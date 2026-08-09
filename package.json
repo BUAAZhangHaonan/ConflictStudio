@@ -1,0 +1,16 @@
+{
+  "name": "conflictstudio",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "build": "npm --prefix frontend run build",
+    "copy:check": "node scripts/copy-check.mjs",
+    "check": "npm run typecheck && npm run build && npm run copy:check",
+    "test": "bash scripts/integrate.sh test",
+    "start": "bash scripts/run.sh",
+    "deploy:check": "bash scripts/integrate.sh deploy:check",
+    "verify": "bash scripts/integrate.sh verify"
+  }
+}
