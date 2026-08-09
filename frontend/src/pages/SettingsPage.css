@@ -1,0 +1,171 @@
+.settings-page {
+  min-width: 0;
+}
+
+.settings-section {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+
+.settings-services__recheck {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-muted);
+}
+
+.settings-services__recheck-state {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.settings-services__recheck-state strong,
+.settings-services__recheck-state p {
+  margin: 0;
+}
+
+.settings-services__recheck-state p {
+  color: var(--color-text-muted);
+}
+
+.settings-services__recheck--error {
+  border-color: var(--color-danger, var(--color-border-strong));
+}
+
+.settings-reviewer-list {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-reviewer-list legend {
+  margin-bottom: 8px;
+  padding: 0;
+  font-weight: 550;
+}
+
+.settings-reviewer-list label {
+  min-height: 40px;
+}
+
+.settings-reviewer-list .state-view {
+  min-height: 160px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+}
+
+.settings-reviewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-reviewer-actions > span {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.settings-reviewer-form,
+.settings-reviewer-form .field {
+  min-width: 0;
+}
+
+.settings-language .button {
+  min-height: 40px;
+}
+
+.settings-services > p {
+  margin-bottom: 0;
+  color: var(--color-text-muted);
+}
+
+.settings-service-list > div {
+  min-width: 0;
+  padding-block: 10px;
+}
+
+.settings-service-list dt,
+.settings-service-list dd {
+  min-width: 0;
+}
+
+.settings-service-list dd {
+  max-width: 68%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.settings-gpu-row dt,
+.settings-gpu-row dd {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-gpu-row dt > span,
+.settings-gpu-row dd > span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.settings-gpu-row dd {
+  justify-items: end;
+}
+
+@media (max-width: 1200px) {
+  .settings-page {
+    width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .settings-page .button,
+  .settings-page input {
+    min-height: 44px;
+  }
+
+  .settings-service-list > div {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 390px) {
+  .settings-services__recheck {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-reviewer-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-reviewer-actions .button {
+    width: 100%;
+  }
+
+  .settings-reviewer-list label {
+    min-height: 44px;
+  }
+
+  .settings-service-list > div {
+    display: grid;
+    gap: 6px;
+  }
+
+  .settings-service-list dd {
+    max-width: none;
+    text-align: left;
+  }
+
+  .settings-gpu-row dd {
+    justify-items: start;
+  }
+}
