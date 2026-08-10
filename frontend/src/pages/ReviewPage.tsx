@@ -123,6 +123,7 @@ export function ReviewPage() {
   const queueButtons = useRef(new Map<string, HTMLButtonElement>());
   const selectAllRef = useRef<HTMLInputElement>(null);
   const reviewVideoRef = useRef<HTMLVideoElement>(null);
+  const mobileBackButtonRef = useRef<HTMLButtonElement>(null);
 
   const datasetsById = useMemo(
     () => new Map(snapshot.data.datasets.map(dataset => [dataset.id, dataset])),
@@ -248,6 +249,28 @@ export function ReviewPage() {
       window.requestAnimationFrame(() => queueButtons.current.get(sample.id)?.focus());
     }
   }, [t, visibleSamples]);
+
+  const openMobileDetail = useCallback((sample: Sample) => {
+    activateSample(sample);
+    if (!window.matchMedia('(max-width: 768px)').matches) return;
+    setMobileDetail(true);
+    const position = visibleSamples.findIndex(item => item.id === sample.id) + 1;
+    setAnnouncement(`${t('review.aria.media')}. ${t('review.aria.selectionChanged', {
+      id: sample.displayId,
+      position,
+      count: visibleSamples.length,
+    })}`);
+    window.requestAnimationFrame(() => mobileBackButtonRef.current?.focus());
+  }, [activateSample, t, visibleSamples]);
+
+  const closeMobileDetail = useCallback(() => {
+    const sampleId = selected?.id;
+    setMobileDetail(false);
+    setAnnouncement(t('review.aria.queue'));
+    window.requestAnimationFrame(() => {
+      if (sampleId) queueButtons.current.get(sampleId)?.focus();
+    });
+  }, [selected?.id, t]);
 
   const save = useCallback(() => {
     if (!selected || decision === 'Pending' || busy) return;
@@ -566,7 +589,7 @@ export function ReviewPage() {
                       }}
                       type="button"
                       className="review-queue__item"
-                      onClick={() => { activateSample(sample); setMobileDetail(true); }}
+                      onClick={() => openMobileDetail(sample)}
                       aria-current={active ? 'true' : undefined}
                       aria-label={queueItemLabel}
                       title={queueItemLabel}
@@ -586,7 +609,7 @@ export function ReviewPage() {
 
           <section className="panel review-media" aria-label={t('review.aria.media')}>
             <div className="section-header">
-              <div className="review-media__heading"><Button className="review-media__back" variant="quiet" onClick={() => setMobileDetail(false)}>{t('review.backToQueue')}</Button><h2>{t('review.media')}</h2></div>
+              <div className="review-media__heading"><Button ref={mobileBackButtonRef} className="review-media__back" variant="quiet" onClick={closeMobileDetail}>{t('review.backToQueue')}</Button><h2>{t('review.media')}</h2></div>
               <div className="review-media__badges" aria-label={t('fields.category')}>
                 <StatusBadge label={t(`category.${selected.category}`)} kind={selected.category.startsWith('C-') ? 'problem' : 'complete'} />
                 <StatusBadge label={t(protocolForCategory(selected.category) === 'VA' ? 'review.protocolVA' : 'review.protocolVT')} />
