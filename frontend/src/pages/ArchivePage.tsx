@@ -48,25 +48,53 @@ function compareText(left: string, right: string): number {
   return 0;
 }
 
-function archiveJsonl(samples: readonly Sample[], label: (key: string) => string): string {
+function archiveJsonl(samples: readonly Sample[]): string {
   return `${samples
-    .map(sample =>
-      JSON.stringify({
-        sample: sample.displayId,
-        category: label(`category.${sample.category}`),
-        protocol: label(protocolForCategory(sample.category) === 'VA' ? 'review.protocolVA' : 'review.protocolVT'),
-        direction: sample.conflictDirection ? label(`direction.${sample.conflictDirection}`) : null,
-        review: label(`status.review.${sample.reviewDecision}`),
+    .map(sample => {
+      const media = [
+        {
+          asset_id: sample.primaryAssetId,
+          type: 'video',
+          role: 'primary',
+          url: sample.primaryAssetId,
+        },
+        sample.sourceAssetId
+          ? {
+              asset_id: sample.sourceAssetId,
+              type: 'video',
+              role: 'source',
+              url: sample.sourceAssetId,
+            }
+          : null,
+        sample.thumbnailAssetId
+          ? {
+              asset_id: sample.thumbnailAssetId,
+              type: 'image',
+              role: 'thumbnail',
+              url: sample.thumbnailAssetId,
+            }
+          : null,
+      ].filter(item => item !== null);
+
+      return JSON.stringify({
+        dataset_id: sample.datasetId,
+        source_id: sample.displayId,
+        sample_id: sample.id,
+        protocol: protocolForCategory(sample.category),
+        relation: sample.category.startsWith('A-') ? 'Aligned' : 'Conflict',
+        conflict_direction: sample.conflictDirection,
+        decision: sample.reviewDecision,
+        media,
         model: sample.model,
         dialogue: sample.dialogue,
-        displayText: sample.displayText,
-        videoPrompt: sample.videoPrompt,
+        display_text: sample.displayText,
+        video_prompt: sample.videoPrompt,
         explanation: sample.explanation,
         emotion: sample.emotion,
         seed: sample.seed,
-        updatedAt: sample.updatedAt,
-      }),
-    )
+        updated_at: sample.updatedAt,
+      });
+    })
     .join('\n')}\n`;
 }
 
@@ -306,7 +334,7 @@ export function ArchivePage() {
   const downloadJsonl = () => {
     if (!dataset || archivedSamples.length === 0) return;
     try {
-      const blob = new Blob([archiveJsonl(archivedSamples, t)], {
+      const blob = new Blob([archiveJsonl(archivedSamples)], {
         type: 'application/x-ndjson;charset=utf-8',
       });
       const url = URL.createObjectURL(blob);

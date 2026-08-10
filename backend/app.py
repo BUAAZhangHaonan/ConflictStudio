@@ -39,6 +39,10 @@ def text_bytes(payload: bytes, content_type: str) -> tuple[int, list[tuple[str, 
     return HTTPStatus.OK, [("Content-Type", content_type), ("Content-Length", str(len(payload)))], payload
 
 
+def not_found() -> tuple[int, list[tuple[str, str]], bytes]:
+    return json_bytes({"detail": "not found"}, HTTPStatus.NOT_FOUND)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ConflictStudio/0.1"
 
@@ -92,6 +96,18 @@ class Handler(BaseHTTPRequestHandler):
             data = media.read_bytes()
             status, headers, body = text_bytes(data, "application/octet-stream")
             self._send(status, headers, body)
+            return
+        if path.startswith("/assets/"):
+            relative_path = path.removeprefix("/assets/")
+            asset = FRONTEND_DIST / "assets" / relative_path
+            content_type = {
+                ".js": "text/javascript; charset=utf-8",
+                ".css": "text/css; charset=utf-8",
+            }.get(asset.suffix.lower())
+            if relative_path not in {"app.js", "app.css"} or not asset.is_file() or content_type is None:
+                self._send(*not_found())
+                return
+            self._send(*text_bytes(asset.read_bytes(), content_type))
             return
         index = FRONTEND_DIST / "index.html"
         if index.is_file():
