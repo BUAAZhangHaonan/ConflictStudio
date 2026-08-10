@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, ConfirmDialog, Dialog, Field, StatusBadge, useToast } from '../../components';
-import { useMockRepository, useRepositorySnapshot } from '../../store';
+import { canKeepTestResult, useMockRepository, useRepositorySnapshot } from '../../store';
 import {
   allowedDirections,
   type Category,
@@ -334,7 +334,7 @@ export function TestPage() {
 
   const openKeep = (jobId: string) => {
     const selected = activeRunCards.find(card => card.job.id === jobId);
-    if (!selected || selected.job.status !== 'Completed' || selected.job.resultSampleIds.length > 0) return;
+    if (!selected || !canKeepTestResult(selected.job)) return;
     setKeepJobId(jobId);
     setKeepDatasetId(activeDatasets[0]?.id ?? '');
     setKeepOpen(true);
@@ -380,8 +380,8 @@ export function TestPage() {
   const keepResult = () => {
     if (!keepJobId || keepDatasetId === '') return;
     const selected = snapshot.data.jobs.find(job => job.id === keepJobId);
-    if (!selected || selected.status !== 'Completed' || selected.resultSampleIds.length > 0) return;
-    const result = repository.keepJobResult(selected.id, keepDatasetId, selected.revision);
+    if (!selected || !canKeepTestResult(selected)) return;
+    const result = repository.keepTestResult(selected.id, keepDatasetId, selected.revision);
     setKeepOpen(false);
     setKeepJobId('');
     if (!result.ok) {
@@ -599,7 +599,7 @@ export function TestPage() {
                     {isCurrentAttempt && (card.job.status === 'Failed' || card.job.status === 'Cancelled') ? (
                       <Button variant="secondary" onClick={() => openRetry(card.job.id)}>{g('jobs.retry')}</Button>
                     ) : null}
-                    {isCurrentAttempt && card.job.status === 'Completed' && card.job.resultSampleIds.length === 0 ? (
+                    {isCurrentAttempt && canKeepTestResult(card.job) ? (
                       <Button variant="primary" onClick={() => openKeep(card.job.id)}>{g('jobs.keep')}</Button>
                     ) : null}
                   </div>

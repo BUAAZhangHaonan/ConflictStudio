@@ -85,7 +85,7 @@ function loadData(storage: Storage): RepositoryData {
     typeof parsed !== 'object' ||
     parsed === null ||
     !('version' in parsed) ||
-    parsed.version !== 2
+    parsed.version !== 3
   ) {
     throw new Error('Prototype data has an unsupported shape.');
   }
@@ -149,6 +149,16 @@ function reserveRunningJobs(
       ? { ...item, availability: 'Reserved', loadedModel: job.model, activeJobId: job.id, checkedAt: timestamp }
       : item;
   });
+}
+
+export function canKeepTestResult(
+  job: Job,
+): job is Job & { testInput: PreparedTest; testAssignmentOrder: number } {
+  return job.status === 'Completed'
+    && job.testInput !== undefined
+    && job.testAssignmentOrder !== undefined
+    && job.testInput.assignments.some(assignment => assignment.order === job.testAssignmentOrder)
+    && job.resultSampleIds.length === 0;
 }
 
 export class MockRepository {
@@ -445,6 +455,7 @@ export class MockRepository {
       displayText: content.displayText,
       explanation: content.explanation,
       videoPrompt: content.videoPrompt,
+      emotion: content.emotion,
       contentRevision: content.revision,
       presetRevision: preset.revision,
     });
@@ -587,42 +598,39 @@ export class MockRepository {
     return success(job);
   }
 
-  keepJobResult(jobId: string, datasetId: string, expectedRevision: number): RepositoryResult<Sample> {
+  keepTestResult(jobId: string, datasetId: string, expectedRevision: number): RepositoryResult<Sample> {
     const job = this.snapshot.data.jobs.find(item => item.id === jobId);
     const dataset = this.snapshot.data.datasets.find(item => item.id === datasetId);
-    const content = job?.testInput
-      ? this.snapshot.data.contentItems.find(item => item.id === job.testInput!.contentItemId)
-      : undefined;
-    const preset = job?.testInput
-      ? this.snapshot.data.presets.find(item => item.id === job.testInput!.presetId)
-      : undefined;
-    if (!job || !dataset || !content || !preset) return failure('NotFound');
+    if (!job || !dataset) return failure('NotFound');
     if (job.revision !== expectedRevision) return failure('Conflict', { currentRevision: job.revision });
-    if (job.status !== 'Completed') return failure('InvalidInput', { field: 'status' });
+    if (!canKeepTestResult(job)) return failure('InvalidInput', { field: 'result' });
+    const input = job.testInput;
+    const assignment = input.assignments.find(item => item.order === job.testAssignmentOrder)!;
     const timestamp = now();
     const sampleId = makeId('sample');
+    const protocol = protocolForCategory(input.category);
     const sample: Sample = {
       id: sampleId,
       displayId: `CS-${String(this.snapshot.data.samples.length + 1).padStart(4, '0')}`,
       datasetId,
-      category: job.category,
-      conflictDirection: job.conflictDirection,
+      category: input.category,
+      conflictDirection: input.conflictDirection,
       reviewDecision: 'Pending',
       reviewRevision: 0,
-      model: job.model,
-      gpu: job.gpu,
-      contentItemId: content.id,
-      presetId: preset.id,
-      primaryAssetId: protocolForCategory(job.category) === 'VA' ? voicedVideoDataUrl : silentVideoDataUrl,
-      sourceAssetId: protocolForCategory(job.category) === 'VT' ? voicedVideoDataUrl : null,
+      model: assignment.model,
+      gpu: assignment.gpu,
+      contentItemId: input.contentItemId,
+      presetId: input.presetId,
+      primaryAssetId: protocol === 'VA' ? voicedVideoDataUrl : silentVideoDataUrl,
+      sourceAssetId: protocol === 'VT' ? voicedVideoDataUrl : null,
       thumbnailAssetId: null,
-      dialogue: content.dialogue,
-      displayText: content.displayText,
-      videoPrompt: content.videoPrompt,
-      explanation: content.explanation,
+      dialogue: input.dialogue,
+      displayText: input.displayText,
+      videoPrompt: input.videoPrompt,
+      explanation: input.explanation,
       generationNote: '',
-      emotion: content.emotion,
-      seed: job.seed ?? 0,
+      emotion: input.emotion,
+      seed: input.seed ?? 0,
       archiveStatus: 'Current',
       revision: 1,
       updatedAt: timestamp,

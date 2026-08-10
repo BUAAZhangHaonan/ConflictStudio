@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, ConfirmDialog, Dialog, Field, StatusBadge, TableShell, useToast } from '../../components';
-import { useMockRepository, useRepositorySnapshot } from '../../store';
+import { canKeepTestResult, useMockRepository, useRepositorySnapshot } from '../../store';
 import type { GpuSlot, Job, JobSource, JobStatus, Sample } from '../../types';
 import {
   GenerationScaffold,
@@ -23,10 +23,6 @@ function isCancellable(status: JobStatus) {
 
 function isRetryable(status: JobStatus) {
   return status === 'Failed' || status === 'Cancelled';
-}
-
-function isKeepable(job: Job) {
-  return job.status === 'Completed' && job.source === 'Test' && job.resultSampleIds.length === 0;
 }
 
 interface ResultEdit {
@@ -240,8 +236,8 @@ export function JobsPage() {
   };
 
   const keepResult = () => {
-    if (!selected || !isKeepable(selected) || keepDatasetId === '') return;
-    const result = repository.keepJobResult(selected.id, keepDatasetId, selected.revision);
+    if (!selected || !canKeepTestResult(selected) || keepDatasetId === '') return;
+    const result = repository.keepTestResult(selected.id, keepDatasetId, selected.revision);
     if (!result.ok) {
       setFailure(result.kind);
       return;
@@ -449,7 +445,7 @@ export function JobsPage() {
                     {g('jobs.retry')}
                   </Button>
                 ) : null}
-                {isLatestSelectedAttempt && isKeepable(selected) ? (
+                {isLatestSelectedAttempt && canKeepTestResult(selected) ? (
                   <Button variant="primary" onClick={openKeepDialog} disabled={activeDatasets.length === 0}>
                     {g('jobs.keep')}
                   </Button>

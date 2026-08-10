@@ -217,7 +217,7 @@ export interface BrowserPreferences {
 }
 
 export interface RepositoryData {
-  version: 2;
+  version: 3;
   datasets: Dataset[];
   reviewers: Reviewer[];
   gpuStates: GpuState[];
@@ -311,6 +311,7 @@ export interface PreparedTest {
   displayText: string | null;
   explanation: string;
   videoPrompt: string;
+  emotion: string;
   contentRevision: number;
   presetRevision: number;
 }

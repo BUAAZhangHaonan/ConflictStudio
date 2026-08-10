@@ -13,7 +13,7 @@ import type {
 } from './types';
 import { silentVideoDataUrl, voicedVideoDataUrl } from './mockMedia';
 
-export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v3';
+export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v4';
 export const LOCALE_STORAGE_KEY = 'conflictstudio.prototype.locale';
 export const REVIEWER_STORAGE_KEY = 'conflictstudio.prototype.reviewer.v2';
 
@@ -127,27 +127,30 @@ function stepsFor(status: JobStatus, jobId: string): Job['steps'] {
   });
 }
 
-function makeJob(status: JobStatus, index: number): Job {
+function makeJob(
+  status: JobStatus,
+  index: number,
+  source: Job['source'] = status === 'Queued' || status === 'Running' || status === 'Completed' || status === 'Failed'
+    ? 'Test'
+    : 'Rerender',
+): Job {
   const id = `job-${status.toLowerCase()}`;
   const model = index % 2 === 0 ? 'LTX-2.3' : 'MiniMax H3';
-  return {
+  const gpu = status === 'Queued' ? 'GPU1' : index % 2 === 0 ? 'GPU0' : 'GPU1';
+  const category = source === 'Test' ? 'A-VA' : categories[index % categories.length];
+  const seed = 9000 + index;
+  const job: Job = {
     id,
     parentJobId: null,
-    source: status === 'Queued' || status === 'Running' || status === 'Completed' || status === 'Failed'
-      ? 'Test'
-      : status === 'Cancelled'
-        ? 'Rerender'
-        : 'Production',
-    datasetId: status === 'Queued' || status === 'Running' || status === 'Completed' || status === 'Failed' ? null : 'dataset-main',
-    category: status === 'Queued' || status === 'Running' || status === 'Completed' || status === 'Failed'
-      ? 'A-VA'
-      : categories[index % categories.length],
+    source,
+    datasetId: source === 'Test' ? null : 'dataset-main',
+    category,
     conflictDirection: null,
     model,
-    gpu: status === 'Queued' ? 'GPU1' : index % 2 === 0 ? 'GPU0' : 'GPU1',
+    gpu,
     status,
     progress: status === 'Completed' ? 100 : status === 'Running' ? 54 : status === 'Queued' ? 0 : 38,
-    seed: 9000 + index,
+    seed,
     quantity: index === 0 ? 8 : 1,
     steps: stepsFor(status, id),
     logs: [
@@ -161,13 +164,42 @@ function makeJob(status: JobStatus, index: number): Job {
     completedAt: status === 'Completed' || status === 'Failed' || status === 'Cancelled' ? baseDate : null,
     updatedAt: baseDate,
   };
+  if (source === 'Test') {
+    const content = contentItems.find(item =>
+      item.category === category && item.conflictDirection === job.conflictDirection,
+    );
+    const preset = presets.find(item => item.category === category);
+    if (!content || !preset) throw new Error(`Missing mock test input for ${id}.`);
+    job.testInput = {
+      id: `prepared-${id}`,
+      category,
+      conflictDirection: job.conflictDirection,
+      contentItemId: content.id,
+      presetId: preset.id,
+      age: 25,
+      gender: 'Female',
+      ethnicity: 'EastAsian',
+      seed,
+      models: [model],
+      assignments: [{ model, gpu, order: 1 }],
+      executionMode: 'Serial',
+      dialogue: content.dialogue,
+      displayText: content.displayText,
+      explanation: content.explanation,
+      videoPrompt: content.videoPrompt,
+      emotion: content.emotion,
+      contentRevision: content.revision,
+      presetRevision: preset.revision,
+    };
+    job.testAssignmentOrder = 1;
+  }
+  return job;
 }
 
 const resultHistoryJobs: Job[] = [
   {
-    ...makeJob('Completed', 6),
+    ...makeJob('Completed', 6, 'Production'),
     id: 'job-result-previous',
-    source: 'Production',
     datasetId: 'dataset-main',
     steps: stepsFor('Completed', 'job-result-previous'),
     logs: [
@@ -181,7 +213,7 @@ const resultHistoryJobs: Job[] = [
     updatedAt: '2026-08-07T08:08:00.000Z',
   },
   {
-    ...makeJob('Completed', 7),
+    ...makeJob('Completed', 7, 'Rerender'),
     id: 'job-result-current',
     parentJobId: 'job-result-previous',
     source: 'Rerender',
@@ -265,7 +297,7 @@ const archives: Archive[] = [
 ];
 
 export const initialData: RepositoryData = {
-  version: 2,
+  version: 3,
   datasets: [
     { id: 'dataset-main', name: '正式生成集', status: 'Active', revision: 3, createdAt: baseDate, updatedAt: baseDate },
     { id: 'dataset-validation', name: '验证集', status: 'Active', revision: 2, createdAt: baseDate, updatedAt: baseDate },
@@ -282,7 +314,8 @@ export const initialData: RepositoryData = {
   samples,
   reviews,
   jobs: [
-    ...(['Queued', 'Running', 'Completed', 'Failed', 'Cancelled'] as JobStatus[]).map(makeJob),
+    ...(['Queued', 'Running', 'Completed', 'Failed', 'Cancelled'] as JobStatus[])
+      .map((status, index) => makeJob(status, index)),
     ...resultHistoryJobs,
   ],
   contentItems,
