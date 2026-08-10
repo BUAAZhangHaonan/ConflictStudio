@@ -1102,12 +1102,13 @@ export class MockRepository {
       updatedAt: timestamp,
     };
     const currentSet = new Set(currentSampleIds);
+    const removedSet = new Set(preview.removedSampleIds);
     const data = copy(this.snapshot.data);
     data.archives = currentArchive
       ? data.archives.map(item => (item.datasetId === preview.datasetId ? archive : item))
       : [...data.archives, archive];
     data.samples = data.samples.map(sample =>
-      sample.datasetId === preview.datasetId && currentSet.has(sample.id)
+      sample.datasetId === preview.datasetId && (currentSet.has(sample.id) || removedSet.has(sample.id))
         ? { ...sample, archiveStatus: 'Current', updatedAt: timestamp }
         : sample,
     );
@@ -1148,8 +1149,31 @@ export class MockRepository {
       const sample = sampleById.get(review.sampleId);
       return sample ? [sample] : [];
     });
-    const revisionCounts = new Map<string, number>();
-    inRange.forEach(review => revisionCounts.set(review.sampleId, (revisionCounts.get(review.sampleId) ?? 0) + 1));
+    const changedSampleIds = new Set<string>();
+    const reviewHistory = new Map<string, typeof this.snapshot.data.reviews>();
+    this.snapshot.data.reviews.forEach(review => {
+      if (review.reviewerId !== filter.reviewerId) return;
+      const sample = sampleById.get(review.sampleId);
+      if (filter.datasetId !== null && sample?.datasetId !== filter.datasetId) return;
+      const history = reviewHistory.get(review.sampleId) ?? [];
+      history.push(review);
+      reviewHistory.set(review.sampleId, history);
+    });
+    reviewHistory.forEach(history => {
+      history.sort((left, right) => left.revision - right.revision);
+      history.forEach((review, index) => {
+        const previous = history[index - 1];
+        const day = review.createdAt.slice(0, 10);
+        if (
+          previous
+          && previous.decision !== review.decision
+          && day >= filter.startDate
+          && day <= filter.endDate
+        ) {
+          changedSampleIds.add(review.sampleId);
+        }
+      });
+    });
 
     const start = new Date(`${filter.startDate}T00:00:00.000Z`);
     const end = new Date(`${filter.endDate}T00:00:00.000Z`);
@@ -1164,7 +1188,7 @@ export class MockRepository {
       startDate: filter.startDate,
       endDate: filter.endDate,
       uniqueReviewedCount: latestReviews.length,
-      revisedSampleCount: [...revisionCounts.values()].filter(count => count > 1).length,
+      revisedSampleCount: changedSampleIds.size,
       archivedCurrentCount: latestSamples.filter(
         sample => sample.reviewDecision === 'Accepted' && sample.archiveStatus === 'Current',
       ).length,

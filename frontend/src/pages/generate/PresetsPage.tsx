@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, ConfirmDialog, Field, TableShell, useToast } from '../../components';
 import { useMockRepository, useRepositorySnapshot } from '../../store';
-import type { Category, Preset, PresetInput } from '../../types';
+import type { Category, Preset, PresetInput, PresetRuleKey } from '../../types';
 import {
   categories,
   categoryLabel,
@@ -38,6 +38,12 @@ type PendingPresetChange =
   | { kind: 'select'; id: string }
   | { kind: 'filters'; filters: PresetFilters };
 
+const fixedStructureRules = [
+  'presets.rule.subject',
+  'presets.rule.signal',
+  'presets.rule.camera',
+] as const satisfies readonly PresetRuleKey[];
+
 function matchesPresetFilters(item: Preset, filters: PresetFilters, locale: string): boolean {
   const query = filters.search.trim().toLocaleLowerCase(locale);
   return (filters.category === 'All' || item.category === filters.category)
@@ -50,7 +56,7 @@ export function PresetsPage() {
   const snapshot = useRepositorySnapshot();
   const { showToast } = useToast();
   const makeEmpty = (): PresetInput => ({
-    name: '', category: 'A-VA', fixedStructureRules: [g('presets.rule.subject'), g('presets.rule.signal'), g('presets.rule.camera')],
+    name: '', category: 'A-VA', fixedStructureRules,
     styleInstruction: '', sceneSupplement: '', positiveExamples: [], negativeExamples: [], renderNegativeConstraints: '',
   });
   const [search, setSearch] = useState('');
@@ -222,7 +228,7 @@ export function PresetsPage() {
             </Field>
             <div className="generation-form__wide">
               <strong>{g('presets.fixedRules')}</strong>
-              <ol className="generation-editor__rules">{draft.fixedStructureRules.map((rule, index) => <li key={`${index}-${rule}`}>{rule}</li>)}</ol>
+              <ol className="generation-editor__rules">{fixedStructureRules.map(rule => <li key={rule}>{g(rule)}</li>)}</ol>
             </div>
             <Field className="generation-form__wide" label={g('presets.style')} htmlFor="preset-style" required>
               <textarea id="preset-style" value={draft.styleInstruction} onChange={event => setDraft(current => ({ ...current, styleInstruction: event.target.value }))} placeholder={g('presets.stylePlaceholder')} />

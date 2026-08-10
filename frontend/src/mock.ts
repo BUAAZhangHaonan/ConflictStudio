@@ -230,7 +230,11 @@ const presets: Preset[] = categories.map((category, index) => ({
   id: `preset-${category.toLowerCase()}`,
   name: `${category} 标准预设`,
   category,
-  fixedStructureRules: ['人物和镜头必须保持连续。', '对白、说明和视频提示词必须完整。'],
+  fixedStructureRules: [
+    'presets.rule.subject',
+    'presets.rule.signal',
+    'presets.rule.camera',
+  ],
   styleInstruction: '保持自然、克制和可观察。',
   sceneSupplement: '使用简单室内场景。',
   positiveExamples: ['动作与目标关系清楚。'],

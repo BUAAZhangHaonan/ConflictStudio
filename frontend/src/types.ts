@@ -12,6 +12,10 @@ export type ModelName = 'LTX-2.3' | 'MiniMax H3';
 export type GpuSlot = 'GPU0' | 'GPU1';
 export type GpuAvailability = 'Available' | 'Reserved' | 'ExternalOccupied' | 'Unknown';
 export type ArchiveStatus = 'Current' | 'NeedsUpdate';
+export type PresetRuleKey =
+  | 'presets.rule.subject'
+  | 'presets.rule.signal'
+  | 'presets.rule.camera';
 export type JobSource = 'Production' | 'Test' | 'Rerender';
 export type JobStepStatus = 'Waiting' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 export type TestExecutionMode = 'Parallel' | 'Serial';
@@ -168,7 +172,7 @@ export interface Preset extends Revisioned {
   id: string;
   name: string;
   category: Category;
-  fixedStructureRules: readonly string[];
+  fixedStructureRules: readonly PresetRuleKey[];
   styleInstruction: string;
   sceneSupplement: string;
   positiveExamples: string[];
