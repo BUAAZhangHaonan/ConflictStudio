@@ -609,7 +609,7 @@ export function JobsPage() {
                         <li key={sampleId}>
                           {sample ? (
                             <video controls preload="metadata" aria-label={g('jobs.resultMediaLabel', { id: sample.displayId })}>
-                              <source src={sample.primaryAssetId} type="video/mp4" />
+                              <source src={sample.primaryAssetId} type="video/webm" />
                               {g('test.videoUnsupported')}
                             </video>
                           ) : null}
