@@ -51,6 +51,7 @@ import {
   type UpdateJobResultValue,
   protocolForCategory,
 } from './types';
+import { allocatePrototypeId } from './id';
 
 type Listener = () => void;
 
@@ -60,10 +61,6 @@ function copy<T>(value: T): T {
 
 function now(): string {
   return new Date().toISOString();
-}
-
-function makeId(prefix: string): string {
-  return `${prefix}-${crypto.randomUUID()}`;
 }
 
 function success<T>(value: T): RepositoryResult<T> {
@@ -103,7 +100,7 @@ function createJob(
   startedAt: string | null,
 ): Job {
   return {
-    id: makeId('job'),
+    id: allocatePrototypeId('job'),
     parentJobId: null,
     ...input,
     progress: 0,
@@ -232,7 +229,7 @@ export class MockRepository {
     }
     const timestamp = now();
     const dataset: Dataset = {
-      id: makeId('dataset'),
+      id: allocatePrototypeId('dataset'),
       name: cleanName,
       status: 'Active',
       revision: 1,
@@ -249,7 +246,7 @@ export class MockRepository {
       updatedAt: timestamp,
     });
     data.activities.unshift({
-      id: makeId('activity'),
+      id: allocatePrototypeId('activity'),
       action: 'DatasetCreated',
       objectLabel: dataset.name,
       reviewerId: this.snapshot.preferences.currentReviewerId,
@@ -279,7 +276,7 @@ export class MockRepository {
     const data = copy(this.snapshot.data);
     data.datasets = data.datasets.map(item => (item.id === datasetId ? updated : item));
     data.activities.unshift({
-      id: makeId('activity'),
+      id: allocatePrototypeId('activity'),
       action: 'DatasetRenamed',
       objectLabel: updated.name,
       reviewerId: this.snapshot.preferences.currentReviewerId,
@@ -304,7 +301,7 @@ export class MockRepository {
     const data = copy(this.snapshot.data);
     data.datasets = data.datasets.map(item => (item.id === datasetId ? updated : item));
     data.activities.unshift({
-      id: makeId('activity'),
+      id: allocatePrototypeId('activity'),
       action: 'DatasetDisabled',
       objectLabel: updated.name,
       reviewerId: this.snapshot.preferences.currentReviewerId,
@@ -419,7 +416,7 @@ export class MockRepository {
         : item,
     );
     data.activities.unshift({
-      id: makeId('activity'),
+      id: allocatePrototypeId('activity'),
       action: 'JobCreated',
       objectLabel: job.id,
       reviewerId: this.snapshot.preferences.currentReviewerId,
@@ -448,7 +445,7 @@ export class MockRepository {
     const preset = this.snapshot.data.presets.find(item => item.id === draft.presetId);
     if (!preset || preset.category !== draft.category) return failure('InvalidInput', { field: 'presetId' });
     return success({
-      id: makeId('prepared-test'),
+      id: allocatePrototypeId('prepared-test'),
       ...copy(draft),
       models: draft.assignments.map(item => item.model),
       dialogue: content.dialogue,
@@ -506,7 +503,7 @@ export class MockRepository {
     data.gpuStates = reserveRunningJobs(data.gpuStates, jobs, timestamp);
     data.activities.unshift(
       ...jobs.map(job => ({
-        id: makeId('activity'),
+        id: allocatePrototypeId('activity'),
         action: 'JobCreated' as const,
         objectLabel: job.id,
         reviewerId: this.snapshot.preferences.currentReviewerId,
@@ -559,7 +556,7 @@ export class MockRepository {
     const gpuState = this.snapshot.data.gpuStates.find(item => item.slot === gpu);
     if (!gpuState || gpuState.availability !== 'Available') return failure('Unavailable', { field: 'gpu' });
     const timestamp = now();
-    const id = makeId('job');
+    const id = allocatePrototypeId('job');
     const job: Job = {
       ...source,
       id,
@@ -607,7 +604,7 @@ export class MockRepository {
     const input = job.testInput;
     const assignment = input.assignments.find(item => item.order === job.testAssignmentOrder)!;
     const timestamp = now();
-    const sampleId = makeId('sample');
+    const sampleId = allocatePrototypeId('sample');
     const protocol = protocolForCategory(input.category);
     const sample: Sample = {
       id: sampleId,
@@ -784,7 +781,7 @@ export class MockRepository {
           : item,
       );
       data.activities.unshift({
-        id: makeId('activity'),
+        id: allocatePrototypeId('activity'),
         action: 'JobCreated',
         objectLabel: rerenderJob.id,
         reviewerId: this.snapshot.preferences.currentReviewerId,
@@ -802,7 +799,7 @@ export class MockRepository {
     const timestamp = now();
     const item: ContentItem = {
       ...copy(input),
-      id: makeId('content'),
+      id: allocatePrototypeId('content'),
       name: input.name.trim(),
       revision: 1,
       createdAt: timestamp,
@@ -851,7 +848,7 @@ export class MockRepository {
     const timestamp = now();
     const preset: Preset = {
       ...copy(input),
-      id: makeId('preset'),
+      id: allocatePrototypeId('preset'),
       name: input.name.trim(),
       revision: 1,
       createdAt: timestamp,
@@ -892,7 +889,7 @@ export class MockRepository {
     }
     const timestamp = now();
     const reviewer: Reviewer = {
-      id: makeId('reviewer'),
+      id: allocatePrototypeId('reviewer'),
       name: cleanName,
       revision: 1,
       createdAt: timestamp,
@@ -953,7 +950,7 @@ export class MockRepository {
     const data = copy(this.snapshot.data);
     data.samples = data.samples.map(item => (item.id === sample.id ? updated : item));
     data.reviews.push({
-      id: makeId('review'),
+      id: allocatePrototypeId('review'),
       sampleId: sample.id,
       reviewerId: input.reviewerId,
       decision: input.decision,
@@ -963,7 +960,7 @@ export class MockRepository {
       createdAt: timestamp,
     });
     data.activities.unshift({
-      id: makeId('activity'),
+      id: allocatePrototypeId('activity'),
       action: 'ReviewSaved',
       objectLabel: sample.displayId,
       reviewerId: input.reviewerId,
@@ -1008,7 +1005,7 @@ export class MockRepository {
     data.samples = data.samples.map(sample => byId.get(sample.id) ?? sample);
     data.reviews.push(
       ...updatedSamples.map(sample => ({
-        id: makeId('review'),
+        id: allocatePrototypeId('review'),
         sampleId: sample.id,
         reviewerId: input.reviewerId,
         decision: input.decision,
@@ -1020,7 +1017,7 @@ export class MockRepository {
     );
     data.activities.unshift(
       ...updatedSamples.map(sample => ({
-        id: makeId('activity'),
+        id: allocatePrototypeId('activity'),
         action: 'ReviewSaved' as const,
         objectLabel: sample.displayId,
         reviewerId: input.reviewerId,
@@ -1121,7 +1118,7 @@ export class MockRepository {
         : sample,
     );
     data.activities.unshift({
-      id: makeId('activity'),
+      id: allocatePrototypeId('activity'),
       action: 'ArchiveSynced',
       objectLabel: this.snapshot.data.datasets.find(item => item.id === preview.datasetId)?.name ?? preview.datasetId,
       reviewerId: this.snapshot.preferences.currentReviewerId,
