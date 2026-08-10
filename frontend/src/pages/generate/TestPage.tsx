@@ -84,7 +84,7 @@ function signatureFromDraft(
     age,
     gender,
     ethnicity,
-    seed,
+    seed: parseSeed(seed),
     assignments,
     executionMode,
   });
@@ -392,24 +392,16 @@ export function TestPage() {
     showToast(g('jobs.kept'));
   };
 
-  const modelSwitchMessages = prepared ? (() => {
-    const loadedModels = new Map(snapshot.data.gpuStates.map(item => [item.slot, item.loadedModel]));
-    return prepared.assignments
-      .slice()
-      .sort((left, right) => left.order - right.order)
-      .flatMap((assignment, index) => {
-        const currentModel = loadedModels.get(assignment.gpu);
-        loadedModels.set(assignment.gpu, assignment.model);
-        if (!currentModel || currentModel === assignment.model) return [];
-        return [g(index > 0 && prepared.executionMode === 'Serial'
-          ? 'test.serialModelSwitch'
-          : 'test.initialModelSwitch', {
-            gpu: g(`gpu.${assignment.gpu}`),
-            currentModel: g(`model.${currentModel}`),
-            nextModel: g(`model.${assignment.model}`),
-          })];
-      });
-  })() : [];
+  const serialSwitchMessage = executionMode === 'Serial'
+    && assignments.length === 2
+    && assignments[0].gpu === assignments[1].gpu
+    && assignments[0].model !== assignments[1].model
+    ? g('test.serialModelSwitch', {
+        gpu: g(`gpu.${assignments[0].gpu}`),
+        currentModel: g(`model.${assignments[0].model}`),
+        nextModel: g(`model.${assignments[1].model}`),
+      })
+    : null;
   const retrySource = snapshot.data.jobs.find(job => job.id === retryJobId) ?? null;
   const retryGpuState = snapshot.data.gpuStates.find(gpu => gpu.slot === retryGpu) ?? null;
 
@@ -617,42 +609,24 @@ export function TestPage() {
         onClose={() => setShowStartConfirm(false)}
         footer={<><Button onClick={() => setShowStartConfirm(false)}>{g('common.cancel')}</Button><Button variant="primary" onClick={startTest}>{g('test.run')}</Button></>}
       >
-        {prepared ? (
-          <div className="generation-dialog-form">
-            <p>{g(prepared.assignments.length === 1 ? 'test.previewBody' : 'test.previewBody_other', { count: prepared.assignments.length })}</p>
-            <dl className="generation-job-summary">
-              <div><dt>{g('test.category')}</dt><dd>{categoryLabel(g, prepared.category)}</dd></div>
-              <div><dt>{g('test.direction')}</dt><dd>{directionLabel(g, prepared.conflictDirection)}</dd></div>
-              <div><dt>{g('test.content')}</dt><dd>{currentContent?.name ?? currentContent?.id ?? g('common.none')}</dd></div>
-              <div><dt>{g('test.preset')}</dt><dd>{currentPreset?.name ?? currentPreset?.id ?? g('common.none')}</dd></div>
-              <div><dt>{g('test.outputProfile')}</dt><dd>{g('test.outputProfileValue')}</dd></div>
-              <div><dt>{g('test.seed')}</dt><dd>{prepared.seed == null ? g('test.randomSeed') : String(prepared.seed)}</dd></div>
-              <div><dt>{g('test.age')}</dt><dd>{g(`demographic.age.${prepared.age}`)}</dd></div>
-              <div><dt>{g('test.gender')}</dt><dd>{g(`demographic.gender.${prepared.gender}`)}</dd></div>
-              <div><dt>{g('test.ethnicity')}</dt><dd>{g(`demographic.ethnicity.${prepared.ethnicity}`)}</dd></div>
-              <div><dt>{g('test.execution')}</dt><dd>{g(prepared.executionMode === 'Serial' ? 'test.serial' : 'test.parallel')}</dd></div>
-            </dl>
-            <div className="generation-result-card__details">
-              <h4>{g('test.assignments')}</h4>
-              <ul>
-                {prepared.assignments.map((assignment, index) => (
-                  <li key={assignment.order}>
-                    <strong>{g('test.assignment', { number: index + 1 })}</strong>
-                    <span>{g(`model.${assignment.model}`)} / {g(`gpu.${assignment.gpu}`)}</span>
-                    <p>{modelSpecLabel(g, assignment.model)}</p>
-                    <p>{g('test.videoPrompt')}: {prepared.videoPrompt}</p>
-                  </li>
-                ))}
-              </ul>
+        <div className="generation-dialog-form">
+          <dl className="generation-job-summary">
+            <div><dt>{g('test.content')}</dt><dd>{currentContent?.name ?? currentContent?.id ?? g('common.none')}</dd></div>
+            <div>
+              <dt>{g('test.category')} / {g('test.direction')}</dt>
+              <dd>{categoryLabel(g, category)} / {direction ? directionLabel(g, direction) : g('common.none')}</dd>
             </div>
-            <p>{g('test.confirmBody')}</p>
-            {modelSwitchMessages.length > 0 ? (
-              <ul className="generation-confirm-list">
-                {modelSwitchMessages.map(message => <li key={message}>{message}</li>)}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
+            <div><dt>{g('test.execution')}</dt><dd>{g(executionMode === 'Serial' ? 'test.serial' : 'test.parallel')}</dd></div>
+            {assignments.map((assignment, index) => (
+              <div key={assignment.order}>
+                <dt>{g('test.assignment', { number: index + 1 })}</dt>
+                <dd>{g(`model.${assignment.model}`)} / {g(`gpu.${assignment.gpu}`)}</dd>
+              </div>
+            ))}
+            <div><dt>{g('test.seed')}</dt><dd>{parseSeed(seed) == null ? g('test.randomSeed') : String(parseSeed(seed))}</dd></div>
+          </dl>
+          {serialSwitchMessage ? <p>{serialSwitchMessage}</p> : null}
+        </div>
       </Dialog>
 
       <ConfirmDialog
