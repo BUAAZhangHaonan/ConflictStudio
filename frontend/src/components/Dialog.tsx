@@ -7,7 +7,7 @@ interface DialogProps extends PropsWithChildren {
   onClose: () => void;
   footer?: ReactNode;
   dismissible?: boolean;
-  size?: 'default' | 'wide';
+  size?: 'default' | 'wide' | 'test-confirm';
 }
 
 const focusableSelector = [

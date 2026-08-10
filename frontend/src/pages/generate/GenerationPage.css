@@ -50,6 +50,9 @@
 .generation-job-summary > div { min-width: 0; padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-small); }
 .generation-job-summary dt { color: var(--color-text-muted); font-size: 12px; }
 .generation-job-summary dd { margin: 5px 0 0; overflow-wrap: anywhere; font-weight: 550; }
+.generation-test-confirm-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.generation-test-confirm-summary > div:nth-child(2) { grid-column: span 2; }
+.generation-test-confirm-summary dd { overflow-wrap: break-word; word-break: normal; }
 .generation-job-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .generation-job-section { min-width: 0; padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-small); }
 .generation-job-section h3 { margin-bottom: 10px; font-size: 15px; }
@@ -113,6 +116,11 @@
   .generation-form input, .generation-form select, .generation-form textarea, .generation-form .button,
   .generation-filters input, .generation-filters select { min-height: 44px; }
   .generation-result-cards { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 599px) {
+  .generation-test-confirm-summary { grid-template-columns: 1fr; }
+  .generation-test-confirm-summary > div:nth-child(2) { grid-column: auto; }
 }
 
 @media (max-width: 390px) {

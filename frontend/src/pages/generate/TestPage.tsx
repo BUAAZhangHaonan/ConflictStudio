@@ -604,13 +604,14 @@ export function TestPage() {
 
       <Dialog
         open={showStartConfirm}
+        size="test-confirm"
         title={g('test.previewTitle')}
         closeLabel={g('common.close')}
         onClose={() => setShowStartConfirm(false)}
         footer={<><Button onClick={() => setShowStartConfirm(false)}>{g('common.cancel')}</Button><Button variant="primary" onClick={startTest}>{g('test.run')}</Button></>}
       >
         <div className="generation-dialog-form">
-          <dl className="generation-job-summary">
+          <dl className="generation-job-summary generation-test-confirm-summary">
             <div><dt>{g('test.content')}</dt><dd>{currentContent?.name ?? currentContent?.id ?? g('common.none')}</dd></div>
             <div>
               <dt>{g('test.category')} / {g('test.direction')}</dt>
