@@ -41,10 +41,14 @@
 @media (max-width: 390px) {
   h1 { font-size: 22px; }
   html, body, .app-shell, .app-shell__body, .main-content { overflow-x: clip; }
-  .topbar__title > span { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar { min-width: 0; }
+  .topbar__title { min-width: 0; flex: 1 1 auto; }
+  .topbar__title > span { min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topbar__actions { gap: 4px; }
+  .topbar__language { display: none; }
   .text-button { padding-inline: 5px; }
-  .reviewer-menu > summary { max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .reviewer-menu { flex: 0 1 auto; min-width: 0; }
+  .reviewer-menu > summary { max-width: 124px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .page-header { flex-direction: column; }
   .page-header__actions, .page-header__actions .button { width: 100%; }
   .metric-grid, .metric-grid--five { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -53,6 +57,25 @@
   .button, input, select { min-height: 44px; }
   .generate-nav {
     display: none;
+  }
+  .generation-page,
+  .archive-page,
+  .settings-page,
+  .statistics-page,
+  .generation-page > *,
+  .archive-page > *,
+  .settings-page > *,
+  .statistics-page > * { min-width: 0; max-width: 100%; }
+  .workspace-page .workspace-datasets .table-shell table,
+  .workspace-page .workspace-datasets .table-shell tbody,
+  .workspace-page .workspace-datasets .table-shell tr {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .workspace-page .workspace-datasets .status-badge {
+    width: auto;
+    justify-self: start;
   }
   .inline-form { grid-template-columns: 1fr; }
   .segmented-control { display: grid; grid-template-columns: 1fr 1fr; }

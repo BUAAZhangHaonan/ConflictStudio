@@ -290,6 +290,22 @@
     overflow-wrap: anywhere;
   }
 
+  .workspace-datasets .table-shell tbody th > *,
+  .workspace-datasets .table-shell tbody td > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .workspace-datasets .table-shell .table-link {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .workspace-datasets .table-shell .is-numeric {
+    justify-items: start;
+    text-align: left;
+  }
+
   .workspace-datasets .table-shell tbody tr > :last-child {
     border-bottom: 0;
   }
@@ -303,7 +319,13 @@
   }
 
   .workspace-datasets__actions {
+    min-width: 0;
     flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .workspace-datasets__actions .button {
+    max-width: 100%;
     white-space: normal;
   }
 

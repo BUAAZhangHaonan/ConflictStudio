@@ -440,6 +440,19 @@
   font-size: 12px;
 }
 
+@media (max-width: 1200px) and (min-width: 769px) {
+  .review-grid {
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+    grid-template-areas:
+      "queue media"
+      "queue decision";
+  }
+
+  .review-queue { grid-area: queue; }
+  .review-media { grid-area: media; }
+  .review-decision { grid-area: decision; }
+}
+
 @media (max-width: 768px) {
   .review-page__subtitle {
     margin-top: -6px;

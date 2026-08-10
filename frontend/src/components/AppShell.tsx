@@ -197,7 +197,7 @@ export function AppShell({ children }: PropsWithChildren) {
             <span>{t(pageTitleKey(location.pathname))}</span>
           </div>
           <div className="topbar__actions">
-            <button type="button" className="text-button" onClick={toggleLocale}>
+            <button type="button" className="text-button topbar__language" onClick={toggleLocale}>
               {t('app.changeLanguage')}
             </button>
             <details className="reviewer-menu">
