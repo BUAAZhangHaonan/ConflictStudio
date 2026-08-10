@@ -27,8 +27,10 @@
 .generation-choice-grid input { width: auto; min-height: auto; }
 .generation-empty-note { padding: 10px 12px; border: 1px dashed var(--color-border-strong); border-radius: var(--radius-small); color: var(--color-text-muted); }
 .generation-gpus__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.generation-layout > .generation-gpus .generation-gpus__grid { grid-template-columns: 1fr; }
 .generation-gpu-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-small); }
-.generation-gpu-card > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.generation-gpu-card > div { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.generation-gpu-card .status-badge { max-width: 100%; white-space: normal; }
 .generation-gpu-card p { margin: 0; color: var(--color-text-muted); font-size: 12px; }
 .generation-gpu-card > .button { justify-self: start; }
 .generation-preview-summary { margin-bottom: 12px; color: var(--color-text-muted); }
@@ -105,13 +107,14 @@
 
 @media (max-width: 1050px) {
   .generation-layout, .generation-layout--editor { grid-template-columns: 1fr; }
+  .generation-layout > .generation-gpus .generation-gpus__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .generation-editor { position: static; }
   .generation-job-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 768px) {
   .generation-form__grid, .generation-form__grid--three, .generation-filters, .generation-job-sections, .generation-job-inputs dl, dl.generation-job-inputs, .generation-allocation-list li { grid-template-columns: 1fr; }
-  .generation-gpus__grid { grid-template-columns: 1fr; }
+  .generation-gpus__grid, .generation-layout > .generation-gpus .generation-gpus__grid { grid-template-columns: 1fr; }
   .generation-job-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .generation-form input, .generation-form select, .generation-form textarea, .generation-form .button,
   .generation-filters input, .generation-filters select { min-height: 44px; }
