@@ -53,6 +53,14 @@
 .generation-job-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .generation-job-section { min-width: 0; padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-small); }
 .generation-job-section h3 { margin-bottom: 10px; font-size: 15px; }
+.generation-job-section--wide { grid-column: 1 / -1; }
+.generation-job-inputs, .generation-job-inputs dl { display: grid; gap: 10px; margin: 0; }
+.generation-job-inputs dl, dl.generation-job-inputs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.generation-job-inputs dt { color: var(--color-text-muted); font-size: 12px; }
+.generation-job-inputs dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+.generation-allocation-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.generation-allocation-list li { display: grid; grid-template-columns: 90px minmax(120px, 1fr) minmax(240px, 2fr); gap: 10px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-small); }
+.generation-result-list video { width: min(280px, 100%); max-height: 180px; border-radius: var(--radius-small); background: #111; }
 .generation-job-section__empty { margin: 0; color: var(--color-text-muted); }
 .generation-step-list, .generation-log-list, .generation-result-list { display: grid; margin: 0; padding: 0; list-style: none; }
 .generation-step-list li, .generation-log-list li, .generation-result-list li { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--color-border); }
@@ -99,7 +107,7 @@
 }
 
 @media (max-width: 768px) {
-  .generation-form__grid, .generation-form__grid--three, .generation-filters, .generation-job-sections { grid-template-columns: 1fr; }
+  .generation-form__grid, .generation-form__grid--three, .generation-filters, .generation-job-sections, .generation-job-inputs dl, dl.generation-job-inputs, .generation-allocation-list li { grid-template-columns: 1fr; }
   .generation-gpus__grid { grid-template-columns: 1fr; }
   .generation-job-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .generation-form input, .generation-form select, .generation-form textarea, .generation-form .button,

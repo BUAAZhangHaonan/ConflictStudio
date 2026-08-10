@@ -89,6 +89,14 @@ export function JobsPage() {
     () => new Map(snapshot.data.samples.map(sample => [sample.id, sample])),
     [snapshot.data.samples],
   );
+  const contentById = useMemo(
+    () => new Map(snapshot.data.contentItems.map(item => [item.id, item])),
+    [snapshot.data.contentItems],
+  );
+  const presetsById = useMemo(
+    () => new Map(snapshot.data.presets.map(item => [item.id, item])),
+    [snapshot.data.presets],
+  );
   const activeDatasets = snapshot.data.datasets.filter(dataset => dataset.status === 'Active');
   const availableGpuSlots = snapshot.data.gpuStates
     .filter(gpu => gpu.availability === 'Available')
@@ -147,7 +155,7 @@ export function JobsPage() {
     let root = selected;
     while (root.parentJobId) {
       const parent = byId.get(root.parentJobId);
-      if (!parent) throw new Error(`Missing parent job ${root.parentJobId}.`);
+      if (!parent) break;
       root = parent;
     }
     const related: Job[] = [];
@@ -179,6 +187,14 @@ export function JobsPage() {
     setKeepOpen(false);
     setEditSampleId('');
     setEditDraft(null);
+  };
+
+  const revealJob = (job: Job) => {
+    setSearch('');
+    setStatusFilter('All');
+    setSourceFilter('All');
+    setSelectedId(job.id);
+    setSearchParams({ job: job.id }, { replace: true });
   };
 
   const openRetryDialog = () => {
@@ -219,7 +235,7 @@ export function JobsPage() {
     }
     setRetryOpen(false);
     setFailure(null);
-    setSelectedId(result.value.id);
+    revealJob(result.value);
     showToast(g('jobs.retried'));
   };
 
@@ -277,7 +293,7 @@ export function JobsPage() {
     const rerenderJob = result.value.rerenderJob;
     closeResultEditor();
     setFailure(null);
-    if (rerenderJob) setSelectedId(rerenderJob.id);
+    if (rerenderJob) revealJob(rerenderJob);
     showToast(g(rerenderJob ? 'jobs.rerenderCreated' : 'jobs.resultSaved'));
   };
 
@@ -502,6 +518,35 @@ export function JobsPage() {
             </dl>
 
             <div className="generation-job-sections">
+              <section className="generation-job-section generation-job-section--wide" aria-labelledby="job-inputs-title">
+                <h3 id="job-inputs-title">{g('jobs.inputs')}</h3>
+                {selected.batchInput ? (
+                  <div className="generation-job-inputs">
+                    <dl>
+                      <div><dt>{g('batches.preset')}</dt><dd>{presetsById.get(selected.batchInput.draft.presetId)?.name ?? `${g('jobs.linkUnavailable')} (${selected.batchInput.draft.presetId})`}</dd></div>
+                      <div><dt>{g('batches.content')}</dt><dd>{selected.batchInput.draft.contentItemIds.map(id => contentById.get(id)?.name ?? `${g('jobs.linkUnavailable')} (${id})`).join(', ')}</dd></div>
+                    </dl>
+                    <ol className="generation-allocation-list">
+                      {selected.batchInput.allocations.map(row => (
+                        <li key={row.sequence}>
+                          <strong>{g('batches.sequence')} {row.sequence}</strong>
+                          <span>{row.contentItemName}</span>
+                          <span>{g(`demographic.age.${row.age}`)} · {g(`demographic.gender.${row.gender}`)} · {g(`demographic.ethnicity.${row.ethnicity}`)}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                ) : selected.testInput ? (
+                  <dl className="generation-job-inputs">
+                    <div><dt>{g('test.content')}</dt><dd>{contentById.get(selected.testInput.contentItemId)?.name ?? `${g('jobs.linkUnavailable')} (${selected.testInput.contentItemId})`}</dd></div>
+                    <div><dt>{g('test.preset')}</dt><dd>{presetsById.get(selected.testInput.presetId)?.name ?? `${g('jobs.linkUnavailable')} (${selected.testInput.presetId})`}</dd></div>
+                    <div><dt>{g('test.age')}</dt><dd>{g(`demographic.age.${selected.testInput.age}`)}</dd></div>
+                    <div><dt>{g('test.gender')}</dt><dd>{g(`demographic.gender.${selected.testInput.gender}`)}</dd></div>
+                    <div><dt>{g('test.ethnicity')}</dt><dd>{g(`demographic.ethnicity.${selected.testInput.ethnicity}`)}</dd></div>
+                  </dl>
+                ) : <p className="generation-empty-note">{g('jobs.noInputs')}</p>}
+              </section>
+
               <section className="generation-job-section" aria-labelledby="job-attempts-title">
                 <h3 id="job-attempts-title">{g('jobs.attemptHistory')}</h3>
                 <ol className="generation-attempt-list">
@@ -566,6 +611,12 @@ export function JobsPage() {
                       const isCurrentAttempt = index === selected.resultSampleIds.length - 1;
                       return (
                         <li key={sampleId}>
+                          {sample ? (
+                            <video controls preload="metadata" aria-label={g('jobs.resultMediaLabel', { id: sample.displayId })}>
+                              <source src={sample.primaryAssetId} type="video/mp4" />
+                              {g('test.videoUnsupported')}
+                            </video>
+                          ) : null}
                           <div className="generation-result-meta">
                             <strong>{g('jobs.attempt', { number: index + 1 })}: {sample?.displayId ?? sampleId}</strong>
                             <span>{datasetName}</span>

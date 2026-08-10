@@ -41,63 +41,25 @@ interface TestResultCard {
   prepared: PreparedTest;
 }
 
-interface StoredTestDraft {
-  category: Category;
-  direction: ConflictDirection | null;
-  contentId: string;
-  presetId: string;
-  age: Age;
-  gender: Gender;
-  ethnicity: Ethnicity;
-  seed: string;
-  assignments: Assignment[];
-  executionMode: TestExecutionMode;
-}
-
-const testDraftStorageKey = 'conflictstudio.generation.testDrafts.v2';
-const resultDialogKey = 'conflictstudio.generation.testRunResults.v3';
-
-function readTestDraft(): StoredTestDraft | null {
-  const raw = window.sessionStorage.getItem(testDraftStorageKey);
-  return raw ? JSON.parse(raw) as StoredTestDraft : null;
-}
-
 function exampleTestResults(snapshot: ReturnType<typeof useRepositorySnapshot>): TestResultCard[] {
   return snapshot.data.jobs
-    .filter(job => job.source === 'Test')
+    .filter(job => job.testInput !== undefined)
     .map(job => {
-      const content = snapshot.data.contentItems.find(item =>
-        item.status === 'Active' &&
-        item.category === job.category &&
-        item.conflictDirection === job.conflictDirection,
-      );
-      const preset = snapshot.data.presets.find(item => item.category === job.category);
-      if (!content || !preset) throw new Error(`Missing example generation input for ${job.id}.`);
+      const prepared = job.testInput!;
+      let attemptNumber = 1;
+      let parentId = job.parentJobId;
+      while (parentId) {
+        const parent = snapshot.data.jobs.find(item => item.id === parentId);
+        if (!parent) break;
+        attemptNumber += 1;
+        parentId = parent.parentJobId;
+      }
       return {
         jobId: job.id,
-        assignmentOrder: 0,
-        attemptGroupId: job.id,
-        attemptNumber: 1,
-        prepared: {
-          id: `prepared-${job.id}`,
-          category: job.category,
-          conflictDirection: job.conflictDirection,
-          contentItemId: content.id,
-          presetId: preset.id,
-          age: 25,
-          gender: 'Female',
-          ethnicity: 'EastAsian',
-          seed: job.seed,
-          models: [job.model],
-          assignments: [{ model: job.model, gpu: job.gpu, order: 1 }],
-          executionMode: 'Serial',
-          dialogue: content.dialogue,
-          displayText: content.displayText,
-          explanation: content.explanation,
-          videoPrompt: content.videoPrompt,
-          contentRevision: content.revision,
-          presetRevision: preset.revision,
-        },
+        assignmentOrder: Math.max(0, prepared.assignments.findIndex(item => item.order === job.testAssignmentOrder)),
+        attemptGroupId: `${prepared.id}-${job.testAssignmentOrder ?? 1}`,
+        attemptNumber,
+        prepared,
       };
     });
 }
@@ -148,25 +110,21 @@ export function TestPage() {
   const repository = useMockRepository();
   const snapshot = useRepositorySnapshot();
   const { showToast } = useToast();
-  const [storedDraft] = useState(readTestDraft);
-  const [category, setCategory] = useState<Category>(storedDraft?.category ?? 'A-VA');
-  const [direction, setDirection] = useState<ConflictDirection | null>(storedDraft?.direction ?? null);
-  const [contentId, setContentId] = useState(storedDraft?.contentId ?? '');
-  const [presetId, setPresetId] = useState(storedDraft?.presetId ?? '');
-  const [age, setAge] = useState<Age>(storedDraft?.age ?? 25);
-  const [gender, setGender] = useState<Gender>(storedDraft?.gender ?? 'Female');
-  const [ethnicity, setEthnicity] = useState<Ethnicity>(storedDraft?.ethnicity ?? 'EastAsian');
-  const [seed, setSeed] = useState(storedDraft?.seed ?? '');
-  const [assignments, setAssignments] = useState<Assignment[]>(storedDraft?.assignments ?? [{ model: 'LTX-2.3', gpu: 'GPU0', order: 1 }]);
-  const [executionMode, setExecutionMode] = useState<TestExecutionMode>(storedDraft?.executionMode ?? 'Serial');
+  const [category, setCategory] = useState<Category>('A-VA');
+  const [direction, setDirection] = useState<ConflictDirection | null>(null);
+  const [contentId, setContentId] = useState('');
+  const [presetId, setPresetId] = useState('');
+  const [age, setAge] = useState<Age>(25);
+  const [gender, setGender] = useState<Gender>('Female');
+  const [ethnicity, setEthnicity] = useState<Ethnicity>('EastAsian');
+  const [seed, setSeed] = useState('');
+  const [assignments, setAssignments] = useState<Assignment[]>([{ model: 'LTX-2.3', gpu: 'GPU0', order: 1 }]);
+  const [executionMode, setExecutionMode] = useState<TestExecutionMode>('Serial');
   const [prepared, setPrepared] = useState<PreparedTest | null>(null);
   const [failure, setFailure] = useState<null | 'Conflict' | 'NotFound' | 'InvalidInput' | 'Unavailable'>(null);
   const [validation, setValidation] = useState<null | 'general' | 'parallel'>(null);
   const [showStartConfirm, setShowStartConfirm] = useState(false);
-  const [results, setResults] = useState<TestResultCard[]>(() => {
-    const raw = window.sessionStorage.getItem(resultDialogKey);
-    return raw ? (JSON.parse(raw) as TestResultCard[]) : exampleTestResults(snapshot);
-  });
+  const results = exampleTestResults(snapshot);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [retryOpen, setRetryOpen] = useState(false);
   const [keepOpen, setKeepOpen] = useState(false);
@@ -233,10 +191,6 @@ export function TestPage() {
   const isPreparedCurrent = prepared !== null && signatureFromPrepared(prepared) === currentSignature;
 
   useEffect(() => {
-    window.sessionStorage.setItem(resultDialogKey, JSON.stringify(results));
-  }, [results]);
-
-  useEffect(() => {
     setContentId(current => matchingContent.some(item => item.id === current) ? current : (matchingContent[0]?.id ?? ''));
     setPresetId(current => matchingPresets.some(item => item.id === current) ? current : (matchingPresets[0]?.id ?? ''));
   }, [matchingContent, matchingPresets]);
@@ -284,24 +238,6 @@ export function TestPage() {
   useEffect(() => {
     if (!isPreparedCurrent) setValidation(null);
   }, [isPreparedCurrent]);
-
-  useEffect(() => {
-    window.sessionStorage.setItem(
-      testDraftStorageKey,
-      JSON.stringify({
-        category,
-        direction,
-        contentId,
-        presetId,
-        age,
-        gender,
-        ethnicity,
-        seed,
-        assignments,
-        executionMode,
-      }),
-    );
-  }, [age, assignments, category, direction, ethnicity, gender, presetId, seed, contentId, executionMode]);
 
   const updateAssignment = (index: number, patch: Partial<Assignment>) => {
     setAssignments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
@@ -376,17 +312,6 @@ export function TestPage() {
       setFailure(result.kind);
       return;
     }
-    const runId = crypto.randomUUID();
-    setResults(current => [
-      ...current,
-      ...result.value.map((job, index) => ({
-        jobId: job.id,
-        assignmentOrder: index,
-        attemptGroupId: `${runId}-${index + 1}`,
-        attemptNumber: 1,
-        prepared,
-      })),
-    ]);
     setPrepared(null);
     setFailure(null);
     showToast(result.value.length === 1 ? g('test.success') : g('test.successMany', { count: result.value.length }));
@@ -448,30 +373,6 @@ export function TestPage() {
       setFailure(result.kind);
       return;
     }
-    const preparedSeed = parseSeed(retrySeed);
-    const sourceCard = activeRunCards.find(card => card.job.id === source.id);
-    if (!sourceCard) return;
-    const retryPrepared: PreparedTest = {
-      ...sourceCard.prepared,
-      id: result.value.id,
-      assignments: [{ model: source.model, gpu: result.value.gpu, order: 1 }],
-      seed: preparedSeed,
-      executionMode: 'Serial',
-      models: [source.model],
-    };
-    const nextAttempt = Math.max(
-      ...activeRunCards.filter(card => card.attemptGroupId === sourceCard.attemptGroupId).map(card => card.attemptNumber),
-    ) + 1;
-    setResults(current => [
-      ...current,
-      {
-        jobId: result.value.id,
-        assignmentOrder: 0,
-        attemptGroupId: sourceCard.attemptGroupId,
-        attemptNumber: nextAttempt,
-        prepared: retryPrepared,
-      },
-    ]);
     setFailure(null);
     showToast(g('jobs.retried'));
   };

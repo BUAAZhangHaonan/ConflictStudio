@@ -108,12 +108,24 @@ export interface Job extends Revisioned {
   progress: number;
   seed: number | null;
   quantity: number;
+  batchInput?: BatchPreview;
+  testInput?: PreparedTest;
+  testAssignmentOrder?: number;
+  rerenderInput?: RerenderInput;
   steps: JobStep[];
   logs: JobLog[];
   resultSampleIds: string[];
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+}
+
+export interface RerenderInput {
+  dialogue: string | null;
+  displayText: string | null;
+  videoPrompt: string;
+  explanation: string;
+  generationNote: string;
 }
 
 export interface UpdateJobResultInput {

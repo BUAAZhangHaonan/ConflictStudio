@@ -400,6 +400,7 @@ export class MockRepository {
       timestamp,
       null,
     );
+    job.batchInput = copy(preview);
     const data = copy(this.snapshot.data);
     data.jobs.unshift(job);
     data.gpuStates = data.gpuStates.map(item =>
@@ -470,7 +471,7 @@ export class MockRepository {
       .sort((a, b) => a.order - b.order)
       .map((assignment, index): Job => {
         const immediatelyRunning = prepared.executionMode === 'Parallel' || index === 0;
-        return createJob(
+        const job = createJob(
           {
             source: 'Test',
             datasetId: null,
@@ -485,6 +486,9 @@ export class MockRepository {
           timestamp,
           immediatelyRunning ? timestamp : null,
         );
+        job.testInput = copy(prepared);
+        job.testAssignmentOrder = assignment.order;
+        return job;
       });
     const data = copy(this.snapshot.data);
     data.jobs = [...jobs, ...data.jobs];
@@ -563,6 +567,15 @@ export class MockRepository {
       completedAt: null,
       updatedAt: timestamp,
     };
+    if (job.testInput) {
+      job.testInput = {
+        ...copy(job.testInput),
+        seed,
+        assignments: job.testInput.assignments.map(assignment =>
+          assignment.order === job.testAssignmentOrder ? { ...assignment, gpu } : assignment,
+        ),
+      };
+    }
     const data = copy(this.snapshot.data);
     data.jobs.unshift(job);
     data.gpuStates = data.gpuStates.map(item =>
@@ -577,12 +590,12 @@ export class MockRepository {
   keepJobResult(jobId: string, datasetId: string, expectedRevision: number): RepositoryResult<Sample> {
     const job = this.snapshot.data.jobs.find(item => item.id === jobId);
     const dataset = this.snapshot.data.datasets.find(item => item.id === datasetId);
-    const content = job && this.snapshot.data.contentItems.find(item =>
-      item.status === 'Active' &&
-      item.category === job.category &&
-      item.conflictDirection === job.conflictDirection,
-    );
-    const preset = job && this.snapshot.data.presets.find(item => item.category === job.category);
+    const content = job?.testInput
+      ? this.snapshot.data.contentItems.find(item => item.id === job.testInput!.contentItemId)
+      : undefined;
+    const preset = job?.testInput
+      ? this.snapshot.data.presets.find(item => item.id === job.testInput!.presetId)
+      : undefined;
     if (!job || !dataset || !content || !preset) return failure('NotFound');
     if (job.revision !== expectedRevision) return failure('Conflict', { currentRevision: job.revision });
     if (job.status !== 'Completed') return failure('InvalidInput', { field: 'status' });
@@ -673,19 +686,21 @@ export class MockRepository {
     }
 
     const timestamp = now();
-    const updatedSample: Sample = {
-      ...sample,
-      dialogue,
-      displayText,
-      videoPrompt: input.videoPrompt,
-      explanation: input.explanation,
-      generationNote: input.generationNote,
-      reviewDecision: invalidatesReview ? 'Pending' : sample.reviewDecision,
-      reviewRevision: invalidatesReview ? sample.reviewRevision + 1 : sample.reviewRevision,
-      archiveStatus: 'NeedsUpdate',
-      revision: sample.revision + 1,
-      updatedAt: timestamp,
-    };
+    const updatedSample: Sample = needsRerender
+      ? sample
+      : {
+          ...sample,
+          dialogue,
+          displayText,
+          videoPrompt: input.videoPrompt,
+          explanation: input.explanation,
+          generationNote: input.generationNote,
+          reviewDecision: invalidatesReview ? 'Pending' : sample.reviewDecision,
+          reviewRevision: invalidatesReview ? sample.reviewRevision + 1 : sample.reviewRevision,
+          archiveStatus: 'NeedsUpdate',
+          revision: sample.revision + 1,
+          updatedAt: timestamp,
+        };
 
     const rerenderBase = needsRerender
       ? createJob(
@@ -708,6 +723,16 @@ export class MockRepository {
       ? {
           ...rerenderBase,
           parentJobId: job.id,
+          batchInput: job.batchInput,
+          testInput: job.testInput,
+          testAssignmentOrder: job.testAssignmentOrder,
+          rerenderInput: {
+            dialogue,
+            displayText,
+            videoPrompt: input.videoPrompt,
+            explanation: input.explanation,
+            generationNote: input.generationNote,
+          },
           steps: createSteps(rerenderBase.id),
           logs: [{
             sequence: 1,
