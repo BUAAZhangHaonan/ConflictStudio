@@ -57,24 +57,25 @@ class ExpectedRevision(ApiModel):
     expected_revision: int = Field(ge=1)
 
 
+class UpdateWithChanges(ExpectedRevision):
+    @model_validator(mode="after")
+    def require_change(self) -> Self:
+        if not self.model_fields_set.difference({"expected_revision"}):
+            raise ValueError("At least one field must be provided")
+        return self
+
+
 class DatasetCreate(ApiModel):
     name: Name
     purpose: DatasetPurpose
     note: str = ""
 
 
-class DatasetUpdate(ExpectedRevision):
+class DatasetUpdate(UpdateWithChanges):
     name: Name | None = None
     purpose: DatasetPurpose | None = None
     note: str | None = None
     status: ResourceStatus | None = None
-
-    @model_validator(mode="after")
-    def require_change(self) -> Self:
-        if not self.model_fields_set.difference({"expected_revision"}):
-            raise ValueError("At least one dataset field must be provided")
-        return self
-
 
 class DatasetRead(ApiModel):
     id: int
@@ -128,7 +129,7 @@ class ContentPlanCreate(ContentPlanFields):
     pass
 
 
-class ContentPlanUpdate(ExpectedRevision):
+class ContentPlanUpdate(UpdateWithChanges):
     name: Name | None = None
     conflict_direction: ConflictDirection | None = None
     mode: ContentMode | None = None
@@ -168,7 +169,7 @@ class PromptPresetCreate(PromptPresetFields):
     pass
 
 
-class PromptPresetUpdate(ExpectedRevision):
+class PromptPresetUpdate(UpdateWithChanges):
     name: Name | None = None
     style_instruction: str | None = None
     scene_supplement: str | None = None
@@ -199,7 +200,7 @@ class VideoBackgroundPresetCreate(VideoBackgroundPresetFields):
     pass
 
 
-class VideoBackgroundPresetUpdate(ExpectedRevision):
+class VideoBackgroundPresetUpdate(UpdateWithChanges):
     name: Name | None = None
     scene: TextValue | None = None
     ambient_audio: str | None = None
@@ -407,4 +408,3 @@ class HealthRead(ApiModel):
     ok: bool
     database: str
     prompt_service_configured: bool
-

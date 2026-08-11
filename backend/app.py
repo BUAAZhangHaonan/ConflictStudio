@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
 from backend.adapters.config import Settings
-from backend.adapters.database import Database
+from backend.adapters.database import Database, DatabaseBusyError
 from backend.adapters.llm import OpenAICompatiblePromptModel, PromptModel
 from backend.api.routes import router
 from backend.services.batches import BatchService
@@ -41,6 +41,13 @@ def create_app(settings: Settings | None = None, prompt_model: PromptModel | Non
         return JSONResponse(
             status_code=error.status_code,
             content={"error": {"code": error.code, "message": error.message, "details": error.details}},
+        )
+
+    @app.exception_handler(DatabaseBusyError)
+    async def database_busy_handler(_: Request, error: DatabaseBusyError) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"code": "database_busy", "message": str(error), "details": {}}},
         )
 
     @app.exception_handler(RequestValidationError)

@@ -84,6 +84,7 @@ class GpuSlotName(ValueEnum):
 class GpuAvailability(ValueEnum):
     AVAILABLE = "Available"
     RESERVED = "Reserved"
+    BUSY = "Busy"
     EXTERNAL_OCCUPIED = "ExternalOccupied"
     UNKNOWN = "Unknown"
 
@@ -114,4 +115,3 @@ def validate_direction(category: Category, direction: ConflictDirection | None) 
 
 def protocol_for(category: Category) -> str:
     return "VA" if category in {Category.A_VA, Category.C_VA} else "VT"
-

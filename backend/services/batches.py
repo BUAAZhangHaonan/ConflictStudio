@@ -593,10 +593,17 @@ class BatchService:
             quantity=aggregate.draft.quantity,
             seed=aggregate.draft.seed_base,
             status=aggregate.draft.status,
-            content_plans=[SelectionRead(id=row.id, name=row.name, revision=row.revision) for row in aggregate.contents],
-            prompt_presets=[SelectionRead(id=row.id, name=row.name, revision=row.revision) for row in aggregate.presets],
+            content_plans=[
+                SelectionRead(id=row.id, name=row.name, revision=aggregate.content_revisions[row.id])
+                for row in aggregate.contents
+            ],
+            prompt_presets=[
+                SelectionRead(id=row.id, name=row.name, revision=aggregate.preset_revisions[row.id])
+                for row in aggregate.presets
+            ],
             background_presets=[
-                SelectionRead(id=row.id, name=row.name, revision=row.revision) for row in aggregate.backgrounds
+                SelectionRead(id=row.id, name=row.name, revision=aggregate.background_revisions[row.id])
+                for row in aggregate.backgrounds
             ],
             demographics=[
                 DemographicInput(age=row.age, gender=row.gender, ethnicity=row.ethnicity)

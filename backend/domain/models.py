@@ -36,14 +36,22 @@ def enum_column(
     *,
     nullable: bool = False,
     primary_key: bool = False,
+    foreign_key: str | None = None,
+    ondelete: str | None = None,
 ) -> Column[Any]:
-    return Column(
+    column_args: list[Any] = [
         SqlEnum(
             enum_type,
             values_callable=lambda members: [member.value for member in members],
             native_enum=False,
             validate_strings=True,
-        ),
+            create_constraint=True,
+        )
+    ]
+    if foreign_key is not None:
+        column_args.append(ForeignKey(foreign_key, ondelete=ondelete))
+    return Column(
+        *column_args,
         nullable=nullable,
         primary_key=primary_key,
     )
@@ -62,7 +70,10 @@ CATEGORY_DIRECTION_CHECK = """
 
 class Dataset(SQLModel, table=True):
     __tablename__ = "datasets"
-    __table_args__ = (UniqueConstraint("name_key", name="uq_datasets_name_key"),)
+    __table_args__ = (
+        UniqueConstraint("name_key", name="uq_datasets_name_key"),
+        CheckConstraint("revision >= 1", name="ck_datasets_revision"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(sa_column=Column(String(160), nullable=False))
@@ -85,6 +96,7 @@ class ContentPlan(SQLModel, table=True):
             "(mode = 'Generative' AND length(trim(content_instruction)) > 0)",
             name="ck_content_plans_mode_input",
         ),
+        CheckConstraint("revision >= 1", name="ck_content_plans_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -112,7 +124,10 @@ class ContentPlan(SQLModel, table=True):
 
 class PromptPreset(SQLModel, table=True):
     __tablename__ = "prompt_presets"
-    __table_args__ = (UniqueConstraint("category", "name_key", name="uq_prompt_presets_category_name"),)
+    __table_args__ = (
+        UniqueConstraint("category", "name_key", name="uq_prompt_presets_category_name"),
+        CheckConstraint("revision >= 1", name="ck_prompt_presets_revision"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(sa_column=Column(String(160), nullable=False))
@@ -129,7 +144,10 @@ class PromptPreset(SQLModel, table=True):
 
 class PromptExample(SQLModel, table=True):
     __tablename__ = "prompt_examples"
-    __table_args__ = (UniqueConstraint("preset_id", "kind", "position", name="uq_prompt_examples_position"),)
+    __table_args__ = (
+        UniqueConstraint("preset_id", "kind", "position", name="uq_prompt_examples_position"),
+        CheckConstraint("position >= 0", name="ck_prompt_examples_position"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     preset_id: int = Field(sa_column=Column(Integer, ForeignKey("prompt_presets.id", ondelete="CASCADE"), nullable=False))
@@ -140,7 +158,10 @@ class PromptExample(SQLModel, table=True):
 
 class VideoBackgroundPreset(SQLModel, table=True):
     __tablename__ = "video_background_presets"
-    __table_args__ = (UniqueConstraint("name_key", name="uq_video_background_presets_name"),)
+    __table_args__ = (
+        UniqueConstraint("name_key", name="uq_video_background_presets_name"),
+        CheckConstraint("revision >= 1", name="ck_background_presets_revision"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(sa_column=Column(String(160), nullable=False))
@@ -162,6 +183,8 @@ class BatchDraft(SQLModel, table=True):
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_batch_drafts_direction"),
         CheckConstraint("quantity > 0", name="ck_batch_drafts_quantity"),
         CheckConstraint("seed_base >= 0 AND seed_base < 2147483648", name="ck_batch_drafts_seed"),
+        CheckConstraint("dataset_revision >= 1", name="ck_batch_drafts_dataset_revision"),
+        CheckConstraint("revision >= 1", name="ck_batch_drafts_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -180,7 +203,11 @@ class BatchDraft(SQLModel, table=True):
 
 class BatchDraftContentPlan(SQLModel, table=True):
     __tablename__ = "batch_draft_content_plans"
-    __table_args__ = (UniqueConstraint("batch_draft_id", "position", name="uq_batch_content_position"),)
+    __table_args__ = (
+        UniqueConstraint("batch_draft_id", "position", name="uq_batch_content_position"),
+        CheckConstraint("position >= 0", name="ck_batch_content_position"),
+        CheckConstraint("source_revision >= 1", name="ck_batch_content_revision"),
+    )
 
     batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
     content_plan_id: int = Field(sa_column=Column(Integer, ForeignKey("content_plans.id", ondelete="RESTRICT"), primary_key=True))
@@ -190,7 +217,11 @@ class BatchDraftContentPlan(SQLModel, table=True):
 
 class BatchDraftPromptPreset(SQLModel, table=True):
     __tablename__ = "batch_draft_prompt_presets"
-    __table_args__ = (UniqueConstraint("batch_draft_id", "position", name="uq_batch_preset_position"),)
+    __table_args__ = (
+        UniqueConstraint("batch_draft_id", "position", name="uq_batch_preset_position"),
+        CheckConstraint("position >= 0", name="ck_batch_preset_position"),
+        CheckConstraint("source_revision >= 1", name="ck_batch_preset_revision"),
+    )
 
     batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
     prompt_preset_id: int = Field(sa_column=Column(Integer, ForeignKey("prompt_presets.id", ondelete="RESTRICT"), primary_key=True))
@@ -200,7 +231,11 @@ class BatchDraftPromptPreset(SQLModel, table=True):
 
 class BatchDraftBackgroundPreset(SQLModel, table=True):
     __tablename__ = "batch_draft_background_presets"
-    __table_args__ = (UniqueConstraint("batch_draft_id", "position", name="uq_batch_background_position"),)
+    __table_args__ = (
+        UniqueConstraint("batch_draft_id", "position", name="uq_batch_background_position"),
+        CheckConstraint("position >= 0", name="ck_batch_background_position"),
+        CheckConstraint("source_revision >= 1", name="ck_batch_background_revision"),
+    )
 
     batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
     background_preset_id: int = Field(sa_column=Column(Integer, ForeignKey("video_background_presets.id", ondelete="RESTRICT"), primary_key=True))
@@ -213,6 +248,7 @@ class BatchDraftDemographic(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("batch_draft_id", "position", name="uq_batch_demographic_position"),
         CheckConstraint(f"age IN {AGES}", name="ck_batch_demographics_age"),
+        CheckConstraint("position >= 0", name="ck_batch_demographics_position"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -225,10 +261,20 @@ class BatchDraftDemographic(SQLModel, table=True):
 
 class BatchDraftGpuSlot(SQLModel, table=True):
     __tablename__ = "batch_draft_gpu_slots"
-    __table_args__ = (UniqueConstraint("batch_draft_id", "position", name="uq_batch_gpu_position"),)
+    __table_args__ = (
+        UniqueConstraint("batch_draft_id", "position", name="uq_batch_gpu_position"),
+        CheckConstraint("position >= 0", name="ck_batch_gpu_position"),
+    )
 
     batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
-    gpu_slot: GpuSlotName = Field(sa_column=enum_column(GpuSlotName, primary_key=True))
+    gpu_slot: GpuSlotName = Field(
+        sa_column=enum_column(
+            GpuSlotName,
+            primary_key=True,
+            foreign_key="gpu_slots.slot",
+            ondelete="RESTRICT",
+        )
+    )
     position: int = Field(ge=0)
 
 
@@ -239,6 +285,10 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_batch_snapshots_direction"),
         CheckConstraint(f"age IN {AGES}", name="ck_batch_snapshots_age"),
         CheckConstraint("seed >= 0 AND seed < 2147483648", name="ck_batch_snapshots_seed"),
+        CheckConstraint("sequence > 0", name="ck_batch_snapshots_sequence"),
+        CheckConstraint("content_plan_revision >= 1", name="ck_batch_snapshots_content_revision"),
+        CheckConstraint("prompt_preset_revision >= 1", name="ck_batch_snapshots_preset_revision"),
+        CheckConstraint("background_preset_revision >= 1", name="ck_batch_snapshots_background_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -281,6 +331,7 @@ class Job(SQLModel, table=True):
             "AND completed_count + failed_count <= total_count",
             name="ck_jobs_counts",
         ),
+        CheckConstraint("revision >= 1", name="ck_jobs_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -306,13 +357,21 @@ class JobItem(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("job_id", "sequence", name="uq_job_items_sequence"),
         UniqueConstraint("input_snapshot_id", name="uq_job_items_snapshot"),
+        CheckConstraint("sequence > 0", name="ck_job_items_sequence"),
+        CheckConstraint("revision >= 1", name="ck_job_items_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
     job_id: int = Field(sa_column=Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False))
     sequence: int = Field(gt=0)
     input_snapshot_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_video_input_snapshots.id", ondelete="RESTRICT"), nullable=False))
-    gpu_slot: GpuSlotName = Field(sa_column=enum_column(GpuSlotName))
+    gpu_slot: GpuSlotName = Field(
+        sa_column=enum_column(
+            GpuSlotName,
+            foreign_key="gpu_slots.slot",
+            ondelete="RESTRICT",
+        )
+    )
     stage: JobItemStage = Field(default=JobItemStage.PROMPT_READY, sa_column=enum_column(JobItemStage))
     status: JobStatus = Field(default=JobStatus.QUEUED, sa_column=enum_column(JobStatus))
     failure_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
@@ -323,6 +382,7 @@ class JobItem(SQLModel, table=True):
 
 class GpuSlot(SQLModel, table=True):
     __tablename__ = "gpu_slots"
+    __table_args__ = (CheckConstraint("revision >= 1", name="ck_gpu_slots_revision"),)
 
     slot: GpuSlotName = Field(sa_column=enum_column(GpuSlotName, primary_key=True))
     availability: GpuAvailability = Field(default=GpuAvailability.UNKNOWN, sa_column=enum_column(GpuAvailability))

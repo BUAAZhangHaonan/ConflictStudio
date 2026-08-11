@@ -4,7 +4,11 @@ After=network.target
 
 [Service]
 WorkingDirectory=/home/team/zhanghaonan/TAFFC/ConflictStudio
-EnvironmentFile=/home/team/zhanghaonan/TAFFC/ConflictStudio.env
+Environment=CONFLICTSTUDIO_DATA_ROOT=/home/team/zhanghaonan/TAFFC/ConflictStudio/runtime
+Environment=CONFLICTSTUDIO_HOST=127.0.0.1
+Environment=CONFLICTSTUDIO_PORT=8000
+Environment=CONFLICTSTUDIO_PYTHON=/home/team/zhanghaonan/miniconda3/envs/mprisk/bin/python
+EnvironmentFile=-/home/team/zhanghaonan/TAFFC/ConflictStudio.env
 ExecStart=/home/team/zhanghaonan/TAFFC/ConflictStudio/scripts/run.sh
 Restart=on-failure
 RestartSec=3

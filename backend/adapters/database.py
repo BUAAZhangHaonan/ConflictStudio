@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import event, text
 from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from backend.domain.enums import GpuAvailability, GpuSlotName
 from backend.domain.models import GpuSlot
+
+
+SQLITE_BUSY_TIMEOUT_MS = 100
+
+
+class DatabaseBusyError(RuntimeError):
+    pass
 
 
 class Database:
@@ -20,16 +29,20 @@ class Database:
         self.database_path = self.data_root / "conflictstudio.sqlite3"
         self.engine = create_engine(
             f"sqlite:///{self.database_path.as_posix()}",
-            connect_args={"check_same_thread": False},
+            connect_args={
+                "check_same_thread": False,
+                "timeout": SQLITE_BUSY_TIMEOUT_MS / 1000,
+            },
         )
-        self._enable_foreign_keys(self.engine)
+        self._configure_connections(self.engine)
 
     @staticmethod
-    def _enable_foreign_keys(engine: Engine) -> None:
+    def _configure_connections(engine: Engine) -> None:
         @event.listens_for(engine, "connect")
         def set_sqlite_pragma(dbapi_connection: object, _: object) -> None:
             cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
             cursor.close()
 
     def initialize(self) -> None:
@@ -68,19 +81,33 @@ class Database:
     @contextmanager
     def immediate_session(self) -> Iterator[Session]:
         connection: Connection = self.engine.connect()
-        connection.exec_driver_sql("BEGIN IMMEDIATE")
+        transaction_started = False
         try:
+            try:
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+                transaction_started = True
+            except OperationalError as error:
+                if self._is_write_lock(error):
+                    raise DatabaseBusyError("The database is busy with another write transaction") from error
+                raise
             with Session(bind=connection, expire_on_commit=False) as session:
                 yield session
                 session.flush()
             connection.commit()
         except BaseException:
-            connection.rollback()
+            if transaction_started:
+                connection.rollback()
             raise
         finally:
             connection.close()
 
+    @staticmethod
+    def _is_write_lock(error: OperationalError) -> bool:
+        original = error.orig
+        error_code = getattr(original, "sqlite_errorcode", None)
+        base_error_code = error_code & 0xFF if isinstance(error_code, int) else None
+        return base_error_code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED} or "locked" in str(original).lower()
+
     def foreign_keys_enabled(self) -> bool:
         with self.engine.connect() as connection:
             return bool(connection.execute(text("PRAGMA foreign_keys")).scalar_one())
-
