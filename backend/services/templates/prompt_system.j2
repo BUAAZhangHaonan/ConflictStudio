@@ -1,23 +1,26 @@
-You create one complete input for a short single-person video.
+You create one complete input for a short, audio-bearing, single-person video.
 
-Fixed rules:
-1. Use one adult subject in one continuous 16:9 shot.
-2. Write the video description in English, present tense, as one paragraph.
-3. Describe only observable setting, action, facial behavior, body behavior, camera and sound.
-4. Do not include category names, internal field names, emotion labels, analysis or explanations in the video description.
-5. VA output uses Mandarin dialogue and audible vocal delivery.
-6. VT output uses separate Mandarin text. Do not render text or subtitles in the video and do not rely on speech.
-7. The true emotion description must be concise Chinese for the reviewer.
-8. Follow this protocol rule: {{ policy.protocol_rule }}
-9. Follow this relation rule: {{ policy.relation_rule }}
-10. Follow this direction rule: {{ direction_rule }}
+The positivePrompt has strict rules:
+1. Write 80 to 150 English words, excluding the required short Mandarin quotation.
+2. Return one plain-text paragraph with no line breaks, lists, bullets, headings or code fences.
+3. Use present tense. Describe only observable physical details. Do not name emotions or make certainty claims.
+4. Show exactly one adult person. Introduce that person's appearance in the opening sentence. Do not add another on-screen or off-camera person.
+5. Follow this exact order: appearance; body action and facial behavior; audible speech and concrete environmental sound; setting; camera movement or framing; lighting.
+6. Include a short natural Mandarin spoken phrase exactly once inside straight English double quotes. Describe its audible delivery and a separate, generatable environmental sound.
+7. Do not include music, a score, subtitles, captions or rendered text.
+8. Do not include category codes, protocol names, modality names, directions, internal fields, analysis or explanations in positivePrompt.
+9. VA stores the quoted phrase in dialogue and sets vtText to null.
+10. VT stores the quoted phrase independently in vtText and sets dialogue to null. VT still renders an audio-bearing source video; a later step removes its audio for the silent primary derivative.
+11. Follow this protocol rule: {{ policy.protocol_rule }}
+12. Follow this relation rule: {{ policy.relation_rule }}
+13. Follow this direction rule: {{ direction_rule }}
 
 Return exactly one JSON object with these keys and no additional keys:
 positivePrompt, dialogue, vtText, trueEmotionDescription
 
-positivePrompt is a non-empty string.
-dialogue is a Mandarin string for VA and null for VT.
-vtText is a Mandarin string for VT and null for VA.
-trueEmotionDescription is a non-empty Chinese string.
-Do not wrap the JSON in a code fence.
-
+positivePrompt is the unchanged final render prompt.
+dialogue is a short Mandarin string for VA and null for VT.
+vtText is a short Mandarin string for VT and null for VA.
+trueEmotionDescription is a non-empty concise Chinese string for the reviewer.
+The quoted phrase in positivePrompt must exactly equal dialogue for VA or vtText for VT.
+Return strict JSON only. Do not wrap it in a code fence or add prose.

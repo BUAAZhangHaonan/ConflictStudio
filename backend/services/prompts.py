@@ -5,12 +5,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from backend.adapters.llm import PromptAdapterError, PromptModel
 from backend.domain.enums import Category, ContentMode, Ethnicity, Gender
 from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
-from backend.domain.prompt_policy import POLICY_VERSION, POLICIES, direction_rule
+from backend.domain.prompt_policy import (
+    POLICY_VERSION,
+    POLICIES,
+    PromptPolicyViolation,
+    direction_rule,
+    validate_final_positive_prompt,
+)
 
 from .errors import ServiceError
 
@@ -22,6 +28,20 @@ class GeneratedPrompt(BaseModel):
     dialogue: str | None
     vt_text: str | None = Field(alias="vtText")
     true_emotion_description: str = Field(alias="trueEmotionDescription", min_length=1)
+
+    @field_validator("positive_prompt", "true_emotion_description")
+    @classmethod
+    def reject_blank_required_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("The field must not be blank")
+        return value
+
+    @field_validator("dialogue", "vt_text")
+    @classmethod
+    def reject_blank_optional_text(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("The field must not be blank")
+        return value
 
 
 @dataclass(frozen=True)
@@ -39,6 +59,9 @@ class PromptContext:
 @dataclass(frozen=True)
 class PreparedPrompt:
     policy_version: str
+    category: Category
+    true_emotion: str
+    apparent_emotion: str
     system_input: str
     user_input: str
     final_negative_prompt: str
@@ -98,13 +121,18 @@ class PromptService:
         fixed_output = self._fixed_output(context) if context.content.mode is ContentMode.FIXED else None
         return PreparedPrompt(
             policy_version=POLICY_VERSION,
+            category=context.content.category,
+            true_emotion=context.content.true_emotion,
+            apparent_emotion=context.content.apparent_emotion,
             system_input=system_input,
             user_input=user_input,
-            final_negative_prompt=context.preset.final_negative_prompt.strip(),
+            final_negative_prompt=context.preset.final_negative_prompt,
             fixed_output=fixed_output,
         )
 
     async def complete(self, prepared: PreparedPrompt, category: Category) -> PromptResult:
+        if category is not prepared.category:
+            raise ServiceError(422, "validation_error", "The prepared prompt category does not match the request")
         if prepared.fixed_output is None:
             try:
                 raw = await self.model.generate(prepared.system_input, prepared.user_input)
@@ -123,16 +151,31 @@ class PromptService:
             output = prepared.fixed_output
             raw = output.model_dump_json(by_alias=True)
         self._validate_output(category, output)
+        spoken_text = output.dialogue if category in {Category.A_VA, Category.C_VA} else output.vt_text
+        assert spoken_text is not None
+        try:
+            validate_final_positive_prompt(
+                output.positive_prompt,
+                spoken_text=spoken_text,
+                true_emotion=prepared.true_emotion,
+                apparent_emotion=prepared.apparent_emotion,
+            )
+        except PromptPolicyViolation as error:
+            raise ServiceError(
+                502,
+                "invalid_prompt_response",
+                f"The final positive prompt violates the prompt policy: {error}",
+            ) from error
         return PromptResult(
             policy_version=prepared.policy_version,
             system_input=prepared.system_input,
             user_input=prepared.user_input,
             raw_structured_response=raw,
-            final_positive_prompt=self._single_paragraph(output.positive_prompt),
-            final_negative_prompt=self._single_paragraph(prepared.final_negative_prompt),
-            dialogue=output.dialogue.strip() if output.dialogue else None,
-            vt_text=output.vt_text.strip() if output.vt_text else None,
-            true_emotion_description=output.true_emotion_description.strip(),
+            final_positive_prompt=output.positive_prompt,
+            final_negative_prompt=prepared.final_negative_prompt,
+            dialogue=output.dialogue,
+            vt_text=output.vt_text,
+            true_emotion_description=output.true_emotion_description,
         )
 
     def _fixed_output(self, context: PromptContext) -> GeneratedPrompt:
@@ -142,42 +185,40 @@ class PromptService:
             f"The subject is a {context.age}-year-old {self._ethnicity_text(context.ethnicity)} "
             f"{context.gender.value.lower()} adult."
         )
-        background_text = " ".join(
-            value.strip()
+        positive = " ".join(
+            value
             for value in (
+                demographic,
+                content.base_video_prompt,
+                self._dialogue_instruction(content),
+                background.ambient_audio,
                 background.scene,
                 background.relationship,
-                background.lighting,
-                background.framing_supplement,
-                background.ambient_audio if content.category in {Category.A_VA, Category.C_VA} else "",
-            )
-            if value.strip()
-        )
-        positive = " ".join(
-            value.strip()
-            for value in (
-                content.base_video_prompt,
-                demographic,
-                background_text,
                 content.scene_supplement,
-                context.preset.style_instruction,
                 context.preset.scene_supplement,
-                self._dialogue_instruction(content),
+                context.preset.style_instruction,
+                background.framing_supplement,
+                background.lighting,
             )
-            if value.strip()
+            if value
         )
         return GeneratedPrompt(
-            positivePrompt=self._single_paragraph(positive),
-            dialogue=content.dialogue.strip() if content.dialogue else None,
-            vtText=content.display_text.strip() if content.display_text else None,
-            trueEmotionDescription=content.true_emotion_description.strip(),
+            positivePrompt=positive,
+            dialogue=content.dialogue,
+            vtText=content.display_text,
+            trueEmotionDescription=content.true_emotion_description,
         )
 
     @staticmethod
     def _dialogue_instruction(content: ContentPlan) -> str:
-        if content.category in {Category.A_VA, Category.C_VA} and content.dialogue:
-            return f"The speaker says this exact Mandarin line with natural vocal delivery: {content.dialogue.strip()}"
-        return "The video contains no subtitles, captions or rendered text."
+        spoken_text = (
+            content.dialogue
+            if content.category in {Category.A_VA, Category.C_VA}
+            else content.display_text
+        )
+        if not spoken_text:
+            return ""
+        return f'The subject says "{spoken_text}" with a natural, audible voice.'
 
     @staticmethod
     def _validate_output(category: Category, output: GeneratedPrompt) -> None:
@@ -193,12 +234,6 @@ class PromptService:
                 "invalid_prompt_response",
                 "Dialogue, VT text and the true emotion description must use Chinese where required",
             )
-        if "```" in output.positive_prompt:
-            raise ServiceError(502, "invalid_prompt_response", "The video prompt must be plain text")
-
-    @staticmethod
-    def _single_paragraph(value: str) -> str:
-        return " ".join(value.split())
 
     @staticmethod
     def _ethnicity_text(value: Ethnicity) -> str:
