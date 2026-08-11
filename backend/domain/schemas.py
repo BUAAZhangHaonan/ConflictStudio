@@ -349,6 +349,8 @@ class BatchPreviewRead(ApiModel):
 class SnapshotRead(ApiModel):
     id: int
     sequence: int
+    dataset_id: int
+    dataset_revision: int
     content_plan_id: int
     content_plan_revision: int
     prompt_preset_id: int
@@ -363,6 +365,14 @@ class SnapshotRead(ApiModel):
     ethnicity: Ethnicity
     model: ModelName
     seed: int
+    width: int
+    height: int
+    fps: int
+    frame_count: int
+    renderer_profile_version: str
+    prompt_model: str
+    source_has_audio: bool
+    derive_silent_primary: bool
     system_input: str
     user_input: str
     raw_structured_response: str

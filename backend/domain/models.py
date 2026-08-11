@@ -75,6 +75,11 @@ CONTENT_EMOTION_CHECK = """
 )
 """
 
+RENDERER_PROFILE_VERSION = "2026-08-12.1"
+VIDEO_WIDTH = 1344
+VIDEO_HEIGHT = 768
+VIDEO_FPS = 24
+
 
 class Dataset(SQLModel, table=True):
     __tablename__ = "datasets"
@@ -298,10 +303,31 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
         CheckConstraint("content_plan_revision >= 1", name="ck_batch_snapshots_content_revision"),
         CheckConstraint("prompt_preset_revision >= 1", name="ck_batch_snapshots_preset_revision"),
         CheckConstraint("background_preset_revision >= 1", name="ck_batch_snapshots_background_revision"),
+        CheckConstraint("dataset_revision >= 1", name="ck_batch_snapshots_dataset_revision"),
+        CheckConstraint(
+            f"width = {VIDEO_WIDTH} AND height = {VIDEO_HEIGHT} AND fps = {VIDEO_FPS}",
+            name="ck_batch_snapshots_video_format",
+        ),
+        CheckConstraint(
+            "(model = 'LTX-2.3' AND frame_count = 121) OR "
+            "(model = 'MiniMax H3' AND frame_count = 124)",
+            name="ck_batch_snapshots_model_frames",
+        ),
+        CheckConstraint(
+            "derive_silent_primary = (category IN ('A-VT', 'C-VT'))",
+            name="ck_batch_snapshots_silent_primary",
+        ),
+        CheckConstraint("source_has_audio = 1", name="ck_batch_snapshots_source_audio"),
+        CheckConstraint(
+            f"renderer_profile_version = '{RENDERER_PROFILE_VERSION}'",
+            name="ck_batch_snapshots_renderer_profile",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
     batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="RESTRICT"), nullable=False))
+    dataset_id: int = Field(sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False))
+    dataset_revision: int = Field(ge=1)
     sequence: int = Field(gt=0)
     content_plan_id: int = Field(sa_column=Column(Integer, ForeignKey("content_plans.id", ondelete="RESTRICT"), nullable=False))
     content_plan_revision: int = Field(ge=1)
@@ -317,6 +343,14 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     ethnicity: Ethnicity = Field(sa_column=enum_column(Ethnicity))
     model: ModelName = Field(sa_column=enum_column(ModelName))
     seed: int = Field(ge=0, lt=2**31)
+    width: int
+    height: int
+    fps: int
+    frame_count: int
+    renderer_profile_version: str = Field(sa_column=Column(String(40), nullable=False))
+    prompt_model: str = Field(sa_column=Column(String(80), nullable=False))
+    source_has_audio: bool
+    derive_silent_primary: bool
     system_input: str = Field(sa_column=Column(Text, nullable=False))
     user_input: str = Field(sa_column=Column(Text, nullable=False))
     raw_structured_response: str = Field(sa_column=Column(Text, nullable=False))

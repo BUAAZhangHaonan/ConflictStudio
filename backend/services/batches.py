@@ -3,12 +3,14 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import product
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
+from backend.adapters.llm import PROMPT_MODEL
 from backend.domain.enums import (
     BatchDraftStatus,
     Category,
@@ -36,6 +38,10 @@ from backend.domain.models import (
     JobItem,
     PromptExample,
     PromptPreset,
+    RENDERER_PROFILE_VERSION,
+    VIDEO_FPS,
+    VIDEO_HEIGHT,
+    VIDEO_WIDTH,
     VideoBackgroundPreset,
     utc_now,
 )
@@ -85,6 +91,17 @@ class Allocation:
     model: ModelName
     seed: int
     prepared: PreparedPrompt
+
+
+def cartesian_allocation_inputs(
+    contents: list[ContentPlan],
+    presets: list[PromptPreset],
+    backgrounds: list[VideoBackgroundPreset],
+    demographics: list[BatchDraftDemographic],
+    quantity: int,
+) -> list[tuple[ContentPlan, PromptPreset, VideoBackgroundPreset, BatchDraftDemographic]]:
+    combinations = list(product(contents, presets, backgrounds, demographics))
+    return [combinations[index % len(combinations)] for index in range(quantity)]
 
 
 class BatchService:
@@ -194,13 +211,15 @@ class BatchService:
             for allocation, result in zip(allocations, results, strict=True):
                 snapshot = BatchVideoInputSnapshot(
                     batch_draft_id=draft_id,
+                    dataset_id=current.dataset.id,
+                    dataset_revision=current.draft.dataset_revision,
                     sequence=allocation.sequence,
                     content_plan_id=allocation.content.id,
-                    content_plan_revision=allocation.content.revision,
+                    content_plan_revision=current.content_revisions[allocation.content.id],
                     prompt_preset_id=allocation.preset.id,
-                    prompt_preset_revision=allocation.preset.revision,
+                    prompt_preset_revision=current.preset_revisions[allocation.preset.id],
                     background_preset_id=allocation.background.id,
-                    background_preset_revision=allocation.background.revision,
+                    background_preset_revision=current.background_revisions[allocation.background.id],
                     policy_version=result.policy_version,
                     category=current.draft.category,
                     conflict_direction=current.draft.conflict_direction,
@@ -209,6 +228,14 @@ class BatchService:
                     ethnicity=allocation.demographic.ethnicity,
                     model=current.draft.model,
                     seed=allocation.seed,
+                    width=VIDEO_WIDTH,
+                    height=VIDEO_HEIGHT,
+                    fps=VIDEO_FPS,
+                    frame_count=121 if current.draft.model is ModelName.LTX else 124,
+                    renderer_profile_version=RENDERER_PROFILE_VERSION,
+                    prompt_model=PROMPT_MODEL,
+                    source_has_audio=True,
+                    derive_silent_primary=current.draft.category in {Category.A_VT, Category.C_VT},
                     system_input=result.system_input,
                     user_input=result.user_input,
                     raw_structured_response=result.raw_structured_response,
@@ -478,11 +505,14 @@ class BatchService:
     def _build_allocations(self, aggregate: DraftAggregate) -> list[Allocation]:
         seed_source = random.Random(aggregate.draft.seed_base)
         values: list[Allocation] = []
-        for offset in range(aggregate.draft.quantity):
-            content = aggregate.contents[offset % len(aggregate.contents)]
-            preset = aggregate.presets[offset % len(aggregate.presets)]
-            background = aggregate.backgrounds[offset % len(aggregate.backgrounds)]
-            demographic = aggregate.demographics[offset % len(aggregate.demographics)]
+        inputs = cartesian_allocation_inputs(
+            aggregate.contents,
+            aggregate.presets,
+            aggregate.backgrounds,
+            aggregate.demographics,
+            aggregate.draft.quantity,
+        )
+        for offset, (content, preset, background, demographic) in enumerate(inputs):
             positive, negative = aggregate.preset_examples[preset.id]
             prepared = self.prompts.prepare(
                 PromptContext(
