@@ -322,6 +322,14 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
             f"renderer_profile_version = '{RENDERER_PROFILE_VERSION}'",
             name="ck_batch_snapshots_renderer_profile",
         ),
+        CheckConstraint(
+            "(fixed_positive_prompt IS NULL AND fixed_dialogue IS NULL AND fixed_vt_text IS NULL "
+            "AND fixed_true_emotion_description IS NULL) OR "
+            "(fixed_positive_prompt IS NOT NULL AND fixed_true_emotion_description IS NOT NULL AND "
+            "((category IN ('A-VA', 'C-VA') AND fixed_dialogue IS NOT NULL AND fixed_vt_text IS NULL) OR "
+            "(category IN ('A-VT', 'C-VT') AND fixed_dialogue IS NULL AND fixed_vt_text IS NOT NULL)))",
+            name="ck_batch_snapshots_fixed_prompt",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -354,6 +362,10 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     system_input: str = Field(sa_column=Column(Text, nullable=False))
     user_input: str = Field(sa_column=Column(Text, nullable=False))
     final_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    fixed_positive_prompt: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    fixed_dialogue: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    fixed_vt_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    fixed_true_emotion_description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     true_emotion: str = Field(sa_column=Column(String(120), nullable=False))
     apparent_emotion: str = Field(sa_column=Column(String(120), nullable=False))
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))

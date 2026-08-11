@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request, Response, status
+from fastapi.responses import JSONResponse
+from starlette.background import BackgroundTask
 
 from backend.domain.schemas import (
     BatchDraftCreate,
@@ -17,6 +19,7 @@ from backend.domain.schemas import (
     DatasetUpdate,
     GpuSlotRead,
     HealthRead,
+    JobCancelRequest,
     JobDetailRead,
     JobSummaryRead,
     PromptPresetCreate,
@@ -28,6 +31,7 @@ from backend.domain.schemas import (
 )
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
+from backend.services.job_executor import JobExecutor
 
 
 router = APIRouter(prefix="/api")
@@ -39,6 +43,14 @@ def catalog(request: Request) -> CatalogService:
 
 def batches(request: Request) -> BatchService:
     return request.app.state.batch_service
+
+
+def executor(request: Request) -> JobExecutor:
+    return request.app.state.job_executor
+
+
+async def notify_executor(job_executor: JobExecutor) -> None:
+    job_executor.notify()
 
 
 @router.get("/health", response_model=HealthRead)
@@ -203,10 +215,14 @@ def preview_batch(draft_id: int, payload: BatchPreviewRequest, request: Request)
 
 
 @router.post("/batch-drafts/{draft_id}/submit", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)
-async def submit_batch(draft_id: int, payload: BatchSubmitRequest, request: Request, response: Response) -> JobDetailRead:
+async def submit_batch(draft_id: int, payload: BatchSubmitRequest, request: Request) -> Response:
     job = await batches(request).submit_batch(draft_id, payload)
-    response.headers["Location"] = f"/api/jobs/{job.id}"
-    return job
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content=job.model_dump(mode="json", by_alias=True),
+        headers={"Location": f"/api/jobs/{job.id}"},
+        background=BackgroundTask(notify_executor, executor(request)),
+    )
 
 
 @router.get("/jobs", response_model=list[JobSummaryRead])
@@ -216,6 +232,12 @@ def list_jobs(request: Request) -> list[JobSummaryRead]:
 
 @router.get("/jobs/{job_id}", response_model=JobDetailRead)
 def get_job(job_id: int, request: Request) -> JobDetailRead:
+    return batches(request).get_job(job_id)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)
+async def cancel_job(job_id: int, payload: JobCancelRequest, request: Request) -> JobDetailRead:
+    await executor(request).cancel_job(job_id, payload)
     return batches(request).get_job(job_id)
 
 

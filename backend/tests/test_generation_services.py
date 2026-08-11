@@ -14,6 +14,7 @@ from sqlmodel import select
 from backend.adapters.database import Database
 from backend.adapters.llm import OpenAICompatiblePromptModel
 from backend.domain.enums import (
+    BatchDraftStatus,
     Category,
     ContentMode,
     ContentStatus,

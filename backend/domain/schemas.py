@@ -324,6 +324,10 @@ class BatchSubmitRequest(ExpectedRevision):
     confirm_model_switch: bool = False
 
 
+class JobCancelRequest(ExpectedRevision):
+    pass
+
+
 class BatchAllocationRead(ApiModel):
     sequence: int
     content_plan: SelectionRead
@@ -377,6 +381,10 @@ class SnapshotRead(ApiModel):
     system_input: str
     user_input: str
     final_negative_prompt: str
+    fixed_positive_prompt: str | None
+    fixed_dialogue: str | None
+    fixed_vt_text: str | None
+    fixed_true_emotion_description: str | None
     true_emotion: str
     apparent_emotion: str
     created_at: str

@@ -20,6 +20,7 @@ from backend.domain.enums import (
     ExampleKind,
     GpuAvailability,
     GpuSlotName,
+    JobItemStage,
     JobSource,
     JobStatus,
     ModelName,
@@ -241,6 +242,7 @@ class BatchService:
 
             snapshots: list[BatchVideoInputSnapshot] = []
             for allocation in allocations:
+                fixed = allocation.prepared.fixed_output
                 snapshot = BatchVideoInputSnapshot(
                     batch_draft_id=draft_id,
                     dataset_id=current.dataset.id,
@@ -271,12 +273,20 @@ class BatchService:
                     system_input=allocation.prepared.system_input,
                     user_input=allocation.prepared.user_input,
                     final_negative_prompt=allocation.prepared.final_negative_prompt,
+                    fixed_positive_prompt=fixed.positive_prompt if fixed is not None else None,
+                    fixed_dialogue=fixed.dialogue if fixed is not None else None,
+                    fixed_vt_text=fixed.vt_text if fixed is not None else None,
+                    fixed_true_emotion_description=(
+                        fixed.true_emotion_description if fixed is not None else None
+                    ),
                     true_emotion=allocation.content.true_emotion,
                     apparent_emotion=allocation.content.apparent_emotion,
                     created_at=timestamp,
                 )
                 session.add(snapshot)
                 snapshots.append(snapshot)
+
+            session.flush()
 
             for allocation, snapshot in zip(allocations, snapshots, strict=True):
                 session.add(

@@ -16,6 +16,7 @@ from backend.api.routes import router
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.errors import ServiceError
+from backend.services.job_executor import JobExecutor
 from backend.services.prompts import PromptService
 
 
@@ -29,11 +30,19 @@ def create_app(
     database.initialize()
     model = prompt_model or OpenAICompatiblePromptModel.from_environment()
     renderer_gateway = renderer or UnconfiguredRendererGateway()
+    prompt_service = PromptService(model)
+    batch_service = BatchService(database, prompt_service, renderer_gateway)
+    job_executor = JobExecutor(database, prompt_service, renderer_gateway)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        yield
-        await model.close()
+        await job_executor.start()
+        try:
+            yield
+        finally:
+            await job_executor.stop()
+            await renderer_gateway.close()
+            await model.close()
 
     app = FastAPI(title="ConflictStudio", version="0.1.0", lifespan=lifespan)
     app.state.settings = resolved_settings
@@ -41,7 +50,8 @@ def create_app(
     app.state.prompt_model = model
     app.state.renderer = renderer_gateway
     app.state.catalog_service = CatalogService(database)
-    app.state.batch_service = BatchService(database, PromptService(model), renderer_gateway)
+    app.state.batch_service = batch_service
+    app.state.job_executor = job_executor
 
     @app.exception_handler(ServiceError)
     async def service_error_handler(_: Request, error: ServiceError) -> JSONResponse:
