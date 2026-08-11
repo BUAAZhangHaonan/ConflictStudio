@@ -1,0 +1,2 @@
+"""ConflictStudio generation domain."""
+

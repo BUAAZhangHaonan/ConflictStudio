@@ -6,13 +6,22 @@ build-backend = "setuptools.build_meta"
 name = "conflictstudio-backend"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "Jinja2>=3.1,<4",
+  "pydantic>=2.11,<3",
+  "PyYAML>=6,<7",
+  "sqlmodel>=0.0.24,<0.1",
+  "uvicorn>=0.35,<1",
+]
 
 [project.optional-dependencies]
-test = []
+test = ["pytest>=8,<9"]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = [".."]
+include = ["backend*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
