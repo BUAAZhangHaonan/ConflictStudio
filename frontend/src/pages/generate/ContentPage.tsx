@@ -84,6 +84,7 @@ export function ContentPage() {
   const [pendingStatus, setPendingStatus] = useState<ContentStatus | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [previewPresetId, setPreviewPresetId] = useState('');
+  const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
   const [failure, setFailure] = useState<null | 'Conflict' | 'NotFound' | 'InvalidInput' | 'Unavailable'>(null);
   const [validation, setValidation] = useState(false);
   const locale = snapshot.preferences.locale;
@@ -114,12 +115,14 @@ export function ContentPage() {
       setCreating(true);
       setSelectedId('');
       setDraft(emptyContent());
+      setMobileEditorOpen(true);
     } else if (change.kind === 'select') {
       const item = snapshot.data.contentItems.find(candidate => candidate.id === change.id);
       if (!item) return;
       setCreating(false);
       setSelectedId(item.id);
       setDraft(contentInput(item));
+      setMobileEditorOpen(true);
     } else {
       setSearch(change.filters.search);
       setCategoryFilter(change.filters.category);
@@ -236,7 +239,7 @@ export function ContentPage() {
       action={<Button variant="primary" onClick={startNew}>{g('content.new')}</Button>}
     >
       {failure ? <OperationFeedback kind={failure} onDismiss={() => setFailure(null)} /> : null}
-      <div className="generation-layout generation-layout--editor">
+      <div className={`generation-layout generation-layout--editor ${mobileEditorOpen ? 'generation-layout--mobile-editor' : ''}`.trim()}>
         <section className="panel generation-list" aria-labelledby="content-list-title">
           <div className="section-header"><h2 id="content-list-title">{g('content.list')}</h2>{hasFilters ? <Button variant="quiet" onClick={clearFilters}>{g('common.clearFilters')}</Button> : null}</div>
           <div className="generation-filters">
@@ -279,7 +282,7 @@ export function ContentPage() {
           )}
         </section>
         <section className="panel generation-form generation-editor" aria-label={g('content.editorRegion')}>
-          <div className="section-header"><h2>{g(creating ? 'content.createTitle' : 'content.editor')}</h2></div>
+          <div className="section-header"><div className="generation-editor__heading"><Button className="generation-editor-back" variant="quiet" onClick={() => setMobileEditorOpen(false)}>{g('content.backToList')}</Button><h2>{g(creating ? 'content.createTitle' : 'content.editor')}</h2></div></div>
           <div className="generation-form__grid">
             <Field label={g('content.name')} htmlFor="content-name" required>
               <input id="content-name" value={draft.name} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder={g('content.namePlaceholder')} />

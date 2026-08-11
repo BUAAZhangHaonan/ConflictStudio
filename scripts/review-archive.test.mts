@@ -65,6 +65,8 @@ test('exports stable delivery fields without internal ids or embedded media', ()
   assert.equal(record.sample_id, 'CS-0101');
   assert.equal(record.dataset_name, '正式生成集');
   assert.equal(record.media.primary_asset_id, sample.primaryAssetId);
+  assert.equal('source_asset_id' in record.media, false);
+  assert.equal('thumbnail_asset_id' in record.media, false);
   assert.equal(record.sample_id.includes('archive-sample'), false);
   assert.equal(line.includes('data:video'), false);
   assert.equal(line.includes('dataset-main'), false);

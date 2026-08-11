@@ -657,7 +657,7 @@ export function ReviewPage() {
           <div className="review-detail">
           <section className="panel review-media" aria-label={t('review.aria.media')}>
             <div className="section-header">
-              <div className="review-media__heading"><Button ref={mobileBackButtonRef} className="review-media__back" variant="quiet" onClick={closeMobileDetail}>{t('review.backToQueue')}</Button><h2>{t('review.media')}</h2></div>
+              <div className="review-media__heading"><Button ref={mobileBackButtonRef} className="review-media__back" variant="quiet" onClick={returnTarget ? () => navigate(returnTarget) : closeMobileDetail}>{t(returnTarget ? 'review.returnToArchive' : 'review.backToQueue')}</Button><h2>{t('review.media')}</h2></div>
               <div className="review-media__badges" aria-label={t('fields.category')}>
                 <StatusBadge label={t(`category.${selected.category}`)} kind={selected.category.startsWith('C-') ? 'problem' : 'complete'} />
                 <StatusBadge label={t(protocolForCategory(selected.category) === 'VA' ? 'review.protocolVA' : 'review.protocolVT')} />

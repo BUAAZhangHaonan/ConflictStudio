@@ -13,9 +13,9 @@ import type {
   Sample,
 } from './types';
 import { silentVideoDataUrl, voicedVideoDataUrl } from './mockMedia';
-import { buildJobItems, createBatchAllocationSnapshot } from './generation';
+import { buildJobItems, composeVideoGenerationInput, createBatchAllocationSnapshot } from './generation';
 
-export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v9';
+export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v10';
 export const LOCALE_STORAGE_KEY = 'conflictstudio.prototype.locale';
 export const REVIEWER_STORAGE_KEY = 'conflictstudio.prototype.reviewer.v2';
 
@@ -242,24 +242,29 @@ function makeJob(
     );
     const preset = presets.find(item => item.category === category);
     if (!content || !preset) throw new Error(`Missing mock test input for ${id}.`);
+    const prompts = composeVideoGenerationInput(content, preset);
     job.testInput = {
       id: `prepared-${id}`,
       category,
       conflictDirection: job.conflictDirection,
       contentItemId: content.id,
+      contentItemName: content.name,
       presetId: preset.id,
+      presetName: preset.name,
       age: 25,
       gender: 'Female',
       ethnicity: 'EastAsian',
       seed,
-      models: [model],
       assignments: [{ model, gpu: gpus[0], order: 1 }],
       executionMode: 'Serial',
       dialogue: content.dialogue,
       displayText: content.displayText,
       explanation: content.explanation,
       videoPrompt: content.videoPrompt,
+      finalPositivePrompt: prompts.positivePrompt,
+      finalNegativePrompt: prompts.negativePrompt,
       emotion: content.emotion,
+      scene: content.scene,
       contentRevision: content.revision,
       presetRevision: preset.revision,
     };
@@ -427,7 +432,7 @@ const archives: Archive[] = [
 ];
 
 export const initialData: RepositoryData = {
-  version: 7,
+  version: 8,
   datasets: [
     {
       id: 'dataset-main',

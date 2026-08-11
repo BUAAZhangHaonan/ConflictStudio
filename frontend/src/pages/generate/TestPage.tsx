@@ -418,7 +418,7 @@ export function TestPage() {
           <section className="generation-test-section" aria-labelledby="test-setup-title">
             <div className="section-header"><h2 id="test-setup-title">{g('test.setup')}</h2></div>
             <div className="generation-form__grid generation-test-config-grid">
-            <Field label={g('test.category')} htmlFor="test-category" required>
+            <Field className="generation-test-category" label={g('test.category')} htmlFor="test-category" required>
               <select id="test-category" value={category} onChange={event => changeCategory(event.target.value as Category)}>
                 {categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}
               </select>

@@ -57,6 +57,9 @@
 .generation-list { min-width: 0; }
 .generation-list__empty { display: grid; min-height: 180px; place-items: center; color: var(--color-text-muted); text-align: center; }
 .generation-editor { position: sticky; top: calc(var(--topbar-height) + 60px); }
+.generation-editor__heading { display: flex; align-items: center; gap: 8px; }
+.generation-editor__heading h2 { margin: 0; }
+.generation-editor-back { display: none; }
 .generation-selection-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .generation-selection-card { display: grid; width: 100%; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 11px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface); color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .generation-selection-card:hover, .generation-selection-card:focus-visible, .generation-selection-card.is-selected { border-color: var(--color-blue); background: var(--color-blue-soft); }
@@ -183,10 +186,17 @@
   .generation-test-config-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+@media (min-width: 901px) and (max-width: 1100px) {
+  .generation-test-category { grid-column: span 2; }
+}
+
 @media (max-width: 768px) {
   .generation-form__grid, .generation-form__grid--three, .generation-filters, .generation-job-inputs dl, dl.generation-job-inputs, .generation-allocation-list li { grid-template-columns: 1fr; }
   .generation-layout--editor .generation-filters { grid-template-columns: 1fr; }
   .generation-layout--editor .generation-filters > :first-child { grid-column: auto; }
+  .generation-layout--editor:not(.generation-layout--mobile-editor) .generation-editor { display: none; }
+  .generation-layout--editor.generation-layout--mobile-editor .generation-list { display: none; }
+  .generation-editor-back { display: inline-flex; }
   .generation-gpus__grid, .generation-layout > .generation-gpus .generation-gpus__grid { grid-template-columns: 1fr; }
   .generation-job-meta, .generation-current-input { grid-template-columns: 1fr; }
   .generation-form input, .generation-form select, .generation-form textarea, .generation-form .button,
@@ -221,6 +231,7 @@
   .generation-progress { min-width: 0; }
   .generation-filters select, .generation-form select { min-width: 0; max-width: 100%; }
   .generation-shortcut-hint { text-align: left; }
+  .generation-test-category { grid-column: auto; }
   .generation-fieldset__toolbar { margin-top: 0; justify-content: flex-start; }
   .generation-item-list li { grid-template-columns: 32px minmax(0, 1fr); }
   .generation-item-list li .status-badge { justify-self: start; }

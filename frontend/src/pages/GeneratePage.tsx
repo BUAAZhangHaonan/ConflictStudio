@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BatchesPage } from './generate/BatchesPage';
 import { ContentPage } from './generate/ContentPage';
@@ -21,6 +22,10 @@ export function GeneratePage({ section }: { section: GenerateSection }) {
   const g = useGenerationCopy();
   const navigate = useNavigate();
   const current = generateSections.find(item => item.section === section)?.section ?? 'batches';
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [section]);
 
   return (
     <>

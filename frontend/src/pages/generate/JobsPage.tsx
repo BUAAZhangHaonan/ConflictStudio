@@ -4,7 +4,6 @@ import { Button, ConfirmDialog, Dialog, Field, StatusBadge, useToast } from '../
 import { canKeepTestResult, useMockRepository, useRepositorySnapshot } from '../../store';
 import { formatDateTime } from '../../time';
 import { formatCompactDateTime } from '../../time';
-import { composeVideoGenerationInput } from '../../generation';
 import type { GpuSlot, Job, JobSource, JobStatus, Sample } from '../../types';
 import {
   GenerationScaffold,
@@ -178,12 +177,14 @@ export function JobsPage() {
   const runningCount = snapshot.data.jobs.filter(job => job.status === 'Running').length;
   const queuedCount = snapshot.data.jobs.filter(job => job.status === 'Queued').length;
   const selectedRunningItems = selected?.items.filter(item => item.status === 'Running') ?? [];
-  const selectedCurrentInputs = selectedRunningItems.map(item => {
+  const selectedInputItems = selectedRunningItems.length > 0
+    ? selectedRunningItems
+    : selected?.testInput && selected.items[0]
+      ? [selected.items[0]]
+      : [];
+  const selectedCurrentInputs = selectedInputItems.map(item => {
     const allocation = selected?.batchInput?.allocations[item.sequence - 1] ?? null;
-    const testContent = selected?.testInput ? contentById.get(selected.testInput.contentItemId) ?? null : null;
-    const testPreset = selected?.testInput ? presetsById.get(selected.testInput.presetId) ?? null : null;
-    const testPrompt = testContent && testPreset ? composeVideoGenerationInput(testContent, testPreset) : null;
-    return { item, allocation, testContent, testPreset, testPrompt };
+    return { item, allocation };
   });
 
   const clearFilters = () => {
@@ -489,21 +490,21 @@ export function JobsPage() {
 
             <div className="generation-job-sections">
               <section className="generation-job-section" aria-labelledby="job-inputs-title">
-                <h3 id="job-inputs-title">{g('jobs.currentInput')}</h3>
+                <h3 id="job-inputs-title">{g(selectedRunningItems.length > 0 ? 'jobs.currentInput' : 'jobs.submittedInput')}</h3>
                 {selectedCurrentInputs.length > 0 ? (
                   <div className="generation-current-inputs">
-                    {selectedCurrentInputs.map(({ item, allocation, testContent, testPreset, testPrompt }) => (
+                    {selectedCurrentInputs.map(({ item, allocation }) => (
                       <dl className="generation-current-input" key={item.sequence} data-current-video={item.sequence}>
                         <div><dt>{g('jobs.currentNumber')}</dt><dd>{item.sequence}/{selected.quantity}</dd></div>
                         <div><dt>{g('jobs.gpu')}</dt><dd>{item.gpuId ? g(`gpu.${item.gpuId}`) : g('jobs.notAssigned')}</dd></div>
-                        <div><dt>{g('batches.content')}</dt><dd>{allocation?.contentItemName ?? testContent?.name ?? g('jobs.linkUnavailable')}</dd></div>
-                        <div><dt>{g('batches.preset')}</dt><dd>{allocation?.presetName ?? testPreset?.name ?? g('jobs.linkUnavailable')}</dd></div>
-                        {allocation ? (
-                          <div><dt>{g('jobs.person')}</dt><dd>{g(`demographic.age.${allocation.age}`)}, {g(`demographic.gender.${allocation.gender}`)}, {g(`demographic.ethnicity.${allocation.ethnicity}`)}</dd></div>
+                        <div><dt>{g('batches.content')}</dt><dd>{allocation?.contentItemName ?? selected.testInput?.contentItemName ?? g('jobs.linkUnavailable')}</dd></div>
+                        <div><dt>{g('batches.preset')}</dt><dd>{allocation?.presetName ?? selected.testInput?.presetName ?? g('jobs.linkUnavailable')}</dd></div>
+                        {allocation || selected.testInput ? (
+                          <div><dt>{g('jobs.person')}</dt><dd>{g(`demographic.age.${allocation?.age ?? selected.testInput!.age}`)}, {g(`demographic.gender.${allocation?.gender ?? selected.testInput!.gender}`)}, {g(`demographic.ethnicity.${allocation?.ethnicity ?? selected.testInput!.ethnicity}`)}</dd></div>
                         ) : null}
-                        <div><dt>{g('jobs.seed')}</dt><dd>{allocation?.seed ?? selected.seed ?? g('common.none')}</dd></div>
-                        <div><dt>{g('promptPreview.positive')}</dt><dd className="generation-current-input__prompt">{allocation?.finalPositivePrompt ?? testPrompt?.positivePrompt ?? selected.testInput?.videoPrompt ?? g('jobs.linkUnavailable')}</dd></div>
-                        <div><dt>{g('promptPreview.negative')}</dt><dd className="generation-current-input__prompt">{allocation?.finalNegativePrompt ?? testPrompt?.negativePrompt ?? g('jobs.linkUnavailable')}</dd></div>
+                        <div><dt>{g('jobs.seed')}</dt><dd>{allocation?.seed ?? selected.testInput?.seed ?? selected.seed ?? g('common.none')}</dd></div>
+                        <div><dt>{g('promptPreview.positive')}</dt><dd className="generation-current-input__prompt">{allocation?.finalPositivePrompt ?? selected.testInput?.finalPositivePrompt ?? g('jobs.linkUnavailable')}</dd></div>
+                        <div><dt>{g('promptPreview.negative')}</dt><dd className="generation-current-input__prompt">{allocation?.finalNegativePrompt ?? selected.testInput?.finalNegativePrompt ?? g('jobs.linkUnavailable')}</dd></div>
                       </dl>
                     ))}
                   </div>

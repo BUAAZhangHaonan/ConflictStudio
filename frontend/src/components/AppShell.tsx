@@ -45,6 +45,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const snapshot = useRepositorySnapshot();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerRef = useRef<HTMLDialogElement>(null);
+  const reviewerMenuRef = useRef<HTMLDetailsElement>(null);
   const drawerButtonRef = useRef<HTMLButtonElement>(null);
   const drawerReturnFocusRef = useRef<HTMLElement | null>(null);
   const drawerOverflowRef = useRef<string | null>(null);
@@ -55,7 +56,10 @@ export function AppShell({ children }: PropsWithChildren) {
     reviewer => reviewer.id === snapshot.preferences.currentReviewerId,
   );
 
-  useEffect(() => setDrawerOpen(false), [location.pathname]);
+  useEffect(() => {
+    setDrawerOpen(false);
+    if (reviewerMenuRef.current) reviewerMenuRef.current.open = false;
+  }, [location.pathname]);
   useEffect(() => {
     document.documentElement.lang = snapshot.preferences.locale;
     document.title = t('app.pageTitle', { page: t(pageTitleKey(location.pathname)) });
@@ -129,6 +133,10 @@ export function AppShell({ children }: PropsWithChildren) {
     const locale = snapshot.preferences.locale === 'zh-CN' ? 'en-US' : 'zh-CN';
     repository.setLocale(locale);
     void i18n.changeLanguage(locale);
+  };
+
+  const closeReviewerMenu = () => {
+    if (reviewerMenuRef.current) reviewerMenuRef.current.open = false;
   };
 
   const navigation = (
@@ -207,7 +215,16 @@ export function AppShell({ children }: PropsWithChildren) {
             <button type="button" className="text-button topbar__language" onClick={toggleLocale}>
               {t('app.changeLanguage')}
             </button>
-            <details className="reviewer-menu">
+            <details
+              ref={reviewerMenuRef}
+              className="reviewer-menu"
+              onKeyDown={event => {
+                if (event.key !== 'Escape' || !reviewerMenuRef.current?.open) return;
+                event.preventDefault();
+                reviewerMenuRef.current.open = false;
+                reviewerMenuRef.current.querySelector('summary')?.focus();
+              }}
+            >
               <summary aria-label={t('app.reviewerMenu')}>
                 <span className="reviewer-menu__symbol" aria-hidden="true" />
                 {currentReviewer?.name ?? t('reviewer.noCurrent')}
@@ -215,8 +232,8 @@ export function AppShell({ children }: PropsWithChildren) {
               <div className="reviewer-menu__panel">
                 <span>{t('app.currentReviewer')}</span>
                 <strong>{currentReviewer?.name ?? t('reviewer.noCurrent')}</strong>
-                <NavLink to="/me/statistics">{t('actions.viewStatistics')}</NavLink>
-                <NavLink to="/settings">{t('nav.settings')}</NavLink>
+                <NavLink to="/me/statistics" onClick={closeReviewerMenu}>{t('actions.viewStatistics')}</NavLink>
+                <NavLink to="/settings" onClick={closeReviewerMenu}>{t('nav.settings')}</NavLink>
               </div>
             </details>
           </div>

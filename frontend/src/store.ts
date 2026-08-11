@@ -58,6 +58,7 @@ import {
   buildJobItems,
   contentIsReferenced,
   createBatchAllocationSnapshot,
+  createPreparedTestSnapshot,
   validateBatchGpuSelection,
 } from './generation';
 import { applyConflictDirectionChange } from './reviewArchive';
@@ -91,7 +92,7 @@ function loadData(storage: Storage): RepositoryData {
     typeof parsed !== 'object' ||
     parsed === null ||
     !('version' in parsed) ||
-    parsed.version !== 7
+    parsed.version !== 8
   ) {
     throw new Error('Prototype data has an unsupported shape.');
   }
@@ -489,18 +490,12 @@ export class MockRepository {
     }
     const preset = this.snapshot.data.presets.find(item => item.id === draft.presetId);
     if (!preset || preset.status !== 'Active' || preset.category !== draft.category) return failure('InvalidInput', { field: 'presetId' });
-    return success({
-      id: allocatePrototypeId('prepared-test'),
-      ...copy(draft),
-      models: draft.assignments.map(item => item.model),
-      dialogue: content.dialogue,
-      displayText: content.displayText,
-      explanation: content.explanation,
-      videoPrompt: content.videoPrompt,
-      emotion: content.emotion,
-      contentRevision: content.revision,
-      presetRevision: preset.revision,
-    });
+    return success(createPreparedTestSnapshot(
+      allocatePrototypeId('prepared-test'),
+      draft,
+      content,
+      preset,
+    ));
   }
 
   submitTest(prepared: PreparedTest): RepositoryResult<Job[]> {
@@ -655,9 +650,6 @@ export class MockRepository {
     if (!canKeepTestResult(job)) return failure('InvalidInput', { field: 'result' });
     const input = job.testInput;
     const assignment = input.assignments.find(item => item.order === job.testAssignmentOrder)!;
-    const content = this.snapshot.data.contentItems.find(item => item.id === input.contentItemId);
-    const preset = this.snapshot.data.presets.find(item => item.id === input.presetId);
-    if (!content || !preset) return failure('NotFound');
     const timestamp = now();
     const sampleId = allocatePrototypeId('sample');
     const protocol = protocolForCategory(input.category);
@@ -680,15 +672,15 @@ export class MockRepository {
       thumbnailAssetId: null,
       dialogue: input.dialogue,
       displayText: input.displayText,
-      videoPrompt: input.videoPrompt,
-      negativePrompt: preset.renderNegativeConstraints,
+      videoPrompt: input.finalPositivePrompt,
+      negativePrompt: input.finalNegativePrompt,
       explanation: input.explanation,
       generationNote: '',
       trueEmotionDescription: input.explanation,
       trueEmotion: input.emotion,
       apparentEmotion: input.category.startsWith('C-') ? '平静' : input.emotion,
-      contentPlanName: content.name,
-      scenario: content.scene,
+      contentPlanName: input.contentItemName,
+      scenario: input.scene,
       triggerEvent: '对方询问人物最近的状态。',
       psychologicalBackground: '人物根据场景控制自己的外在表现。',
       age: input.age,

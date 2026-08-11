@@ -5,11 +5,12 @@ import {
   composeVideoGenerationInput,
   contentIsReferenced,
   createBatchAllocationSnapshot,
+  createPreparedTestSnapshot,
   jobProgress,
   selectInitialBatchDraft,
   validateBatchGpuSelection,
 } from '../frontend/src/generation.ts';
-import type { BatchDraft, ContentItem, Job, Preset, Sample } from '../frontend/src/types.ts';
+import type { BatchDraft, ContentItem, Job, Preset, Sample, TestDraft } from '../frontend/src/types.ts';
 
 test('composes only the prompts sent to ComfyUI', () => {
   const input = composeVideoGenerationInput(
@@ -80,6 +81,39 @@ test('stores immutable prompt and reference snapshots for every video', () => {
   assert.equal(snapshot.finalPositivePrompt, 'Original prompt.\n\nOriginal scene.\n\nOriginal style.\n\nFixed camera.');
   assert.equal(snapshot.finalNegativePrompt, 'No subtitles.');
   assert.equal(snapshot.seed, 42);
+});
+
+test('stores a complete immutable input snapshot for a test task', () => {
+  const draft = {
+    category: 'C-VT', conflictDirection: 'Text', contentItemId: 'content', presetId: 'preset',
+    age: 35, gender: 'Female', ethnicity: 'EastAsian', seed: 77,
+    assignments: [{ model: 'MiniMax H3', gpu: 'GPU1', order: 1 }], executionMode: 'Serial',
+  } satisfies TestDraft;
+  const content = {
+    id: 'content', name: 'Quiet refusal', revision: 4, dialogue: null, displayText: 'I need some time.',
+    explanation: 'The text carries sadness.', videoPrompt: 'Original prompt.', sceneSupplement: 'Quiet room.',
+    emotion: 'sadness', scene: 'Office after a meeting.',
+  } as ContentItem;
+  const preset = {
+    id: 'preset', name: 'Natural motion', revision: 7, styleInstruction: 'Natural movement.',
+    sceneSupplement: 'Fixed camera.', renderNegativeConstraints: 'No subtitles.',
+  } as Preset;
+  const snapshot = createPreparedTestSnapshot('prepared-1', draft, content, preset);
+
+  content.name = 'Changed content';
+  content.videoPrompt = 'Changed prompt.';
+  preset.name = 'Changed preset';
+  preset.renderNegativeConstraints = 'Changed negative prompt.';
+
+  assert.equal(snapshot.contentItemName, 'Quiet refusal');
+  assert.equal(snapshot.contentRevision, 4);
+  assert.equal(snapshot.presetName, 'Natural motion');
+  assert.equal(snapshot.presetRevision, 7);
+  assert.equal(snapshot.finalPositivePrompt, 'Original prompt.\n\nQuiet room.\n\nNatural movement.\n\nFixed camera.');
+  assert.equal(snapshot.finalNegativePrompt, 'No subtitles.');
+  assert.equal(snapshot.age, 35);
+  assert.equal(snapshot.assignments[0].model, 'MiniMax H3');
+  assert.equal(snapshot.seed, 77);
 });
 
 test('loads a saved batch without replacing its GPU or references', () => {

@@ -37,34 +37,35 @@ function readableEthnicity(value: Sample['ethnicity']): string {
 }
 
 export function archiveJsonl(datasetName: string, samples: readonly Sample[]): string {
-  return `${samples.map(sample => JSON.stringify({
-    sample_id: sample.displayId,
-    dataset_name: datasetName,
-    category: sample.category,
-    protocol: sample.category.endsWith('-VA') ? 'VA' : 'VT',
-    true_emotion_modality: readableModality(sample.conflictDirection),
-    true_emotion: sample.trueEmotion,
-    apparent_emotion: sample.apparentEmotion,
-    true_emotion_description: sample.trueEmotionDescription,
-    dialogue: sample.dialogue,
-    display_text: sample.displayText,
-    positive_prompt: sample.videoPrompt,
-    negative_prompt: sample.negativePrompt,
-    content_plan: sample.contentPlanName,
-    model: sample.model,
-    seed: sample.seed,
-    person: {
-      age: sample.age,
-      gender: sample.gender === 'Female' ? 'female' : 'male',
-      ethnicity: readableEthnicity(sample.ethnicity),
-    },
-    media: {
-      primary_asset_id: sample.primaryAssetId,
-      source_asset_id: sample.sourceAssetId,
-      thumbnail_asset_id: sample.thumbnailAssetId,
-    },
-    updated_at: sample.updatedAt,
-  })).join('\n')}\n`;
+  return `${samples.map(sample => {
+    const protocol = sample.category.endsWith('-VA') ? 'VA' : 'VT';
+    return JSON.stringify({
+      sample_id: sample.displayId,
+      dataset_name: datasetName,
+      category: sample.category,
+      protocol,
+      true_emotion_modality: readableModality(sample.conflictDirection),
+      true_emotion: sample.trueEmotion,
+      apparent_emotion: sample.apparentEmotion,
+      true_emotion_description: sample.trueEmotionDescription,
+      dialogue: sample.dialogue,
+      display_text: sample.displayText,
+      positive_prompt: sample.videoPrompt,
+      negative_prompt: sample.negativePrompt,
+      content_plan: sample.contentPlanName,
+      model: sample.model,
+      seed: sample.seed,
+      person: {
+        age: sample.age,
+        gender: sample.gender === 'Female' ? 'female' : 'male',
+        ethnicity: readableEthnicity(sample.ethnicity),
+      },
+      media: {
+        primary_asset_id: sample.primaryAssetId,
+      },
+      updated_at: sample.updatedAt,
+    });
+  }).join('\n')}\n`;
 }
 
 export function archiveFileName(datasetName: string): string {

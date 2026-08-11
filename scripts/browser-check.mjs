@@ -10,7 +10,7 @@ const { chromium } = await import(pathToFileURL(playwrightModule).href);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = resolve(projectRoot, 'frontend');
 const baseUrl = 'http://127.0.0.1:4173';
-const dataKey = 'conflictstudio.prototype.data.v9';
+const dataKey = 'conflictstudio.prototype.data.v10';
 
 function equal(actual, expected, message) {
   assert.equal(actual, expected, message);
@@ -43,6 +43,68 @@ async function expectContained(locator, message) {
     scrollWidth: element.scrollWidth,
   }));
   equal(dimensions.scrollWidth <= dimensions.clientWidth, true, `${message} ${JSON.stringify(dimensions)}`);
+}
+
+async function expectDialogBasics(page, message, dismissible = true) {
+  const dialog = page.locator('dialog[open]').last();
+  await dialog.waitFor();
+  await page.waitForFunction(() => {
+    const openDialogs = [...document.querySelectorAll('dialog[open]')];
+    const current = openDialogs.at(-1);
+    return current instanceof HTMLDialogElement && current.contains(document.activeElement);
+  });
+  const state = await dialog.evaluate(element => {
+    const labelId = element.getAttribute('aria-labelledby');
+    const label = labelId ? document.getElementById(labelId)?.textContent?.trim() ?? '' : '';
+    const bounds = element.getBoundingClientRect();
+    return {
+      label,
+      activeInside: element.contains(document.activeElement),
+      left: bounds.left,
+      top: bounds.top,
+      right: bounds.right,
+      bottom: bounds.bottom,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  equal(state.label.length > 0, true, `${message} must have an accessible name.`);
+  equal(state.activeInside, true, `${message} must move focus inside.`);
+  equal(state.left >= -1 && state.top >= -1, true, `${message} must start inside the viewport.`);
+  equal(state.right <= state.viewportWidth + 1 && state.bottom <= state.viewportHeight + 1, true, `${message} must fit inside the viewport.`);
+  await page.keyboard.press('Escape');
+  if (dismissible) {
+    await dialog.waitFor({ state: 'hidden' });
+  } else {
+    equal(await dialog.isVisible(), true, `${message} must remain open when dismissal is disabled.`);
+  }
+}
+
+async function resetPrototypeState(page) {
+  await page.evaluate(key => {
+    localStorage.removeItem(key);
+    sessionStorage.clear();
+  }, dataKey);
+  await page.reload({ waitUntil: 'networkidle' });
+}
+
+async function expectNamedControls(page, scope, message) {
+  const unnamed = await page.locator(scope).locator('button, a[href], input, select, textarea, summary').evaluateAll(elements =>
+    elements.filter(element => {
+      if (element instanceof HTMLInputElement && element.type === 'hidden') return false;
+      const labelledBy = element.getAttribute('aria-labelledby')
+        ?.split(/\s+/u)
+        .map(id => document.getElementById(id)?.textContent ?? '')
+        .join(' ')
+        .trim();
+      const labels = 'labels' in element
+        ? [...(element.labels ?? [])].map(label => label.textContent ?? '').join(' ').trim()
+        : '';
+      const ownText = element.textContent?.trim() ?? '';
+      return !(element.getAttribute('aria-label')?.trim() || labelledBy || labels || ownText || element.getAttribute('title')?.trim());
+    }).map(element => `${element.tagName.toLowerCase()}#${element.id}`),
+  );
+  equal(unnamed.length, 0, `${message}: ${unnamed.join(', ')}`);
 }
 
 const server = await createServer({
@@ -174,6 +236,17 @@ try {
   );
   equal(presetTimes.every(item => item.width >= item.scrollWidth && item.whiteSpace === 'nowrap'), true, 'Preset times must not wrap or compress.');
 
+  await open(page, '/generate/test');
+  const categoryFit = await page.locator('#test-category').evaluate(element => {
+    const selected = element instanceof HTMLSelectElement ? element.selectedOptions[0]?.textContent ?? '' : '';
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) return false;
+    context.font = getComputedStyle(element).font;
+    return context.measureText(selected).width + 46 <= element.clientWidth;
+  });
+  equal(categoryFit, true, 'The test category must be fully visible at 1024 pixels.');
+
   await page.setViewportSize({ width: 768, height: 900 });
   await open(page, '/workspace');
   equal(await page.locator('.workspace-datasets .table-shell table').evaluate(element => getComputedStyle(element).display), 'block', 'The 768 pixel workspace must use the compact dataset layout.');
@@ -217,6 +290,158 @@ try {
   equal(await page.locator('.mobile-drawer .primary-nav__link[aria-current="page"]').textContent(), 'Archive', 'Mobile navigation must mark the archive route.');
   await page.keyboard.press('Escape');
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page, '/archive?dataset=dataset-main&page=2');
+  const archivedSample = await page.locator('.archive-list-panel tbody .table-link').first().textContent();
+  await page.locator('.archive-list-panel tbody .table-link').first().click();
+  equal(new URL(page.url()).pathname, '/review', 'An archive sample must open in review.');
+  equal(new URL(page.url()).searchParams.get('sample'), archivedSample, 'Review must open the selected archive sample.');
+  await page.locator('.review-media__back').click();
+  equal(new URL(page.url()).pathname, '/archive', 'The mobile return action must return to archive.');
+  equal(new URL(page.url()).searchParams.get('page'), '2', 'The mobile return action must restore archive page two.');
+
+  await open(page, '/generate/content');
+  equal(await page.locator('.generation-list').isVisible(), true, 'Mobile content must open on the list.');
+  equal(await page.locator('.generation-editor').isVisible(), false, 'Mobile content must not place the editor below the list.');
+  await page.locator('.generation-selection-card').first().click();
+  equal(await page.locator('.generation-list').isVisible(), false, 'Selecting mobile content must open the editor.');
+  equal(await page.locator('.generation-editor').isVisible(), true, 'The mobile content editor must be visible after selection.');
+  equal(await page.locator('.generation-editor').evaluate(element => element.getBoundingClientRect().top < 900), true, 'The mobile content editor must open near the top of the page.');
+  await page.locator('.generation-editor-back').click();
+  equal(await page.locator('.generation-list').isVisible(), true, 'The mobile editor must return to the content list.');
+
+  await page.evaluate(() => window.scrollTo(0, 420));
+  equal(await page.evaluate(() => window.scrollY > 0), true, 'The generate page must be scrollable before switching sections.');
+  await page.locator('#generate-section-select').evaluate(element => {
+    element.value = 'presets';
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForURL('**/generate/presets');
+  equal(await page.evaluate(() => window.scrollY), 0, 'Switching generate sections must return to the page top.');
+
+  await open(page, '/settings');
+  await expectNamedControls(page, '.app-shell', 'Global navigation and settings controls must have accessible names');
+  const reviewerMenu = page.locator('.reviewer-menu');
+  await reviewerMenu.locator('summary').click();
+  await reviewerMenu.getByRole('link', { name: 'My statistics' }).click();
+  await page.waitForURL('**/me/statistics');
+  equal(await reviewerMenu.getAttribute('open'), null, 'The name menu must close after route changes.');
+  await reviewerMenu.locator('summary').click();
+  await page.keyboard.press('Escape');
+  equal(await reviewerMenu.getAttribute('open'), null, 'Escape must close the name menu.');
+  equal(await reviewerMenu.locator('summary').evaluate(element => element === document.activeElement), true, 'Closing the name menu must restore focus to its summary.');
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, '/generate/jobs?job=job-completed');
+  const testSnapshotBefore = await page.locator('.generation-current-input').innerText();
+  await page.evaluate(key => {
+    const data = JSON.parse(localStorage.getItem(key));
+    const job = data.jobs.find(item => item.id === 'job-completed');
+    const content = data.contentItems.find(item => item.id === job.testInput.contentItemId);
+    const preset = data.presets.find(item => item.id === job.testInput.presetId);
+    content.name = 'Edited after submission';
+    content.videoPrompt = 'Edited prompt after submission.';
+    preset.name = 'Edited preset after submission';
+    preset.renderNegativeConstraints = 'Edited negative prompt after submission.';
+    localStorage.setItem(key, JSON.stringify(data));
+  }, dataKey);
+  await page.reload({ waitUntil: 'networkidle' });
+  equal(await page.locator('.generation-current-input').innerText(), testSnapshotBefore, 'Historical test task input must come only from its immutable snapshot.');
+  await resetPrototypeState(page);
+
+  await open(page, '/archive');
+  const downloadEvent = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download JSONL' }).click();
+  const archiveDownload = await downloadEvent;
+  const archiveStream = await archiveDownload.createReadStream();
+  let archiveText = '';
+  for await (const chunk of archiveStream) archiveText += chunk.toString('utf8');
+  const archiveRecords = archiveText.trim().split('\n').map(line => JSON.parse(line));
+  const vtRecords = archiveRecords.filter(record => record.protocol === 'VT');
+  equal(vtRecords.length > 0, true, 'The example archive must include VT records.');
+  equal(vtRecords.every(record => Object.keys(record.media).join(',') === 'primary_asset_id'), true, 'VT delivery records must include only the silent primary video asset.');
+  equal(archiveRecords.every(record => !('thumbnail_asset_id' in record.media)), true, 'Archive delivery records must exclude thumbnails.');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page, '/workspace');
+  const createDatasetButton = page.getByRole('button', { name: 'Create dataset' });
+  await createDatasetButton.click();
+  await expectDialogBasics(page, 'The create dataset dialog');
+  equal(await createDatasetButton.evaluate(element => element === document.activeElement), true, 'Closing the create dataset dialog must restore trigger focus.');
+
+  await open(page, '/settings');
+  const renameButton = page.getByRole('button', { name: 'Rename current name' });
+  await renameButton.click();
+  await expectDialogBasics(page, 'The rename dialog');
+  equal(await renameButton.evaluate(element => element === document.activeElement), true, 'Closing the rename dialog must restore trigger focus.');
+
+  await open(page, '/generate/content');
+  await page.locator('.generation-selection-card').first().click();
+  await page.locator('#content-name').fill('Updated content name');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expectDialogBasics(page, 'The content save dialog');
+  await page.evaluate(() => sessionStorage.clear());
+  await page.reload({ waitUntil: 'networkidle' });
+
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await open(page, '/generate/test');
+  await page.getByRole('button', { name: 'Review test' }).click();
+  await expectDialogBasics(page, 'The test review dialog');
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, '/generate/jobs?job=job-queued');
+  await page.getByRole('button', { name: 'Cancel job' }).click();
+  await expectDialogBasics(page, 'The cancel job dialog');
+
+  await open(page, '/review?sample=CS-0008');
+  const modality = page.locator('#review-direction');
+  const currentModality = await modality.inputValue();
+  const nextModality = await modality.locator('option').evaluateAll((options, current) =>
+    options.map(option => option.value).find(value => value !== current) ?? '', currentModality);
+  if (nextModality) {
+    await modality.selectOption(nextModality);
+    await page.getByRole('button', { name: 'Save modality' }).click();
+    await expectDialogBasics(page, 'The modality dialog');
+  }
+
+  await open(page, '/archive');
+  await page.getByRole('button', { name: 'Preview sync' }).click();
+  await expectDialogBasics(page, 'The archive preview dialog');
+
+  await open(page, '/settings');
+  await page.getByRole('button', { name: 'Recheck example status' }).click();
+  await page.locator('#settings-example-status p').getByText(/Example status refreshed at/u).waitFor();
+  equal(await page.locator('#settings-example-status').getAttribute('aria-live'), 'polite', 'The success status must use a polite live region.');
+
+  await open(page, '/me/statistics');
+  await expectNamedControls(page, '.app-shell', 'Global navigation and statistics controls must have accessible names');
+  await page.locator('#statistics-start-date').fill('2020-01-01');
+  await page.locator('#statistics-end-date').fill('2020-01-30');
+  await page.getByRole('heading', { name: 'No matching records' }).waitFor();
+  await page.locator('.state-view').getByRole('button', { name: 'Reset filters' }).click();
+  await page.locator('.statistics-metrics').waitFor();
+  await page.locator('#statistics-start-date').fill('2026-08-11');
+  await page.locator('#statistics-end-date').fill('2026-08-01');
+  equal(await page.locator('#statistics-date-error').getAttribute('role'), 'alert', 'Invalid statistic dates must be announced as an alert.');
+
+  await open(page, '/settings?state=error');
+  equal(await page.locator('.state-view').getAttribute('aria-live'), 'assertive', 'Failure state must be announced immediately.');
+  equal(await page.getByRole('button', { name: 'Reload' }).count(), 1, 'Failure state must provide one clear action.');
+
+  await open(page, '/settings');
+  await page.locator('body').press('Tab');
+  equal(await page.locator('.skip-link').evaluate(element => element === document.activeElement), true, 'The first keyboard stop must skip to main content.');
+  await page.locator('.skip-link').press('Enter');
+  equal(await page.locator('#main-content').evaluate(element => element === document.activeElement), true, 'The skip link must focus the main content.');
+
+  const reviewerlessContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const reviewerlessPage = await reviewerlessContext.newPage();
+  await reviewerlessPage.goto(`${baseUrl}/workspace`, { waitUntil: 'networkidle' });
+  const firstReviewerDialog = reviewerlessPage.locator('dialog[open]');
+  await firstReviewerDialog.waitFor();
+  await expectDialogBasics(reviewerlessPage, 'The first name dialog', false);
+  await reviewerlessContext.close();
+
   const routes = [
     '/workspace',
     '/generate/batches',
@@ -226,17 +451,35 @@ try {
     '/generate/jobs',
     '/review?sample=CS-0008',
     '/archive',
+    '/settings',
+    '/me/statistics',
   ];
   const viewports = [[1440, 900], [1024, 768], [768, 900], [390, 844]];
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of viewports) {
-      for (const route of routes) await expectNoOverflow(page, route, locale, width, height);
+      for (const route of routes) {
+        if ((route === '/settings' || route === '/me/statistics') && width === 768) continue;
+        await expectNoOverflow(page, route, locale, width, height);
+      }
     }
+  }
+
+  for (const [width, height] of [[1440, 900], [1024, 768], [390, 844]]) {
+    await page.setViewportSize({ width, height });
+    for (const route of ['/settings', '/me/statistics']) {
+      for (const state of ['loading', 'empty', 'filtered', 'error', 'conflict']) {
+        await expectNoOverflow(page, `${route}?state=${state}`, 'en-US', width, height);
+      }
+    }
+    await open(page, '/settings');
+    await page.getByRole('button', { name: 'Recheck example status' }).click();
+    await page.locator('#settings-example-status p').getByText(/Example status refreshed at/u).waitFor();
+    await expectContained(page.locator('.settings-page'), `Settings success state must fit at ${width} pixels.`);
   }
 
   equal(routerWarnings.length, 0, `React Router warnings: ${routerWarnings.join(' | ')}`);
   equal(pageErrors.length, 0, `Browser page errors: ${pageErrors.join(' | ')}`);
-  console.log('Browser checks passed: 31 interactions and 64 bilingual viewport checks.');
+  console.log('Browser checks passed: core interactions, dialogs, states, and bilingual viewport checks.');
 } finally {
   if (browser) await browser.close();
   await server.close();

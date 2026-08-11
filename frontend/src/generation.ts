@@ -7,8 +7,10 @@ import type {
   Job,
   JobItem,
   JobStatus,
+  PreparedTest,
   Preset,
   Sample,
+  TestDraft,
 } from './types';
 
 export interface VideoGenerationInput {
@@ -86,6 +88,31 @@ export function createBatchAllocationSnapshot(
     seed: draft.seed === null ? 100_000 + sequence : draft.seed + sequence - 1,
     finalPositivePrompt: prompts.positivePrompt,
     finalNegativePrompt: prompts.negativePrompt,
+  };
+}
+
+export function createPreparedTestSnapshot(
+  id: string,
+  draft: TestDraft,
+  content: ContentItem,
+  preset: Preset,
+): PreparedTest {
+  const prompts = composeVideoGenerationInput(content, preset);
+  return {
+    id,
+    ...structuredClone(draft),
+    contentItemName: content.name,
+    presetName: preset.name,
+    dialogue: content.dialogue,
+    displayText: content.displayText,
+    explanation: content.explanation,
+    videoPrompt: content.videoPrompt,
+    finalPositivePrompt: prompts.positivePrompt,
+    finalNegativePrompt: prompts.negativePrompt,
+    emotion: content.emotion,
+    scene: content.scene,
+    contentRevision: content.revision,
+    presetRevision: preset.revision,
   };
 }
 

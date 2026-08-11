@@ -245,7 +245,7 @@ export interface BrowserPreferences {
 }
 
 export interface RepositoryData {
-  version: 7;
+  version: 8;
   datasets: Dataset[];
   reviewers: Reviewer[];
   gpuStates: GpuState[];
@@ -333,19 +333,23 @@ export interface PreparedTest {
   category: Category;
   conflictDirection: ConflictDirection | null;
   contentItemId: string;
+  contentItemName: string;
   presetId: string;
+  presetName: string;
   age: 25 | 35 | 45 | 60;
   gender: 'Male' | 'Female';
   ethnicity: 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
   seed: number | null;
-  models: ModelName[];
   assignments: Array<{ model: ModelName; gpu: GpuSlot; order: number }>;
   executionMode: TestExecutionMode;
   dialogue: string | null;
   displayText: string | null;
   explanation: string;
   videoPrompt: string;
+  finalPositivePrompt: string;
+  finalNegativePrompt: string;
   emotion: string;
+  scene: string;
   contentRevision: number;
   presetRevision: number;
 }
