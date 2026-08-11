@@ -17,6 +17,7 @@ from .enums import (
     Ethnicity,
     ExampleKind,
     Gender,
+    GenerationAttemptStatus,
     GpuAvailability,
     GpuSlotName,
     JobItemStage,
@@ -457,6 +458,71 @@ class JobItemPromptResult(SQLModel, table=True):
     vt_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     true_emotion_description: str = Field(sa_column=Column(Text, nullable=False))
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
+class Asset(SQLModel, table=True):
+    __tablename__ = "assets"
+    __table_args__ = (
+        UniqueConstraint("storage_root", "relative_path", name="uq_assets_storage_path"),
+        CheckConstraint("length(trim(storage_root)) > 0", name="ck_assets_storage_root"),
+        CheckConstraint(
+            "length(trim(relative_path)) > 0 AND relative_path NOT LIKE '/%' "
+            "AND relative_path NOT LIKE '%\\\\%' AND relative_path NOT LIKE '%..%'",
+            name="ck_assets_relative_path",
+        ),
+        CheckConstraint("media_type = 'video/mp4'", name="ck_assets_media_type"),
+        CheckConstraint("byte_size > 0", name="ck_assets_byte_size"),
+        CheckConstraint("width = 1344 AND height = 768", name="ck_assets_video_size"),
+        CheckConstraint("fps = 24", name="ck_assets_fps"),
+        CheckConstraint("frame_count IN (121, 124)", name="ck_assets_frame_count"),
+        CheckConstraint("duration_seconds > 0", name="ck_assets_duration"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    storage_root: str = Field(sa_column=Column(String(1024), nullable=False))
+    relative_path: str = Field(sa_column=Column(String(1024), nullable=False))
+    media_type: str = Field(sa_column=Column(String(80), nullable=False))
+    byte_size: int = Field(gt=0)
+    width: int
+    height: int
+    fps: int
+    frame_count: int
+    duration_seconds: float = Field(gt=0)
+    has_audio: bool
+    created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
+class GenerationAttempt(SQLModel, table=True):
+    __tablename__ = "generation_attempts"
+    __table_args__ = (
+        UniqueConstraint("job_item_id", "attempt_number", name="uq_generation_attempts_item_number"),
+        CheckConstraint("attempt_number > 0", name="ck_generation_attempts_number"),
+        CheckConstraint("seed >= 0 AND seed < 2147483648", name="ck_generation_attempts_seed"),
+        CheckConstraint(
+            "(status = 'Completed' AND source_asset_id IS NOT NULL AND primary_asset_id IS NOT NULL "
+            "AND finished_at IS NOT NULL AND failure_reason IS NULL) OR "
+            "(status = 'Failed' AND failure_reason IS NOT NULL AND finished_at IS NOT NULL) OR "
+            "(status = 'Running' AND finished_at IS NULL)",
+            name="ck_generation_attempts_status",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_item_id: int = Field(sa_column=Column(Integer, ForeignKey("job_items.id", ondelete="CASCADE"), nullable=False))
+    attempt_number: int = Field(gt=0)
+    model: ModelName = Field(sa_column=enum_column(ModelName))
+    gpu_slot: GpuSlotName = Field(sa_column=enum_column(GpuSlotName, foreign_key="gpu_slots.slot", ondelete="RESTRICT"))
+    seed: int = Field(ge=0, lt=2**31)
+    source_asset_id: int | None = Field(default=None, sa_column=Column(Integer, ForeignKey("assets.id", ondelete="RESTRICT"), nullable=True))
+    primary_asset_id: int | None = Field(default=None, sa_column=Column(Integer, ForeignKey("assets.id", ondelete="RESTRICT"), nullable=True))
+    renderer_prompt_id: str | None = Field(default=None, sa_column=Column(String(160), nullable=True))
+    status: GenerationAttemptStatus = Field(
+        default=GenerationAttemptStatus.RUNNING,
+        sa_column=enum_column(GenerationAttemptStatus),
+    )
+    failure_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    started_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
+    finished_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
 
 
 class JobEvent(SQLModel, table=True):

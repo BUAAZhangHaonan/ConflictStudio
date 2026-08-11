@@ -57,8 +57,21 @@ class Database:
             ("batch_video_input_snapshots", "batch video input snapshots are immutable"),
             ("job_events", "job events are immutable"),
             ("job_item_prompt_results", "job item prompt results are immutable"),
+            ("assets", "assets are immutable"),
         )
         with self.engine.begin() as connection:
+            quoted_root = str(self.data_root).replace("'", "''")
+            connection.exec_driver_sql("DROP TRIGGER IF EXISTS require_assets_storage_root")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER require_assets_storage_root
+                BEFORE INSERT ON assets
+                WHEN NEW.storage_root != '{quoted_root}'
+                BEGIN
+                    SELECT RAISE(ABORT, 'assets must use the configured data root');
+                END
+                """
+            )
             for table_name, message in immutable_tables:
                 connection.exec_driver_sql(
                     f"""
@@ -78,6 +91,24 @@ class Database:
                     END
                     """
                 )
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER IF NOT EXISTS prevent_generation_attempt_critical_update
+                BEFORE UPDATE ON generation_attempts
+                WHEN NEW.job_item_id != OLD.job_item_id
+                  OR NEW.attempt_number != OLD.attempt_number
+                  OR NEW.model != OLD.model
+                  OR NEW.gpu_slot != OLD.gpu_slot
+                  OR NEW.seed != OLD.seed
+                  OR NEW.source_asset_id IS NOT OLD.source_asset_id
+                  OR (OLD.primary_asset_id IS NOT NULL AND NEW.primary_asset_id IS NOT OLD.primary_asset_id)
+                  OR NEW.renderer_prompt_id IS NOT OLD.renderer_prompt_id
+                  OR NEW.started_at IS NOT OLD.started_at
+                BEGIN
+                    SELECT RAISE(ABORT, 'generation attempt critical fields are immutable');
+                END
+                """
+            )
             background_text = (
                 "lower(coalesce(NEW.scene, '') || ' ' || coalesce(NEW.ambient_audio, '') || ' ' || "
                 "coalesce(NEW.relationship, '') || ' ' || coalesce(NEW.lighting, '') || ' ' || "

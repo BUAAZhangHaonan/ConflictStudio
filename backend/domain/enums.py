@@ -78,6 +78,12 @@ class JobItemStage(ValueEnum):
     COMPLETED = "Completed"
 
 
+class GenerationAttemptStatus(ValueEnum):
+    RUNNING = "Running"
+    COMPLETED = "Completed"
+    FAILED = "Failed"
+
+
 class GpuSlotName(ValueEnum):
     GPU0 = "GPU0"
     GPU1 = "GPU1"

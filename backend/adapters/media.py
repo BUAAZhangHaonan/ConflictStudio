@@ -1,0 +1,223 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from dataclasses import dataclass
+from fractions import Fraction
+from pathlib import Path, PurePosixPath
+
+from sqlmodel import Session
+
+from backend.domain.enums import Category, GenerationAttemptStatus, GpuSlotName, ModelName, protocol_for
+from backend.domain.models import Asset, GenerationAttempt, utc_now
+
+
+VIDEO_WIDTH = 1344
+VIDEO_HEIGHT = 768
+VIDEO_FPS = 24
+MEDIA_TYPE_MP4 = "video/mp4"
+
+
+class MediaError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class ProbeEvidence:
+    byte_size: int
+    width: int
+    height: int
+    fps: int
+    frame_count: int
+    duration_seconds: float
+    has_audio: bool
+
+
+class MediaStore:
+    """Owns generation media below one explicitly configured data root."""
+
+    def __init__(self, data_root: Path, *, ffprobe_binary: str = "ffprobe", ffmpeg_binary: str = "ffmpeg") -> None:
+        if not data_root.is_dir():
+            raise MediaError("A configured existing data root is required")
+        self.data_root = data_root.resolve()
+        self.ffprobe_binary = ffprobe_binary
+        self.ffmpeg_binary = ffmpeg_binary
+
+    def relative_path(self, path: Path) -> str:
+        resolved = path.resolve()
+        try:
+            return resolved.relative_to(self.data_root).as_posix()
+        except ValueError as error:
+            raise MediaError("Media path escapes the configured data root") from error
+
+    def resolve(self, relative_path: str) -> Path:
+        if not relative_path or "\\" in relative_path:
+            raise MediaError("Media path must be a non-empty relative POSIX path")
+        relative = PurePosixPath(relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise MediaError("Media path must not be absolute or contain dot-dot")
+        candidate = self.data_root.joinpath(*relative.parts)
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(self.data_root)
+        except ValueError as error:
+            raise MediaError("Media path escapes the configured data root") from error
+        return resolved
+
+    def attempt_paths(self, job_id: int, item_sequence: int, attempt_number: int) -> tuple[Path, Path, Path]:
+        if job_id <= 0 or item_sequence <= 0 or attempt_number <= 0:
+            raise MediaError("Job id, item sequence, and attempt number must be positive")
+        directory = self.resolve(f"media/jobs/{job_id}/items/{item_sequence}/attempts/{attempt_number}")
+        return directory / "source.mp4", directory / "primary.mp4", directory / ".primary.tmp.mp4"
+
+    def probe(self, path: Path, *, require_audio: bool, model: ModelName) -> ProbeEvidence:
+        relative_path = self.relative_path(path)
+        checked_path = self.resolve(relative_path)
+        if not checked_path.is_file() or checked_path.stat().st_size <= 0:
+            raise MediaError("Media file must exist and be nonzero")
+        result = subprocess.run(
+            [self.ffprobe_binary, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(checked_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise MediaError("ffprobe failed")
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise MediaError("ffprobe returned invalid JSON") from error
+        if not isinstance(payload, dict) or set(payload) != {"streams", "format"}:
+            raise MediaError("ffprobe JSON has an unexpected shape")
+        streams = payload["streams"]
+        format_info = payload["format"]
+        if not isinstance(streams, list) or not isinstance(format_info, dict) or set(format_info) != {"duration"}:
+            raise MediaError("ffprobe JSON has an unexpected shape")
+        video_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"]
+        audio_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"]
+        if len(video_streams) != 1:
+            raise MediaError("Media must contain exactly one video stream")
+        video = video_streams[0]
+        required_video = {"codec_type", "width", "height", "r_frame_rate", "nb_frames"}
+        if set(video) != required_video:
+            raise MediaError("ffprobe video stream is incomplete")
+        if video["width"] != VIDEO_WIDTH or video["height"] != VIDEO_HEIGHT:
+            raise MediaError("Video must be 1344x768")
+        try:
+            fps = Fraction(video["r_frame_rate"])
+        except (TypeError, ValueError, ZeroDivisionError) as error:
+            raise MediaError("Video fps is invalid") from error
+        if fps != VIDEO_FPS:
+            raise MediaError("Video must be 24fps")
+        frame_count = self._positive_int(video["nb_frames"], "frame count")
+        expected_frames = 121 if model is ModelName.LTX else 124
+        if frame_count != expected_frames:
+            raise MediaError("Video frame count does not match the model")
+        try:
+            duration_seconds = float(format_info["duration"])
+        except (TypeError, ValueError) as error:
+            raise MediaError("Media duration is invalid") from error
+        if duration_seconds <= 0:
+            raise MediaError("Media duration must be positive")
+        if require_audio and not audio_streams:
+            raise MediaError("Source media must contain audio")
+        return ProbeEvidence(
+            byte_size=checked_path.stat().st_size,
+            width=VIDEO_WIDTH,
+            height=VIDEO_HEIGHT,
+            fps=VIDEO_FPS,
+            frame_count=frame_count,
+            duration_seconds=duration_seconds,
+            has_audio=bool(audio_streams),
+        )
+
+    @staticmethod
+    def _positive_int(value: object, name: str) -> int:
+        if not isinstance(value, str) or not value.isdecimal() or int(value) <= 0:
+            raise MediaError(f"Video {name} is missing or invalid")
+        return int(value)
+
+    def make_vt_primary(self, job_id: int, item_sequence: int, attempt_number: int, *, model: ModelName) -> Path:
+        source_path, primary_path, temporary_path = self.attempt_paths(job_id, item_sequence, attempt_number)
+        self.probe(source_path, require_audio=True, model=model)
+        primary_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            result = subprocess.run(
+                [self.ffmpeg_binary, "-y", "-i", str(source_path), "-map", "0:v:0", "-c:v", "copy", "-an", str(temporary_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise MediaError("ffmpeg failed while making a silent primary")
+            evidence = self.probe(temporary_path, require_audio=False, model=model)
+            if evidence.has_audio:
+                raise MediaError("Silent primary unexpectedly contains audio")
+            os.replace(temporary_path, primary_path)
+        except Exception:
+            temporary_path.unlink(missing_ok=True)
+            primary_path.unlink(missing_ok=True)
+            raise
+        return primary_path
+
+    def persist_completed_attempt(
+        self,
+        session: Session,
+        *,
+        job_item_id: int,
+        job_id: int,
+        item_sequence: int,
+        attempt_number: int,
+        category: Category,
+        model: ModelName,
+        gpu_slot: GpuSlotName,
+        seed: int,
+        renderer_prompt_id: str | None,
+        started_at: str,
+        finished_at: str | None = None,
+    ) -> GenerationAttempt:
+        source_path, _, _ = self.attempt_paths(job_id, item_sequence, attempt_number)
+        source_evidence = self.probe(source_path, require_audio=True, model=model)
+        source_asset = self._asset(source_path, source_evidence)
+        session.add(source_asset)
+        session.flush()
+        if protocol_for(category) == "VA":
+            primary_asset = source_asset
+        else:
+            primary_path = self.make_vt_primary(job_id, item_sequence, attempt_number, model=model)
+            primary_evidence = self.probe(primary_path, require_audio=False, model=model)
+            if primary_evidence.has_audio:
+                raise MediaError("Silent primary unexpectedly contains audio")
+            primary_asset = self._asset(primary_path, primary_evidence)
+            session.add(primary_asset)
+            session.flush()
+        attempt = GenerationAttempt(
+            job_item_id=job_item_id,
+            attempt_number=attempt_number,
+            model=model,
+            gpu_slot=gpu_slot,
+            seed=seed,
+            source_asset_id=source_asset.id,
+            primary_asset_id=primary_asset.id,
+            renderer_prompt_id=renderer_prompt_id,
+            status=GenerationAttemptStatus.COMPLETED,
+            started_at=started_at,
+            finished_at=finished_at or utc_now(),
+        )
+        session.add(attempt)
+        return attempt
+
+    def _asset(self, path: Path, evidence: ProbeEvidence) -> Asset:
+        return Asset(
+            storage_root=str(self.data_root),
+            relative_path=self.relative_path(path),
+            media_type=MEDIA_TYPE_MP4,
+            byte_size=evidence.byte_size,
+            width=evidence.width,
+            height=evidence.height,
+            fps=evidence.fps,
+            frame_count=evidence.frame_count,
+            duration_seconds=evidence.duration_seconds,
+            has_audio=evidence.has_audio,
+        )
