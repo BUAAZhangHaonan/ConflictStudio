@@ -11,7 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 from backend.adapters.config import Settings
 from backend.app import create_app
 from backend.domain.enums import GpuSlotName, JobStatus
-from backend.domain.models import JobEvent
+from backend.domain.models import Job, JobEvent
 from backend.tests.test_job_executor import (
     FakeRenderer,
     RecordingPromptModel,
@@ -140,6 +140,7 @@ def test_websocket_replays_initial_events_and_resumes_after_cursor(tmp_path: Pat
     try:
         with client.websocket_connect(f"/api/ws/jobs/{job.id}") as websocket:
             assert websocket.receive_json()["id"] == queued_id
+            assert websocket.receive_json()["id"] == continued_id
 
         with client.websocket_connect(
             f"/api/ws/jobs/{job.id}",
@@ -156,31 +157,69 @@ def test_websocket_replays_initial_events_and_resumes_after_cursor(tmp_path: Pat
         client.close()
 
 
+def test_websocket_unsubscribes_when_idle_client_disconnects(tmp_path: Path) -> None:
+    app, job = create_queued_job(tmp_path)
+    executor = app.state.job_executor
+    client = TestClient(app)
+    try:
+        with client.websocket_connect(
+            f"/api/ws/jobs/{job.id}",
+            params={"afterEventId": job.events[0].id},
+        ):
+            with executor._event_subscribers_lock:
+                assert len(executor._event_subscribers) == 1
+        with executor._event_subscribers_lock:
+            assert executor._event_subscribers == {}
+    finally:
+        client.close()
+
+
+def test_websocket_terminal_job_closes_when_cursor_already_consumed_terminal_event(tmp_path: Path) -> None:
+    app, job = create_queued_job(tmp_path)
+    with app.state.database.immediate_session() as session:
+        stored = session.get(Job, job.id)
+        assert stored is not None
+        stored.status = JobStatus.COMPLETED
+    terminal_id = append_event(app, job.id, "JobCompleted")
+    client = TestClient(app)
+    try:
+        with client.websocket_connect(
+            f"/api/ws/jobs/{job.id}",
+            params={"afterEventId": terminal_id},
+        ) as websocket:
+            with pytest.raises(WebSocketDisconnect) as closed:
+                websocket.receive_json()
+        assert closed.value.code == 1000
+        assert closed.value.reason == "Job event stream completed"
+    finally:
+        client.close()
+
+
 def test_websocket_subscribes_before_replay_and_keeps_new_event(tmp_path: Path) -> None:
     app, job = create_queued_job(tmp_path)
     queued_id = job.events[0].id
     service = app.state.batch_service
     executor = app.state.job_executor
-    original = service.list_job_events
+    original = service.list_job_events_snapshot
     inserted_id: list[int] = []
 
     def insert_during_first_replay(job_id: int, after_event_id: int, limit: int):  # type: ignore[no-untyped-def]
-        events = original(job_id, after_event_id, limit)
+        events, terminal = original(job_id, after_event_id, limit)
         if not inserted_id:
             with executor._event_subscribers_lock:
                 assert len(executor._event_subscribers) == 1
             inserted_id.append(append_event(app, job_id, "ItemPromptStarted", sequence=1))
             executor.notify_events()
-        return events
+        return events, terminal
 
-    service.list_job_events = insert_during_first_replay
+    service.list_job_events_snapshot = insert_during_first_replay
     client = TestClient(app)
     try:
         with client.websocket_connect(f"/api/ws/jobs/{job.id}") as websocket:
             assert websocket.receive_json()["id"] == queued_id
             assert websocket.receive_json()["id"] == inserted_id[0]
     finally:
-        service.list_job_events = original
+        service.list_job_events_snapshot = original
         client.close()
 
 

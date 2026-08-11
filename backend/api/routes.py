@@ -273,6 +273,9 @@ async def replay_job_events(
     batch_service: BatchService = websocket.app.state.batch_service
     job_executor: JobExecutor = websocket.app.state.job_executor
     signal = job_executor.subscribe_events()
+    receive_task: asyncio.Task[dict[str, object]] | None = None
+    signal_task: asyncio.Task[bool] | None = None
+    poll_task: asyncio.Task[None] | None = None
     try:
         if not batch_service.job_exists(job_id):
             await websocket.accept()
@@ -283,7 +286,7 @@ async def replay_job_events(
         cursor = after_event_id
         while True:
             signal.clear()
-            events = batch_service.list_job_events(job_id, cursor, EVENT_REPLAY_LIMIT)
+            events, job_terminal = batch_service.list_job_events_snapshot(job_id, cursor, EVENT_REPLAY_LIMIT)
             terminal_sent = False
             for event in events:
                 if event.id <= cursor:
@@ -292,19 +295,41 @@ async def replay_job_events(
                 cursor = event.id
                 terminal_sent = terminal_sent or event.event_type in TERMINAL_EVENT_TYPES
 
-            if terminal_sent:
+            replay_exhausted = len(events) < EVENT_REPLAY_LIMIT
+            if terminal_sent or (job_terminal and replay_exhausted):
                 await websocket.close(code=1000, reason="Job event stream completed")
                 return
-            if len(events) == EVENT_REPLAY_LIMIT:
+            if not replay_exhausted:
                 continue
 
-            try:
-                await asyncio.wait_for(signal.wait(), timeout=EVENT_POLL_SECONDS)
-            except TimeoutError:
-                pass
-    except WebSocketDisconnect:
+            if receive_task is None:
+                receive_task = asyncio.create_task(websocket.receive())
+            signal_task = asyncio.create_task(signal.wait())
+            poll_task = asyncio.create_task(asyncio.sleep(EVENT_POLL_SECONDS))
+            done, _ = await asyncio.wait(
+                {signal_task, receive_task, poll_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if receive_task in done:
+                message = receive_task.result()
+                if message["type"] == "websocket.disconnect":
+                    return
+                receive_task = asyncio.create_task(websocket.receive())
+            iteration_tasks = (signal_task, poll_task)
+            for task in iteration_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*iteration_tasks, return_exceptions=True)
+            signal_task = None
+            poll_task = None
+    except (WebSocketDisconnect, asyncio.CancelledError):
         return
     finally:
+        pending = [task for task in (receive_task, signal_task, poll_task) if task is not None and not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         job_executor.unsubscribe_events(signal)
 
 

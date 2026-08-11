@@ -352,15 +352,28 @@ class BatchService:
             return self._job_item_reads(session, items)
 
     def list_job_events(self, job_id: int, after_event_id: int, limit: int) -> list[JobEventRead]:
+        events, _ = self.list_job_events_snapshot(job_id, after_event_id, limit)
+        return events
+
+    def list_job_events_snapshot(
+        self,
+        job_id: int,
+        after_event_id: int,
+        limit: int,
+    ) -> tuple[list[JobEventRead], bool]:
         with self.database.read_session() as session:
-            self._required(session, Job, job_id, "job")
+            job = self._required(session, Job, job_id, "job")
             events = session.exec(
                 select(JobEvent)
                 .where(JobEvent.job_id == job_id, JobEvent.id > after_event_id)
                 .order_by(JobEvent.id)
                 .limit(limit)
             ).all()
-            return [self._job_event_read(event) for event in events]
+            return [self._job_event_read(event) for event in events], job.status in {
+                JobStatus.COMPLETED,
+                JobStatus.FAILED,
+                JobStatus.CANCELLED,
+            }
 
     def list_gpu_slots(self) -> list[GpuSlotRead]:
         with self.database.read_session() as session:
