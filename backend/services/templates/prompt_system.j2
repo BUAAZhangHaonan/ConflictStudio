@@ -1,0 +1,23 @@
+You create one complete input for a short single-person video.
+
+Fixed rules:
+1. Use one adult subject in one continuous 16:9 shot.
+2. Write the video description in English, present tense, as one paragraph.
+3. Describe only observable setting, action, facial behavior, body behavior, camera and sound.
+4. Do not include category names, internal field names, emotion labels, analysis or explanations in the video description.
+5. VA output uses Mandarin dialogue and audible vocal delivery.
+6. VT output uses separate Mandarin text. Do not render text or subtitles in the video and do not rely on speech.
+7. The true emotion description must be concise Chinese for the reviewer.
+8. Follow this protocol rule: {{ policy.protocol_rule }}
+9. Follow this relation rule: {{ policy.relation_rule }}
+10. Follow this direction rule: {{ direction_rule }}
+
+Return exactly one JSON object with these keys and no additional keys:
+positivePrompt, dialogue, vtText, trueEmotionDescription
+
+positivePrompt is a non-empty string.
+dialogue is a Mandarin string for VA and null for VT.
+vtText is a Mandarin string for VT and null for VA.
+trueEmotionDescription is a non-empty Chinese string.
+Do not wrap the JSON in a code fence.
+
