@@ -43,7 +43,11 @@
 .generation-test-workflow > .generation-gpus .generation-gpus__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .generation-test-section { display: grid; gap: 14px; padding-bottom: 16px; border-bottom: 1px solid var(--color-border); }
 .generation-test-section:last-of-type { padding-bottom: 0; border-bottom: 0; }
+.generation-section-note { max-width: 760px; margin: -4px 0 0; color: var(--color-text-muted); font-size: 13px; line-height: 1.5; }
 .generation-test-config-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.generation-test-source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.generation-test-source { display: grid; min-width: 0; align-content: start; gap: 10px; }
+.generation-test-source h2 { margin: 0; font-size: 16px; }
 .generation-test-model-heading { margin-top: 4px; }
 .generation-preview-summary { margin-bottom: 12px; color: var(--color-text-muted); }
 .generation-preview-table table { min-width: 720px; }
@@ -203,6 +207,9 @@
   .generation-filters input, .generation-filters select { min-height: 44px; }
   .generation-result-cards { grid-template-columns: 1fr; }
   .generation-test-config-grid { grid-template-columns: 1fr; }
+  .generation-test-source-grid { grid-template-columns: 1fr; }
+  .generation-test-section { gap: 8px; padding-bottom: 10px; }
+  .generation-test-section .generation-section-note { font-size: 12px; }
   .generation-layout--jobs { display: block; }
   .generation-layout--jobs:not(.generation-layout--job-detail) .generation-job-detail { display: none; }
   .generation-layout--jobs.generation-layout--job-detail .generation-list { display: none; }

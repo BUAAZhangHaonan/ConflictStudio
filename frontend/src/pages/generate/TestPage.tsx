@@ -413,10 +413,11 @@ export function TestPage() {
     <GenerationScaffold title={'test.title'} subtitle={'test.subtitle'}>
       {failure ? <OperationFeedback kind={failure} onDismiss={() => setFailure(null)} /> : null}
       <div className="generation-test-workflow">
-        <GpuPanel />
+        <GpuPanel description={'test.gpuNote'} />
         <section className="panel generation-form" aria-label={g('test.formRegion')}>
           <section className="generation-test-section" aria-labelledby="test-setup-title">
             <div className="section-header"><h2 id="test-setup-title">{g('test.setup')}</h2></div>
+            <p className="generation-section-note">{g('test.setupNote')}</p>
             <div className="generation-form__grid generation-test-config-grid">
             <Field className="generation-test-category" label={g('test.category')} htmlFor="test-category" required>
               <select id="test-category" value={category} onChange={event => changeCategory(event.target.value as Category)}>
@@ -427,18 +428,6 @@ export function TestPage() {
               <select id="test-direction" value={direction ?? ''} disabled={directions.length === 0} onChange={event => setDirection((event.target.value || null) as ConflictDirection | null)}>
                 {directions.length === 0 ? <option value="">{g('common.none')}</option> : null}
                 {directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}
-              </select>
-            </Field>
-            <Field label={g('test.content')} htmlFor="test-content" required>
-              <select id="test-content" value={contentId} onChange={event => setContentId(event.target.value)}>
-                {matchingContent.length === 0 ? <option value="">{g('batches.noContent')}</option> : null}
-                {matchingContent.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </Field>
-            <Field label={g('test.preset')} htmlFor="test-preset" required>
-              <select id="test-preset" value={presetId} onChange={event => setPresetId(event.target.value)}>
-                {matchingPresets.length === 0 ? <option value="">{g('batches.noPreset')}</option> : null}
-                {matchingPresets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
             </Field>
             <Field label={g('test.age')} htmlFor="test-age">
@@ -464,6 +453,28 @@ export function TestPage() {
             </Field>
             </div>
           </section>
+          <section className="generation-test-section generation-test-source-grid" aria-label={g('test.sourcesRegion')}>
+            <div className="generation-test-source">
+              <h2>{g('test.contentPlan')}</h2>
+              <p className="generation-section-note">{g('test.contentNote')}</p>
+              <Field label={g('test.content')} htmlFor="test-content" required>
+                <select id="test-content" value={contentId} onChange={event => setContentId(event.target.value)}>
+                  {matchingContent.length === 0 ? <option value="">{g('batches.noContent')}</option> : null}
+                  {matchingContent.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="generation-test-source">
+              <h2>{g('test.preset')}</h2>
+              <p className="generation-section-note">{g('test.presetNote')}</p>
+              <Field label={g('test.preset')} htmlFor="test-preset" required>
+                <select id="test-preset" value={presetId} onChange={event => setPresetId(event.target.value)}>
+                  {matchingPresets.length === 0 ? <option value="">{g('batches.noPreset')}</option> : null}
+                  {matchingPresets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </Field>
+            </div>
+          </section>
           <section className="generation-test-section" aria-labelledby="test-models-title">
             <div className="section-header generation-test-model-heading">
               <h2 id="test-models-title">{g('test.models')}</h2>
@@ -471,6 +482,7 @@ export function TestPage() {
                 {g(assignments.length === 1 ? 'test.addSecond' : 'test.removeSecond')}
               </Button>
             </div>
+            <p className="generation-section-note">{g('test.modelsNote')}</p>
             <fieldset className="generation-fieldset">
               <legend>{g('test.execution')}</legend>
               <div className="generation-choice-grid">
@@ -506,6 +518,7 @@ export function TestPage() {
           </section>
           {currentContent && currentPreset ? (
             <section className="generation-test-section" aria-label={g('promptPreview.title')}>
+              <p className="generation-section-note">{g('test.promptNote')}</p>
               <VideoPromptPreview content={currentContent} preset={currentPreset} />
             </section>
           ) : null}
@@ -519,6 +532,7 @@ export function TestPage() {
         <div className="section-header">
           <h2>{g('test.resultsTitle')}</h2>
         </div>
+        <p className="generation-section-note">{g('test.resultsNote')}</p>
         {activeRunCards.length === 0 ? (
           <p className="generation-empty-note">{g('jobs.noResults')}</p>
         ) : (

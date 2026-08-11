@@ -193,7 +193,7 @@ function availabilityKind(status: GpuAvailability) {
   return 'neutral' as const;
 }
 
-export function GpuPanel() {
+export function GpuPanel({ description }: { description?: GenerationKey } = {}) {
   const g = useGenerationCopy();
   const repository = useMockRepository();
   const snapshot = useRepositorySnapshot();
@@ -218,6 +218,7 @@ export function GpuPanel() {
     <>
       <section className="panel generation-gpus" aria-labelledby="generation-gpus-title">
         <div className="section-header"><h2 id="generation-gpus-title">{g('gpu.title')}</h2></div>
+        {description ? <p className="generation-section-note">{g(description)}</p> : null}
         {releaseFailed ? <p className="field__error" role="alert">{g('gpu.releaseUnavailable')}</p> : null}
         <div className="generation-gpus__grid">
           {snapshot.data.gpuStates.map(gpu => (

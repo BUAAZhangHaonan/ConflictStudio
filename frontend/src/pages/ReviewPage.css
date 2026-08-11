@@ -102,7 +102,7 @@
 .review-detail {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
-  grid-template-rows: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas:
     "media decision"
     "context decision";
@@ -215,7 +215,7 @@
   display: grid;
   align-content: start;
   gap: 14px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .review-media > .section-header {
@@ -263,6 +263,7 @@
 .review-media__previews .media-panel video,
 .review-media__previews .media-panel__empty {
   aspect-ratio: 16 / 9;
+  object-fit: contain;
 }
 
 .review-media__navigation {
@@ -557,7 +558,6 @@
 
   .review-media .media-panel video,
   .review-media .media-panel__empty {
-    max-height: 260px;
     object-fit: contain;
   }
 }

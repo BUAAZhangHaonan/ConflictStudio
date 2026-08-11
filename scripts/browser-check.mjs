@@ -45,6 +45,46 @@ async function expectContained(locator, message) {
   equal(dimensions.scrollWidth <= dimensions.clientWidth, true, `${message} ${JSON.stringify(dimensions)}`);
 }
 
+async function expectReviewMediaFit(page, sampleId, locale, width, height, expectedMuted) {
+  await page.setViewportSize({ width, height });
+  await open(page, `/review?sample=${sampleId}`, locale);
+  const dimensions = await page.locator('.review-media').evaluate(panel => {
+    const video = panel.querySelector('video');
+    if (!(video instanceof HTMLVideoElement)) return null;
+    const panelBounds = panel.getBoundingClientRect();
+    const videoBounds = video.getBoundingClientRect();
+    return {
+      panelBottom: panelBounds.bottom,
+      panelTop: panelBounds.top,
+      videoBottom: videoBounds.bottom,
+      videoTop: videoBounds.top,
+      videoRatio: videoBounds.width / videoBounds.height,
+      controls: video.controls,
+      muted: video.muted,
+      objectFit: getComputedStyle(video).objectFit,
+      overflowY: getComputedStyle(panel).overflowY,
+    };
+  });
+  equal(dimensions !== null, true, `${locale} ${sampleId} ${width} must render a video.`);
+  equal(dimensions.controls, true, `${locale} ${sampleId} ${width} must show native video controls.`);
+  equal(dimensions.muted, expectedMuted, `${locale} ${sampleId} ${width} must keep the protocol audio setting.`);
+  equal(dimensions.objectFit, 'contain', `${locale} ${sampleId} ${width} must contain the full video frame.`);
+  equal(Math.abs(dimensions.videoRatio - (16 / 9)) < 0.02, true, `${locale} ${sampleId} ${width} must keep a 16:9 video area.`);
+  equal(dimensions.videoTop >= dimensions.panelTop - 1, true, `${locale} ${sampleId} ${width} video must start inside the media panel.`);
+  equal(dimensions.videoBottom <= dimensions.panelBottom + 1, true, `${locale} ${sampleId} ${width} video and controls must end inside the media panel.`);
+  equal(['auto', 'scroll'].includes(dimensions.overflowY), false, `${locale} ${sampleId} ${width} media panel must not require its own scrollbar.`);
+}
+
+async function expectTestGuidance(page, locale, width, height) {
+  await page.setViewportSize({ width, height });
+  await open(page, '/generate/test', locale);
+  const notes = page.locator('.generation-section-note');
+  equal(await notes.count(), 7, `${locale} test bench at ${width} must explain all seven sections.`);
+  equal(await notes.evaluateAll(elements => elements.every(element => element.textContent?.trim())), true, `${locale} test bench at ${width} must not show an empty explanation.`);
+  equal(await page.locator('.generation-prompt-preview pre').count(), 2, `${locale} test bench at ${width} must show the final positive and negative prompts.`);
+  equal(await page.locator('.generation-prompt-preview').locator('input, textarea').count(), 0, `${locale} test bench at ${width} must keep the final prompts read-only.`);
+}
+
 async function expectDialogBasics(page, message, dismissible = true) {
   const dialog = page.locator('dialog[open]').last();
   await dialog.waitFor();
@@ -236,7 +276,7 @@ try {
   });
   equal(testLayout.gpuTop < testLayout.formTop, true, 'GPU status must appear before test configuration.');
   equal(testLayout.height < 2600, true, 'The desktop test bench must avoid an excessively tall page.');
-  equal(await page.locator('.generation-test-section').count(), 3, 'The test workflow must separate configuration, model comparison, and prompts.');
+  equal(await page.locator('.generation-test-section').count(), 4, 'The test workflow must separate settings, content selection, model comparison, and final prompts.');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await open(page, '/generate/test');
@@ -649,6 +689,28 @@ try {
   await expectDialogBasics(reviewerlessPage, 'The first name dialog', false);
   await reviewerlessContext.close();
 
+  await resetPrototypeState(page);
+  const focusedViewports = [[1440, 900], [1024, 768], [768, 900], [390, 844]];
+  for (const locale of ['zh-CN', 'en-US']) {
+    for (const [width, height] of focusedViewports) {
+      await expectReviewMediaFit(page, 'CS-0008', locale, width, height, false);
+      await expectReviewMediaFit(page, 'CS-0010', locale, width, height, true);
+      await expectTestGuidance(page, locale, width, height);
+    }
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, '/generate/content', locale);
+    const contentRelationship = await page.locator('.generation-page__subtitle').innerText();
+    equal(contentRelationship.includes(locale === 'zh-CN' ? '提示词预设' : 'prompt preset'), true, `${locale} content page must explain the prompt preset relationship.`);
+    equal(contentRelationship.includes(locale === 'zh-CN' ? '正提示词和负提示词' : 'positive prompt and negative prompt'), true, `${locale} content page must explain the final video input.`);
+
+    await open(page, '/generate/presets', locale);
+    const presetRelationship = await page.locator('.generation-page__subtitle').innerText();
+    equal(presetRelationship.includes(locale === 'zh-CN' ? '内容方案' : 'content plan'), true, `${locale} preset page must explain the content plan relationship.`);
+    equal(presetRelationship.includes(locale === 'zh-CN' ? '正面示例和反面示例' : 'Positive and negative examples'), true, `${locale} preset page must explain how examples are used.`);
+    equal(presetRelationship.includes(locale === 'zh-CN' ? '正提示词和负提示词' : 'positive prompt and negative prompt'), true, `${locale} preset page must explain the final video input.`);
+  }
+
   const routes = [
     '/workspace',
     '/generate/batches',
@@ -661,7 +723,7 @@ try {
     '/settings',
     '/me/statistics',
   ];
-  const viewports = [[1440, 900], [1024, 768], [768, 900], [390, 844]];
+  const viewports = focusedViewports;
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of viewports) {
       for (const route of routes) {
