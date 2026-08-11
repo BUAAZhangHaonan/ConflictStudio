@@ -16,9 +16,59 @@ export function pageItems<T>(items: readonly T[], page: number): T[] {
   return items.slice(start, start + ARCHIVE_PAGE_SIZE);
 }
 
-export function reviewLocation(sampleId: string, returnTo: string): string {
-  const params = new URLSearchParams({ sample: sampleId, returnTo });
+export function reviewLocation(displayId: string, returnTo: string): string {
+  const params = new URLSearchParams({ sample: displayId, returnTo });
   return `/review?${params.toString()}`;
+}
+
+function readableModality(direction: ConflictDirection | null): 'visual' | 'audio' | 'text' | null {
+  if (direction === 'Vision') return 'visual';
+  if (direction === 'Audio') return 'audio';
+  if (direction === 'Text') return 'text';
+  return null;
+}
+
+function readableEthnicity(value: Sample['ethnicity']): string {
+  if (value === 'EastAsian') return 'east asian';
+  if (value === 'SouthAsian') return 'south asian';
+  if (value === 'Black') return 'black';
+  if (value === 'Latino') return 'latino';
+  return 'white';
+}
+
+export function archiveJsonl(datasetName: string, samples: readonly Sample[]): string {
+  return `${samples.map(sample => JSON.stringify({
+    sample_id: sample.displayId,
+    dataset_name: datasetName,
+    category: sample.category,
+    protocol: sample.category.endsWith('-VA') ? 'VA' : 'VT',
+    true_emotion_modality: readableModality(sample.conflictDirection),
+    true_emotion: sample.trueEmotion,
+    apparent_emotion: sample.apparentEmotion,
+    true_emotion_description: sample.trueEmotionDescription,
+    dialogue: sample.dialogue,
+    display_text: sample.displayText,
+    positive_prompt: sample.videoPrompt,
+    negative_prompt: sample.negativePrompt,
+    content_plan: sample.contentPlanName,
+    model: sample.model,
+    seed: sample.seed,
+    person: {
+      age: sample.age,
+      gender: sample.gender === 'Female' ? 'female' : 'male',
+      ethnicity: readableEthnicity(sample.ethnicity),
+    },
+    media: {
+      primary_asset_id: sample.primaryAssetId,
+      source_asset_id: sample.sourceAssetId,
+      thumbnail_asset_id: sample.thumbnailAssetId,
+    },
+    updated_at: sample.updatedAt,
+  })).join('\n')}\n`;
+}
+
+export function archiveFileName(datasetName: string): string {
+  return `${datasetName.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/gu, '_')}.jsonl`;
 }
 
 export function archiveReturnTarget(value: string | null): string | null {

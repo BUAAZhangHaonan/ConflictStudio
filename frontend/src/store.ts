@@ -54,7 +54,12 @@ import {
 } from './types';
 import { allocatePrototypeId } from './id';
 import { formatCompactDateTime, formatDate } from './time';
-import { buildJobItems, contentIsReferenced, validateBatchGpuSelection } from './generation';
+import {
+  buildJobItems,
+  contentIsReferenced,
+  createBatchAllocationSnapshot,
+  validateBatchGpuSelection,
+} from './generation';
 import { applyConflictDirectionChange } from './reviewArchive';
 
 type Listener = () => void;
@@ -86,7 +91,7 @@ function loadData(storage: Storage): RepositoryData {
     typeof parsed !== 'object' ||
     parsed === null ||
     !('version' in parsed) ||
-    parsed.version !== 6
+    parsed.version !== 7
   ) {
     throw new Error('Prototype data has an unsupported shape.');
   }
@@ -108,12 +113,16 @@ function createJob(
     parentJobId: null,
     ...input,
     failureReason: null,
-    progress: 0,
     completedCount: 0,
-    currentItemSequence: null,
     steps: [],
     logs: [],
-    items: buildJobItems(input.quantity, input.status, input.gpus),
+    items: buildJobItems(
+      input.quantity,
+      input.status,
+      input.gpus,
+      0,
+      input.status === 'Running' ? input.gpus.map((_, index) => index + 1) : [],
+    ),
     resultSampleIds: [],
     revision: 1,
     createdAt: timestamp,
@@ -179,8 +188,12 @@ export class MockRepository {
 
   constructor(storage: Storage) {
     this.storage = storage;
+    const data = loadData(storage);
+    if (storage.getItem(DATA_STORAGE_KEY) === null) {
+      storage.setItem(DATA_STORAGE_KEY, JSON.stringify(data));
+    }
     this.snapshot = {
-      data: loadData(storage),
+      data,
       preferences: {
         locale: loadLocale(storage),
         currentReviewerId: storage.getItem(REVIEWER_STORAGE_KEY),
@@ -369,7 +382,7 @@ export class MockRepository {
       return failure('InvalidInput', { field: 'contentItemIds' });
     }
     const preset = this.snapshot.data.presets.find(item => item.id === draft.presetId);
-    if (!preset || preset.category !== draft.category) return failure('InvalidInput', { field: 'presetId' });
+    if (!preset || preset.status !== 'Active' || preset.category !== draft.category) return failure('InvalidInput', { field: 'presetId' });
     const gpuSelectionError = validateBatchGpuSelection(draft.gpus, this.snapshot.data.gpuStates);
     if (gpuSelectionError) {
       return failure(gpuSelectionError === 'Unavailable' ? 'Unavailable' : 'InvalidInput', { field: 'gpus' });
@@ -381,15 +394,7 @@ export class MockRepository {
     const allocations = Array.from({ length: draft.quantity }, (_, index) => {
       const content = contents[index % contents.length]!;
       const demographics = combinations[index % combinations.length];
-      return {
-        sequence: index + 1,
-        contentItemId: content.id,
-        contentItemName: content.name,
-        category: draft.category,
-        conflictDirection: draft.conflictDirection,
-        ...demographics,
-        model: draft.model,
-      };
+      return createBatchAllocationSnapshot(index + 1, draft, content, preset, demographics);
     });
     return success({
       draft: copy(draft),
@@ -415,6 +420,7 @@ export class MockRepository {
     }
     const preset = this.snapshot.data.presets.find(item => item.id === preview.draft.presetId);
     if (!preset) return failure('NotFound', { field: 'presetId' });
+    if (preset.status !== 'Active') return failure('Unavailable', { field: 'presetId' });
     if (preset.revision !== preview.presetRevision) {
       return failure('Conflict', { currentRevision: preset.revision });
     }
@@ -444,7 +450,7 @@ export class MockRepository {
       job.status,
       job.gpus,
       0,
-      null,
+      [],
       preview.draft.contentItemIds,
     );
     const data = copy(this.snapshot.data);
@@ -482,7 +488,7 @@ export class MockRepository {
       return failure('InvalidInput', { field: 'contentItemId' });
     }
     const preset = this.snapshot.data.presets.find(item => item.id === draft.presetId);
-    if (!preset || preset.category !== draft.category) return failure('InvalidInput', { field: 'presetId' });
+    if (!preset || preset.status !== 'Active' || preset.category !== draft.category) return failure('InvalidInput', { field: 'presetId' });
     return success({
       id: allocatePrototypeId('prepared-test'),
       ...copy(draft),
@@ -563,7 +569,6 @@ export class MockRepository {
       ...job,
       status: 'Cancelled',
       completedAt: timestamp,
-      currentItemSequence: null,
       updatedAt: timestamp,
       revision: job.revision + 1,
       items: job.items.map(item =>
@@ -611,9 +616,7 @@ export class MockRepository {
       seed,
       status: 'Queued',
       failureReason: null,
-      progress: 0,
       completedCount: 0,
-      currentItemSequence: null,
       steps: createSteps(id),
       logs: [{ sequence: 1, stepId: `${id}-step-1`, messageKey: 'jobs.log.created', occurredAt: timestamp }],
       items: buildJobItems(source.quantity, 'Queued', [gpu]),
@@ -670,8 +673,10 @@ export class MockRepository {
       gpu: assignment.gpu,
       contentItemId: input.contentItemId,
       presetId: input.presetId,
-      primaryAssetId: protocol === 'VA' ? voicedVideoDataUrl : silentVideoDataUrl,
-      sourceAssetId: protocol === 'VT' ? voicedVideoDataUrl : null,
+      primaryAssetId: `asset-primary-${sampleId}`,
+      primaryAssetUrl: protocol === 'VA' ? voicedVideoDataUrl : silentVideoDataUrl,
+      sourceAssetId: protocol === 'VT' ? `asset-source-${sampleId}` : null,
+      sourceAssetUrl: protocol === 'VT' ? voicedVideoDataUrl : null,
       thumbnailAssetId: null,
       dialogue: input.dialogue,
       displayText: input.displayText,
@@ -929,6 +934,7 @@ export class MockRepository {
       ...copy(input),
       id: allocatePrototypeId('preset'),
       name: input.name.trim(),
+      status: 'Active',
       revision: 1,
       createdAt: timestamp,
       updatedAt: timestamp,

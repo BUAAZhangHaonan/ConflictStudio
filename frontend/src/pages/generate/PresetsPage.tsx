@@ -18,7 +18,7 @@ import {
 } from './shared';
 
 function presetInput(item: Preset): PresetInput {
-  const { id: _id, revision: _revision, createdAt: _createdAt, updatedAt: _updatedAt, ...input } = item;
+  const { id: _id, revision: _revision, createdAt: _createdAt, updatedAt: _updatedAt, status: _status, ...input } = item;
   return input;
 }
 

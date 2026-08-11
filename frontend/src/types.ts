@@ -6,6 +6,7 @@ export type ConflictDirection = 'Vision' | 'Audio' | 'Text';
 export type ReviewDecision = 'Pending' | 'Accepted' | 'Rejected';
 export type JobStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 export type ContentStatus = 'Draft' | 'Active' | 'Disabled';
+export type PresetStatus = 'Active' | 'Disabled';
 export type DatasetStatus = 'Active' | 'Disabled';
 export type DatasetPurpose = 'Production' | 'Validation' | 'General';
 export type ContentMode = 'Fixed' | 'Generative';
@@ -64,7 +65,9 @@ export interface Sample extends Revisioned {
   contentItemId: string | null;
   presetId: string | null;
   primaryAssetId: string;
+  primaryAssetUrl: string;
   sourceAssetId: string | null;
+  sourceAssetUrl: string | null;
   thumbnailAssetId: string | null;
   dialogue: string | null;
   displayText: string | null;
@@ -117,7 +120,7 @@ export interface JobLog {
 export interface JobItem {
   sequence: number;
   status: JobStatus;
-  gpu: GpuSlot | null;
+  gpuId: GpuSlot | null;
   contentItemId: string | null;
 }
 
@@ -132,9 +135,7 @@ export interface Job extends Revisioned {
   gpus: GpuSlot[];
   status: JobStatus;
   failureReason: JobFailureReason | null;
-  progress: number;
   completedCount: number;
-  currentItemSequence: number | null;
   seed: number | null;
   quantity: number;
   batchInput?: BatchPreview;
@@ -198,6 +199,7 @@ export interface Preset extends Revisioned {
   id: string;
   name: string;
   category: Category;
+  status: PresetStatus;
   fixedStructureRules: readonly PresetRuleKey[];
   styleInstruction: string;
   sceneSupplement: string;
@@ -243,7 +245,7 @@ export interface BrowserPreferences {
 }
 
 export interface RepositoryData {
-  version: 6;
+  version: 7;
   datasets: Dataset[];
   reviewers: Reviewer[];
   gpuStates: GpuState[];
@@ -303,12 +305,19 @@ export interface BatchAllocation {
   sequence: number;
   contentItemId: string;
   contentItemName: string;
+  contentItemRevision: number;
+  presetId: string;
+  presetName: string;
+  presetRevision: number;
   category: Category;
   conflictDirection: ConflictDirection | null;
   age: 25 | 35 | 45 | 60;
   gender: 'Male' | 'Female';
   ethnicity: 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
   model: ModelName;
+  seed: number;
+  finalPositivePrompt: string;
+  finalNegativePrompt: string;
 }
 
 export interface BatchPreview {
@@ -355,7 +364,7 @@ export interface TestDraft {
 }
 
 export type ContentItemInput = Omit<ContentItem, 'id' | 'revision' | 'createdAt' | 'updatedAt'>;
-export type PresetInput = Omit<Preset, 'id' | 'revision' | 'createdAt' | 'updatedAt'>;
+export type PresetInput = Omit<Preset, 'id' | 'revision' | 'createdAt' | 'updatedAt' | 'status'>;
 
 export interface SaveReviewInput {
   sampleId: string;

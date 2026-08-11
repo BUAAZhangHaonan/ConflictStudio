@@ -96,7 +96,7 @@ export function ReviewPage() {
   const navigate = useNavigate();
   const exampleState = useExamplePageState();
   const initialParams = new URLSearchParams(location.search);
-  const requestedSample = snapshot.data.samples.find(sample => sample.id === initialParams.get('sample'));
+  const requestedSample = snapshot.data.samples.find(sample => sample.displayId === initialParams.get('sample'));
   const initialDataset = requestedSample?.datasetId ?? initialParams.get('dataset');
   const initialDecision = initialParams.get('decision');
 
@@ -120,6 +120,8 @@ export function ReviewPage() {
   const [batchConfirmOpen, setBatchConfirmOpen] = useState(false);
   const [transferConfirmOpen, setTransferConfirmOpen] = useState(false);
   const [directionConfirmOpen, setDirectionConfirmOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(() => !window.matchMedia('(max-width: 768px)').matches);
+  const [batchOpen, setBatchOpen] = useState(() => !window.matchMedia('(max-width: 768px)').matches);
   const [mobileDetail, setMobileDetail] = useState(false);
   const [operationMessage, setOperationMessage] = useState<OperationMessage | null>(null);
   const [busy, setBusy] = useState(false);
@@ -139,7 +141,7 @@ export function ReviewPage() {
     const normalizedSearch = search.trim().toLocaleLowerCase(snapshot.preferences.locale);
     return snapshot.data.samples.filter(sample => {
       const dataset = datasetsById.get(sample.datasetId);
-      const searchText = [sample.displayId, sample.id, dataset?.name ?? '', dataset?.id ?? '']
+      const searchText = [sample.displayId, dataset?.name ?? '']
         .join(' ')
         .toLocaleLowerCase(snapshot.preferences.locale);
       return (
@@ -178,7 +180,7 @@ export function ReviewPage() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const requestedSampleId = params.get('sample');
-    const nextSample = snapshot.data.samples.find(sample => sample.id === requestedSampleId);
+    const nextSample = snapshot.data.samples.find(sample => sample.displayId === requestedSampleId);
     const requestedDataset = params.get('dataset');
     const requestedDecision = params.get('decision');
     if (nextSample) {
@@ -253,7 +255,7 @@ export function ReviewPage() {
     setSelectedId(sample.id);
     setOperationMessage(null);
     const params = new URLSearchParams(location.search);
-    params.set('sample', sample.id);
+    params.set('sample', sample.displayId);
     navigate({ pathname: '/review', search: `?${params.toString()}` }, { replace: true });
     const position = visibleSamples.findIndex(item => item.id === sample.id) + 1;
     setAnnouncement(t('review.aria.selectionChanged', {
@@ -585,7 +587,7 @@ export function ReviewPage() {
       ) : selected ? (
         <div
           className={`review-grid ${mobileDetail ? 'review-grid--mobile-detail' : ''}`.trim()}
-          data-selected-sample={selected.id}
+          data-selected-sample={selected.displayId}
           data-sample-revision={selected.revision}
         >
           <section className="panel review-queue" aria-label={t('review.aria.queue')}>
@@ -619,7 +621,7 @@ export function ReviewPage() {
                   decision: t(`status.review.${sample.reviewDecision}`),
                 });
                 return (
-                  <li key={sample.id} className={active ? 'is-active' : undefined} data-sample-id={sample.id}>
+                  <li key={sample.id} className={active ? 'is-active' : undefined} data-sample-id={sample.displayId}>
                     <label className="review-queue__check">
                       <input
                         type="checkbox"
@@ -667,7 +669,7 @@ export function ReviewPage() {
               <MediaPanel
                 title={t('review.video')}
                 mediaLabel={t('review.primaryMediaAlt', { id: selected.displayId })}
-                src={selected.primaryAssetId}
+                src={selected.primaryAssetUrl}
                 muted={protocolForCategory(selected.category) === 'VT'}
                 videoRef={reviewVideoRef}
               />
@@ -778,54 +780,58 @@ export function ReviewPage() {
               {t('actions.saveDecision')}
             </Button>
 
-            <section className="review-transfer" aria-label={t('review.aria.transfer')}>
-              <h3>{t('review.transfer')}</h3>
-              <p>{t('review.transferHelp')}</p>
-              <dl>
-                <div><dt>{t('review.currentCategory')}</dt><dd>{t(`category.${selected.category}`)}</dd></div>
-                {targetCategory ? <div><dt>{t('review.targetCategory')}</dt><dd>{t(`category.${targetCategory}`)}</dd></div> : null}
-              </dl>
-              {targetDirections.length > 0 ? (
-                <Field label={t('review.conflictDirection')} htmlFor="review-transfer-direction">
-                  <select
-                    id="review-transfer-direction"
-                    value={transferDirection ?? ''}
-                    onChange={event => setTransferDirection(event.target.value as ConflictDirection)}
-                  >
-                    {targetDirections.map(value => <option key={value} value={value}>{t(`direction.${value}`)}</option>)}
+            <details className="review-secondary-action" open={transferOpen} onToggle={event => setTransferOpen(event.currentTarget.open)}>
+              <summary>{t('review.transfer')}</summary>
+              <section className="review-transfer" aria-label={t('review.aria.transfer')}>
+                <p>{t('review.transferHelp')}</p>
+                <dl>
+                  <div><dt>{t('review.currentCategory')}</dt><dd>{t(`category.${selected.category}`)}</dd></div>
+                  {targetCategory ? <div><dt>{t('review.targetCategory')}</dt><dd>{t(`category.${targetCategory}`)}</dd></div> : null}
+                </dl>
+                {targetDirections.length > 0 ? (
+                  <Field label={t('review.conflictDirection')} htmlFor="review-transfer-direction">
+                    <select
+                      id="review-transfer-direction"
+                      value={transferDirection ?? ''}
+                      onChange={event => setTransferDirection(event.target.value as ConflictDirection)}
+                    >
+                      {targetDirections.map(value => <option key={value} value={value}>{t(`direction.${value}`)}</option>)}
+                    </select>
+                  </Field>
+                ) : <p>{t('review.directionNotRequired')}</p>}
+                <Button
+                  variant="secondary"
+                  onClick={requestTransfer}
+                  busy={busy}
+                  disabled={!targetCategory || (targetDirections.length > 0 && transferDirection === null)}
+                >
+                  {t('review.transferAction')}
+                </Button>
+              </section>
+            </details>
+
+            <details className="review-secondary-action" open={batchOpen} onToggle={event => setBatchOpen(event.currentTarget.open)} data-review-batch>
+              <summary>{t('review.batch')}</summary>
+              <section className="review-batch" aria-label={t('review.aria.batch')}>
+                <p>{selectedVisibleIds.length > 0 ? t('review.selectionCount', { count: selectedVisibleIds.length }) : t('review.nothingSelected')}</p>
+                <Field label={t('review.batchDecision')} htmlFor="review-batch-decision">
+                  <select id="review-batch-decision" value={batchDecision} onChange={event => setBatchDecision(event.target.value as FinalDecision)}>
+                    {finalDecisions.map(value => <option key={value} value={value}>{t(`status.review.${value}`)}</option>)}
                   </select>
                 </Field>
-              ) : <p>{t('review.directionNotRequired')}</p>}
-              <Button
-                variant="secondary"
-                onClick={requestTransfer}
-                busy={busy}
-                disabled={!targetCategory || (targetDirections.length > 0 && transferDirection === null)}
-              >
-                {t('review.transferAction')}
-              </Button>
-            </section>
-
-            <section className="review-batch" aria-label={t('review.aria.batch')} data-review-batch>
-              <h3>{t('review.batch')}</h3>
-              <p>{selectedVisibleIds.length > 0 ? t('review.selectionCount', { count: selectedVisibleIds.length }) : t('review.nothingSelected')}</p>
-              <Field label={t('review.batchDecision')} htmlFor="review-batch-decision">
-                <select id="review-batch-decision" value={batchDecision} onChange={event => setBatchDecision(event.target.value as FinalDecision)}>
-                  {finalDecisions.map(value => <option key={value} value={value}>{t(`status.review.${value}`)}</option>)}
-                </select>
-              </Field>
-              <Field label={t('fields.note')} htmlFor="review-batch-note">
-                <textarea
-                  id="review-batch-note"
-                  value={batchNote}
-                  onChange={event => setBatchNote(event.target.value)}
-                  placeholder={t('review.batchNotePlaceholder')}
-                />
-              </Field>
-              <Button variant="secondary" onClick={requestBatch} busy={busy} disabled={selectedVisibleIds.length === 0}>
-                {t('review.applyBatch')}
-              </Button>
-            </section>
+                <Field label={t('fields.note')} htmlFor="review-batch-note">
+                  <textarea
+                    id="review-batch-note"
+                    value={batchNote}
+                    onChange={event => setBatchNote(event.target.value)}
+                    placeholder={t('review.batchNotePlaceholder')}
+                  />
+                </Field>
+                <Button variant="secondary" onClick={requestBatch} busy={busy} disabled={selectedVisibleIds.length === 0}>
+                  {t('review.applyBatch')}
+                </Button>
+              </section>
+            </details>
 
             <details className="review-shortcuts">
               <summary>{t('review.shortcuts')}</summary>

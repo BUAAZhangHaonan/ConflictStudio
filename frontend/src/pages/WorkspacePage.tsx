@@ -14,6 +14,7 @@ import {
 } from '../components';
 import { useExamplePageState } from '../app/useExamplePageState';
 import { useMockRepository, useRepositorySnapshot } from '../store';
+import { jobProgress } from '../generation';
 import { formatCompactDateTime, formatDateTime } from '../time';
 import type { DatasetPurpose, DatasetStatus, ExamplePageState, Job } from '../types';
 import './WorkspacePage.css';
@@ -343,7 +344,7 @@ export function WorkspacePage() {
                   </p>
                 ) : null}
                 <span className="workspace-job-card__footer">
-                  <span>{t(`${copyKey}.workspace.jobs.progress`, { value: job.progress })}</span>
+                  <span>{t(`${copyKey}.workspace.jobs.progress`, { value: Math.round(jobProgress(job.completedCount, job.quantity)) })}</span>
                   <time dateTime={job.updatedAt}>
                     {t(`${copyKey}.workspace.jobs.updatedAt`, {
                       value: formatDateTime(job.updatedAt),

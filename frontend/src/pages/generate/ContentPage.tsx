@@ -86,7 +86,7 @@ export function ContentPage() {
   const [failure, setFailure] = useState<null | 'Conflict' | 'NotFound' | 'InvalidInput' | 'Unavailable'>(null);
   const [validation, setValidation] = useState(false);
   const locale = snapshot.preferences.locale;
-  const previewPresets = snapshot.data.presets.filter(item => item.category === draft.category);
+  const previewPresets = snapshot.data.presets.filter(item => item.status === 'Active' && item.category === draft.category);
   const previewPreset = previewPresets.find(item => item.id === previewPresetId) ?? previewPresets[0] ?? null;
   const referenced = selected
     ? contentIsReferenced(selected.id, snapshot.data.jobs, snapshot.data.samples)

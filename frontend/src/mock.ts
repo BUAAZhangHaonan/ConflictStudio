@@ -1,5 +1,6 @@
 import type {
   Archive,
+  BatchDraft,
   Category,
   ConflictDirection,
   ContentItem,
@@ -12,9 +13,9 @@ import type {
   Sample,
 } from './types';
 import { silentVideoDataUrl, voicedVideoDataUrl } from './mockMedia';
-import { buildJobItems } from './generation';
+import { buildJobItems, createBatchAllocationSnapshot } from './generation';
 
-export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v7';
+export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v8';
 export const LOCALE_STORAGE_KEY = 'conflictstudio.prototype.locale';
 export const REVIEWER_STORAGE_KEY = 'conflictstudio.prototype.reviewer.v2';
 
@@ -61,8 +62,10 @@ function makeSample(category: Category, index: number, sampleIndex: number): Sam
     gpu: sampleIndex % 2 === 0 ? 'GPU0' : 'GPU1',
     contentItemId: `content-${category.toLowerCase()}`,
     presetId: `preset-${category.toLowerCase()}`,
-    primaryAssetId: protocol === 'VA' ? voicedVideoDataUrl : silentVideoDataUrl,
-    sourceAssetId: protocol === 'VT' ? voicedVideoDataUrl : null,
+    primaryAssetId: `asset-video-${String(sampleIndex + 1).padStart(4, '0')}`,
+    primaryAssetUrl: protocol === 'VA' ? voicedVideoDataUrl : silentVideoDataUrl,
+    sourceAssetId: protocol === 'VT' ? `asset-source-${String(sampleIndex + 1).padStart(4, '0')}` : null,
+    sourceAssetUrl: protocol === 'VT' ? voicedVideoDataUrl : null,
     thumbnailAssetId: `asset-thumb-${sampleIndex + 1}`,
     dialogue: protocol === 'VA' ? '我没事，你先忙吧。' : null,
     displayText: protocol === 'VT' ? '今天一切都很好。' : null,
@@ -88,9 +91,26 @@ function makeSample(category: Category, index: number, sampleIndex: number): Sam
   };
 }
 
-const samples = categories.flatMap((category, categoryIndex) =>
+const reviewSamples = categories.flatMap((category, categoryIndex) =>
   decisions.map((_, decisionIndex) => makeSample(category, decisionIndex, categoryIndex * 3 + decisionIndex)),
 );
+
+const archiveSamples = Array.from({ length: 28 }, (_, index): Sample => {
+  const category = categories[index % categories.length];
+  const sampleIndex = index + 100;
+  return {
+    ...makeSample(category, 1, sampleIndex),
+    id: `archive-sample-${String(index + 1).padStart(3, '0')}`,
+    displayId: `CS-${String(index + 101).padStart(4, '0')}`,
+    datasetId: 'dataset-main',
+    reviewDecision: 'Accepted',
+    reviewRevision: 1,
+    archiveStatus: index % 7 === 0 ? 'NeedsUpdate' : 'Current',
+    revision: 2,
+  };
+});
+
+const samples = [...reviewSamples, ...archiveSamples];
 
 const reviews: Review[] = samples
   .filter(sample => sample.reviewDecision !== 'Pending')
@@ -102,7 +122,7 @@ const reviews: Review[] = samples
     note: index % 3 === 0 ? '已核对媒体与文本。' : '',
     sampleRevision: 1,
     revision: 1,
-    createdAt: `2026-08-${String(index + 1).padStart(2, '0')}T09:00:00.000Z`,
+    createdAt: new Date(Date.parse(baseDate) - index * 86_400_000).toISOString(),
   }));
 
 reviews.push(
@@ -162,7 +182,9 @@ function makeJob(
 ): Job {
   const id = `job-${status.toLowerCase()}`;
   const model = index % 2 === 0 ? 'LTX-2.3' : 'MiniMax H3';
-  const gpus = [status === 'Queued' ? 'GPU1' : index % 2 === 0 ? 'GPU0' : 'GPU1'] as Job['gpus'];
+  const gpus = (status === 'Running'
+    ? ['GPU0', 'GPU1']
+    : [status === 'Queued' ? 'GPU1' : index % 2 === 0 ? 'GPU0' : 'GPU1']) as Job['gpus'];
   const category = source === 'Test'
     ? 'A-VA'
     : status === 'Running'
@@ -188,9 +210,7 @@ function makeJob(
     gpus,
     status,
     failureReason: status === 'Failed' ? 'ModelServiceUnavailable' : null,
-    progress: status === 'Completed' ? 100 : status === 'Running' ? 26 : status === 'Queued' ? 0 : 38,
     completedCount: status === 'Completed' ? 1 : status === 'Running' ? 33 : 0,
-    currentItemSequence: status === 'Running' ? 34 : status === 'Failed' ? 1 : null,
     seed,
     quantity: status === 'Running' ? 128 : index === 0 ? 8 : 1,
     steps: stepsFor(status, id, timestamp),
@@ -211,7 +231,7 @@ function makeJob(
     job.status,
     job.gpus,
     job.completedCount,
-    job.currentItemSequence,
+    status === 'Running' ? [34, 35] : status === 'Failed' ? [1] : [],
   );
   if (source === 'Test') {
     const content = contentItems.find(item =>
@@ -251,37 +271,32 @@ function makeJob(
     const preset = presets.find(item => item.category === category);
     if (!preset || matching.length === 0) throw new Error(`Missing mock batch input for ${id}.`);
     const contentIds = matching.map(item => item.id);
+    const batchDraft: BatchDraft = {
+      datasetId: 'dataset-main',
+      category,
+      conflictDirection: job.conflictDirection,
+      contentItemIds: contentIds,
+      presetId: preset.id,
+      model,
+      gpus,
+      quantity: job.quantity,
+      seed,
+      ages: [25, 35, 45, 60] as Array<25 | 35 | 45 | 60>,
+      genders: ['Male', 'Female'] as Array<'Male' | 'Female'>,
+      ethnicities: ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'] as Sample['ethnicity'][],
+    };
     job.batchInput = {
-      draft: {
-        datasetId: 'dataset-main',
-        category,
-        conflictDirection: job.conflictDirection,
-        contentItemIds: contentIds,
-        presetId: preset.id,
-        model,
-        gpus,
-        quantity: job.quantity,
-        seed,
-        ages: [25, 35, 45, 60],
-        genders: ['Male', 'Female'],
-        ethnicities: ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'],
-      },
+      draft: batchDraft,
       allocations: Array.from({ length: job.quantity }, (_, itemIndex) => {
         const content = matching[itemIndex % matching.length];
         const age = [25, 35, 45, 60] as const;
         const gender = ['Male', 'Female'] as const;
         const ethnicity = ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'] as const;
-        return {
-          sequence: itemIndex + 1,
-          contentItemId: content.id,
-          contentItemName: content.name,
-          category,
-          conflictDirection: job.conflictDirection,
+        return createBatchAllocationSnapshot(itemIndex + 1, batchDraft, content, preset, {
           age: age[itemIndex % age.length],
           gender: gender[itemIndex % gender.length],
           ethnicity: ethnicity[itemIndex % ethnicity.length],
-          model,
-        };
+        });
       }),
       datasetRevision: 3,
       contentItemRevisions: Object.fromEntries(matching.map(item => [item.id, item.revision])),
@@ -292,7 +307,7 @@ function makeJob(
       job.status,
       job.gpus,
       job.completedCount,
-      job.currentItemSequence,
+      status === 'Running' ? [34, 35] : status === 'Failed' ? [1] : [],
       contentIds,
     );
   }
@@ -373,6 +388,7 @@ const presets: Preset[] = categories.map((category, index) => ({
   id: `preset-${category.toLowerCase()}`,
   name: `${category} 标准预设`,
   category,
+  status: 'Active',
   fixedStructureRules: [
     'presets.rule.subject',
     'presets.rule.signal',
@@ -408,7 +424,7 @@ const archives: Archive[] = [
 ];
 
 export const initialData: RepositoryData = {
-  version: 6,
+  version: 7,
   datasets: [
     {
       id: 'dataset-main',
@@ -446,7 +462,7 @@ export const initialData: RepositoryData = {
     { id: 'reviewer-chen', name: '陈宁', revision: 2, createdAt: baseDate, updatedAt: baseDate },
   ],
   gpuStates: [
-    { slot: 'GPU0', availability: 'Available', loadedModel: 'LTX-2.3', activeJobId: null, checkedAt: baseDate },
+    { slot: 'GPU0', availability: 'Reserved', loadedModel: 'LTX-2.3', activeJobId: 'job-running', checkedAt: baseDate },
     { slot: 'GPU1', availability: 'Reserved', loadedModel: 'MiniMax H3', activeJobId: 'job-running', checkedAt: baseDate },
   ],
   samples,

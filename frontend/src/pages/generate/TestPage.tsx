@@ -11,6 +11,7 @@ import {
   type TestExecutionMode,
 } from '../../types';
 import { silentVideoDataUrl, voicedVideoDataUrl } from '../../mockMedia';
+import { jobProgress } from '../../generation';
 import {
   ages,
   categories,
@@ -142,7 +143,7 @@ export function TestPage() {
     [category, direction, snapshot.data.contentItems],
   );
   const matchingPresets = useMemo(
-    () => snapshot.data.presets.filter(item => item.category === category),
+    () => snapshot.data.presets.filter(item => item.status === 'Active' && item.category === category),
     [category, snapshot.data.presets],
   );
   const activeDatasets = snapshot.data.datasets.filter(dataset => dataset.status === 'Active');
@@ -543,7 +544,7 @@ export function TestPage() {
                       </div>
                       <div>
                         <dt>{g('jobs.progress')}</dt>
-                        <dd>{card.job.progress}%</dd>
+                        <dd>{Math.round(jobProgress(card.job.completedCount, card.job.quantity))}%</dd>
                       </div>
                       <div>
                         <dt>{g('jobs.source')}</dt>

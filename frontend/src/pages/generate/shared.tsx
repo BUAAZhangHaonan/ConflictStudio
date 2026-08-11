@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useBlocker, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, ConfirmDialog, PageHeader, StatusBadge, useToast } from '../../components';
 import { generationText, type GenerationKey } from '../../locales/features/generation';
 import { useMockRepository, useRepositorySnapshot } from '../../store';
@@ -25,12 +25,6 @@ export const genders = ['Male', 'Female'] as const;
 export const ethnicities = ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'] as const;
 
 const draftPrefix = 'conflictstudio.generation.draft.';
-const dirtyEditors = new Set<symbol>();
-
-export function confirmGenerationNavigation(message: string): boolean {
-  return dirtyEditors.size === 0 || window.confirm(message);
-}
-
 export function useGenerationCopy() {
   const locale = useRepositorySnapshot().preferences.locale;
   return useCallback(
@@ -58,36 +52,27 @@ export function useGenerationDraft<T>(key: string, value: T, dirty: boolean) {
 
 export function useUnsavedChanges(dirty: boolean) {
   const g = useGenerationCopy();
-  const location = useLocation();
-  const token = useRef(Symbol('generation-editor'));
+  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
+    dirty && `${currentLocation.pathname}${currentLocation.search}` !== `${nextLocation.pathname}${nextLocation.search}`,
+  );
+
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return;
+    if (window.confirm(g('generate.leaveConfirm'))) blocker.proceed();
+    else blocker.reset();
+  }, [blocker, g]);
+
   useEffect(() => {
     if (!dirty) return;
-    const currentToken = token.current;
-    dirtyEditors.add(currentToken);
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = g('generate.leaveConfirm');
     };
-    const handleAnchorClick = (event: MouseEvent) => {
-      const candidate = (event.target as Element | null)?.closest?.('a[href]');
-      if (!(candidate instanceof HTMLAnchorElement)) return;
-      if (candidate.target && candidate.target !== '_self') return;
-      const destination = new URL(candidate.href, window.location.href);
-      if (destination.origin !== window.location.origin) return;
-      if (destination.pathname === location.pathname && destination.search === location.search) return;
-      if (!window.confirm(g('generate.leaveConfirm'))) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-      }
-    };
     window.addEventListener('beforeunload', warn);
-    document.addEventListener('click', handleAnchorClick, true);
     return () => {
-      dirtyEditors.delete(currentToken);
       window.removeEventListener('beforeunload', warn);
-      document.removeEventListener('click', handleAnchorClick, true);
     };
-  }, [dirty, g, location.pathname, location.search]);
+  }, [dirty, g]);
 }
 
 export function useCommandEnter(action: () => void, enabled = true) {

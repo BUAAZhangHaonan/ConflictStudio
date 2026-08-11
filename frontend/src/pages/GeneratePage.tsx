@@ -4,7 +4,7 @@ import { ContentPage } from './generate/ContentPage';
 import { JobsPage } from './generate/JobsPage';
 import { PresetsPage } from './generate/PresetsPage';
 import { TestPage } from './generate/TestPage';
-import { confirmGenerationNavigation, useGenerationCopy } from './generate/shared';
+import { useGenerationCopy } from './generate/shared';
 import './generate/GenerationPage.css';
 
 type GenerateSection = 'batches' | 'test' | 'content' | 'presets' | 'jobs';
@@ -31,7 +31,7 @@ export function GeneratePage({ section }: { section: GenerateSection }) {
           value={current}
           onChange={event => {
             const next = generateSections.find(item => item.section === event.target.value)?.to;
-            if (next && confirmGenerationNavigation(g('generate.leaveConfirm'))) navigate(next);
+            if (next) navigate(next);
           }}
           aria-label={g('generate.sectionAriaLabel')}
         >

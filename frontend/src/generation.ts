@@ -1,4 +1,6 @@
 import type {
+  BatchAllocation,
+  BatchDraft,
   ContentItem,
   GpuSlot,
   GpuState,
@@ -52,27 +54,67 @@ export function validateBatchGpuSelection(
     : 'Unavailable';
 }
 
+export function selectInitialBatchDraft(stored: BatchDraft | null, defaults: BatchDraft): BatchDraft {
+  return structuredClone(stored ?? defaults);
+}
+
+export function jobProgress(completedCount: number, quantity: number): number {
+  if (quantity <= 0) return 0;
+  return Math.min(100, Math.max(0, (completedCount / quantity) * 100));
+}
+
+export function createBatchAllocationSnapshot(
+  sequence: number,
+  draft: BatchDraft,
+  content: ContentItem,
+  preset: Preset,
+  demographics: Pick<BatchAllocation, 'age' | 'gender' | 'ethnicity'>,
+): BatchAllocation {
+  const prompts = composeVideoGenerationInput(content, preset);
+  return {
+    sequence,
+    contentItemId: content.id,
+    contentItemName: content.name,
+    contentItemRevision: content.revision,
+    presetId: preset.id,
+    presetName: preset.name,
+    presetRevision: preset.revision,
+    category: draft.category,
+    conflictDirection: draft.conflictDirection,
+    ...demographics,
+    model: draft.model,
+    seed: draft.seed === null ? 100_000 + sequence : draft.seed + sequence - 1,
+    finalPositivePrompt: prompts.positivePrompt,
+    finalNegativePrompt: prompts.negativePrompt,
+  };
+}
+
 export function buildJobItems(
   quantity: number,
   status: JobStatus,
   gpus: readonly GpuSlot[],
   completedCount = status === 'Completed' ? quantity : 0,
-  currentItemSequence: number | null = null,
+  activeSequences: readonly number[] = [],
   contentItemIds: readonly string[] = [],
 ): JobItem[] {
   return Array.from({ length: quantity }, (_, index) => {
     const sequence = index + 1;
     const completed = sequence <= completedCount;
-    const current = sequence === currentItemSequence;
+    const activeIndex = activeSequences.indexOf(sequence);
+    const active = activeIndex >= 0;
     const itemStatus: JobStatus = completed
       ? 'Completed'
-      : current
+      : active
         ? status === 'Failed' ? 'Failed' : 'Running'
         : status === 'Cancelled' ? 'Cancelled' : 'Queued';
     return {
       sequence,
       status: itemStatus,
-      gpu: completed || current ? gpus[index % gpus.length] ?? null : null,
+      gpuId: completed
+        ? gpus[index % gpus.length] ?? null
+        : active
+          ? gpus[activeIndex % gpus.length] ?? null
+          : null,
       contentItemId: contentItemIds.length > 0 ? contentItemIds[index % contentItemIds.length] : null,
     };
   });

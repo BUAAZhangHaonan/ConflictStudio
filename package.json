@@ -11,6 +11,7 @@
     "test:time": "node --test scripts/time.test.mts",
     "test:generation": "node --test scripts/generation.test.mts",
     "test:review-archive": "node --test scripts/review-archive.test.mts",
+    "browser:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/browser-check.ps1",
     "check": "npm run test:time && npm run test:generation && npm run test:review-archive && npm run typecheck && npm run build && npm run copy:check && npm run built:check",
     "test": "bash scripts/integrate.sh test",
     "start": "bash scripts/run.sh",

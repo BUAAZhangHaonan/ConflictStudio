@@ -178,6 +178,9 @@ export function AppShell({ children }: PropsWithChildren) {
             {t('app.mainNavigation')}
           </h2>
           {navigation}
+          <button type="button" className="text-button mobile-drawer__language" onClick={toggleLocale}>
+            {t('app.changeLanguage')}
+          </button>
         </aside>
       </dialog>
       <div className="app-shell__body">

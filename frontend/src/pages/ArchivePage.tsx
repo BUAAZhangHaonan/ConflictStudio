@@ -5,6 +5,8 @@ import { useExamplePageState } from '../app/useExamplePageState';
 import { Button, Dialog, Metric, PageHeader, useToast } from '../components';
 import {
   ARCHIVE_PAGE_SIZE,
+  archiveFileName,
+  archiveJsonl,
   clampPage,
   pageCount,
   pageItems,
@@ -13,7 +15,6 @@ import {
 import { useMockRepository, useRepositorySnapshot } from '../store';
 import { formatDateTime } from '../time';
 import {
-  protocolForCategory,
   type ArchivePreview,
   type Category,
   type Sample,
@@ -47,34 +48,6 @@ function compareText(left: string, right: string): number {
   if (left < right) return -1;
   if (left > right) return 1;
   return 0;
-}
-
-function archiveJsonl(samples: readonly Sample[]): string {
-  return `${samples.map(sample => JSON.stringify({
-    dataset_id: sample.datasetId,
-    source_id: sample.displayId,
-    sample_id: sample.id,
-    protocol: protocolForCategory(sample.category),
-    relation: sample.category.startsWith('A-') ? 'Aligned' : 'Conflict',
-    conflict_direction: sample.conflictDirection,
-    decision: sample.reviewDecision,
-    media: [{
-      asset_id: sample.primaryAssetId,
-      type: 'video',
-      role: 'primary',
-      url: sample.primaryAssetId,
-    }],
-    model: sample.model,
-    dialogue: sample.dialogue,
-    display_text: sample.displayText,
-    true_emotion_description: sample.trueEmotionDescription,
-    true_emotion: sample.trueEmotion,
-    apparent_emotion: sample.apparentEmotion,
-    positive_prompt: sample.videoPrompt,
-    negative_prompt: sample.negativePrompt,
-    seed: sample.seed,
-    updated_at: sample.updatedAt,
-  })).join('\n')}\n`;
 }
 
 function ArchiveStateView({ title, body, loading = false, urgent = false, action }: ArchiveStateViewProps) {
@@ -156,7 +129,7 @@ export function ArchivePage() {
   const filteredRows = useMemo(() => {
     const query = search.trim().toLocaleLowerCase(snapshot.preferences.locale);
     const matches = rows.filter(sample => {
-      const searchText = [sample.displayId, sample.id, dataset?.name, sample.category, sample.model]
+      const searchText = [sample.displayId, dataset?.name, sample.category, sample.model]
         .filter(Boolean)
         .join(' ')
         .toLocaleLowerCase(snapshot.preferences.locale);
@@ -272,11 +245,11 @@ export function ArchivePage() {
   const downloadJsonl = () => {
     if (!dataset || archivedSamples.length === 0) return;
     try {
-      const blob = new Blob([archiveJsonl(archivedSamples)], { type: 'application/x-ndjson;charset=utf-8' });
+      const blob = new Blob([archiveJsonl(dataset.name, archivedSamples)], { type: 'application/x-ndjson;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `${dataset.id}-archive.jsonl`;
+      anchor.download = archiveFileName(dataset.name);
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
@@ -299,13 +272,13 @@ export function ArchivePage() {
     buildPreview();
   };
 
-  const openReview = (sampleId: string) => {
+  const openReview = (sample: Sample) => {
     const params = new URLSearchParams();
     if (datasetId) params.set('dataset', datasetId);
     if (search.trim()) params.set('search', search.trim());
     if (categoryFilter !== 'All') params.set('category', categoryFilter);
     if (currentPage > 1) params.set('page', String(currentPage));
-    navigate(reviewLocation(sampleId, `/archive?${params.toString()}`));
+    navigate(reviewLocation(sample.displayId, `/archive?${params.toString()}`));
   };
 
   useEffect(() => {
@@ -341,11 +314,11 @@ export function ArchivePage() {
     return <div className="page-stack archive-page" role="region" aria-label={t('archive.aria.page')}>{pageHeader}<section className="panel">{stateView}</section></div>;
   }
 
-  const previewGroups = previewState ? [
+  const previewGroups = (previewState ? [
     { change: 'Added' as const, ids: previewState.value.addedSampleIds },
     { change: 'Updated' as const, ids: previewState.value.updatedSampleIds },
     { change: 'Removed' as const, ids: previewState.value.removedSampleIds },
-  ] : [];
+  ] : []).filter(group => group.ids.length > 0);
   const changeLabel = (change: ArchiveChange): string => {
     if (change === 'Added') return t('archive.added');
     if (change === 'Updated') return t('archive.updated');
@@ -427,10 +400,10 @@ export function ArchivePage() {
                           <th scope="col" aria-sort={sortKey === 'updatedAt' ? sortDirection : 'none'}><button type="button" onClick={() => requestSort('updatedAt')}><span>{t('fields.updatedAt')}</span><span aria-hidden="true">{sortKey === 'updatedAt' ? sortDirection === 'ascending' ? '↑' : '↓' : '↕'}</span></button></th>
                         </tr></thead>
                         <tbody>{visibleRows.map(sample => (
-                          <tr key={sample.id} data-sample-id={sample.id}>
-                            <td><video className="archive-thumbnail" src={sample.primaryAssetId} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /></td>
+                          <tr key={sample.id} data-sample-id={sample.displayId}>
+                            <td><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /></td>
                             <th scope="row">
-                              <button type="button" className="table-link" onClick={() => openReview(sample.id)}>{sample.displayId}</button>
+                              <button type="button" className="table-link" onClick={() => openReview(sample)}>{sample.displayId}</button>
                               <span className="archive-sample-meta">{t(`category.${sample.category}`)}<br />{formatDateTime(sample.updatedAt)}</span>
                             </th>
                             <td>{t(`category.${sample.category}`)}</td>
@@ -459,7 +432,7 @@ export function ArchivePage() {
             <p>{t('archive.previewSummary', { add: previewState.value.addedSampleIds.length, update: previewState.value.updatedSampleIds.length, remove: previewState.value.removedSampleIds.length })}</p>
             {previewChangeCount === 0 ? <div className="archive-preview__current"><h3>{t('archive.noChangesTitle')}</h3><p>{t('archive.noChangesBody')}</p></div> : null}
             <div className="archive-preview__groups" aria-label={t('archive.aria.previewTable')}>
-              {previewGroups.map(group => <section key={group.change} className="archive-preview__group"><h3><span>{changeLabel(group.change)}</span><span>{group.ids.length}</span></h3>{group.ids.length > 0 ? <ul>{group.ids.map(id => { const sample = sampleById.get(id); return <li key={id}><span>{sample?.displayId ?? id}</span><span>{sample ? t(`category.${sample.category}`) : t('state.empty.title')}</span></li>; })}</ul> : <span className="archive-preview__zero">0</span>}</section>)}
+              {previewGroups.map(group => <section key={group.change} className="archive-preview__group"><h3><span>{changeLabel(group.change)}</span><span>{group.ids.length}</span></h3><ul>{group.ids.map(id => { const sample = sampleById.get(id); return <li key={id}><span>{sample?.displayId ?? id}</span><span>{sample ? t(`category.${sample.category}`) : t('state.empty.title')}</span></li>; })}</ul></section>)}
             </div>
             <p className="archive-preview__warning">{t('archive.confirmWarning')}</p>
           </div>

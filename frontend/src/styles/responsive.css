@@ -19,6 +19,7 @@
   .mobile-drawer::backdrop { background: rgba(31, 41, 51, .36); }
   .mobile-drawer__backdrop { position: absolute; inset: 0; border: 0; background: transparent; }
   .mobile-drawer__panel { position: relative; z-index: 1; width: min(280px, 84vw); height: 100%; padding: 16px 12px; border-right: 1px solid var(--color-border); background: var(--color-surface); transform: translateX(-100%); transition: transform .16s ease; }
+  .mobile-drawer__language { width: 100%; margin-top: 12px; text-align: left; }
   .mobile-drawer.is-open .mobile-drawer__panel { transform: translateX(0); }
   .generate-nav { padding-inline: 8px; }
   .generate-nav a { padding-inline: 10px; }
