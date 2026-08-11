@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, ConfirmDialog, Field, TableShell, useToast } from '../../components';
 import { useMockRepository, useRepositorySnapshot } from '../../store';
+import { formatDateTime } from '../../time';
 import type { Category, Preset, PresetInput, PresetRuleKey } from '../../types';
 import {
   categories,
@@ -209,7 +210,7 @@ export function PresetsPage() {
               {filtered.map(item => (
                 <tr key={item.id} className={!creating && item.id === selectedId ? 'is-selected' : undefined}>
                   <th scope="row"><button type="button" className="table-link" aria-pressed={!creating && item.id === selectedId} onClick={() => choose(item)}>{item.name}</button></th>
-                  <td>{categoryLabel(g, item.category)}</td><td>{new Date(item.updatedAt).toLocaleDateString(locale)}</td>
+                  <td>{categoryLabel(g, item.category)}</td><td>{formatDateTime(item.updatedAt)}</td>
                 </tr>
               ))}
             </TableShell>

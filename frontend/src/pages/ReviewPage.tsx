@@ -21,6 +21,7 @@ import {
   type Sample,
 } from '../types';
 import { directionForTransfer, nextCategory, useMockRepository, useRepositorySnapshot } from '../store';
+import { formatDateTime } from '../time';
 import './ReviewPage.css';
 
 type FinalDecision = Exclude<ReviewDecision, 'Pending'>;
@@ -648,7 +649,7 @@ export function ReviewPage() {
                 <div><dt>{t('review.model')}</dt><dd>{selected.model}</dd></div>
                 <div><dt>{t('review.emotion')}</dt><dd>{selected.emotion}</dd></div>
                 <div><dt>{t('review.seed')}</dt><dd>{selected.seed}</dd></div>
-                <div><dt>{t('review.updatedAt')}</dt><dd>{new Date(selected.updatedAt).toLocaleString(snapshot.preferences.locale)}</dd></div>
+                <div><dt>{t('review.updatedAt')}</dt><dd>{formatDateTime(selected.updatedAt)}</dd></div>
               </dl>
               <div className="review-context__copy">
                 {protocolForCategory(selected.category) === 'VA' && selected.dialogue ? (

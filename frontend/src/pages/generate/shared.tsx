@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, ConfirmDialog, PageHeader, StatusBadge, useToast } from '../../components';
 import { generationText, type GenerationKey } from '../../locales/features/generation';
 import { useMockRepository, useRepositorySnapshot } from '../../store';
+import { formatDateTime } from '../../time';
 import type {
   Category,
   ConflictDirection,
@@ -215,7 +216,7 @@ export function GpuPanel() {
                 <StatusBadge label={g(`gpu.${gpu.availability}` as GenerationKey)} kind={availabilityKind(gpu.availability)} />
               </div>
               <p>{gpu.loadedModel ? g('gpu.loadedModel', { model: g(`model.${gpu.loadedModel}` as GenerationKey) }) : g('gpu.noModel')}</p>
-              <p>{g('gpu.checked', { time: new Date(gpu.checkedAt).toLocaleString(snapshot.preferences.locale) })}</p>
+              <p>{g('gpu.checked', { time: formatDateTime(gpu.checkedAt) })}</p>
               {gpu.availability === 'Available' && gpu.loadedModel ? (
                 <Button variant="quiet" onClick={() => {
                   setReleaseFailed(false);

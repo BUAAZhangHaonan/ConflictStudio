@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useExamplePageState } from '../app/useExamplePageState';
 import { Button, Dialog, Metric, PageHeader, StatusBadge, useToast } from '../components';
 import { useMockRepository, useRepositorySnapshot } from '../store';
+import { formatDateTime } from '../time';
 import {
   protocolForCategory,
   type ArchivePreview,
@@ -486,7 +487,7 @@ export function ArchivePage() {
                 <p>
                   {currentArchive?.lastSyncedAt
                     ? t('archive.lastSynced', {
-                        date: new Date(currentArchive.lastSyncedAt).toLocaleString(snapshot.preferences.locale),
+                        date: formatDateTime(currentArchive.lastSyncedAt),
                       })
                     : t('archive.neverSynced')}
                 </p>
@@ -632,7 +633,7 @@ export function ArchivePage() {
                                     aria-pressed={selected}
                                     aria-expanded={selected}
                                     aria-controls={detailId}
-                                    title={selectedRow?.sample.id === row.sample.id ? row.sample.displayId : `${row.sample.displayId} — ${t('archive.currentArchive')}`}
+                                  title={selectedRow?.sample.id === row.sample.id ? row.sample.displayId : `${row.sample.displayId} ${t('archive.currentArchive')}`}
                                     aria-label={row.sample.displayId}
                                     onClick={() => setSelectedSampleId(row.sample.id)}
                                   >
@@ -641,7 +642,7 @@ export function ArchivePage() {
                                 </th>
                                 <td>{t(`category.${row.sample.category}`)}</td>
                                 <td><StatusBadge label={changeLabel(row.change)} kind={changeKind(row.change)} /></td>
-                                <td>{new Date(row.sample.updatedAt).toLocaleString(snapshot.preferences.locale)}</td>
+                                <td>{formatDateTime(row.sample.updatedAt)}</td>
                               </tr>
                             );
                           })}
@@ -667,16 +668,16 @@ export function ArchivePage() {
                       <div><dt>{t('archive.archiveStatus')}</dt><dd><StatusBadge label={t(`status.archive.${selectedRow.sample.archiveStatus}`)} kind={selectedRow.sample.archiveStatus === 'Current' ? 'complete' : 'problem'} /></dd></div>
                       <div><dt>{t('review.model')}</dt><dd>{selectedRow.sample.model}</dd></div>
                       <div><dt>{t('review.seed')}</dt><dd>{selectedRow.sample.seed}</dd></div>
-                      <div><dt>{t('review.updatedAt')}</dt><dd>{new Date(selectedRow.sample.updatedAt).toLocaleString(snapshot.preferences.locale)}</dd></div>
+                      <div><dt>{t('review.updatedAt')}</dt><dd>{formatDateTime(selectedRow.sample.updatedAt)}</dd></div>
                       <div className="archive-detail__wide">
                         <dt>{t(protocolForCategory(selectedRow.sample.category) === 'VA' ? 'review.dialogue' : 'review.displayText')}</dt>
-                        <dd>{protocolForCategory(selectedRow.sample.category) === 'VA' ? selectedRow.sample.dialogue ?? '—' : selectedRow.sample.displayText ?? '—'}</dd>
+                        <dd>{protocolForCategory(selectedRow.sample.category) === 'VA' ? selectedRow.sample.dialogue ?? t('media.unavailable') : selectedRow.sample.displayText ?? t('media.unavailable')}</dd>
                       </div>
                       <div className="archive-detail__wide"><dt>{t('review.prompt')}</dt><dd>{selectedRow.sample.videoPrompt}</dd></div>
                       <div className="archive-detail__wide"><dt>{t('review.explanation')}</dt><dd>{selectedRow.sample.explanation}</dd></div>
                       <div className="archive-detail__wide"><dt>{t('review.primaryMedia')}</dt><dd>{t('review.playableMedia')}</dd></div>
                       {protocolForCategory(selectedRow.sample.category) === 'VT' ? (
-                        <div className="archive-detail__wide"><dt>{t('review.generationRecord')}</dt><dd>{selectedRow.sample.sourceAssetId ? t('review.sourceRecord') : '—'}</dd></div>
+                      <div className="archive-detail__wide"><dt>{t('review.generationRecord')}</dt><dd>{selectedRow.sample.sourceAssetId ? t('review.sourceRecord') : t('media.unavailable')}</dd></div>
                       ) : null}
                     </dl>
                   </aside>
@@ -759,7 +760,7 @@ export function ArchivePage() {
                         return (
                           <li key={id}>
                             <span>{sample?.displayId ?? id}</span>
-                            <span>{sample ? t(`category.${sample.category}`) : '—'}</span>
+                      <span>{sample ? t(`category.${sample.category}`) : t('state.empty.title')}</span>
                           </li>
                         );
                       })}

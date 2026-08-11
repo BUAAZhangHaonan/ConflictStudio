@@ -56,6 +56,83 @@
   background: var(--color-blue-soft);
 }
 
+.workspace-dataset-name {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.workspace-dataset-name__title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-dataset-name__note {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.workspace-dataset-purpose {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.workspace-dataset-purpose__button {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: help;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  place-items: center;
+}
+
+.workspace-dataset-purpose__button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.workspace-dataset-purpose__button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.workspace-dataset-purpose__tooltip {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 8px);
+  left: 50%;
+  display: none;
+  width: max-content;
+  max-width: min(320px, 70vw);
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  box-shadow: 0 8px 24px rgb(31 41 51 / 12%);
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  transform: translateX(-50%);
+}
+
+.workspace-dataset-purpose:hover .workspace-dataset-purpose__tooltip,
+.workspace-dataset-purpose:focus-within .workspace-dataset-purpose__tooltip {
+  display: block;
+}
+
 .workspace-datasets__actions {
   display: flex;
   align-items: center;
@@ -70,6 +147,10 @@
 .workspace-dialog-form {
   display: grid;
   gap: 12px;
+}
+
+.workspace-dialog-form textarea {
+  resize: vertical;
 }
 
 .workspace-jobs__grid {
@@ -150,6 +231,17 @@
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.workspace-job-card__failure {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid #b42318;
+  background: #fff4f2;
+  color: var(--color-text);
+  font-size: 13px;
 }
 
 .workspace-job-card__footer {

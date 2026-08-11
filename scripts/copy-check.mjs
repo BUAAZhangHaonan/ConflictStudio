@@ -6,8 +6,10 @@ const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, '..');
 const sourceRoot = join(projectRoot, 'frontend', 'src');
 const localeRoot = join(sourceRoot, 'locales');
+const timeSourcePath = join(sourceRoot, 'time.ts');
 
 const blockedPatterns = [
+  /[·—–“”「」『』]/u,
   /赋能/u,
   /智能/u,
   /一站式/u,
@@ -51,8 +53,6 @@ const technicalTokens = [
   'A-VT',
   'C-VA',
   'C-VT',
-  'A ·',
-  'C ·',
   'VA',
   'VT',
   'LTX-2.3',
@@ -103,6 +103,7 @@ function isChineseLocaleValue(file, source, index) {
 const failures = [];
 const localeFiles = filesUnder(localeRoot, new Set(['.ts']));
 const jsxFiles = filesUnder(sourceRoot, new Set(['.tsx']));
+const sourceFiles = filesUnder(sourceRoot, new Set(['.ts', '.tsx']));
 
 for (const file of [...localeFiles, ...jsxFiles]) {
   const source = readFileSync(file, 'utf8');
@@ -112,6 +113,22 @@ for (const file of [...localeFiles, ...jsxFiles]) {
       failures.push(`${relative(projectRoot, file)}:${lineNumber(source, match.index)} blocked copy: ${match[0]}`);
     }
     pattern.lastIndex = 0;
+  }
+}
+
+for (const file of sourceFiles) {
+  const source = readFileSync(file, 'utf8');
+  const forbiddenTimeFormatting = [
+    /\.toLocaleString\s*\(/u,
+    /\.toLocaleDateString\s*\(/u,
+    /\.toLocaleTimeString\s*\(/u,
+    /timeZone:\s*['"]UTC['"]/u,
+  ];
+  for (const pattern of forbiddenTimeFormatting) {
+    const match = pattern.exec(source);
+    if (match) {
+      failures.push(`${relative(projectRoot, file)}:${lineNumber(source, match.index)} local time formatting bypass: ${match[0]}`);
+    }
   }
 }
 
@@ -156,6 +173,20 @@ for (const file of localeFiles) {
 }
 
 if (!existsSync(sourceRoot)) failures.push('frontend/src is missing');
+if (!existsSync(timeSourcePath)) {
+  failures.push('frontend/src/time.ts is missing');
+} else {
+  const timeSource = readFileSync(timeSourcePath, 'utf8');
+  if (!timeSource.includes("const SHANGHAI_TIME_ZONE = 'Asia/Shanghai';")) {
+    failures.push('frontend/src/time.ts does not use Asia/Shanghai');
+  }
+  if (!timeSource.includes('`${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`')) {
+    failures.push('frontend/src/time.ts does not provide YYYY-MM-DD HH:mm:ss');
+  }
+  if (!timeSource.includes('`${parts.hour}:${parts.minute}:${parts.second}`')) {
+    failures.push('frontend/src/time.ts does not provide HH:mm:ss');
+  }
+}
 
 if (failures.length > 0) {
   console.error(failures.join('\n'));

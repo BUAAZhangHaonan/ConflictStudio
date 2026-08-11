@@ -4,25 +4,13 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Field, Metric, PageHeader, StateView, TableShell } from '../components';
 import { PageStateBoundary } from '../app/PageStateBoundary';
 import { useMockRepository, useRepositorySnapshot } from '../store';
+import { formatDate } from '../time';
 import './StatisticsPage.css';
 
 const dateRangeErrorId = 'statistics-date-error';
 
-function utcDateDaysAgo(referenceDate: Date, days: number): string {
-  return new Date(Date.UTC(
-    referenceDate.getUTCFullYear(),
-    referenceDate.getUTCMonth(),
-    referenceDate.getUTCDate() - days,
-  )).toISOString().slice(0, 10);
-}
-
-function formatUtcDate(value: string, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  }).format(new Date(value));
+function dateDaysAgo(referenceDate: Date, days: number): string {
+  return formatDate(new Date(referenceDate.getTime() - days * 24 * 60 * 60 * 1000));
 }
 
 export function StatisticsPage() {
@@ -33,8 +21,8 @@ export function StatisticsPage() {
   const [defaultRange] = useState(() => {
     const referenceDate = new Date();
     return {
-      startDate: utcDateDaysAgo(referenceDate, 29),
-      endDate: utcDateDaysAgo(referenceDate, 0),
+      startDate: dateDaysAgo(referenceDate, 29),
+      endDate: dateDaysAgo(referenceDate, 0),
     };
   });
   const [datasetId, setDatasetId] = useState<string | null>(null);
@@ -197,7 +185,7 @@ export function StatisticsPage() {
                       tabIndex={0}
                       role="img"
                       aria-label={t('workspaceSettingsStatistics.statistics.activityPoint', {
-                        date: formatUtcDate(item.date, snapshot.preferences.locale),
+                        date: formatDate(item.date),
                         count: item.reviewedCount,
                       })}
                     >

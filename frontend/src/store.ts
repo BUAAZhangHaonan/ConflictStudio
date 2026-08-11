@@ -52,6 +52,7 @@ import {
   protocolForCategory,
 } from './types';
 import { allocatePrototypeId } from './id';
+import { formatCompactDateTime, formatDate } from './time';
 
 type Listener = () => void;
 
@@ -82,7 +83,7 @@ function loadData(storage: Storage): RepositoryData {
     typeof parsed !== 'object' ||
     parsed === null ||
     !('version' in parsed) ||
-    parsed.version !== 3
+    parsed.version !== 4
   ) {
     throw new Error('Prototype data has an unsupported shape.');
   }
@@ -103,6 +104,7 @@ function createJob(
     id: allocatePrototypeId('job'),
     parentJobId: null,
     ...input,
+    failureReason: null,
     progress: 0,
     steps: [],
     logs: [],
@@ -113,6 +115,10 @@ function createJob(
     completedAt: null,
     updatedAt: timestamp,
   };
+}
+
+function jobDisplayName(job: Pick<Job, 'category' | 'createdAt'>): string {
+  return `${job.category}-${formatCompactDateTime(job.createdAt)}`;
 }
 
 function createSteps(jobId: string): Job['steps'] {
@@ -221,7 +227,7 @@ export class MockRepository {
     };
   }
 
-  createDataset(name: string): RepositoryResult<Dataset> {
+  createDataset(name: string, note: string): RepositoryResult<Dataset> {
     const cleanName = name.trim();
     if (!cleanName) return failure('InvalidInput', { field: 'name' });
     if (this.snapshot.data.datasets.some(item => item.name.toLocaleLowerCase() === cleanName.toLocaleLowerCase())) {
@@ -231,6 +237,8 @@ export class MockRepository {
     const dataset: Dataset = {
       id: allocatePrototypeId('dataset'),
       name: cleanName,
+      purpose: 'General',
+      note: note.trim(),
       status: 'Active',
       revision: 1,
       createdAt: timestamp,
@@ -256,7 +264,12 @@ export class MockRepository {
     return success(dataset);
   }
 
-  renameDataset(datasetId: string, name: string, expectedRevision: number): RepositoryResult<Dataset> {
+  updateDatasetDetails(
+    datasetId: string,
+    name: string,
+    note: string,
+    expectedRevision: number,
+  ): RepositoryResult<Dataset> {
     const dataset = this.snapshot.data.datasets.find(item => item.id === datasetId);
     if (!dataset) return failure('NotFound', { field: 'datasetId' });
     if (dataset.revision !== expectedRevision) {
@@ -272,12 +285,18 @@ export class MockRepository {
       return failure('InvalidInput', { field: 'name' });
     }
     const timestamp = now();
-    const updated: Dataset = { ...dataset, name: cleanName, revision: dataset.revision + 1, updatedAt: timestamp };
+    const updated: Dataset = {
+      ...dataset,
+      name: cleanName,
+      note: note.trim(),
+      revision: dataset.revision + 1,
+      updatedAt: timestamp,
+    };
     const data = copy(this.snapshot.data);
     data.datasets = data.datasets.map(item => (item.id === datasetId ? updated : item));
     data.activities.unshift({
       id: allocatePrototypeId('activity'),
-      action: 'DatasetRenamed',
+      action: 'DatasetUpdated',
       objectLabel: updated.name,
       reviewerId: this.snapshot.preferences.currentReviewerId,
       occurredAt: timestamp,
@@ -418,7 +437,7 @@ export class MockRepository {
     data.activities.unshift({
       id: allocatePrototypeId('activity'),
       action: 'JobCreated',
-      objectLabel: job.id,
+      objectLabel: jobDisplayName(job),
       reviewerId: this.snapshot.preferences.currentReviewerId,
       occurredAt: timestamp,
     });
@@ -505,7 +524,7 @@ export class MockRepository {
       ...jobs.map(job => ({
         id: allocatePrototypeId('activity'),
         action: 'JobCreated' as const,
-        objectLabel: job.id,
+        objectLabel: jobDisplayName(job),
         reviewerId: this.snapshot.preferences.currentReviewerId,
         occurredAt: timestamp,
       })),
@@ -565,6 +584,7 @@ export class MockRepository {
       gpu,
       seed,
       status: 'Queued',
+      failureReason: null,
       progress: 0,
       steps: createSteps(id),
       logs: [{ sequence: 1, stepId: `${id}-step-1`, messageKey: 'jobs.log.created', occurredAt: timestamp }],
@@ -783,7 +803,7 @@ export class MockRepository {
       data.activities.unshift({
         id: allocatePrototypeId('activity'),
         action: 'JobCreated',
-        objectLabel: rerenderJob.id,
+        objectLabel: jobDisplayName(rerenderJob),
         reviewerId: this.snapshot.preferences.currentReviewerId,
         occurredAt: timestamp,
       });
@@ -1136,7 +1156,7 @@ export class MockRepository {
     const sampleById = new Map(this.snapshot.data.samples.map(sample => [sample.id, sample]));
     const inRange = this.snapshot.data.reviews.filter(review => {
       const sample = sampleById.get(review.sampleId);
-      const day = review.createdAt.slice(0, 10);
+      const day = formatDate(review.createdAt);
       return (
         review.reviewerId === filter.reviewerId &&
         day >= filter.startDate &&
@@ -1168,7 +1188,7 @@ export class MockRepository {
       history.sort((left, right) => left.revision - right.revision);
       history.forEach((review, index) => {
         const previous = history[index - 1];
-        const day = review.createdAt.slice(0, 10);
+        const day = formatDate(review.createdAt);
         if (
           previous
           && previous.decision !== review.decision
@@ -1185,7 +1205,10 @@ export class MockRepository {
     const activity: Statistics['activity'] = [];
     for (let date = start; date <= end; date = new Date(date.getTime() + 86_400_000)) {
       const day = date.toISOString().slice(0, 10);
-      activity.push({ date: day, reviewedCount: inRange.filter(review => review.createdAt.startsWith(day)).length });
+      activity.push({
+        date: day,
+        reviewedCount: inRange.filter(review => formatDate(review.createdAt) === day).length,
+      });
     }
     return success({
       reviewerId: filter.reviewerId,

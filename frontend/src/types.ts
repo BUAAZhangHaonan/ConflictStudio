@@ -7,6 +7,7 @@ export type ReviewDecision = 'Pending' | 'Accepted' | 'Rejected';
 export type JobStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 export type ContentStatus = 'Draft' | 'Active' | 'Disabled';
 export type DatasetStatus = 'Active' | 'Disabled';
+export type DatasetPurpose = 'Production' | 'Validation' | 'General';
 export type ContentMode = 'Fixed' | 'Generative';
 export type ModelName = 'LTX-2.3' | 'MiniMax H3';
 export type GpuSlot = 'GPU0' | 'GPU1';
@@ -17,6 +18,7 @@ export type PresetRuleKey =
   | 'presets.rule.signal'
   | 'presets.rule.camera';
 export type JobSource = 'Production' | 'Test' | 'Rerender';
+export type JobFailureReason = 'ModelServiceUnavailable';
 export type JobStepStatus = 'Waiting' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 export type TestExecutionMode = 'Parallel' | 'Serial';
 export type ExamplePageState = 'ready' | 'loading' | 'empty' | 'filtered' | 'error' | 'conflict';
@@ -29,6 +31,8 @@ export interface Revisioned {
 export interface Dataset extends Revisioned {
   id: string;
   name: string;
+  purpose: DatasetPurpose;
+  note: string;
   status: DatasetStatus;
   createdAt: string;
 }
@@ -109,6 +113,7 @@ export interface Job extends Revisioned {
   model: ModelName;
   gpu: GpuSlot;
   status: JobStatus;
+  failureReason: JobFailureReason | null;
   progress: number;
   seed: number | null;
   quantity: number;
@@ -189,7 +194,7 @@ export interface Archive extends Revisioned {
 
 export interface Activity {
   id: string;
-  action: 'DatasetCreated' | 'DatasetRenamed' | 'DatasetDisabled' | 'JobCreated' | 'ReviewSaved' | 'ArchiveSynced';
+  action: 'DatasetCreated' | 'DatasetUpdated' | 'DatasetDisabled' | 'JobCreated' | 'ReviewSaved' | 'ArchiveSynced';
   objectLabel: string;
   reviewerId: string | null;
   occurredAt: string;
@@ -217,7 +222,7 @@ export interface BrowserPreferences {
 }
 
 export interface RepositoryData {
-  version: 3;
+  version: 4;
   datasets: Dataset[];
   reviewers: Reviewer[];
   gpuStates: GpuState[];

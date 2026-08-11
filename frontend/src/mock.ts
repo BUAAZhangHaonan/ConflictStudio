@@ -13,7 +13,7 @@ import type {
 } from './types';
 import { silentVideoDataUrl, voicedVideoDataUrl } from './mockMedia';
 
-export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v4';
+export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v5';
 export const LOCALE_STORAGE_KEY = 'conflictstudio.prototype.locale';
 export const REVIEWER_STORAGE_KEY = 'conflictstudio.prototype.reviewer.v2';
 
@@ -102,7 +102,7 @@ reviews.push(
   },
 );
 
-function stepsFor(status: JobStatus, jobId: string): Job['steps'] {
+function stepsFor(status: JobStatus, jobId: string, timestamp = baseDate): Job['steps'] {
   const names: Job['steps'][number]['name'][] = [
     'PrepareContent',
     'GeneratePrompt',
@@ -121,8 +121,8 @@ function stepsFor(status: JobStatus, jobId: string): Job['steps'] {
       order: index + 1,
       name,
       status: stepStatus,
-      startedAt: stepStatus === 'Waiting' ? null : baseDate,
-      completedAt: stepStatus === 'Completed' ? baseDate : null,
+      startedAt: stepStatus === 'Waiting' ? null : timestamp,
+      completedAt: stepStatus === 'Completed' ? timestamp : null,
     };
   });
 }
@@ -139,6 +139,7 @@ function makeJob(
   const gpu = status === 'Queued' ? 'GPU1' : index % 2 === 0 ? 'GPU0' : 'GPU1';
   const category = source === 'Test' ? 'A-VA' : categories[index % categories.length];
   const seed = 9000 + index;
+  const timestamp = new Date(Date.parse(baseDate) - index * 75_000).toISOString();
   const job: Job = {
     id,
     parentJobId: null,
@@ -149,20 +150,21 @@ function makeJob(
     model,
     gpu,
     status,
+    failureReason: status === 'Failed' ? 'ModelServiceUnavailable' : null,
     progress: status === 'Completed' ? 100 : status === 'Running' ? 54 : status === 'Queued' ? 0 : 38,
     seed,
     quantity: index === 0 ? 8 : 1,
-    steps: stepsFor(status, id),
+    steps: stepsFor(status, id, timestamp),
     logs: [
-      { sequence: 1, stepId: `${id}-step-1`, messageKey: 'jobs.log.created', occurredAt: baseDate },
-      { sequence: 2, stepId: `${id}-step-2`, messageKey: 'jobs.log.contentReady', occurredAt: baseDate },
+      { sequence: 1, stepId: `${id}-step-1`, messageKey: 'jobs.log.created', occurredAt: timestamp },
+      { sequence: 2, stepId: `${id}-step-2`, messageKey: 'jobs.log.contentReady', occurredAt: timestamp },
     ],
     resultSampleIds: [],
     revision: 1,
-    createdAt: baseDate,
-    startedAt: status === 'Queued' ? null : baseDate,
-    completedAt: status === 'Completed' || status === 'Failed' || status === 'Cancelled' ? baseDate : null,
-    updatedAt: baseDate,
+    createdAt: timestamp,
+    startedAt: status === 'Queued' ? null : timestamp,
+    completedAt: status === 'Completed' || status === 'Failed' || status === 'Cancelled' ? timestamp : null,
+    updatedAt: timestamp,
   };
   if (source === 'Test') {
     const content = contentItems.find(item =>
@@ -297,11 +299,38 @@ const archives: Archive[] = [
 ];
 
 export const initialData: RepositoryData = {
-  version: 3,
+  version: 4,
   datasets: [
-    { id: 'dataset-main', name: '正式生成集', status: 'Active', revision: 3, createdAt: baseDate, updatedAt: baseDate },
-    { id: 'dataset-validation', name: '验证集', status: 'Active', revision: 2, createdAt: baseDate, updatedAt: baseDate },
-    { id: 'dataset-paused', name: '已停用示例集', status: 'Disabled', revision: 2, createdAt: baseDate, updatedAt: baseDate },
+    {
+      id: 'dataset-main',
+      name: '正式生成集',
+      purpose: 'Production',
+      note: '用于本轮正式样本审核。',
+      status: 'Active',
+      revision: 3,
+      createdAt: baseDate,
+      updatedAt: baseDate,
+    },
+    {
+      id: 'dataset-validation',
+      name: '验证集',
+      purpose: 'Validation',
+      note: '用于比较提示词和模型结果。',
+      status: 'Active',
+      revision: 2,
+      createdAt: baseDate,
+      updatedAt: baseDate,
+    },
+    {
+      id: 'dataset-paused',
+      name: '已停用示例集',
+      purpose: 'General',
+      note: '',
+      status: 'Disabled',
+      revision: 2,
+      createdAt: baseDate,
+      updatedAt: baseDate,
+    },
   ],
   reviewers: [
     { id: 'reviewer-lin', name: '林然', revision: 1, createdAt: baseDate, updatedAt: baseDate },
@@ -323,7 +352,7 @@ export const initialData: RepositoryData = {
   archives,
   activities: [
     { id: 'activity-1', action: 'ReviewSaved', objectLabel: 'CS-0002', reviewerId: 'reviewer-lin', occurredAt: baseDate },
-    { id: 'activity-2', action: 'JobCreated', objectLabel: 'job-running', reviewerId: null, occurredAt: baseDate },
+    { id: 'activity-2', action: 'JobCreated', objectLabel: 'A-VA-20260809-175845', reviewerId: null, occurredAt: baseDate },
     { id: 'activity-3', action: 'ArchiveSynced', objectLabel: '正式生成集', reviewerId: 'reviewer-chen', occurredAt: '2026-08-08T09:00:00.000Z' },
   ],
 };

@@ -14,34 +14,13 @@ import {
 } from '../components';
 import { useExamplePageState } from '../app/useExamplePageState';
 import { useMockRepository, useRepositorySnapshot } from '../store';
-import type { DatasetStatus, ExamplePageState, Job } from '../types';
+import { formatCompactDateTime, formatDateTime } from '../time';
+import type { DatasetPurpose, DatasetStatus, ExamplePageState, Job } from '../types';
 import './WorkspacePage.css';
 
 const copyKey = 'workspaceSettingsStatistics';
 const createDatasetErrorId = 'workspace-create-dataset-error';
 const renameDatasetErrorId = 'workspace-rename-dataset-error';
-
-function formatUtcDate(value: string, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-    timeZoneName: 'short',
-  }).format(new Date(value));
-}
-
-function formatUtcDateTime(value: string, locale: string): string {
-  return new Intl.DateTimeFormat(locale, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'UTC',
-    timeZoneName: 'short',
-  }).format(new Date(value));
-}
 
 function jobStatusKind(status: Job['status']) {
   return status === 'Running' ? 'active' as const : 'problem' as const;
@@ -76,6 +55,7 @@ function FeatureStateView({
 interface RenameTarget {
   id: string;
   name: string;
+  note: string;
   revision: number;
 }
 
@@ -83,6 +63,38 @@ interface DisableTarget {
   id: string;
   name: string;
   revision: number;
+}
+
+function DatasetPurposeInfo({
+  purpose,
+  tooltipId,
+  label,
+  description,
+}: {
+  purpose: DatasetPurpose;
+  tooltipId: string;
+  label: string;
+  description: string;
+}) {
+  if (purpose === 'General') return null;
+  return (
+    <span className="workspace-dataset-purpose">
+      <button
+        type="button"
+        className="workspace-dataset-purpose__button"
+        aria-label={label}
+        aria-describedby={tooltipId}
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M8 7v4M8 4.75v.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </button>
+      <span id={tooltipId} className="workspace-dataset-purpose__tooltip" role="tooltip">
+        {description}
+      </span>
+    </span>
+  );
 }
 
 export function WorkspacePage() {
@@ -94,9 +106,11 @@ export function WorkspacePage() {
   const pageState = useExamplePageState();
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
+  const [createNote, setCreateNote] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
   const [renameName, setRenameName] = useState('');
+  const [renameNote, setRenameNote] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
   const [disableTarget, setDisableTarget] = useState<DisableTarget | null>(null);
   const [datasetSearch, setDatasetSearch] = useState('');
@@ -146,6 +160,7 @@ export function WorkspacePage() {
 
   const openCreateDialog = () => {
     setCreateName('');
+    setCreateNote('');
     setCreateError(null);
     setCreateOpen(true);
   };
@@ -153,6 +168,7 @@ export function WorkspacePage() {
   const closeCreateDialog = () => {
     setCreateOpen(false);
     setCreateName('');
+    setCreateNote('');
     setCreateError(null);
   };
 
@@ -164,7 +180,7 @@ export function WorkspacePage() {
       showToast(message);
       return;
     }
-    const result = repository.createDataset(createName);
+    const result = repository.createDataset(createName, createNote);
     if (!result.ok) {
       const message = failureMessage(result.kind);
       setCreateError(message);
@@ -178,12 +194,14 @@ export function WorkspacePage() {
   const openRenameDialog = (target: RenameTarget) => {
     setRenameTarget(target);
     setRenameName(target.name);
+    setRenameNote(target.note);
     setRenameError(null);
   };
 
   const closeRenameDialog = () => {
     setRenameTarget(null);
     setRenameName('');
+    setRenameNote('');
     setRenameError(null);
   };
 
@@ -196,7 +214,12 @@ export function WorkspacePage() {
       showToast(message);
       return;
     }
-    const result = repository.renameDataset(renameTarget.id, renameName, renameTarget.revision);
+    const result = repository.updateDatasetDetails(
+      renameTarget.id,
+      renameName,
+      renameNote,
+      renameTarget.revision,
+    );
     if (!result.ok) {
       const message = failureMessage(result.kind);
       setRenameError(message);
@@ -284,15 +307,16 @@ export function WorkspacePage() {
       <ul className="workspace-jobs__list">
         {jobs.map(job => {
           const datasetName = job.datasetId ? datasetsById.get(job.datasetId)?.name : null;
+          const displayName = `${job.category}-${formatCompactDateTime(job.createdAt)}`;
           return (
             <li key={job.id}>
               <Link
                 className="workspace-job-card"
                 to={`/generate/jobs?status=${job.status}&job=${encodeURIComponent(job.id)}`}
-                aria-label={t(`${copyKey}.workspace.jobs.openAriaLabel`, { id: job.id })}
+                aria-label={t(`${copyKey}.workspace.jobs.openAriaLabel`, { name: displayName })}
               >
                 <span className="workspace-job-card__header">
-                  <strong>{job.id}</strong>
+                  <strong>{displayName}</strong>
                   <StatusBadge
                     label={t(`${copyKey}.status.job.${job.status}`)}
                     kind={jobStatusKind(job.status)}
@@ -312,11 +336,17 @@ export function WorkspacePage() {
                     <dd>{job.gpu}</dd>
                   </div>
                 </dl>
+                {job.failureReason ? (
+                  <p className="workspace-job-card__failure">
+                    <strong>{t(`${copyKey}.workspace.jobs.failureLabel`)}</strong>
+                    <span>{t(`${copyKey}.workspace.jobs.failureReason.${job.failureReason}`)}</span>
+                  </p>
+                ) : null}
                 <span className="workspace-job-card__footer">
                   <span>{t(`${copyKey}.workspace.jobs.progress`, { value: job.progress })}</span>
                   <time dateTime={job.updatedAt}>
                     {t(`${copyKey}.workspace.jobs.updatedAt`, {
-                      value: formatUtcDateTime(job.updatedAt, snapshot.preferences.locale),
+                      value: formatDateTime(job.updatedAt),
                     })}
                   </time>
                 </span>
@@ -428,14 +458,28 @@ export function WorkspacePage() {
                   className="workspace-datasets__row"
                 >
                   <th scope="row" data-label={t(`${copyKey}.workspace.datasets.name`)}>
-                    <button
-                      type="button"
-                      className="table-link"
-                      onClick={() => openDataset(dataset.id)}
-                      aria-label={openLabel}
-                    >
-                      {dataset.name}
-                    </button>
+                    <div className="workspace-dataset-name">
+                      <span className="workspace-dataset-name__title">
+                        <button
+                          type="button"
+                          className="table-link"
+                          onClick={() => openDataset(dataset.id)}
+                          aria-label={openLabel}
+                        >
+                          {dataset.name}
+                        </button>
+                        <DatasetPurposeInfo
+                          purpose={dataset.purpose}
+                          tooltipId={`dataset-purpose-${dataset.id}`}
+                          label={t(`${copyKey}.workspace.datasets.purpose.openLabel`, {
+                            name: dataset.name,
+                            description: t(`${copyKey}.workspace.datasets.purpose.${dataset.purpose}`),
+                          })}
+                          description={t(`${copyKey}.workspace.datasets.purpose.${dataset.purpose}`)}
+                        />
+                      </span>
+                      {dataset.note ? <span className="workspace-dataset-name__note">{dataset.note}</span> : null}
+                    </div>
                   </th>
                   <td data-label={t(`${copyKey}.workspace.datasets.status`)}>
                     <StatusBadge
@@ -449,14 +493,19 @@ export function WorkspacePage() {
                   <td className="is-numeric" data-label={t(`${copyKey}.workspace.datasets.rejected`)}>{counts.rejectedCount}</td>
                   <td data-label={t(`${copyKey}.workspace.datasets.updatedAt`)}>
                     <time dateTime={dataset.updatedAt}>
-                      {formatUtcDate(dataset.updatedAt, snapshot.preferences.locale)}
+                      {formatDateTime(dataset.updatedAt)}
                     </time>
                   </td>
                   <td data-label={t(`${copyKey}.workspace.datasets.actions`)}>
                     <div className="workspace-datasets__actions">
                       <Button
                         variant="quiet"
-                        onClick={() => openRenameDialog({ id: dataset.id, name: dataset.name, revision: dataset.revision })}
+                        onClick={() => openRenameDialog({
+                          id: dataset.id,
+                          name: dataset.name,
+                          note: dataset.note,
+                          revision: dataset.revision,
+                        })}
                         aria-label={t(`${copyKey}.workspace.rename.ariaLabel`, { name: dataset.name })}
                       >
                         {t(`${copyKey}.workspace.rename.action`)}
@@ -521,7 +570,7 @@ export function WorkspacePage() {
                   <span className="workspace-activity__meta">
                     <span>{actor}</span>
                     <time dateTime={activity.occurredAt}>
-                      {formatUtcDateTime(activity.occurredAt, snapshot.preferences.locale)}
+                      {formatDateTime(activity.occurredAt)}
                     </time>
                   </span>
                 </li>
@@ -571,6 +620,15 @@ export function WorkspacePage() {
               </span>
             ) : null}
           </Field>
+          <Field label={t(`${copyKey}.workspace.datasetNote.label`)} htmlFor="create-dataset-note">
+            <textarea
+              id="create-dataset-note"
+              value={createNote}
+              onChange={event => setCreateNote(event.target.value)}
+              placeholder={t(`${copyKey}.workspace.datasetNote.placeholder`)}
+              rows={3}
+            />
+          </Field>
         </form>
       </Dialog>
 
@@ -613,6 +671,15 @@ export function WorkspacePage() {
                 {renameError}
               </span>
             ) : null}
+          </Field>
+          <Field label={t(`${copyKey}.workspace.datasetNote.label`)} htmlFor="rename-dataset-note">
+            <textarea
+              id="rename-dataset-note"
+              value={renameNote}
+              onChange={event => setRenameNote(event.target.value)}
+              placeholder={t(`${copyKey}.workspace.datasetNote.placeholder`)}
+              rows={3}
+            />
           </Field>
         </form>
       </Dialog>

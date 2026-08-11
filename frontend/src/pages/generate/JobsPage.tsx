@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, ConfirmDialog, Dialog, Field, StatusBadge, TableShell, useToast } from '../../components';
 import { canKeepTestResult, useMockRepository, useRepositorySnapshot } from '../../store';
+import { formatDateTime } from '../../time';
 import type { GpuSlot, Job, JobSource, JobStatus, Sample } from '../../types';
 import {
   GenerationScaffold,
@@ -496,11 +497,11 @@ export function JobsPage() {
               </div>
               <div>
                 <dt>{g('jobs.created')}</dt>
-                <dd>{new Date(selected.createdAt).toLocaleString(locale)}</dd>
+                <dd>{formatDateTime(selected.createdAt)}</dd>
               </div>
               <div>
                 <dt>{g('common.updated')}</dt>
-                <dd>{new Date(selected.updatedAt).toLocaleString(locale)}</dd>
+                <dd>{formatDateTime(selected.updatedAt)}</dd>
               </div>
               <div>
                 <dt>{g('jobs.progress')}</dt>
@@ -527,7 +528,7 @@ export function JobsPage() {
                         <li key={row.sequence}>
                           <strong>{g('batches.sequence')} {row.sequence}</strong>
                           <span>{row.contentItemName}</span>
-                          <span>{g(`demographic.age.${row.age}`)} · {g(`demographic.gender.${row.gender}`)} · {g(`demographic.ethnicity.${row.ethnicity}`)}</span>
+                          <span>{g(`demographic.age.${row.age}`)}, {g(`demographic.gender.${row.gender}`)}, {g(`demographic.ethnicity.${row.ethnicity}`)}</span>
                         </li>
                       ))}
                     </ol>
@@ -552,7 +553,7 @@ export function JobsPage() {
                       <li key={attempt.id}>
                         <div>
                           <strong>{g('jobs.attempt', { number: index + 1 })}</strong>
-                          <span>{new Date(attempt.createdAt).toLocaleString(locale)}</span>
+                          <span>{formatDateTime(attempt.createdAt)}</span>
                         </div>
                         <StatusBadge label={g(`jobs.status.${attempt.status}`)} kind={jobStatusKind(attempt.status)} />
                         {latest ? <StatusBadge label={g('jobs.latestAttempt')} kind="active" /> : null}
@@ -588,7 +589,7 @@ export function JobsPage() {
                     {selected.logs.map(log => (
                       <li key={`${log.stepId}-${log.sequence}`}>
                         <span>{g(log.messageKey as Parameters<typeof g>[0])}</span>
-                        <time dateTime={log.occurredAt}>{new Date(log.occurredAt).toLocaleString(locale)}</time>
+                        <time dateTime={log.occurredAt}>{formatDateTime(log.occurredAt)}</time>
                       </li>
                     ))}
                   </ul>

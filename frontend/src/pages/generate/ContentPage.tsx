@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, ConfirmDialog, Field, StatusBadge, TableShell, useToast } from '../../components';
 import { useMockRepository, useRepositorySnapshot } from '../../store';
+import { formatDateTime } from '../../time';
 import { allowedDirections, type Category, type ConflictDirection, type ContentItem, type ContentItemInput, type ContentMode, type ContentStatus } from '../../types';
 import {
   categories,
@@ -233,7 +234,7 @@ export function ContentPage() {
                   <th scope="row"><button type="button" className="table-link" aria-pressed={!creating && item.id === selectedId} onClick={() => choose(item)}>{item.name}</button></th>
                   <td>{categoryLabel(g, item.category)}</td>
                   <td><StatusBadge label={g(`content.status.${item.status}`)} kind={contentStatusKind(item.status)} /></td>
-                  <td>{new Date(item.updatedAt).toLocaleDateString(locale)}</td>
+                  <td>{formatDateTime(item.updatedAt)}</td>
                 </tr>
               ))}
             </TableShell>

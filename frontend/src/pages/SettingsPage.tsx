@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Button, Dialog, Field, PageHeader, StateView, StatusBadge, useToast } from '../components';
 import { PageStateBoundary } from '../app/PageStateBoundary';
 import { useMockRepository, useRepositorySnapshot } from '../store';
+import { formatDateTime } from '../time';
 import type { GpuAvailability, Locale, RepositoryFailure, Reviewer } from '../types';
 import './SettingsPage.css';
 
@@ -17,13 +18,6 @@ function gpuStatusKind(availability: GpuAvailability) {
   if (availability === 'Reserved') return 'active' as const;
   if (availability === 'ExternalOccupied') return 'problem' as const;
   return 'neutral' as const;
-}
-
-function formatUtcDateTime(value: string, locale: Locale): string {
-  return new Date(value).toLocaleString(locale, {
-    timeZone: 'UTC',
-    timeZoneName: 'short',
-  });
 }
 
 export function SettingsPage() {
@@ -149,7 +143,7 @@ export function SettingsPage() {
       setRecheckedAt(refreshedAt);
       setRecheckState('success');
       showToast(t(`${copyKey}.services.recheckSuccess`, {
-        value: formatUtcDateTime(refreshedAt, snapshot.preferences.locale),
+        value: formatDateTime(refreshedAt),
       }));
     }, 700);
   };
@@ -277,7 +271,7 @@ export function SettingsPage() {
                     ? t(`${copyKey}.services.rechecking`)
                     : recheckState === 'success'
                       ? t(`${copyKey}.services.recheckSuccess`, {
-                        value: formatUtcDateTime(recheckedAt ?? new Date().toISOString(), snapshot.preferences.locale),
+                        value: formatDateTime(recheckedAt ?? new Date()),
                       })
                       : t(`${copyKey}.services.recheckError`)}
               </p>
@@ -316,7 +310,7 @@ export function SettingsPage() {
                   <strong>{gpu.slot}</strong>
                   <span>
                     {t(`${copyKey}.services.checkedAt`, {
-                      value: formatUtcDateTime(recheckedAt ?? gpu.checkedAt, snapshot.preferences.locale),
+                      value: formatDateTime(recheckedAt ?? gpu.checkedAt),
                     })}
                   </span>
                 </dt>
