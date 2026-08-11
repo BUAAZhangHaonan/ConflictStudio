@@ -1,0 +1,21 @@
+{
+  "prompt": {
+    "5": {
+      "class_type": "MiniMaxH3ImageToVideo",
+      "inputs": {"clip": ["2", 0], "height": 1, "length": 1, "prompt": "template", "vae": ["3", 0], "width": 1}
+    },
+    "6": {
+      "class_type": "RandomNoise",
+      "inputs": {"noise_seed": 0}
+    },
+    "13": {
+      "class_type": "CreateVideo",
+      "inputs": {"audio": ["12", 0], "bit_depth": 8, "fps": 1.0, "images": ["11", 0]}
+    },
+    "14": {
+      "class_type": "SaveVideo",
+      "inputs": {"codec": "auto", "filename_prefix": "template", "format": "mp4", "video": ["13", 0]}
+    }
+  },
+  "client_id": "fixture-client"
+}

@@ -1,0 +1,35 @@
+{
+  "_comment": "Minimal node fixture for builder tests.",
+  "enc_pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {"clip": ["loader_gemma", 0], "text": "template positive"}
+  },
+  "enc_neg": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {"clip": ["loader_gemma", 0], "text": "template negative"}
+  },
+  "conditioning": {
+    "class_type": "LTXVConditioning",
+    "inputs": {"frame_rate": 12.0, "negative": ["enc_neg", 0], "positive": ["enc_pos", 0]}
+  },
+  "empty_video": {
+    "class_type": "EmptyLTXVLatentVideo",
+    "inputs": {"batch_size": 1, "height": 1, "length": 1, "width": 1}
+  },
+  "empty_audio": {
+    "class_type": "LTXVEmptyLatentAudio",
+    "inputs": {"audio_vae": ["loader_audio_vae", 0], "batch_size": 1, "frame_rate": 1, "frames_number": 1}
+  },
+  "noise": {
+    "class_type": "RandomNoise",
+    "inputs": {"noise_seed": 0}
+  },
+  "create_video": {
+    "class_type": "CreateVideo",
+    "inputs": {"audio": ["vae_audio", 0], "bit_depth": 8, "fps": 1.0, "images": ["vae_video", 0]}
+  },
+  "save_video": {
+    "class_type": "SaveVideo",
+    "inputs": {"codec": "auto", "filename_prefix": "template", "format": "auto", "video": ["create_video", 0]}
+  }
+}
