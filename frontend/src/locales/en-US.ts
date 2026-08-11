@@ -61,7 +61,7 @@ const enUS = {
     'C-VT': 'C-VT (Vision and text conflict)',
   },
   direction: {
-    label: 'Conflict direction',
+    label: 'Modality carrying the true emotion',
     Vision: 'Vision',
     Audio: 'Audio',
     Text: 'Text',

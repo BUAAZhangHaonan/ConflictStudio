@@ -47,6 +47,7 @@ import {
   type StatisticsFilter,
   type TestDraft,
   type TransferCategoryInput,
+  type UpdateConflictDirectionInput,
   type UpdateJobResultInput,
   type UpdateJobResultValue,
   protocolForCategory,
@@ -54,6 +55,7 @@ import {
 import { allocatePrototypeId } from './id';
 import { formatCompactDateTime, formatDate } from './time';
 import { buildJobItems, contentIsReferenced, validateBatchGpuSelection } from './generation';
+import { applyConflictDirectionChange } from './reviewArchive';
 
 type Listener = () => void;
 
@@ -84,7 +86,7 @@ function loadData(storage: Storage): RepositoryData {
     typeof parsed !== 'object' ||
     parsed === null ||
     !('version' in parsed) ||
-    parsed.version !== 5
+    parsed.version !== 6
   ) {
     throw new Error('Prototype data has an unsupported shape.');
   }
@@ -173,8 +175,10 @@ export function canKeepTestResult(
 export class MockRepository {
   private snapshot: RepositorySnapshot;
   private readonly listeners = new Set<Listener>();
+  private readonly storage: Storage;
 
-  constructor(private readonly storage: Storage) {
+  constructor(storage: Storage) {
+    this.storage = storage;
     this.snapshot = {
       data: loadData(storage),
       preferences: {
@@ -648,6 +652,9 @@ export class MockRepository {
     if (!canKeepTestResult(job)) return failure('InvalidInput', { field: 'result' });
     const input = job.testInput;
     const assignment = input.assignments.find(item => item.order === job.testAssignmentOrder)!;
+    const content = this.snapshot.data.contentItems.find(item => item.id === input.contentItemId);
+    const preset = this.snapshot.data.presets.find(item => item.id === input.presetId);
+    if (!content || !preset) return failure('NotFound');
     const timestamp = now();
     const sampleId = allocatePrototypeId('sample');
     const protocol = protocolForCategory(input.category);
@@ -669,9 +676,20 @@ export class MockRepository {
       dialogue: input.dialogue,
       displayText: input.displayText,
       videoPrompt: input.videoPrompt,
+      negativePrompt: preset.renderNegativeConstraints,
       explanation: input.explanation,
       generationNote: '',
-      emotion: input.emotion,
+      trueEmotionDescription: input.explanation,
+      trueEmotion: input.emotion,
+      apparentEmotion: input.category.startsWith('C-') ? '平静' : input.emotion,
+      contentPlanName: content.name,
+      scenario: content.scene,
+      triggerEvent: '对方询问人物最近的状态。',
+      psychologicalBackground: '人物根据场景控制自己的外在表现。',
+      age: input.age,
+      gender: input.gender,
+      ethnicity: input.ethnicity,
+      contentVersion: input.contentRevision,
       seed: input.seed ?? 0,
       archiveStatus: 'Current',
       revision: 1,
@@ -1114,6 +1132,26 @@ export class MockRepository {
     };
     const data = copy(this.snapshot.data);
     data.samples = data.samples.map(item => (item.id === sample.id ? updated : item));
+    this.commitData(data);
+    return success(updated);
+  }
+
+  updateConflictDirection(input: UpdateConflictDirectionInput): RepositoryResult<Sample> {
+    const sample = this.snapshot.data.samples.find(item => item.id === input.sampleId);
+    if (!sample) return failure('NotFound', { field: 'sampleId' });
+    if (sample.revision !== input.expectedRevision) {
+      return failure('Conflict', { currentRevision: sample.revision });
+    }
+    if (!sample.category.startsWith('C-') || !isDirectionValid(sample.category, input.conflictDirection)) {
+      return failure('InvalidInput', { field: 'conflictDirection' });
+    }
+    if (sample.conflictDirection === input.conflictDirection) {
+      return failure('InvalidInput', { field: 'conflictDirection' });
+    }
+    const timestamp = now();
+    const updated = applyConflictDirectionChange(sample, input.conflictDirection, timestamp);
+    const data = copy(this.snapshot.data);
+    data.samples = data.samples.map(item => item.id === sample.id ? updated : item);
     this.commitData(data);
     return success(updated);
   }

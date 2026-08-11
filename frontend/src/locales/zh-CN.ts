@@ -66,7 +66,7 @@ const zhCN = {
     'C-VT': 'C-VT（视觉与文本冲突）',
   },
   direction: {
-    label: '冲突方向',
+    label: '真实情感所在模态',
     Vision: '视觉',
     Audio: '声音',
     Text: '文本',

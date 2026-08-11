@@ -21,7 +21,7 @@ import {
   type Sample,
 } from '../types';
 import { directionForTransfer, nextCategory, useMockRepository, useRepositorySnapshot } from '../store';
-import { formatDateTime } from '../time';
+import { archiveReturnTarget } from '../reviewArchive';
 import './ReviewPage.css';
 
 type FinalDecision = Exclude<ReviewDecision, 'Pending'>;
@@ -96,7 +96,8 @@ export function ReviewPage() {
   const navigate = useNavigate();
   const exampleState = useExamplePageState();
   const initialParams = new URLSearchParams(location.search);
-  const initialDataset = initialParams.get('dataset');
+  const requestedSample = snapshot.data.samples.find(sample => sample.id === initialParams.get('sample'));
+  const initialDataset = requestedSample?.datasetId ?? initialParams.get('dataset');
   const initialDecision = initialParams.get('decision');
 
   const [search, setSearch] = useState('');
@@ -108,15 +109,17 @@ export function ReviewPage() {
     decisionFilters.includes(initialDecision as DecisionFilter) ? initialDecision as DecisionFilter : 'All',
   );
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('All');
-  const [selectedId, setSelectedId] = useState(snapshot.data.samples[0]?.id ?? '');
+  const [selectedId, setSelectedId] = useState(requestedSample?.id ?? snapshot.data.samples[0]?.id ?? '');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [decision, setDecision] = useState<ReviewDecision>('Pending');
   const [note, setNote] = useState('');
   const [batchDecision, setBatchDecision] = useState<FinalDecision>('Accepted');
   const [batchNote, setBatchNote] = useState('');
   const [transferDirection, setTransferDirection] = useState<ConflictDirection | null>(null);
+  const [directionDraft, setDirectionDraft] = useState<ConflictDirection | null>(requestedSample?.conflictDirection ?? null);
   const [batchConfirmOpen, setBatchConfirmOpen] = useState(false);
   const [transferConfirmOpen, setTransferConfirmOpen] = useState(false);
+  const [directionConfirmOpen, setDirectionConfirmOpen] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false);
   const [operationMessage, setOperationMessage] = useState<OperationMessage | null>(null);
   const [busy, setBusy] = useState(false);
@@ -125,6 +128,7 @@ export function ReviewPage() {
   const selectAllRef = useRef<HTMLInputElement>(null);
   const reviewVideoRef = useRef<HTMLVideoElement>(null);
   const mobileBackButtonRef = useRef<HTMLButtonElement>(null);
+  const returnTarget = archiveReturnTarget(initialParams.get('returnTo'));
 
   const datasetsById = useMemo(
     () => new Map(snapshot.data.datasets.map(dataset => [dataset.id, dataset])),
@@ -173,8 +177,15 @@ export function ReviewPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
+    const requestedSampleId = params.get('sample');
+    const nextSample = snapshot.data.samples.find(sample => sample.id === requestedSampleId);
     const requestedDataset = params.get('dataset');
     const requestedDecision = params.get('decision');
+    if (nextSample) {
+      setDatasetFilter(nextSample.datasetId);
+      setSelectedId(nextSample.id);
+      if (window.matchMedia('(max-width: 768px)').matches) setMobileDetail(true);
+    }
     if (requestedDataset && snapshot.data.datasets.some(dataset => dataset.id === requestedDataset)) {
       setDatasetFilter(requestedDataset);
     }
@@ -205,6 +216,7 @@ export function ReviewPage() {
     }
     setDecision(selected.reviewDecision);
     setNote(latestReviewNote(selected.id, snapshot.data.reviews));
+    setDirectionDraft(selected.conflictDirection);
     setOperationMessage(null);
   }, [selected?.id]);
 
@@ -240,6 +252,9 @@ export function ReviewPage() {
   const activateSample = useCallback((sample: Sample, focus = false) => {
     setSelectedId(sample.id);
     setOperationMessage(null);
+    const params = new URLSearchParams(location.search);
+    params.set('sample', sample.id);
+    navigate({ pathname: '/review', search: `?${params.toString()}` }, { replace: true });
     const position = visibleSamples.findIndex(item => item.id === sample.id) + 1;
     setAnnouncement(t('review.aria.selectionChanged', {
       id: sample.displayId,
@@ -249,7 +264,7 @@ export function ReviewPage() {
     if (focus) {
       window.requestAnimationFrame(() => queueButtons.current.get(sample.id)?.focus());
     }
-  }, [t, visibleSamples]);
+  }, [location.search, navigate, t, visibleSamples]);
 
   const openMobileDetail = useCallback((sample: Sample) => {
     activateSample(sample);
@@ -371,6 +386,33 @@ export function ReviewPage() {
     setTransferConfirmOpen(true);
   };
 
+  const updateDirection = useCallback(() => {
+    if (!selected || directionDraft === null || directionDraft === selected.conflictDirection || busy) return;
+    setBusy(true);
+    setOperationMessage(null);
+    const result = repository.updateConflictDirection({
+      sampleId: selected.id,
+      conflictDirection: directionDraft,
+      expectedRevision: selected.revision,
+    });
+    setBusy(false);
+    setDirectionConfirmOpen(false);
+    if (!result.ok) {
+      reportFailure(result.kind);
+      return;
+    }
+    setDecision('Pending');
+    setNote('');
+    setDirectionDraft(result.value.conflictDirection);
+    setAnnouncement(t('review.directionUpdated'));
+    showToast(t('review.directionUpdated'));
+  }, [busy, directionDraft, reportFailure, repository, selected, showToast, t]);
+
+  const requestDirectionUpdate = () => {
+    if (!selected || directionDraft === null || directionDraft === selected.conflictDirection) return;
+    setDirectionConfirmOpen(true);
+  };
+
   const moveSelection = useCallback((offset: -1 | 1) => {
     if (visibleSamples.length === 0) return;
     const currentIndex = Math.max(0, visibleSamples.findIndex(sample => sample.id === selected?.id));
@@ -468,7 +510,7 @@ export function ReviewPage() {
     <section className="page-stack review-page" aria-label={t('review.aria.page')}>
       <PageHeader
         title={t('review.title')}
-        actions={<span className="review-page__count">{t('review.queueCount', { visible: visibleSamples.length, total: snapshot.data.samples.length })}</span>}
+        actions={<div className="review-page__header-actions">{returnTarget ? <Button variant="secondary" onClick={() => navigate(returnTarget)}>{t('review.returnToArchive')}</Button> : null}<span className="review-page__count">{t('review.queueCount', { visible: visibleSamples.length, total: snapshot.data.samples.length })}</span></div>}
       />
       <p className="review-page__subtitle">{t('review.subtitle')}</p>
 
@@ -541,7 +583,11 @@ export function ReviewPage() {
       ) : visibleSamples.length === 0 ? (
         <ReviewState state="filtered" action={{ label: t('actions.clearFilters'), onClick: clearFilters }} />
       ) : selected ? (
-        <div className={`review-grid ${mobileDetail ? 'review-grid--mobile-detail' : ''}`.trim()}>
+        <div
+          className={`review-grid ${mobileDetail ? 'review-grid--mobile-detail' : ''}`.trim()}
+          data-selected-sample={selected.id}
+          data-sample-revision={selected.revision}
+        >
           <section className="panel review-queue" aria-label={t('review.aria.queue')}>
             <div className="section-header">
               <h2>{t('review.queue')}</h2>
@@ -573,7 +619,7 @@ export function ReviewPage() {
                   decision: t(`status.review.${sample.reviewDecision}`),
                 });
                 return (
-                  <li key={sample.id} className={active ? 'is-active' : undefined}>
+                  <li key={sample.id} className={active ? 'is-active' : undefined} data-sample-id={sample.id}>
                     <label className="review-queue__check">
                       <input
                         type="checkbox"
@@ -597,7 +643,7 @@ export function ReviewPage() {
                       >
                       <span className="review-queue__item-main">
                         <strong>{sample.displayId}</strong>
-                        <span>{categoryLabel}</span>
+                        <span>{sample.category}</span>
                       </span>
                       <span className="review-queue__dataset">{dataset?.name ?? sample.datasetId}</span>
                       <StatusBadge label={t(`status.review.${sample.reviewDecision}`)} kind={reviewStatusKind(sample.reviewDecision)} />
@@ -608,48 +654,38 @@ export function ReviewPage() {
             </ul>
           </section>
 
+          <div className="review-detail">
           <section className="panel review-media" aria-label={t('review.aria.media')}>
             <div className="section-header">
               <div className="review-media__heading"><Button ref={mobileBackButtonRef} className="review-media__back" variant="quiet" onClick={closeMobileDetail}>{t('review.backToQueue')}</Button><h2>{t('review.media')}</h2></div>
               <div className="review-media__badges" aria-label={t('fields.category')}>
                 <StatusBadge label={t(`category.${selected.category}`)} kind={selected.category.startsWith('C-') ? 'problem' : 'complete'} />
                 <StatusBadge label={t(protocolForCategory(selected.category) === 'VA' ? 'review.protocolVA' : 'review.protocolVT')} />
-                {selected.conflictDirection ? (
-                  <StatusBadge label={t(`direction.${selected.conflictDirection}`)} kind="problem" />
-                ) : null}
               </div>
             </div>
-            <p className="review-media__help" id="review-decision-help">
-              {t(protocolForCategory(selected.category) === 'VA' ? 'review.decisionHelpVA' : 'review.decisionHelpVT')}
-            </p>
-            <div className={`review-media__previews ${protocolForCategory(selected.category) === 'VT' ? 'review-media__previews--comparison' : ''}`}>
+            <div className="review-media__previews">
               <MediaPanel
-                title={t('review.primaryMedia')}
+                title={t('review.video')}
                 mediaLabel={t('review.primaryMediaAlt', { id: selected.displayId })}
                 src={selected.primaryAssetId}
                 muted={protocolForCategory(selected.category) === 'VT'}
                 videoRef={reviewVideoRef}
               />
-              {protocolForCategory(selected.category) === 'VA' ? (
-                <p className="review-media__audio-note">{t('review.audioIncluded')}</p>
-              ) : null}
-              {protocolForCategory(selected.category) === 'VT' ? (
-                selected.sourceAssetId ? (
-                  <p className="review-media__source-record">{t('review.sourceRecord')}</p>
-                ) : <p className="review-media__missing">{t('review.sourceMediaUnavailable')}</p>
-              ) : null}
             </div>
+            <div className="review-media__navigation" aria-label={t('review.aria.sampleNavigation')}>
+              <Button variant="secondary" onClick={() => moveSelection(-1)} disabled={visibleSamples[0]?.id === selected.id}>{t('review.previousSample')}</Button>
+              <span>{t('review.samplePosition', { position: visibleSamples.findIndex(sample => sample.id === selected.id) + 1, count: visibleSamples.length })}</span>
+              <Button variant="secondary" onClick={() => moveSelection(1)} disabled={visibleSamples[visibleSamples.length - 1]?.id === selected.id}>{t('review.nextSample')}</Button>
+            </div>
+          </section>
 
-            <section className="review-context" aria-label={t('review.aria.details', { id: selected.displayId })}>
+            <section className="panel review-context" aria-label={t('review.aria.details', { id: selected.displayId })}>
               <h3>{t('review.context')}</h3>
               <dl className="review-context__facts">
+                <div><dt>{t('review.sampleId')}</dt><dd>{selected.displayId}</dd></div>
                 <div><dt>{t('fields.dataset')}</dt><dd>{datasetsById.get(selected.datasetId)?.name ?? selected.datasetId}</dd></div>
                 <div><dt>{t('fields.category')}</dt><dd>{t(`category.${selected.category}`)}</dd></div>
-                {selected.conflictDirection ? <div><dt>{t('direction.label')}</dt><dd>{t(`direction.${selected.conflictDirection}`)}</dd></div> : null}
-                <div><dt>{t('review.model')}</dt><dd>{selected.model}</dd></div>
-                <div><dt>{t('review.emotion')}</dt><dd>{selected.emotion}</dd></div>
-                <div><dt>{t('review.seed')}</dt><dd>{selected.seed}</dd></div>
-                <div><dt>{t('review.updatedAt')}</dt><dd>{formatDateTime(selected.updatedAt)}</dd></div>
+                <div><dt>{t('review.protocolFilter')}</dt><dd>{t(protocolForCategory(selected.category) === 'VA' ? 'review.protocolVA' : 'review.protocolVT')}</dd></div>
               </dl>
               <div className="review-context__copy">
                 {protocolForCategory(selected.category) === 'VA' && selected.dialogue ? (
@@ -658,18 +694,36 @@ export function ReviewPage() {
                 {protocolForCategory(selected.category) === 'VT' && selected.displayText ? (
                   <div className="review-context__copy--protocol"><h3>{t('review.displayText')}</h3><p>{selected.displayText}</p></div>
                 ) : null}
-                <div className="review-context__copy--prompt"><h3>{t('review.prompt')}</h3><p>{selected.videoPrompt}</p></div>
-                <div><h3>{t('review.explanation')}</h3><p>{selected.explanation}</p></div>
+                <div className="review-context__copy--description" aria-readonly="true"><h3>{t('review.trueEmotionDescription')}</h3><p>{selected.trueEmotionDescription}</p></div>
               </div>
+              <dl className="review-context__facts review-context__facts--emotion">
+                <div><dt>{t('review.trueEmotion')}</dt><dd>{selected.trueEmotion}</dd></div>
+                <div><dt>{t('review.apparentEmotion')}</dt><dd>{selected.apparentEmotion}</dd></div>
+                <div><dt>{t('direction.label')}</dt><dd>{selected.conflictDirection ? t(`direction.${selected.conflictDirection}`) : t('review.directionNotRequired')}</dd></div>
+              </dl>
+              <details className="review-context__details">
+                <summary>{t('review.moreDetails')}</summary>
+                <dl>
+                  <div><dt>{t('review.contentPlan')}</dt><dd>{selected.contentPlanName}</dd></div>
+                  <div><dt>{t('review.scenario')}</dt><dd>{selected.scenario}</dd></div>
+                  <div><dt>{t('review.triggerEvent')}</dt><dd>{selected.triggerEvent}</dd></div>
+                  <div><dt>{t('review.psychologicalBackground')}</dt><dd>{selected.psychologicalBackground}</dd></div>
+                  <div><dt>{t('review.demographics')}</dt><dd>{t(`review.gender.${selected.gender}`)} {selected.age} {t(`review.ethnicity.${selected.ethnicity}`)}</dd></div>
+                  <div><dt>{t('review.model')}</dt><dd>{selected.model}</dd></div>
+                  <div><dt>{t('review.seed')}</dt><dd>{selected.seed}</dd></div>
+                  <div><dt>{t('review.contentVersion')}</dt><dd>{selected.contentVersion}</dd></div>
+                  <div className="review-context__details-wide"><dt>{t('review.positivePrompt')}</dt><dd>{selected.videoPrompt}</dd></div>
+                  <div className="review-context__details-wide"><dt>{t('review.negativePrompt')}</dt><dd>{selected.negativePrompt}</dd></div>
+                </dl>
+              </details>
             </section>
-          </section>
 
           <aside className="panel review-decision">
             <div className="section-header">
               <h2>{t('review.decision')}</h2>
               <StatusBadge label={t(`status.review.${decision}`)} kind={reviewStatusKind(decision)} />
             </div>
-            <div className="decision-options" role="group" aria-label={t('review.aria.decision')} aria-describedby="review-decision-help">
+            <div className="decision-options" role="group" aria-label={t('review.aria.decision')}>
               {finalDecisions.map((value, index) => (
                 <Button
                   key={value}
@@ -684,6 +738,28 @@ export function ReviewPage() {
                 </Button>
               ))}
             </div>
+            {selected.category.startsWith('C-') ? (
+              <section className="review-direction" aria-label={t('review.aria.direction')}>
+                <Field label={t('direction.label')} htmlFor="review-direction">
+                  <select
+                    id="review-direction"
+                    value={directionDraft ?? ''}
+                    onChange={event => setDirectionDraft(event.target.value as ConflictDirection)}
+                  >
+                    {allowedDirections(selected.category).map(value => (
+                      <option key={value} value={value}>{t(`direction.${value}`)}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Button
+                  variant="secondary"
+                  onClick={requestDirectionUpdate}
+                  disabled={directionDraft === null || directionDraft === selected.conflictDirection}
+                >
+                  {t('review.saveDirection')}
+                </Button>
+              </section>
+            ) : null}
             <Field label={t('fields.note')} htmlFor="review-note">
               <textarea
                 id="review-note"
@@ -763,6 +839,7 @@ export function ReviewPage() {
               <p>{t('review.shortcutIme')}</p>
             </details>
           </aside>
+          </div>
         </div>
       ) : null}
 
@@ -786,6 +863,22 @@ export function ReviewPage() {
         footer={<><Button onClick={() => setTransferConfirmOpen(false)}>{t('actions.cancel')}</Button><Button variant="primary" busy={busy} onClick={() => { setTransferConfirmOpen(false); transfer(); }}>{t('review.transferAction')}</Button></>}
       >
         {selected && targetCategory ? <><p>{t('review.transferConfirmBody', { from: t(`category.${selected.category}`), to: t(`category.${targetCategory}`) })}</p>{targetDirections.length > 0 ? <p>{t('review.transferConfirmDirection', { direction: t(`direction.${transferDirection}`) })}</p> : null}<p>{t('review.transferConfirmConsequence')}</p></> : null}
+      </Dialog>
+
+      <Dialog
+        open={directionConfirmOpen}
+        title={t('review.directionConfirmTitle')}
+        closeLabel={t('actions.close')}
+        onClose={() => setDirectionConfirmOpen(false)}
+        footer={<><Button onClick={() => setDirectionConfirmOpen(false)}>{t('actions.cancel')}</Button><Button variant="primary" busy={busy} onClick={updateDirection}>{t('review.saveDirection')}</Button></>}
+      >
+        {selected && directionDraft ? (
+          <>
+            <p>{t('review.directionConfirmBody', { from: t(`direction.${selected.conflictDirection}`), to: t(`direction.${directionDraft}`) })}</p>
+            <p>{t('review.directionConfirmRevision', { revision: selected.revision })}</p>
+            <p>{t('review.directionConfirmConsequence')}</p>
+          </>
+        ) : null}
       </Dialog>
 
       <p className="review-page__sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</p>

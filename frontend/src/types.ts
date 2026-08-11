@@ -69,9 +69,20 @@ export interface Sample extends Revisioned {
   dialogue: string | null;
   displayText: string | null;
   videoPrompt: string;
+  negativePrompt: string;
   explanation: string;
   generationNote: string;
-  emotion: string;
+  trueEmotionDescription: string;
+  trueEmotion: string;
+  apparentEmotion: string;
+  contentPlanName: string;
+  scenario: string;
+  triggerEvent: string;
+  psychologicalBackground: string;
+  age: 25 | 35 | 45 | 60;
+  gender: 'Male' | 'Female';
+  ethnicity: 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
+  contentVersion: number;
   seed: number;
   archiveStatus: ArchiveStatus;
 }
@@ -232,7 +243,7 @@ export interface BrowserPreferences {
 }
 
 export interface RepositoryData {
-  version: 5;
+  version: 6;
   datasets: Dataset[];
   reviewers: Reviewer[];
   gpuStates: GpuState[];
@@ -370,6 +381,12 @@ export interface TransferCategoryInput {
   sampleId: string;
   targetCategory: Category;
   conflictDirection: ConflictDirection | null;
+  expectedRevision: number;
+}
+
+export interface UpdateConflictDirectionInput {
+  sampleId: string;
+  conflictDirection: ConflictDirection;
   expectedRevision: number;
 }
 

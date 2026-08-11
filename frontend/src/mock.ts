@@ -14,7 +14,7 @@ import type {
 import { silentVideoDataUrl, voicedVideoDataUrl } from './mockMedia';
 import { buildJobItems } from './generation';
 
-export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v6';
+export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v7';
 export const LOCALE_STORAGE_KEY = 'conflictstudio.prototype.locale';
 export const REVIEWER_STORAGE_KEY = 'conflictstudio.prototype.reviewer.v2';
 
@@ -35,12 +35,26 @@ function makeSample(category: Category, index: number, sampleIndex: number): Sam
   const protocol = category.endsWith('VA') ? 'VA' : 'VT';
   const decision = decisions[index];
   const id = `sample-${category.toLowerCase()}-${index + 1}`;
+  const conflictDirection = directionBySample[`${category}-${index}`] ?? null;
+  const trueEmotion = category.startsWith('C-') ? '悲伤' : index === 1 ? '悲伤' : '平静';
+  const apparentEmotion = category.startsWith('C-') ? '平静' : trueEmotion;
+  const trueEmotionDescription = category === 'C-VA'
+    ? conflictDirection === 'Vision'
+      ? '人物的表情和动作表现出悲伤，声音保持平静。真实情绪主要由视觉信息表达。'
+      : '人物的表情保持平静，声音中的停顿和轻微颤抖表现出悲伤。真实情绪主要由声音表达。'
+    : category === 'C-VT'
+      ? conflictDirection === 'Vision'
+        ? '人物的表情和动作表现出悲伤，显示文本保持轻松。真实情绪主要由视觉信息表达。'
+        : '人物的表情保持平静，显示文本表达出悲伤。真实情绪主要由文本表达。'
+      : protocol === 'VA'
+        ? '人物的视觉表现和声音都表达相同情绪，两种信息相互支持。'
+        : '人物的视觉表现和显示文本都表达相同情绪，两种信息相互支持。';
   return {
     id,
     displayId: `CS-${String(sampleIndex + 1).padStart(4, '0')}`,
     datasetId: sampleIndex < 8 ? 'dataset-main' : 'dataset-validation',
     category,
-    conflictDirection: directionBySample[`${category}-${index}`] ?? null,
+    conflictDirection,
     reviewDecision: decision,
     reviewRevision: decision === 'Pending' ? 0 : 1,
     model: sampleIndex % 2 === 0 ? 'LTX-2.3' : 'MiniMax H3',
@@ -53,9 +67,20 @@ function makeSample(category: Category, index: number, sampleIndex: number): Sam
     dialogue: protocol === 'VA' ? '我没事，你先忙吧。' : null,
     displayText: protocol === 'VT' ? '今天一切都很好。' : null,
     videoPrompt: 'A natural indoor conversation, restrained body language, stable camera, realistic lighting.',
+    negativePrompt: 'Subtitles, camera cuts, exaggerated gestures, distorted hands.',
     explanation: '示例内容用于核对审核、归档和生成页面的字段。',
     generationNote: index === 1 ? '需要复核人物动作。' : '',
-    emotion: index === 1 ? '悲伤' : '平静',
+    trueEmotionDescription,
+    trueEmotion,
+    apparentEmotion,
+    contentPlanName: category.startsWith('C-') ? '克制情绪冲突' : '自然情绪表达',
+    scenario: '安静的室内，两人进行简短交谈。',
+    triggerEvent: '对方询问人物最近的状态。',
+    psychologicalBackground: '人物不希望让对方担心，因此控制了外在表现。',
+    age: [25, 35, 45, 60][sampleIndex % 4] as 25 | 35 | 45 | 60,
+    gender: sampleIndex % 2 === 0 ? 'Female' : 'Male',
+    ethnicity: ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'][sampleIndex % 5] as Sample['ethnicity'],
+    contentVersion: 2,
     seed: 3200 + sampleIndex,
     archiveStatus: decision === 'Accepted' && sampleIndex % 4 === 1 ? 'NeedsUpdate' : 'Current',
     revision: decision === 'Pending' ? 1 : 2,
@@ -383,7 +408,7 @@ const archives: Archive[] = [
 ];
 
 export const initialData: RepositoryData = {
-  version: 5,
+  version: 6,
   datasets: [
     {
       id: 'dataset-main',
