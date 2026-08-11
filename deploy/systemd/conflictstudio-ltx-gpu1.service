@@ -1,0 +1,17 @@
+[Unit]
+Description=ConflictStudio LTX 2.3 model service on GPU1
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/team/lvshuyang/ComfyUI
+Environment=CUDA_VISIBLE_DEVICES=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=XDG_CACHE_HOME=/home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/cache
+ReadOnlyPaths=/home/team/lvshuyang/ComfyUI
+ExecStartPre=/usr/bin/mkdir -p /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/input /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/output /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/temp /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/user /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/cache
+ExecStart=/home/team/lvshuyang/anaconda3/envs/comfyui/bin/python /home/team/lvshuyang/ComfyUI/main.py --listen 127.0.0.1 --port 8189 --disable-auto-launch --input-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/input --output-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/output --temp-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/temp --user-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu1/user
+Restart=no
+
+[Install]
+WantedBy=default.target
