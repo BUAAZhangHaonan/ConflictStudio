@@ -72,11 +72,12 @@ async function expectDialogBasics(page, message, dismissible = true) {
   equal(state.activeInside, true, `${message} must move focus inside.`);
   equal(state.left >= -1 && state.top >= -1, true, `${message} must start inside the viewport.`);
   equal(state.right <= state.viewportWidth + 1 && state.bottom <= state.viewportHeight + 1, true, `${message} must fit inside the viewport.`);
+  const trackedDialog = page.getByRole('dialog', { name: state.label, exact: true });
   await page.keyboard.press('Escape');
   if (dismissible) {
-    await dialog.waitFor({ state: 'hidden' });
+    await trackedDialog.waitFor({ state: 'hidden' });
   } else {
-    equal(await dialog.isVisible(), true, `${message} must remain open when dismissal is disabled.`);
+    equal(await trackedDialog.isVisible(), true, `${message} must remain open when dismissal is disabled.`);
   }
 }
 
@@ -407,6 +408,103 @@ try {
   await open(page, '/archive');
   await page.getByRole('button', { name: 'Preview sync' }).click();
   await expectDialogBasics(page, 'The archive preview dialog');
+
+  await open(page, '/workspace');
+  await page.getByRole('button', { name: /Edit dataset/u }).first().click();
+  await expectDialogBasics(page, 'The edit dataset dialog');
+  await page.getByRole('button', { name: /Disable dataset/u }).first().click();
+  await expectDialogBasics(page, 'The disable dataset dialog');
+
+  await open(page, '/generate/batches');
+  let batchContent = page.locator('fieldset[aria-describedby="batch-content-hint"]');
+  await batchContent.getByRole('button').click();
+  await page.getByRole('button', { name: 'Save batch draft' }).click();
+  await page.getByRole('button', { name: 'Preview allocation' }).click();
+  await expectDialogBasics(page, 'The batch allocation dialog');
+
+  await resetPrototypeState(page);
+  batchContent = page.locator('fieldset[aria-describedby="batch-content-hint"]');
+  await batchContent.getByRole('button').click();
+  await page.getByRole('button', { name: 'Save batch draft' }).click();
+  await page.getByRole('button', { name: 'Preview allocation' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Submit batch' }).click();
+  await expectDialogBasics(page, 'The batch submission dialog');
+  await page.keyboard.press('Escape');
+
+  await resetPrototypeState(page);
+  await page.locator('#batch-model').selectOption('MiniMax H3');
+  batchContent = page.locator('fieldset[aria-describedby="batch-content-hint"]');
+  await batchContent.getByRole('button').click();
+  await page.getByRole('button', { name: 'Save batch draft' }).click();
+  await page.getByRole('button', { name: 'Preview allocation' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Submit batch' }).click();
+  await expectDialogBasics(page, 'The loaded model replacement dialog');
+  await page.keyboard.press('Escape');
+
+  await resetPrototypeState(page);
+  await open(page, '/generate/content');
+  let draftContentCard = page.locator('.generation-selection-card').filter({ hasText: 'Draft' });
+  await draftContentCard.click();
+  await page.locator('#content-status').selectOption('Active');
+  await expectDialogBasics(page, 'The content activation dialog');
+  await page.locator('#content-status').selectOption('Disabled');
+  await expectDialogBasics(page, 'The content disable dialog');
+  await page.getByRole('button', { name: 'Delete content' }).click();
+  await expectDialogBasics(page, 'The content deletion dialog');
+  await page.locator('#content-name').fill('Unsaved content edit');
+  await page.locator('.generation-selection-card').first().click();
+  await expectDialogBasics(page, 'The content discard dialog');
+
+  await resetPrototypeState(page);
+  await open(page, '/generate/presets');
+  await page.locator('#preset-style').fill('Natural acting with stable movement.');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expectDialogBasics(page, 'The preset save dialog');
+  await page.locator('#preset-style').fill('Unsaved preset edit.');
+  await page.locator('.generation-selection-card').nth(1).click();
+  await expectDialogBasics(page, 'The preset discard dialog');
+
+  await resetPrototypeState(page);
+  await open(page, '/generate/test');
+  let testCard = page.locator('.generation-result-card').filter({ hasText: 'Waiting to start' });
+  await testCard.getByRole('button', { name: 'Cancel job' }).click();
+  await expectDialogBasics(page, 'The test cancellation dialog');
+  testCard = page.locator('.generation-result-card').filter({ hasText: 'Cancelled' });
+  await testCard.getByRole('button', { name: 'Retry job' }).click();
+  await expectDialogBasics(page, 'The test retry dialog');
+  testCard = page.locator('.generation-result-card').filter({ hasText: 'Completed' });
+  await testCard.getByRole('button', { name: 'Keep result' }).click();
+  await expectDialogBasics(page, 'The test keep dialog');
+
+  await open(page, '/generate/jobs?job=job-cancelled');
+  await page.getByRole('button', { name: 'Retry job' }).click();
+  await expectDialogBasics(page, 'The job retry dialog');
+  await open(page, '/generate/jobs?job=job-completed');
+  await page.getByRole('button', { name: 'Keep result' }).click();
+  await expectDialogBasics(page, 'The job keep dialog');
+  await open(page, '/generate/jobs?job=job-result-current');
+  await page.getByRole('button', { name: 'Edit result' }).click();
+  await expectDialogBasics(page, 'The result editor dialog');
+  await page.getByRole('button', { name: 'Edit result' }).click();
+  await page.locator('#job-result-video-prompt').fill('A revised prompt that requires rendering.');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
+  await expectDialogBasics(page, 'The rerender confirmation dialog');
+  await page.keyboard.press('Escape');
+
+  await open(page, '/review?sample=CS-0008');
+  await page.locator('.review-secondary-action').first().locator('summary').click();
+  await page.locator('.review-transfer').getByRole('button').click();
+  await expectDialogBasics(page, 'The category transfer dialog');
+  await page.locator('.review-queue__check input').first().check();
+  await page.locator('[data-review-batch] summary').click();
+  await page.locator('[data-review-batch]').getByRole('button').click();
+  await expectDialogBasics(page, 'The batch review dialog');
+
+  await open(page, '/archive');
+  await page.getByRole('button', { name: 'Preview sync' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Sync archive' }).click();
+  await expectDialogBasics(page, 'The archive sync dialog');
+  await page.keyboard.press('Escape');
 
   await open(page, '/settings');
   await page.getByRole('button', { name: 'Recheck example status' }).click();
