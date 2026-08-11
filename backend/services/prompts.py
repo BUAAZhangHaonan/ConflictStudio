@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +23,7 @@ from .errors import ServiceError
 
 
 class GeneratedPrompt(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     positive_prompt: str = Field(alias="positivePrompt", min_length=1)
     dialogue: str | None
@@ -62,6 +63,8 @@ class PreparedPrompt:
     category: Category
     true_emotion: str
     apparent_emotion: str
+    gender: Gender
+    ethnicity: Ethnicity
     system_input: str
     user_input: str
     final_negative_prompt: str
@@ -124,6 +127,8 @@ class PromptService:
             category=context.content.category,
             true_emotion=context.content.true_emotion,
             apparent_emotion=context.content.apparent_emotion,
+            gender=context.gender,
+            ethnicity=context.ethnicity,
             system_input=system_input,
             user_input=user_input,
             final_negative_prompt=context.preset.final_negative_prompt,
@@ -140,8 +145,8 @@ class PromptService:
                 status = 503 if error.code == "external_configuration_missing" else 502
                 raise ServiceError(status, error.code, error.message) from error
             try:
-                output = GeneratedPrompt.model_validate_json(raw)
-            except ValidationError as error:
+                output = GeneratedPrompt.model_validate(_load_unique_json_object(raw))
+            except (ValidationError, ValueError, json.JSONDecodeError) as error:
                 raise ServiceError(
                     502,
                     "invalid_prompt_response",
@@ -169,6 +174,8 @@ class PromptService:
                 spoken_text=spoken_text,
                 true_emotion=prepared.true_emotion,
                 apparent_emotion=prepared.apparent_emotion,
+                expected_ethnicity=cls._ethnicity_text(prepared.ethnicity),
+                expected_gender=prepared.gender.value,
             )
         except PromptPolicyViolation as error:
             raise ServiceError(
@@ -254,3 +261,18 @@ class PromptService:
             Ethnicity.SOUTH_ASIAN: "South Asian",
             Ethnicity.LATINO: "Latino",
         }[value]
+
+
+def _load_unique_json_object(raw: str) -> dict[str, object]:
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"Duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    value = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+    if not isinstance(value, dict):
+        raise ValueError("The prompt response must be a JSON object")
+    return value

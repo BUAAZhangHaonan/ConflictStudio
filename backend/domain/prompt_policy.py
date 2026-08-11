@@ -81,6 +81,7 @@ BANNED_EMOTION_LABELS: tuple[str, ...] = (
     "joy",
     "depressed",
     "anxious",
+    "melancholic",
 )
 
 BANNED_CERTAINTY_MODIFIERS: tuple[str, ...] = (
@@ -103,6 +104,9 @@ FORBIDDEN_MULTI_SUBJECT_PHRASES: tuple[str, ...] = (
     "several people",
     "the trio",
     "a crowd",
+    "a friend",
+    "the friend",
+    "third adult",
 )
 
 FORBIDDEN_MUSIC_PHRASES: tuple[str, ...] = (
@@ -116,6 +120,8 @@ FORBIDDEN_MUSIC_PHRASES: tuple[str, ...] = (
     "melody",
     "tune playing",
     "instrumental",
+    "orchestra",
+    "orchestral",
 )
 
 FORBIDDEN_INTERNAL_PHRASES: tuple[str, ...] = (
@@ -160,6 +166,15 @@ FORBIDDEN_BACKGROUND_PROTOCOL_PHRASES: tuple[str, ...] = (
     "caption",
     "rendered text",
     "text overlay",
+    "words appear on screen",
+)
+
+FORBIDDEN_RENDERED_TEXT_PHRASES: tuple[str, ...] = (
+    "subtitle",
+    "caption",
+    "rendered text",
+    "text overlay",
+    "words appear on screen",
 )
 
 FORBIDDEN_BACKGROUND_PERSON_PHRASES: tuple[str, ...] = (
@@ -190,6 +205,18 @@ FORBIDDEN_BACKGROUND_PERSON_PHRASES: tuple[str, ...] = (
     "the bystander",
     "other people",
     "background people",
+)
+
+BACKGROUND_DATABASE_FORBIDDEN_PHRASES: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        (
+            *FORBIDDEN_BACKGROUND_PERSON_PHRASES,
+            *FORBIDDEN_MUSIC_PHRASES,
+            *BANNED_EMOTION_LABELS,
+            *FORBIDDEN_INTERNAL_PHRASES,
+            *FORBIDDEN_BACKGROUND_PROTOCOL_PHRASES,
+        )
+    )
 )
 
 _PAST_TENSE_MARKERS: tuple[str, ...] = (
@@ -223,6 +250,7 @@ _PAST_TENSE_MARKERS: tuple[str, ...] = (
     "stopped",
     "ran",
     "fell",
+    "arranged",
 )
 
 _ENGLISH_WORD_RE = re.compile(r"\b[A-Za-z]+(?:[-'][A-Za-z]+)*\b")
@@ -293,6 +321,8 @@ def validate_final_positive_prompt(
     spoken_text: str,
     true_emotion: str = "",
     apparent_emotion: str = "",
+    expected_ethnicity: str | None = None,
+    expected_gender: str | None = None,
 ) -> None:
     """Validate a final video prompt without changing any supplied text."""
 
@@ -328,6 +358,12 @@ def validate_final_positive_prompt(
     _append_phrase_violation(violations, prompt, BANNED_CERTAINTY_MODIFIERS, "certainty claims")
     _append_phrase_violation(violations, prompt, FORBIDDEN_MUSIC_PHRASES, "music or score terms")
     _append_phrase_violation(violations, prompt, FORBIDDEN_INTERNAL_PHRASES, "internal category or protocol names")
+    _append_phrase_violation(
+        violations,
+        prompt,
+        FORBIDDEN_RENDERED_TEXT_PHRASES,
+        "subtitles, captions or rendered text",
+    )
 
     first_sentence = re.split(r"(?<=[.!?])\s+", narrative, maxsplit=1)[0]
     appearance_position = _first_pattern_position(structural_text, _APPEARANCE_PATTERNS)
@@ -341,6 +377,11 @@ def validate_final_positive_prompt(
     )
     if re.search(r"\b(?:another|second)\s+(?:person|adult|man|woman|character)\b", narrative, re.IGNORECASE):
         violations.append("positivePrompt must contain exactly one on-screen person")
+    if re.search(r"\b(?:three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:[a-z]+\s+){0,2}(?:adults|people|persons|men|women|characters)\b", narrative, re.IGNORECASE):
+        violations.append("positivePrompt must contain exactly one on-screen person")
+    if re.search(r"\b(?:man|woman|adult|person)\b[^.!?]{0,80}\band\b[^.!?]{0,80}\b(?:man|woman|adult|person)\b", narrative, re.IGNORECASE):
+        violations.append("positivePrompt must contain exactly one on-screen person")
+    _validate_expected_demographic(narrative, expected_ethnicity, expected_gender, violations)
 
     action_position = _first_pattern_position(structural_text, _ACTION_PATTERNS)
     speech_position = _first_pattern_position(prompt, _SPEECH_PATTERNS)
@@ -422,8 +463,14 @@ def _validate_spoken_text(spoken_text: str, violations: list[str]) -> str:
         violations.append("spoken text must not contain surrounding whitespace or line breaks")
     if any(mark in spoken_text for mark in ('"', "\u201c", "\u201d")):
         violations.append("spoken text must not contain quote marks")
-    if not _CJK_RE.search(spoken_text):
-        violations.append("spoken text must contain a natural Chinese phrase")
+    han_count = sum(1 for character in spoken_text if _CJK_RE.fullmatch(character))
+    other_alphanumeric_count = sum(
+        1
+        for character in spoken_text
+        if character.isalnum() and not _CJK_RE.fullmatch(character)
+    )
+    if han_count < 2 or han_count <= other_alphanumeric_count:
+        violations.append("spoken text must be predominantly Chinese and contain at least two Chinese characters")
     if not 2 <= len(spoken_text) <= 40:
         violations.append("spoken text must contain 2 to 40 characters")
     return f'"{spoken_text}"'
@@ -443,13 +490,44 @@ def _append_phrase_violation(
 def _find_phrases(text: str, phrases: Sequence[str]) -> list[str]:
     found: list[str] = []
     for phrase in phrases:
-        clean = phrase.strip()
+        clean = phrase.strip().casefold()
         if not clean:
             continue
         pattern = rf"(?<![A-Za-z0-9_]){re.escape(clean)}(?![A-Za-z0-9_])"
-        if re.search(pattern, text, re.IGNORECASE):
+        if re.search(pattern, text.casefold()):
             found.append(clean)
     return list(dict.fromkeys(found))
+
+
+def _validate_expected_demographic(
+    text: str,
+    expected_ethnicity: str | None,
+    expected_gender: str | None,
+    violations: list[str],
+) -> None:
+    normalized = text.casefold()
+    ethnicities = ("east asian", "south asian", "white", "black", "latino")
+    found_ethnicities = {
+        value
+        for value in ethnicities
+        if re.search(
+            rf"(?<![a-z]){re.escape(value)}(?![a-z])(?:\s+[a-z-]+){{0,2}}\s+(?:adult|man|woman|male|female|person)\b",
+            normalized,
+        )
+    }
+    if expected_ethnicity is not None:
+        expected = expected_ethnicity.strip().casefold()
+        if found_ethnicities != {expected}:
+            violations.append("positivePrompt appearance must match the selected ethnicity")
+
+    if expected_gender is not None:
+        expected = expected_gender.strip().casefold()
+        accepted = {"female": ("female", "woman"), "male": ("male", "man")}.get(expected, (expected,))
+        opposite = ("male", "man") if expected == "female" else ("female", "woman")
+        has_expected = any(re.search(rf"(?<![a-z]){term}(?![a-z])", normalized) for term in accepted)
+        has_opposite = any(re.search(rf"(?<![a-z]){term}(?![a-z])", normalized) for term in opposite)
+        if not has_expected or has_opposite:
+            violations.append("positivePrompt appearance must match the selected gender")
 
 
 def _first_pattern_position(text: str, patterns: Sequence[str]) -> int | None:

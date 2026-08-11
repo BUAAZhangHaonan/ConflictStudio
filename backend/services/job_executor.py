@@ -348,6 +348,8 @@ class JobExecutor:
             category=snapshot.category,
             true_emotion=snapshot.true_emotion,
             apparent_emotion=snapshot.apparent_emotion,
+            gender=snapshot.gender,
+            ethnicity=snapshot.ethnicity,
             system_input=snapshot.system_input,
             user_input=snapshot.user_input,
             final_negative_prompt=snapshot.final_negative_prompt,

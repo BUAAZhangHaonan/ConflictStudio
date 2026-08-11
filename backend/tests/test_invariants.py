@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 from time import monotonic
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.adapters.config import Settings
@@ -70,6 +71,58 @@ def normalized_table_sql(database: Database, table_name: str) -> str:
             (table_name,),
         ).scalar_one()
     return " ".join(statement.split())
+
+
+def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    connection = sqlite3.connect(database.database_path)
+    columns = (
+        "name, name_key, scene, ambient_audio, relationship, lighting, framing_supplement, "
+        "status, revision, created_at, updated_at"
+    )
+    try:
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"INSERT INTO video_background_presets ({columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "Invalid background",
+                    "invalid background",
+                    "A friend waits beside the subject.",
+                    "Room tone",
+                    "",
+                    "Soft daylight",
+                    "Medium shot",
+                    "Active",
+                    1,
+                    "2026-08-12T00:00:00Z",
+                    "2026-08-12T00:00:00Z",
+                ),
+            )
+
+        connection.execute(
+            f"INSERT INTO video_background_presets ({columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "Valid background",
+                "valid background",
+                "A private office with one chair.",
+                "Room tone",
+                "",
+                "Soft daylight",
+                "Medium shot",
+                "Active",
+                1,
+                "2026-08-12T00:00:00Z",
+                "2026-08-12T00:00:00Z",
+            ),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE video_background_presets SET ambient_audio = ? WHERE name_key = ?",
+                ("An orchestra plays nearby.", "valid background"),
+            )
+    finally:
+        connection.close()
 
 
 def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp_path: Path) -> None:

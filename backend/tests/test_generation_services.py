@@ -277,8 +277,8 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
                 negative_examples=preset_read.negative_examples,
                 background=session.get(VideoBackgroundPreset, background_read.id),
                 age=45,
-                gender=Gender.MALE,
-                ethnicity=Ethnicity.BLACK,
+                gender=Gender.FEMALE,
+                ethnicity=Ethnicity.EAST_ASIAN,
             )
         )
     result = asyncio.run(service.complete(prepared, Category.C_VA))

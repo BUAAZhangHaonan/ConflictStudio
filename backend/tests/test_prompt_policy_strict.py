@@ -78,6 +78,8 @@ def prompt_context(
     mode: ContentMode,
     category: Category = Category.A_VA,
     base_video_prompt: str = "",
+    gender: Gender = Gender.FEMALE,
+    ethnicity: Ethnicity = Ethnicity.EAST_ASIAN,
 ) -> PromptContext:
     is_va = category in {Category.A_VA, Category.C_VA}
     content = ContentPlan(
@@ -131,8 +133,8 @@ def prompt_context(
         negative_examples=[],
         background=background,
         age=25,
-        gender=Gender.FEMALE,
-        ethnicity=Ethnicity.EAST_ASIAN,
+        gender=gender,
+        ethnicity=ethnicity,
     )
 
 
@@ -222,7 +224,14 @@ def test_generative_prompt_is_preserved_exactly_without_whitespace_repair() -> N
 def test_vt_source_prompt_contains_exact_independently_stored_spoken_text() -> None:
     model = StaticPromptModel(prompt_json(VALID_VT_PROMPT, dialogue=None, vt_text=VT_TEXT))
     service = PromptService(model)
-    prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE, category=Category.A_VT))
+    prepared = service.prepare(
+        prompt_context(
+            mode=ContentMode.GENERATIVE,
+            category=Category.A_VT,
+            gender=Gender.MALE,
+            ethnicity=Ethnicity.SOUTH_ASIAN,
+        )
+    )
     result = asyncio.run(service.complete(prepared, Category.A_VT))
 
     assert result.dialogue is None
@@ -242,13 +251,76 @@ def test_strict_json_rejects_code_fenced_response() -> None:
 
 
 @pytest.mark.parametrize(
+    "raw",
+    [
+        prompt_json(VALID_VA_PROMPT).replace(
+            '"positivePrompt":', '"positivePrompt": "duplicate", "positivePrompt":', 1
+        ),
+        prompt_json(VALID_VA_PROMPT).replace('"positivePrompt":', '"positive_prompt":', 1),
+    ],
+)
+def test_strict_json_rejects_duplicate_and_non_camel_keys(raw: str) -> None:
+    service = PromptService(StaticPromptModel(raw))
+    prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
+    with pytest.raises(ServiceError) as error:
+        asyncio.run(service.complete(prepared, Category.A_VA))
+    assert error.value.code == "invalid_prompt_response"
+
+
+@pytest.mark.parametrize(
+    "invalid_prompt",
+    [
+        VALID_VA_PROMPT.replace("An East Asian woman", "Three East Asian adults"),
+        VALID_VA_PROMPT.replace("An East Asian woman", "An East Asian man and a white woman"),
+        VALID_VA_PROMPT.replace("She sits upright", "A friend sits upright"),
+        VALID_VA_PROMPT.replace("She sits upright", "A third adult sits upright"),
+        VALID_VA_PROMPT.replace("gaze stays level", "melancholic gaze stays level"),
+        VALID_VA_PROMPT.replace("ventilation hums softly", "an orchestra plays softly"),
+        VALID_VA_PROMPT.replace("ventilation hums softly", "arranged music plays softly"),
+        VALID_VA_PROMPT.replace("The private office", "Words appear on screen. The private office"),
+    ],
+)
+def test_policy_rejects_additional_single_subject_and_rendering_violations(invalid_prompt: str) -> None:
+    with pytest.raises(PromptPolicyViolation):
+        validate_final_positive_prompt(invalid_prompt, spoken_text=VA_DIALOGUE)
+
+
+def test_policy_accepts_matching_demographic_and_rejects_mismatch() -> None:
+    validate_final_positive_prompt(
+        VALID_VA_PROMPT,
+        spoken_text=VA_DIALOGUE,
+        expected_ethnicity="East Asian",
+        expected_gender="Female",
+    )
+    with pytest.raises(PromptPolicyViolation, match="selected ethnicity"):
+        validate_final_positive_prompt(
+            VALID_VA_PROMPT,
+            spoken_text=VA_DIALOGUE,
+            expected_ethnicity="White",
+            expected_gender="Female",
+        )
+
+
+@pytest.mark.parametrize("spoken_text", ["Hello你there", "你A"])
+def test_policy_rejects_spoken_text_without_a_chinese_majority(spoken_text: str) -> None:
+    prompt = VALID_VA_PROMPT.replace(VA_DIALOGUE, spoken_text)
+    with pytest.raises(PromptPolicyViolation, match="predominantly Chinese"):
+        validate_final_positive_prompt(prompt, spoken_text=spoken_text)
+
+
+@pytest.mark.parametrize(
     "value",
     [
         "A trusted colleague stands off camera.",
+        "A friend waits beside the subject.",
+        "A third adult stands nearby.",
         "Soft background music fills the room.",
+        "An orchestra plays nearby.",
         "The walls create a sad atmosphere.",
+        "The room feels melancholic.",
         "The A-VT protocol applies here.",
         "The scene is silent with no speech.",
+        "The words appear on screen.",
     ],
 )
 def test_background_policy_rejects_person_music_emotion_internal_and_protocol_conflicts(value: str) -> None:

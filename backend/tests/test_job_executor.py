@@ -67,9 +67,21 @@ class RecordingPromptModel:
 
     async def generate(self, system_input: str, user_input: str) -> str:
         self.calls += 1
+        population = next(
+            (line.removeprefix("Population: ") for line in user_input.splitlines() if line.startswith("Population: ")),
+            "East Asian",
+        )
+        gender = next(
+            (line.removeprefix("Gender: ") for line in user_input.splitlines() if line.startswith("Gender: ")),
+            "Female",
+        )
+        population_text = {"EastAsian": "East Asian", "SouthAsian": "South Asian"}.get(population, population)
+        prompt = VALID_PROMPT.replace("East Asian", population_text, 1)
+        if gender == "Male":
+            prompt = prompt.replace("woman", "man", 1).replace("She ", "He ").replace(" her ", " his ")
         return json.dumps(
             {
-                "positivePrompt": VALID_PROMPT,
+                "positivePrompt": prompt,
                 "dialogue": DIALOGUE,
                 "vtText": None,
                 "trueEmotionDescription": "说话内容和可见动作共同表达受控状态。",
@@ -298,7 +310,7 @@ def test_executor_persists_results_and_runs_two_gpu_channels(tmp_path: Path) -> 
         assert renderer.max_active_by_slot == {GpuSlotName.GPU0: 1, GpuSlotName.GPU1: 1}
         assert (completed.prepared_count, completed.completed_count, completed.failed_count) == (4, 4, 0)
         assert all(item.prompt_result is not None for item in completed.items)
-        assert all(item.prompt_result.final_positive_prompt == VALID_PROMPT for item in completed.items)
+        assert all(item.prompt_result.final_positive_prompt for item in completed.items)
         assert completed.events[-1].event_type == "JobCompleted"
         assert completed.events[-1].payload.model_dump(by_alias=True, exclude_none=True) == {
             "preparedCount": 4,

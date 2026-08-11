@@ -69,9 +69,9 @@ CATEGORY_DIRECTION_CHECK = """
 
 CONTENT_EMOTION_CHECK = """
 (
-  category IN ('A-VA', 'A-VT') AND true_emotion = apparent_emotion
+  category IN ('A-VA', 'A-VT') AND lower(trim(true_emotion)) = lower(trim(apparent_emotion))
 ) OR (
-  category IN ('C-VA', 'C-VT') AND true_emotion <> apparent_emotion
+  category IN ('C-VA', 'C-VT') AND lower(trim(true_emotion)) <> lower(trim(apparent_emotion))
 )
 """
 

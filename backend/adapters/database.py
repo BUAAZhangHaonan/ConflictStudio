@@ -12,6 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from backend.domain.enums import GpuAvailability, GpuSlotName
 from backend.domain.models import GpuSlot
+from backend.domain.prompt_policy import BACKGROUND_DATABASE_FORBIDDEN_PHRASES
 
 
 SQLITE_BUSY_TIMEOUT_MS = 100
@@ -74,6 +75,28 @@ class Database:
                     BEFORE DELETE ON {table_name}
                     BEGIN
                         SELECT RAISE(ABORT, '{message}');
+                    END
+                    """
+                )
+            background_text = (
+                "lower(coalesce(NEW.scene, '') || ' ' || coalesce(NEW.ambient_audio, '') || ' ' || "
+                "coalesce(NEW.relationship, '') || ' ' || coalesce(NEW.lighting, '') || ' ' || "
+                "coalesce(NEW.framing_supplement, ''))"
+            )
+            forbidden_checks = " OR ".join(
+                f"instr({background_text}, '{phrase.casefold().replace(chr(39), chr(39) * 2)}') > 0"
+                for phrase in BACKGROUND_DATABASE_FORBIDDEN_PHRASES
+            )
+            for operation in ("INSERT", "UPDATE"):
+                trigger_name = f"reject_video_background_presets_{operation.casefold()}"
+                connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+                connection.exec_driver_sql(
+                    f"""
+                    CREATE TRIGGER {trigger_name}
+                    BEFORE {operation} ON video_background_presets
+                    WHEN {forbidden_checks}
+                    BEGIN
+                        SELECT RAISE(ABORT, 'video background preset violates prompt policy');
                     END
                     """
                 )

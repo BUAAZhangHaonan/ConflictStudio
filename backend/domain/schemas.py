@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, field_validator, model_validator
+from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, field_validator, model_validator
 
 from .enums import (
     AGES,
@@ -42,6 +42,19 @@ class ApiModel(BaseModel):
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
 TextValue = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+def normalize_emotion(value: object) -> object:
+    if isinstance(value, str):
+        return value.strip().casefold()
+    return value
+
+
+EmotionValue = Annotated[
+    str,
+    BeforeValidator(normalize_emotion),
+    StringConstraints(min_length=1, max_length=120),
+]
 
 
 class ErrorValue(ApiModel):
@@ -95,8 +108,8 @@ class ContentPlanFields(ApiModel):
     conflict_direction: ConflictDirection | None = None
     mode: ContentMode
     status: ContentStatus = ContentStatus.DRAFT
-    true_emotion: TextValue
-    apparent_emotion: TextValue
+    true_emotion: EmotionValue
+    apparent_emotion: EmotionValue
     scene: TextValue
     trigger_event: TextValue
     psychological_background: TextValue
@@ -139,8 +152,8 @@ class ContentPlanUpdate(UpdateWithChanges):
     conflict_direction: ConflictDirection | None = None
     mode: ContentMode | None = None
     status: ContentStatus | None = None
-    true_emotion: TextValue | None = None
-    apparent_emotion: TextValue | None = None
+    true_emotion: EmotionValue | None = None
+    apparent_emotion: EmotionValue | None = None
     scene: TextValue | None = None
     trigger_event: TextValue | None = None
     psychological_background: TextValue | None = None

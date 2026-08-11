@@ -93,6 +93,23 @@ def test_content_plan_accepts_protocol_directions(category: Category, direction:
     assert result.conflict_direction is direction
 
 
+def test_content_plan_normalizes_emotions_before_relation_validation() -> None:
+    aligned = ContentPlanCreate.model_validate(
+        content_plan_payload(trueEmotion=" Sadness ", apparentEmotion="sadness")
+    )
+    assert (aligned.true_emotion, aligned.apparent_emotion) == ("sadness", "sadness")
+
+    with pytest.raises(ValidationError):
+        ContentPlanCreate.model_validate(
+            content_plan_payload(
+                category=Category.C_VA,
+                conflictDirection=ConflictDirection.AUDIO,
+                trueEmotion="Sadness",
+                apparentEmotion=" sadness ",
+            )
+        )
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -127,6 +144,7 @@ def test_content_plan_rejects_invalid_relation_or_protocol(overrides: dict[str, 
     [
         (Category.A_VA, None, "calm", "tense"),
         (Category.C_VA, ConflictDirection.AUDIO, "calm", "calm"),
+        (Category.C_VA, ConflictDirection.AUDIO, "Sadness", " sadness "),
         (Category.C_VA, ConflictDirection.TEXT, "calm", "tense"),
         (Category.C_VT, ConflictDirection.AUDIO, "calm", "tense"),
     ],
