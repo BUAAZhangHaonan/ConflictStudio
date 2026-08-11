@@ -25,6 +25,15 @@ export const reviewArchiveEnUS = {
       NeedsUpdate: 'Update needed',
     },
   },
+  emotion: {
+    neutral: 'Neutral',
+    joy: 'Joy',
+    sadness: 'Sadness',
+    anger: 'Anger',
+    fear: 'Fear',
+    surprise: 'Surprise',
+    disgust: 'Disgust',
+  },
   table: {
     samplesCaption: 'Review sample list',
     archiveCaption: 'Archive sample list',
@@ -288,6 +297,15 @@ export const reviewArchiveZhCN = {
       Current: '已是最新',
       NeedsUpdate: '需要更新',
     },
+  },
+  emotion: {
+    neutral: '平静',
+    joy: '愉快',
+    sadness: '悲伤',
+    anger: '愤怒',
+    fear: '害怕',
+    surprise: '惊讶',
+    disgust: '厌恶',
   },
   table: {
     samplesCaption: '审核样本列表',

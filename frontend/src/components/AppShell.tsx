@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type PropsWithChildren } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMockRepository, useRepositorySnapshot } from '../store';
 
@@ -135,17 +135,21 @@ export function AppShell({ children }: PropsWithChildren) {
     <>
       <div className="app-shell__brand">{t('app.product')}</div>
       <nav className="primary-nav" aria-label={t('app.mainNavigation')}>
-        {primaryNavigation.map(item => (
-          <NavLink
-            key={item.key}
-            to={item.to}
-            className={({ isActive }) =>
-              `primary-nav__link ${isActive || (item.key === 'generate' && location.pathname.startsWith('/generate')) ? 'is-active' : ''}`
-            }
-          >
-            <span>{t(`nav.${item.key}`)}</span>
-          </NavLink>
-        ))}
+        {primaryNavigation.map(item => {
+          const isCurrent = item.key === 'generate'
+            ? location.pathname.startsWith('/generate')
+            : location.pathname === item.to;
+          return (
+            <Link
+              key={item.key}
+              to={item.to}
+              className={`primary-nav__link ${isCurrent ? 'is-active' : ''}`}
+              aria-current={isCurrent ? 'page' : undefined}
+            >
+              <span>{t(`nav.${item.key}`)}</span>
+            </Link>
+          );
+        })}
       </nav>
     </>
   );

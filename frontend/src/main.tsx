@@ -20,12 +20,16 @@ const router = createBrowserRouter([{
       <App />
     </ToastProvider>
   ),
-}]);
+}], {
+  future: {
+    v7_relativeSplatPath: true,
+  },
+});
 
 createRoot(root).render(
   <StrictMode>
     <RepositoryProvider>
-      <RouterProvider router={router} />
+      <RouterProvider router={router} future={{ v7_startTransition: true }} />
     </RepositoryProvider>
   </StrictMode>,
 );

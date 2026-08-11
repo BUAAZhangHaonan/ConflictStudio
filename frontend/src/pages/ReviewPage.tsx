@@ -52,8 +52,7 @@ function isShortcutBlockedTarget(target: EventTarget | null): target is HTMLElem
     target.isContentEditable ||
     target instanceof HTMLInputElement ||
     target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement ||
-    target instanceof HTMLButtonElement
+    target instanceof HTMLSelectElement
   );
 }
 
@@ -120,8 +119,8 @@ export function ReviewPage() {
   const [batchConfirmOpen, setBatchConfirmOpen] = useState(false);
   const [transferConfirmOpen, setTransferConfirmOpen] = useState(false);
   const [directionConfirmOpen, setDirectionConfirmOpen] = useState(false);
-  const [transferOpen, setTransferOpen] = useState(() => !window.matchMedia('(max-width: 768px)').matches);
-  const [batchOpen, setBatchOpen] = useState(() => !window.matchMedia('(max-width: 768px)').matches);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false);
   const [operationMessage, setOperationMessage] = useState<OperationMessage | null>(null);
   const [busy, setBusy] = useState(false);
@@ -509,7 +508,7 @@ export function ReviewPage() {
   }
 
   return (
-    <section className="page-stack review-page" aria-label={t('review.aria.page')}>
+    <section className={`page-stack review-page ${mobileDetail ? 'review-page--mobile-detail' : ''}`} aria-label={t('review.aria.page')}>
       <PageHeader
         title={t('review.title')}
         actions={<div className="review-page__header-actions">{returnTarget ? <Button variant="secondary" onClick={() => navigate(returnTarget)}>{t('review.returnToArchive')}</Button> : null}<span className="review-page__count">{t('review.queueCount', { visible: visibleSamples.length, total: snapshot.data.samples.length })}</span></div>}
@@ -629,7 +628,6 @@ export function ReviewPage() {
                         onChange={() => toggleSelected(sample.id)}
                         aria-label={queueItemLabel}
                       />
-                      <span className="review-page__sr-only">{queueItemLabel}</span>
                     </label>
                     <button
                       ref={node => {
@@ -699,8 +697,8 @@ export function ReviewPage() {
                 <div className="review-context__copy--description" aria-readonly="true"><h3>{t('review.trueEmotionDescription')}</h3><p>{selected.trueEmotionDescription}</p></div>
               </div>
               <dl className="review-context__facts review-context__facts--emotion">
-                <div><dt>{t('review.trueEmotion')}</dt><dd>{selected.trueEmotion}</dd></div>
-                <div><dt>{t('review.apparentEmotion')}</dt><dd>{selected.apparentEmotion}</dd></div>
+                <div><dt>{t('review.trueEmotion')}</dt><dd>{t(`emotion.${selected.trueEmotion}`, { defaultValue: selected.trueEmotion })}</dd></div>
+                <div><dt>{t('review.apparentEmotion')}</dt><dd>{t(`emotion.${selected.apparentEmotion}`, { defaultValue: selected.apparentEmotion })}</dd></div>
                 <div><dt>{t('direction.label')}</dt><dd>{selected.conflictDirection ? t(`direction.${selected.conflictDirection}`) : t('review.directionNotRequired')}</dd></div>
               </dl>
               <details className="review-context__details">
