@@ -67,6 +67,14 @@ CATEGORY_DIRECTION_CHECK = """
 )
 """
 
+CONTENT_EMOTION_CHECK = """
+(
+  category IN ('A-VA', 'A-VT') AND true_emotion = apparent_emotion
+) OR (
+  category IN ('C-VA', 'C-VT') AND true_emotion <> apparent_emotion
+)
+"""
+
 
 class Dataset(SQLModel, table=True):
     __tablename__ = "datasets"
@@ -91,6 +99,7 @@ class ContentPlan(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("category", "name_key", name="uq_content_plans_category_name"),
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_content_plans_direction"),
+        CheckConstraint(CONTENT_EMOTION_CHECK, name="ck_content_plans_emotion_relation"),
         CheckConstraint(
             "(mode = 'Fixed' AND length(trim(base_video_prompt)) > 0) OR "
             "(mode = 'Generative' AND length(trim(content_instruction)) > 0)",

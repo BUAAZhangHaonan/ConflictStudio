@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, field_validator, model_validator
 
 from .enums import (
     AGES,
@@ -23,6 +23,7 @@ from .enums import (
     ResourceStatus,
     validate_direction,
 )
+from .prompt_policy import validate_background_policy_text
 
 
 def to_camel(value: str) -> str:
@@ -110,6 +111,10 @@ class ContentPlanFields(ApiModel):
     def validate_content(self) -> Self:
         if not validate_direction(self.category, self.conflict_direction):
             raise ValueError("Conflict direction does not match the category")
+        if self.category in {Category.A_VA, Category.A_VT} and self.true_emotion != self.apparent_emotion:
+            raise ValueError("Aligned content requires true emotion to equal apparent emotion")
+        if self.category in {Category.C_VA, Category.C_VT} and self.true_emotion == self.apparent_emotion:
+            raise ValueError("Conflict content requires true emotion to differ from apparent emotion")
         if self.mode is ContentMode.FIXED and not self.base_video_prompt.strip():
             raise ValueError("Fixed content requires a base video prompt")
         if self.mode is ContentMode.GENERATIVE and not self.content_instruction.strip():
@@ -195,6 +200,11 @@ class VideoBackgroundPresetFields(ApiModel):
     framing_supplement: str = ""
     status: ResourceStatus = ResourceStatus.ACTIVE
 
+    @field_validator("scene", "ambient_audio", "relationship", "lighting", "framing_supplement")
+    @classmethod
+    def validate_background_text(cls, value: str, info: ValidationInfo) -> str:
+        return validate_background_policy_text(value, info.field_name)
+
 
 class VideoBackgroundPresetCreate(VideoBackgroundPresetFields):
     pass
@@ -208,6 +218,13 @@ class VideoBackgroundPresetUpdate(UpdateWithChanges):
     lighting: str | None = None
     framing_supplement: str | None = None
     status: ResourceStatus | None = None
+
+    @field_validator("scene", "ambient_audio", "relationship", "lighting", "framing_supplement")
+    @classmethod
+    def validate_background_text(cls, value: str | None, info: ValidationInfo) -> str | None:
+        if value is None:
+            return None
+        return validate_background_policy_text(value, info.field_name)
 
 
 class VideoBackgroundPresetRead(VideoBackgroundPresetFields):

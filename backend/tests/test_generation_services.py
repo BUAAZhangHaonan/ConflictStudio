@@ -78,7 +78,7 @@ def fixed_resources(database: Database) -> tuple[CatalogService, object, object,
             name="安静办公室",
             scene="A small private office with a desk and neutral walls.",
             ambientAudio="Low room tone and distant ventilation.",
-            relationship="A trusted colleague stands off camera.",
+            relationship="The subject remains the only occupant in view.",
             lighting="Soft daylight from one side.",
             framingSupplement="Static eye-level medium shot.",
         )

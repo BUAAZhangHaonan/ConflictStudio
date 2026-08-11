@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.adapters.config import Settings
@@ -76,6 +77,113 @@ def test_invalid_direction_returns_stable_422(tmp_path: Path) -> None:
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def content_plan_request(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "name": "Aligned response",
+        "category": "A-VA",
+        "mode": "Generative",
+        "status": "Active",
+        "trueEmotion": "calm",
+        "apparentEmotion": "calm",
+        "scene": "A private office.",
+        "triggerEvent": "A timer sounds.",
+        "psychologicalBackground": "The subject prepares a brief response.",
+        "contentInstruction": "Describe one adult responding in the room.",
+    }
+    values.update(overrides)
+    return values
+
+
+def test_content_plan_create_and_update_enforce_emotion_relation(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        invalid_create = client.post(
+            "/api/content-plans",
+            json=content_plan_request(apparentEmotion="tense"),
+        )
+        created = client.post("/api/content-plans", json=content_plan_request())
+        invalid_update = client.patch(
+            f"/api/content-plans/{created.json()['id']}",
+            json={"expectedRevision": created.json()["revision"], "apparentEmotion": "tense"},
+        )
+
+    assert invalid_create.status_code == 422
+    assert invalid_create.json()["error"]["code"] == "validation_error"
+    assert created.status_code == 201
+    assert invalid_update.status_code == 422
+    assert invalid_update.json()["error"]["code"] == "validation_error"
+
+
+def background_request(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "name": "Private office",
+        "scene": "A private office containing one chair and one desk.",
+        "ambientAudio": "A steady ventilation hum remains audible.",
+        "relationship": "The subject is the only occupant in view.",
+        "lighting": "Soft daylight enters through one window.",
+        "framingSupplement": "Use a static eye-level medium shot.",
+    }
+    values.update(overrides)
+    return values
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("relationship", "A second person stands off camera.", "another person"),
+        ("ambientAudio", "A soft soundtrack plays nearby.", "music or score terms"),
+        ("lighting", "The lighting creates a sad atmosphere.", "emotion labels"),
+        ("scene", "The A-VT protocol applies in this office.", "internal category or protocol names"),
+    ],
+)
+def test_background_create_returns_field_specific_policy_error(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    with client_for(tmp_path) as client:
+        response = client.post(
+            "/api/video-background-presets",
+            json=background_request(**{field: value}),
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    fields = response.json()["error"]["details"]["fields"]
+    assert fields[0]["field"] == field
+    assert message in fields[0]["message"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("relationship", "A second person stands off camera.", "another person"),
+        ("ambientAudio", "A soft soundtrack plays nearby.", "music or score terms"),
+        ("lighting", "The lighting creates a sad atmosphere.", "emotion labels"),
+        ("scene", "The A-VT protocol applies in this office.", "internal category or protocol names"),
+    ],
+)
+def test_background_update_returns_field_specific_policy_error(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    with client_for(tmp_path) as client:
+        created = client.post("/api/video-background-presets", json=background_request())
+        response = client.patch(
+            f"/api/video-background-presets/{created.json()['id']}",
+            json={"expectedRevision": created.json()["revision"], field: value},
+        )
+
+    assert created.status_code == 201
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    fields = response.json()["error"]["details"]["fields"]
+    assert fields[0]["field"] == field
+    assert message in fields[0]["message"]
 
 
 def test_unknown_api_route_does_not_return_frontend(tmp_path: Path) -> None:
