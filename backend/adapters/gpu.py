@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -225,7 +226,7 @@ class SlotInspector:
         control_group = values.get("ControlGroup", "")
         configuration_matches = (
             values.get("FragmentPath") == definition.fragment_path
-            and " ".join(definition.required_exec_tokens) in exec_start
+            and self._parse_exec_start(exec_start) == definition.required_exec_tokens
         )
         process_metadata_matches = (
             values.get("ActiveState") == "inactive"
@@ -247,6 +248,24 @@ class SlotInspector:
             exec_start=exec_start,
             trusted=trusted,
         )
+
+    @staticmethod
+    def _parse_exec_start(value: str) -> tuple[str, ...] | None:
+        value = value.strip()
+        if not value:
+            return None
+        if value.startswith("{"):
+            match = re.fullmatch(
+                r"\{\s*path=.*?;\s*argv\[\]=(.*?);\s*.*\}",
+                value,
+            )
+            if match is None:
+                return None
+            value = match.group(1).strip()
+        try:
+            return tuple(shlex.split(value, posix=True))
+        except ValueError:
+            return None
 
     async def _gpu_pids(self, slot: GpuSlotName) -> set[int] | None:
         command = (
@@ -306,12 +325,7 @@ class SlotInspector:
     def _owner(process: _Process, active: list[UnitState]) -> UnitState | None:
         for state in active:
             required = state.definition.required_exec_tokens
-            command_matches = (
-                len(process.argv) >= 2
-                and process.argv[0] == required[0]
-                and process.argv[1] == required[1]
-                and process.argv[: len(required)] == required
-            )
+            command_matches = process.argv == required
             if (
                 state.trusted
                 and process.user == SERVICE_USER

@@ -19,7 +19,12 @@ from backend.adapters.renderer import RendererGatewayError
 from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName
 
 
-def _unit_show(unit: UnitDefinition, *, active: bool) -> str:
+def _unit_show(
+    unit: UnitDefinition,
+    *,
+    active: bool,
+    exec_tokens: tuple[str, ...] | None = None,
+) -> str:
     control_group = (
         f"/user.slice/user-1000.slice/user@1000.service/app.slice/{unit.name}" if active else ""
     )
@@ -31,7 +36,7 @@ def _unit_show(unit: UnitDefinition, *, active: bool) -> str:
             f"FragmentPath={unit.fragment_path}",
             f"MainPID={main_pid}",
             f"ControlGroup={control_group}",
-            f"ExecStart={' '.join(unit.required_exec_tokens)}",
+            f"ExecStart={' '.join(exec_tokens or unit.required_exec_tokens)}",
         )
     )
 
@@ -44,11 +49,15 @@ class InspectionCommands:
         gpu_pids: Iterable[int] = (),
         listener_pids: Iterable[int] = (),
         foreign_pids: Iterable[int] = (),
+        unit_extra_tokens: Iterable[str] = (),
+        process_extra_tokens: Iterable[str] = (),
     ) -> None:
         self.active_model = active_model
         self.gpu_pids = set(gpu_pids)
         self.listener_pids = set(listener_pids)
         self.foreign_pids = set(foreign_pids)
+        self.unit_extra_tokens = tuple(unit_extra_tokens)
+        self.process_extra_tokens = tuple(process_extra_tokens)
         self.calls: list[tuple[str, ...]] = []
 
     async def __call__(self, command: tuple[str, ...]) -> CommandResult:
@@ -56,7 +65,14 @@ class InspectionCommands:
         if command[:3] == ("systemctl", "--user", "show"):
             unit = next(value for value in UNIT_DEFINITIONS if value.name == command[3])
             active = unit.slot is GpuSlotName.GPU0 and unit.model is self.active_model
-            return CommandResult(0, _unit_show(unit, active=active))
+            return CommandResult(
+                0,
+                _unit_show(
+                    unit,
+                    active=active,
+                    exec_tokens=unit.required_exec_tokens + self.unit_extra_tokens,
+                ),
+            )
         if command[0] == "nvidia-smi":
             return CommandResult(0, "\n".join(str(pid) for pid in sorted(self.gpu_pids)))
         if command[0] == "ss":
@@ -77,7 +93,10 @@ class InspectionCommands:
                 for value in UNIT_DEFINITIONS
                 if value.slot is GpuSlotName.GPU0 and value.model is self.active_model
             )
-            return CommandResult(0, "\0".join(unit.required_exec_tokens) + "\0")
+            return CommandResult(
+                0,
+                "\0".join(unit.required_exec_tokens + self.process_extra_tokens) + "\0",
+            )
         if command[0] == "cat" and command[-1].endswith("/cgroup"):
             if pid in self.foreign_pids or self.active_model is None:
                 return CommandResult(0, "0::/user.slice/foreign.service\n")
@@ -101,6 +120,41 @@ def test_slot_inspector_accepts_exact_owned_process() -> None:
     assert result.loaded_model is ModelName.LTX
     assert result.owned_unit == "conflictstudio-ltx-gpu0.service"
     assert all(isinstance(call, tuple) for call in commands.calls)
+
+
+def test_exec_start_parser_accepts_systemd_show_format() -> None:
+    unit = next(unit for unit in UNIT_DEFINITIONS if unit.model is ModelName.LTX)
+    value = (
+        "{ path=/home/team/lvshuyang/anaconda3/envs/comfyui/bin/python ; "
+        f"argv[]={' '.join(unit.required_exec_tokens)} ; "
+        "ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; }"
+    )
+
+    assert SlotInspector._parse_exec_start(value) == unit.required_exec_tokens
+
+
+@pytest.mark.parametrize("extra_argument", ["--port", "--output-directory"])
+def test_slot_inspector_rejects_extra_unit_arguments(extra_argument: str) -> None:
+    commands = InspectionCommands(
+        active_model=ModelName.LTX,
+        unit_extra_tokens=(extra_argument, "9999"),
+    )
+    result = asyncio.run(SlotInspector(commands).inspect(GpuSlotName.GPU0))
+
+    assert result.availability is GpuAvailability.UNKNOWN
+
+
+@pytest.mark.parametrize("extra_argument", ["--port", "--output-directory"])
+def test_slot_inspector_rejects_extra_process_arguments(extra_argument: str) -> None:
+    commands = InspectionCommands(
+        active_model=ModelName.LTX,
+        gpu_pids={4100},
+        listener_pids={4100},
+        process_extra_tokens=(extra_argument, "9999"),
+    )
+    result = asyncio.run(SlotInspector(commands).inspect(GpuSlotName.GPU0))
+
+    assert result.availability is GpuAvailability.EXTERNAL_OCCUPIED
 
 
 @pytest.mark.parametrize(
