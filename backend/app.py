@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, Response
 from backend.adapters.config import Settings
 from backend.adapters.database import Database, DatabaseBusyError
 from backend.adapters.llm import OpenAICompatiblePromptModel, PromptModel
+from backend.adapters.renderer import RendererGateway, UnconfiguredRendererGateway
 from backend.api.routes import router
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
@@ -18,11 +19,16 @@ from backend.services.errors import ServiceError
 from backend.services.prompts import PromptService
 
 
-def create_app(settings: Settings | None = None, prompt_model: PromptModel | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    prompt_model: PromptModel | None = None,
+    renderer: RendererGateway | None = None,
+) -> FastAPI:
     resolved_settings = settings or Settings.from_environment()
     database = Database(resolved_settings.data_root)
     database.initialize()
     model = prompt_model or OpenAICompatiblePromptModel.from_environment()
+    renderer_gateway = renderer or UnconfiguredRendererGateway()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -33,8 +39,9 @@ def create_app(settings: Settings | None = None, prompt_model: PromptModel | Non
     app.state.settings = resolved_settings
     app.state.database = database
     app.state.prompt_model = model
+    app.state.renderer = renderer_gateway
     app.state.catalog_service = CatalogService(database)
-    app.state.batch_service = BatchService(database, PromptService(model))
+    app.state.batch_service = BatchService(database, PromptService(model), renderer_gateway)
 
     @app.exception_handler(ServiceError)
     async def service_error_handler(_: Request, error: ServiceError) -> JSONResponse:

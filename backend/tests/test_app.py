@@ -4,16 +4,38 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlmodel import select
 
 from backend.adapters.config import Settings
 from backend.adapters.llm import UnconfiguredPromptModel
 from backend.app import create_app
+from backend.domain.enums import GpuAvailability
+from backend.domain.models import GpuSlot
 
 
-def client_for(tmp_path: Path) -> TestClient:
+def client_for(tmp_path: Path, renderer: object | None = None) -> TestClient:
     frontend = tmp_path / "frontend"
     frontend.mkdir()
-    return TestClient(create_app(Settings(data_root=tmp_path, frontend_dist=frontend), UnconfiguredPromptModel()))
+    return TestClient(create_app(Settings(data_root=tmp_path, frontend_dist=frontend), UnconfiguredPromptModel(), renderer))
+
+
+class _ConfiguredRendererGateway:
+    configured = True
+
+    async def probe(self, slot):  # type: ignore[no-untyped-def]
+        return slot
+
+    async def submit(self, request):  # type: ignore[no-untyped-def]
+        return "probe"
+
+    async def wait(self, slot, prompt_id):  # type: ignore[no-untyped-def]
+        return ()
+
+    async def cancel(self, slot, prompt_id):  # type: ignore[no-untyped-def]
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 def test_health_and_initial_gpu_state(tmp_path: Path) -> None:
@@ -191,3 +213,80 @@ def test_unknown_api_route_does_not_return_frontend(tmp_path: Path) -> None:
         response = client.get("/api/removed-placeholder")
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "not_found"
+
+
+def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
+    with client_for(tmp_path, _ConfiguredRendererGateway()) as client:
+        dataset = client.post(
+            "/api/datasets",
+            json={"name": "Production", "purpose": "Production", "note": ""},
+        )
+        content = client.post(
+            "/api/content-plans",
+            json={
+                "name": "Aligned response",
+                "category": "A-VA",
+                "mode": "Generative",
+                "status": "Active",
+                "trueEmotion": "calm",
+                "apparentEmotion": "calm",
+                "scene": "A private office.",
+                "triggerEvent": "A timer sounds.",
+                "psychologicalBackground": "The subject prepares a brief response.",
+                "contentInstruction": "Describe one adult responding in the room.",
+            },
+        )
+        prompt = client.post(
+            "/api/prompt-presets",
+            json={
+                "name": "Natural shot",
+                "category": "A-VA",
+                "styleInstruction": "Use a static medium shot.",
+                "finalNegativePrompt": "subtitles, captions, distortion",
+            },
+        )
+        background = client.post(
+            "/api/video-background-presets",
+            json={
+                "name": "Private study",
+                "scene": "A private study containing one chair and one desk.",
+                "ambientAudio": "A steady ventilation hum is audible.",
+                "lighting": "Soft daylight from one window.",
+                "framingSupplement": "Use a static eye-level medium shot.",
+            },
+        )
+        draft = client.post(
+            "/api/batch-drafts",
+            json={
+                "datasetId": dataset.json()["id"],
+                "category": "A-VA",
+                "model": "LTX-2.3",
+                "quantity": 1,
+                "contentPlans": [{"id": content.json()["id"], "expectedRevision": content.json()["revision"]}],
+                "promptPresets": [{"id": prompt.json()["id"], "expectedRevision": prompt.json()["revision"]}],
+                "backgroundPresets": [{"id": background.json()["id"], "expectedRevision": background.json()["revision"]}],
+                "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
+                "gpuSlots": ["GPU0"],
+            },
+        )
+
+        with client.app.state.database.immediate_session() as session:
+            rows = session.exec(select(GpuSlot).order_by(GpuSlot.slot)).all()
+            for row in rows:
+                row.availability = GpuAvailability.AVAILABLE
+
+        preview = client.post(
+            f"/api/batch-drafts/{draft.json()['id']}/preview",
+            json={"expectedRevision": draft.json()["revision"]},
+        )
+        submit = client.post(
+            f"/api/batch-drafts/{draft.json()['id']}/submit",
+            json={
+                "expectedRevision": draft.json()["revision"],
+                "expectedGpuRevisions": preview.json()["gpuRevisions"],
+            },
+        )
+        assert submit.status_code == 202
+        assert submit.headers["Location"] == f"/api/jobs/{submit.json()['id']}"
+
+    assert preview.status_code == 200

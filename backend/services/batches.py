@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from sqlmodel import Session, select
 
 from backend.adapters.database import Database
 from backend.adapters.llm import PROMPT_MODEL
+from backend.adapters.renderer import RendererGateway, UnconfiguredRendererGateway
 from backend.domain.enums import (
     BatchDraftStatus,
     Category,
@@ -35,7 +37,9 @@ from backend.domain.models import (
     Dataset,
     GpuSlot,
     Job,
+    JobEvent,
     JobItem,
+    JobItemPromptResult,
     PromptExample,
     PromptPreset,
     RENDERER_PROFILE_VERSION,
@@ -56,13 +60,15 @@ from backend.domain.schemas import (
     GpuSlotRead,
     JobDetailRead,
     JobItemRead,
+    JobItemPromptResultRead,
     JobSummaryRead,
+    JobEventRead,
     SelectionRead,
     SnapshotRead,
 )
 
 from .errors import ServiceError, not_found, revision_conflict, state_conflict
-from .prompts import PreparedPrompt, PromptContext, PromptResult, PromptService
+from .prompts import PreparedPrompt, PromptContext, PromptService
 
 
 @dataclass(frozen=True)
@@ -105,9 +111,15 @@ def cartesian_allocation_inputs(
 
 
 class BatchService:
-    def __init__(self, database: Database, prompts: PromptService) -> None:
+    def __init__(
+        self,
+        database: Database,
+        prompts: PromptService,
+        renderer: RendererGateway | None = None,
+    ) -> None:
         self.database = database
         self.prompts = prompts
+        self.renderer = renderer or UnconfiguredRendererGateway()
 
     def list_batch_drafts(self) -> list[BatchDraftRead]:
         with self.database.read_session() as session:
@@ -182,16 +194,19 @@ class BatchService:
             )
 
     async def submit_batch(self, draft_id: int, payload: BatchSubmitRequest) -> JobDetailRead:
+        if not self.renderer.configured:
+            raise ServiceError(
+                503,
+                "renderer_not_configured",
+                "Rendering requires a configured renderer gateway",
+            )
+
         with self.database.read_session() as session:
             aggregate = self._load_aggregate(session, draft_id)
             self._check_draft_revision(aggregate.draft, payload.expected_revision)
             self._validate_aggregate(aggregate)
             self._validate_gpu_request(session, aggregate, payload)
             allocations = self._build_allocations(aggregate)
-
-        results: list[PromptResult] = []
-        for allocation in allocations:
-            results.append(await self.prompts.complete(allocation.prepared, aggregate.draft.category))
 
         with self.database.immediate_session() as session:
             current = self._load_aggregate(session, draft_id)
@@ -207,8 +222,25 @@ class BatchService:
                 )
 
             timestamp = utc_now()
+            job = Job(
+                display_name=self._job_name(current.draft.category),
+                source=JobSource.PRODUCTION,
+                dataset_id=current.dataset.id,
+                batch_draft_id=draft_id,
+                category=current.draft.category,
+                conflict_direction=current.draft.conflict_direction,
+                model=current.draft.model,
+                status=JobStatus.QUEUED,
+                total_count=current.draft.quantity,
+                confirm_model_switch=payload.confirm_model_switch,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            session.add(job)
+            session.flush()
+
             snapshots: list[BatchVideoInputSnapshot] = []
-            for allocation, result in zip(allocations, results, strict=True):
+            for allocation in allocations:
                 snapshot = BatchVideoInputSnapshot(
                     batch_draft_id=draft_id,
                     dataset_id=current.dataset.id,
@@ -220,7 +252,7 @@ class BatchService:
                     prompt_preset_revision=current.preset_revisions[allocation.preset.id],
                     background_preset_id=allocation.background.id,
                     background_preset_revision=current.background_revisions[allocation.background.id],
-                    policy_version=result.policy_version,
+                    policy_version=allocation.prepared.policy_version,
                     category=current.draft.category,
                     conflict_direction=current.draft.conflict_direction,
                     age=allocation.demographic.age,
@@ -236,37 +268,16 @@ class BatchService:
                     prompt_model=PROMPT_MODEL,
                     source_has_audio=True,
                     derive_silent_primary=current.draft.category in {Category.A_VT, Category.C_VT},
-                    system_input=result.system_input,
-                    user_input=result.user_input,
-                    raw_structured_response=result.raw_structured_response,
-                    final_positive_prompt=result.final_positive_prompt,
-                    final_negative_prompt=result.final_negative_prompt,
-                    dialogue=result.dialogue,
-                    vt_text=result.vt_text,
+                    system_input=allocation.prepared.system_input,
+                    user_input=allocation.prepared.user_input,
+                    final_negative_prompt=allocation.prepared.final_negative_prompt,
                     true_emotion=allocation.content.true_emotion,
                     apparent_emotion=allocation.content.apparent_emotion,
-                    true_emotion_description=result.true_emotion_description,
                     created_at=timestamp,
                 )
                 session.add(snapshot)
                 snapshots.append(snapshot)
-            session.flush()
 
-            job = Job(
-                display_name=self._job_name(current.draft.category),
-                source=JobSource.PRODUCTION,
-                dataset_id=current.dataset.id,
-                batch_draft_id=draft_id,
-                category=current.draft.category,
-                conflict_direction=current.draft.conflict_direction,
-                model=current.draft.model,
-                status=JobStatus.QUEUED,
-                total_count=current.draft.quantity,
-                created_at=timestamp,
-                updated_at=timestamp,
-            )
-            session.add(job)
-            session.flush()
             for allocation, snapshot in zip(allocations, snapshots, strict=True):
                 session.add(
                     JobItem(
@@ -274,14 +285,24 @@ class BatchService:
                         sequence=allocation.sequence,
                         input_snapshot_id=snapshot.id,
                         gpu_slot=allocation.gpu_slot,
+                        stage=JobItemStage.PROMPT_QUEUED,
                         status=JobStatus.QUEUED,
                         created_at=timestamp,
                         updated_at=timestamp,
                     )
                 )
+
+            session.add(
+                JobEvent(
+                    job_id=job.id,
+                    item_id=None,
+                    event_type="JobQueued",
+                    payload_json=json.dumps({"slotCount": len(current.gpu_slots)}),
+                )
+            )
+
             for gpu in self._gpu_rows(session, current.gpu_slots):
                 gpu.availability = GpuAvailability.RESERVED
-                gpu.loaded_model = current.draft.model
                 gpu.active_job_id = job.id
                 gpu.revision += 1
                 gpu.checked_at = timestamp
@@ -601,6 +622,21 @@ class BatchService:
                     "The selected GPU is not available",
                     {"slot": row.slot.value, "availability": row.availability.value},
                 )
+            if (
+                row.loaded_model is not None
+                and row.loaded_model is not aggregate.draft.model
+                and not payload.confirm_model_switch
+            ):
+                raise ServiceError(
+                    409,
+                    "model_switch_required",
+                    "The GPU is loaded with a different model",
+                    {
+                        "slot": row.slot.value,
+                        "loadedModel": row.loaded_model.value,
+                        "requestedModel": aggregate.draft.model.value,
+                    },
+                )
 
     @staticmethod
     def _gpu_rows(session: Session, slots: list[GpuSlotName]) -> list[GpuSlot]:
@@ -667,11 +703,19 @@ class BatchService:
     @staticmethod
     def _job_detail(session: Session, job: Job) -> JobDetailRead:
         items = session.exec(select(JobItem).where(JobItem.job_id == job.id).order_by(JobItem.sequence)).all()
+        prompt_results = session.exec(
+            select(JobItemPromptResult).where(
+                JobItemPromptResult.job_item_id.in_([item.id for item in items]),
+            )
+        ).all()
+        prompt_by_item = {row.job_item_id: row for row in prompt_results}
+        events = session.exec(select(JobEvent).where(JobEvent.job_id == job.id).order_by(JobEvent.id)).all()
         item_reads: list[JobItemRead] = []
         for item in items:
             snapshot = session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
             if snapshot is None:
                 raise not_found("batchVideoInputSnapshot", item.input_snapshot_id)
+            prompt_result = prompt_by_item.get(item.id)
             item_reads.append(
                 JobItemRead(
                     id=item.id,
@@ -680,13 +724,29 @@ class BatchService:
                     stage=item.stage,
                     status=item.status,
                     failure_reason=item.failure_reason,
+                    failure_code=item.failure_code,
+                    renderer_prompt_id=item.renderer_prompt_id,
                     revision=item.revision,
                     created_at=item.created_at,
                     updated_at=item.updated_at,
                     input=SnapshotRead.model_validate(snapshot),
+                    prompt_result=JobItemPromptResultRead.model_validate(prompt_result)
+                    if prompt_result is not None
+                    else None,
                 )
             )
-        return JobDetailRead(**JobSummaryRead.model_validate(job).model_dump(), items=item_reads)
+        event_reads = [
+            JobEventRead(
+                id=event.id,
+                job_id=event.job_id,
+                item_id=event.item_id,
+                event_type=event.event_type,
+                payload=json.loads(event.payload_json),
+                created_at=event.created_at,
+            )
+            for event in events
+        ]
+        return JobDetailRead(**JobSummaryRead.model_validate(job).model_dump(), items=item_reads, events=event_reads)
 
     @staticmethod
     def _get_draft(session: Session, draft_id: int) -> BatchDraft:

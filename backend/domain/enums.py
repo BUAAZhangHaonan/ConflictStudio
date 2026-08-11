@@ -70,6 +70,8 @@ class JobStatus(ValueEnum):
 
 
 class JobItemStage(ValueEnum):
+    PROMPT_QUEUED = "PromptQueued"
+    PROMPT_GENERATING = "PromptGenerating"
     PROMPT_READY = "PromptReady"
     RENDERING = "Rendering"
     MEDIA_PROCESSING = "MediaProcessing"

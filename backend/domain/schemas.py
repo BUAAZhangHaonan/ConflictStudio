@@ -321,6 +321,7 @@ class BatchPreviewRequest(ExpectedRevision):
 
 class BatchSubmitRequest(ExpectedRevision):
     expected_gpu_revisions: dict[GpuSlotName, int]
+    confirm_model_switch: bool = False
 
 
 class BatchAllocationRead(ApiModel):
@@ -375,13 +376,23 @@ class SnapshotRead(ApiModel):
     derive_silent_primary: bool
     system_input: str
     user_input: str
+    final_negative_prompt: str
+    true_emotion: str
+    apparent_emotion: str
+    created_at: str
+
+
+class JobItemPromptResultRead(ApiModel):
+    id: int
+    job_item_id: int
+    policy_version: str
+    system_input: str
+    user_input: str
     raw_structured_response: str
     final_positive_prompt: str
     final_negative_prompt: str
     dialogue: str | None
     vt_text: str | None
-    true_emotion: str
-    apparent_emotion: str
     true_emotion_description: str
     created_at: str
 
@@ -392,11 +403,14 @@ class JobItemRead(ApiModel):
     gpu_slot: GpuSlotName
     stage: JobItemStage
     status: JobStatus
+    failure_code: str | None
     failure_reason: str | None
+    renderer_prompt_id: str | None
     revision: int
     created_at: str
     updated_at: str
     input: SnapshotRead
+    prompt_result: JobItemPromptResultRead | None
 
 
 class JobSummaryRead(ApiModel):
@@ -410,9 +424,15 @@ class JobSummaryRead(ApiModel):
     model: ModelName
     status: JobStatus
     total_count: int
+    prepared_count: int
     completed_count: int
     failed_count: int
+    confirm_model_switch: bool
+    cancel_requested_at: str | None
+    failure_code: str | None
     failure_reason: str | None
+    started_at: str | None
+    finished_at: str | None
     revision: int
     created_at: str
     updated_at: str
@@ -420,6 +440,16 @@ class JobSummaryRead(ApiModel):
 
 class JobDetailRead(JobSummaryRead):
     items: list[JobItemRead]
+    events: list[JobEventRead] = Field(default_factory=list)
+
+
+class JobEventRead(ApiModel):
+    id: int
+    job_id: int
+    item_id: int | None
+    event_type: str
+    payload: dict[str, Any]
+    created_at: str
 
 
 class GpuSlotRead(ApiModel):

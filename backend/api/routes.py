@@ -202,9 +202,11 @@ def preview_batch(draft_id: int, payload: BatchPreviewRequest, request: Request)
     return batches(request).preview_batch(draft_id, payload.expected_revision)
 
 
-@router.post("/batch-drafts/{draft_id}/submit", response_model=JobDetailRead, status_code=status.HTTP_201_CREATED)
-async def submit_batch(draft_id: int, payload: BatchSubmitRequest, request: Request) -> JobDetailRead:
-    return await batches(request).submit_batch(draft_id, payload)
+@router.post("/batch-drafts/{draft_id}/submit", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)
+async def submit_batch(draft_id: int, payload: BatchSubmitRequest, request: Request, response: Response) -> JobDetailRead:
+    job = await batches(request).submit_batch(draft_id, payload)
+    response.headers["Location"] = f"/api/jobs/{job.id}"
+    return job
 
 
 @router.get("/jobs", response_model=list[JobSummaryRead])
@@ -220,4 +222,3 @@ def get_job(job_id: int, request: Request) -> JobDetailRead:
 @router.get("/gpu-slots", response_model=list[GpuSlotRead])
 def list_gpu_slots(request: Request) -> list[GpuSlotRead]:
     return batches(request).list_gpu_slots()
-

@@ -24,7 +24,15 @@ from backend.domain.enums import (
     GpuSlotName,
     ModelName,
 )
-from backend.domain.models import BatchVideoInputSnapshot, GpuSlot, Job, RENDERER_PROFILE_VERSION
+from backend.domain.models import (
+    BatchDraft,
+    BatchVideoInputSnapshot,
+    GpuSlot,
+    Job,
+    JobEvent,
+    JobItemPromptResult,
+    RENDERER_PROFILE_VERSION,
+)
 from backend.domain.schemas import (
     BatchDraftCreate,
     BatchSubmitRequest,
@@ -40,6 +48,25 @@ from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.errors import ServiceError
 from backend.services.prompts import PromptContext, PromptService
+
+
+class _ConfiguredRendererGateway:
+    configured = True
+
+    async def probe(self, slot):  # type: ignore[no-untyped-def]
+        return slot
+
+    async def submit(self, request):  # type: ignore[no-untyped-def]
+        return "probe"
+
+    async def wait(self, slot, prompt_id):  # type: ignore[no-untyped-def]
+        return ()
+
+    async def cancel(self, slot, prompt_id):  # type: ignore[no-untyped-def]
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 def fixed_resources(database: Database) -> tuple[CatalogService, object, object, object, object]:
@@ -271,7 +298,7 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Pat
         VideoBackgroundPresetCreate(name="候车室", scene="A quiet station waiting room.")
     )
     prompt_service = PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test"))
-    batches = BatchService(database, prompt_service)
+    batches = BatchService(database, prompt_service, _ConfiguredRendererGateway())
     draft = batches.create_batch_draft(
         BatchDraftCreate(
             datasetId=dataset.id,
@@ -308,6 +335,100 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Pat
         assert session.exec(select(BatchVideoInputSnapshot)).all() == []
 
 
+def test_submit_blocks_when_renderer_is_not_configured(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    catalog, dataset, content, preset, background = fixed_resources(database)
+    batches = BatchService(database, PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")))
+    draft = make_batch(
+        batches,
+        dataset,
+        content,
+        preset,
+        background,
+        [GpuSlotName.GPU0],
+    )
+    preview = batches.preview_batch(draft.id, draft.revision)
+    with database.immediate_session() as session:
+        for row in session.exec(select(GpuSlot)).all():
+            row.availability = GpuAvailability.AVAILABLE
+            row.revision += 1
+
+    with pytest.raises(ServiceError) as error:
+        asyncio.run(
+            batches.submit_batch(
+                draft.id,
+                BatchSubmitRequest(
+                    expectedRevision=draft.revision,
+                    expectedGpuRevisions=preview.gpu_revisions,
+                ),
+            )
+        )
+    assert error.value.code == "renderer_not_configured"
+    with database.read_session() as session:
+        assert session.exec(select(Job)).all() == []
+        assert session.exec(select(BatchVideoInputSnapshot)).all() == []
+        draft_row = session.get(BatchDraft, draft.id)
+        assert draft_row is not None
+        assert draft_row.status is BatchDraftStatus.DRAFT
+
+
+def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_confirmation(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    catalog, dataset, content, preset, background = fixed_resources(database)
+    prompt_service = PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test"))
+    batches = BatchService(database, prompt_service, _ConfiguredRendererGateway())
+    draft = make_batch(
+        batches,
+        dataset,
+        content,
+        preset,
+        background,
+        [GpuSlotName.GPU0],
+    )
+    with database.immediate_session() as session:
+        slot = session.get(GpuSlot, GpuSlotName.GPU0)
+        assert slot is not None
+        slot.availability = GpuAvailability.AVAILABLE
+        slot.loaded_model = ModelName.H3
+        slot.revision += 1
+    preview = batches.preview_batch(draft.id, draft.revision)
+
+    with pytest.raises(ServiceError) as error:
+        asyncio.run(
+            batches.submit_batch(
+                draft.id,
+                BatchSubmitRequest(
+                    expectedRevision=draft.revision,
+                    expectedGpuRevisions=preview.gpu_revisions,
+                ),
+            )
+        )
+    assert error.value.code == "model_switch_required"
+    with database.read_session() as session:
+        slot = session.get(GpuSlot, GpuSlotName.GPU0)
+        assert slot is not None
+        assert slot.loaded_model is ModelName.H3
+
+    job = asyncio.run(
+        batches.submit_batch(
+                draft.id,
+                BatchSubmitRequest(
+                    expectedRevision=draft.revision,
+                    expectedGpuRevisions=preview.gpu_revisions,
+                    confirm_model_switch=True,
+                ),
+            )
+        )
+    assert job.confirm_model_switch is True
+    with database.read_session() as session:
+        slot = session.get(GpuSlot, GpuSlotName.GPU0)
+        assert slot is not None
+        assert slot.loaded_model is ModelName.H3
+        assert slot.availability is GpuAvailability.RESERVED
+
+
 def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
@@ -315,6 +436,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
     batches = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")),
+        _ConfiguredRendererGateway(),
     )
     draft = make_batch(
         batches,
@@ -365,35 +487,65 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
     assert first_input.prompt_model == "deepseek-v4-flash"
     assert first_input.source_has_audio is True
     assert first_input.derive_silent_primary is False
-    assert first_input.final_positive_prompt == first_preview.final_positive_prompt
     assert first_input.final_negative_prompt == first_preview.final_negative_prompt
     assert first_input.seed == first_preview.seed
     assert first_input.model is ModelName.LTX
+    assert job.items[0].prompt_result is None
     with database.read_session() as session:
         slots = session.exec(select(GpuSlot).order_by(GpuSlot.slot)).all()
         assert all(slot.availability is GpuAvailability.RESERVED for slot in slots)
+        assert all(slot.active_job_id == job.id for slot in slots)
         snapshot_id = job.items[0].input.id
+    assert job.events and job.events[0].event_type == "JobQueued"
+    assert job.events[0].payload["slotCount"] == 2
     with pytest.raises(IntegrityError):
         with database.immediate_session() as session:
             session.exec(
                 update(BatchVideoInputSnapshot)
                 .where(BatchVideoInputSnapshot.id == snapshot_id)
-                .values(final_positive_prompt="changed")
+                .values(final_negative_prompt="changed")
             )
     with pytest.raises(IntegrityError):
         with database.immediate_session() as session:
             snapshot = session.get(BatchVideoInputSnapshot, snapshot_id)
             assert snapshot is not None
             session.delete(snapshot)
+    with pytest.raises(IntegrityError):
+        with database.immediate_session() as session:
+            session.exec(update(JobEvent).where(JobEvent.id == job.events[0].id).values(event_type="JobRestarted"))
+            session.flush()
+    with database.immediate_session() as session:
+        prompt_result = JobItemPromptResult(
+            job_item_id=job.items[0].id,
+            policy_version="test",
+            system_input="system",
+            user_input="user",
+            raw_structured_response="{}",
+            final_positive_prompt="a good answer",
+            final_negative_prompt="no subtitles",
+            dialogue='',
+            vt_text=None,
+            true_emotion_description="测试情绪描述",
+        )
+        session.add(prompt_result)
+        session.flush()
+        with pytest.raises(IntegrityError):
+            session.exec(
+                update(JobItemPromptResult)
+                .where(JobItemPromptResult.id == prompt_result.id)
+                .values(final_negative_prompt="no music")
+            )
+            session.flush()
 
     reopened = Database(tmp_path)
     reopened.initialize()
     restored = BatchService(
         reopened,
         PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")),
+        _ConfiguredRendererGateway(),
     ).get_job(job.id)
     assert len(restored.items) == 4
-    assert restored.items[0].input.final_positive_prompt == job.items[0].input.final_positive_prompt
+    assert restored.items[0].input.final_negative_prompt == job.items[0].input.final_negative_prompt
 
 
 def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Path) -> None:
@@ -440,6 +592,7 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
     batches = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")),
+        _ConfiguredRendererGateway(),
     )
     demographics = [
         DemographicInput(age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN),
@@ -565,6 +718,7 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: 
     batches = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")),
+        _ConfiguredRendererGateway(),
     )
     draft = batches.create_batch_draft(
         BatchDraftCreate(
@@ -604,7 +758,6 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: 
     assert snapshot.derive_silent_primary is True
     assert snapshot.final_negative_prompt == preset.final_negative_prompt
     assert snapshot.final_negative_prompt == preview.allocations[0].final_negative_prompt
-    assert snapshot.final_positive_prompt == preview.allocations[0].final_positive_prompt
     assert snapshot.seed == preview.allocations[0].seed
     assert snapshot.model is ModelName.H3
     assert (snapshot.dataset_id, snapshot.dataset_revision) == (dataset.id, dataset.revision)

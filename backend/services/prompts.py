@@ -150,7 +150,17 @@ class PromptService:
         else:
             output = prepared.fixed_output
             raw = output.model_dump_json(by_alias=True)
-        self._validate_output(category, output)
+        return self._result(prepared, category, output, raw)
+
+    @classmethod
+    def _result(
+        cls,
+        prepared: PreparedPrompt,
+        category: Category,
+        output: GeneratedPrompt,
+        raw: str,
+    ) -> PromptResult:
+        cls._validate_output(category, output)
         spoken_text = output.dialogue if category in {Category.A_VA, Category.C_VA} else output.vt_text
         assert spoken_text is not None
         try:

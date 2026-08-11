@@ -353,14 +353,9 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     derive_silent_primary: bool
     system_input: str = Field(sa_column=Column(Text, nullable=False))
     user_input: str = Field(sa_column=Column(Text, nullable=False))
-    raw_structured_response: str = Field(sa_column=Column(Text, nullable=False))
-    final_positive_prompt: str = Field(sa_column=Column(Text, nullable=False))
     final_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
-    dialogue: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    vt_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     true_emotion: str = Field(sa_column=Column(String(120), nullable=False))
     apparent_emotion: str = Field(sa_column=Column(String(120), nullable=False))
-    true_emotion_description: str = Field(sa_column=Column(Text, nullable=False))
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
@@ -370,7 +365,8 @@ class Job(SQLModel, table=True):
         UniqueConstraint("batch_draft_id", name="uq_jobs_batch_draft"),
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_jobs_direction"),
         CheckConstraint(
-            "total_count > 0 AND completed_count >= 0 AND failed_count >= 0 "
+            "total_count > 0 AND prepared_count >= 0 AND completed_count >= 0 AND failed_count >= 0 "
+            "AND prepared_count <= total_count "
             "AND completed_count + failed_count <= total_count",
             name="ck_jobs_counts",
         ),
@@ -387,9 +383,15 @@ class Job(SQLModel, table=True):
     model: ModelName = Field(sa_column=enum_column(ModelName))
     status: JobStatus = Field(default=JobStatus.QUEUED, sa_column=enum_column(JobStatus))
     total_count: int = Field(gt=0)
+    prepared_count: int = Field(default=0, ge=0)
     completed_count: int = Field(default=0, ge=0)
     failed_count: int = Field(default=0, ge=0)
+    confirm_model_switch: bool = False
+    cancel_requested_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
+    failure_code: str | None = Field(default=None, sa_column=Column(String(80), nullable=True))
     failure_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    started_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
+    finished_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
@@ -415,17 +417,61 @@ class JobItem(SQLModel, table=True):
             ondelete="RESTRICT",
         )
     )
-    stage: JobItemStage = Field(default=JobItemStage.PROMPT_READY, sa_column=enum_column(JobItemStage))
+    stage: JobItemStage = Field(default=JobItemStage.PROMPT_QUEUED, sa_column=enum_column(JobItemStage))
     status: JobStatus = Field(default=JobStatus.QUEUED, sa_column=enum_column(JobStatus))
+    failure_code: str | None = Field(default=None, sa_column=Column(String(80), nullable=True))
     failure_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    renderer_prompt_id: str | None = Field(default=None, sa_column=Column(String(160), nullable=True))
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
+class JobItemPromptResult(SQLModel, table=True):
+    __tablename__ = "job_item_prompt_results"
+    __table_args__ = (UniqueConstraint("job_item_id", name="uq_job_item_prompt_results_item"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_item_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("job_items.id", ondelete="CASCADE"), nullable=False)
+    )
+    policy_version: str = Field(sa_column=Column(String(40), nullable=False))
+    system_input: str = Field(sa_column=Column(Text, nullable=False))
+    user_input: str = Field(sa_column=Column(Text, nullable=False))
+    raw_structured_response: str = Field(sa_column=Column(Text, nullable=False))
+    final_positive_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    final_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    dialogue: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    vt_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    true_emotion_description: str = Field(sa_column=Column(Text, nullable=False))
+    created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
+class JobEvent(SQLModel, table=True):
+    __tablename__ = "job_events"
+    __table_args__ = (CheckConstraint("length(event_type) > 0", name="ck_job_events_type"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_id: int = Field(sa_column=Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False))
+    item_id: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("job_items.id", ondelete="SET NULL"), nullable=True),
+    )
+    event_type: str = Field(sa_column=Column(String(80), nullable=False))
+    payload_json: str = Field(default="{}", sa_column=Column(Text, nullable=False))
+    created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
 class GpuSlot(SQLModel, table=True):
     __tablename__ = "gpu_slots"
-    __table_args__ = (CheckConstraint("revision >= 1", name="ck_gpu_slots_revision"),)
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_gpu_slots_revision"),
+        CheckConstraint(
+            "(availability IN ('Reserved', 'Busy') AND active_job_id IS NOT NULL) OR "
+            "(availability IN ('Available', 'ExternalOccupied', 'Unknown') AND active_job_id IS NULL)",
+            name="ck_gpu_slots_active_job",
+        ),
+    )
 
     slot: GpuSlotName = Field(sa_column=enum_column(GpuSlotName, primary_key=True))
     availability: GpuAvailability = Field(default=GpuAvailability.UNKNOWN, sa_column=enum_column(GpuAvailability))

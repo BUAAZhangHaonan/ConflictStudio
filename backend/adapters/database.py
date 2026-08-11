@@ -52,26 +52,31 @@ class Database:
             for slot in GpuSlotName:
                 if slot not in existing:
                     session.add(GpuSlot(slot=slot, availability=GpuAvailability.UNKNOWN))
-        immutable_table = "batch_video_input_snapshots"
+        immutable_tables = (
+            ("batch_video_input_snapshots", "batch video input snapshots are immutable"),
+            ("job_events", "job events are immutable"),
+            ("job_item_prompt_results", "job item prompt results are immutable"),
+        )
         with self.engine.begin() as connection:
-            connection.exec_driver_sql(
-                f"""
-                CREATE TRIGGER IF NOT EXISTS prevent_snapshot_update
-                BEFORE UPDATE ON {immutable_table}
-                BEGIN
-                    SELECT RAISE(ABORT, 'batch video input snapshots are immutable');
-                END
-                """
-            )
-            connection.exec_driver_sql(
-                f"""
-                CREATE TRIGGER IF NOT EXISTS prevent_snapshot_delete
-                BEFORE DELETE ON {immutable_table}
-                BEGIN
-                    SELECT RAISE(ABORT, 'batch video input snapshots are immutable');
-                END
-                """
-            )
+            for table_name, message in immutable_tables:
+                connection.exec_driver_sql(
+                    f"""
+                    CREATE TRIGGER IF NOT EXISTS prevent_{table_name}_update
+                    BEFORE UPDATE ON {table_name}
+                    BEGIN
+                        SELECT RAISE(ABORT, '{message}');
+                    END
+                    """
+                )
+                connection.exec_driver_sql(
+                    f"""
+                    CREATE TRIGGER IF NOT EXISTS prevent_{table_name}_delete
+                    BEFORE DELETE ON {table_name}
+                    BEGIN
+                        SELECT RAISE(ABORT, '{message}');
+                    END
+                    """
+                )
 
     @contextmanager
     def read_session(self) -> Iterator[Session]:
