@@ -12,7 +12,6 @@ from backend.adapters.database import Database
 from backend.domain.enums import (
     BatchDraftStatus,
     Category,
-    ContentMode,
     ContentStatus,
     ExampleKind,
     GpuAvailability,

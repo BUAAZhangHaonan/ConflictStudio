@@ -1,152 +1,90 @@
 from __future__ import annotations
 
-import json
-from dataclasses import asdict, dataclass
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import mimetypes
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+
+from backend.adapters.config import Settings
+from backend.adapters.database import Database
+from backend.adapters.llm import OpenAICompatiblePromptModel, PromptModel
+from backend.api.routes import router
+from backend.services.batches import BatchService
+from backend.services.catalog import CatalogService
+from backend.services.errors import ServiceError
+from backend.services.prompts import PromptService
 
 
-ROOT = Path(__file__).resolve().parents[1]
-FRONTEND_DIST = ROOT / "frontend" / "dist"
+def create_app(settings: Settings | None = None, prompt_model: PromptModel | None = None) -> FastAPI:
+    resolved_settings = settings or Settings.from_environment()
+    database = Database(resolved_settings.data_root)
+    database.initialize()
+    model = prompt_model or OpenAICompatiblePromptModel.from_environment()
 
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        yield
+        await model.close()
 
-@dataclass
-class Sample:
-    id: str
-    dataset_id: str
-    protocol: str
-    relation: str
-    payload: dict[str, Any]
-    revision: int
-    archive_status: str
+    app = FastAPI(title="ConflictStudio", version="0.1.0", lifespan=lifespan)
+    app.state.settings = resolved_settings
+    app.state.database = database
+    app.state.prompt_model = model
+    app.state.catalog_service = CatalogService(database)
+    app.state.batch_service = BatchService(database, PromptService(model))
 
+    @app.exception_handler(ServiceError)
+    async def service_error_handler(_: Request, error: ServiceError) -> JSONResponse:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": error.message, "details": error.details}},
+        )
 
-SAMPLES = [
-    Sample("sample-001", "dataset-a", "VA", "Conflict", {"asset_id": "asset-001"}, 1, "queued"),
-    Sample("sample-002", "dataset-b", "VT", "Aligned", {"asset_id": "asset-002"}, 2, "reviewed"),
-]
-
-
-def json_bytes(payload: Any, status: HTTPStatus = HTTPStatus.OK) -> tuple[int, list[tuple[str, str]], bytes]:
-    body = json.dumps(payload).encode("utf-8")
-    return status, [("Content-Type", "application/json; charset=utf-8"), ("Content-Length", str(len(body)))], body
-
-
-def text_bytes(payload: bytes, content_type: str) -> tuple[int, list[tuple[str, str]], bytes]:
-    return HTTPStatus.OK, [("Content-Type", content_type), ("Content-Length", str(len(payload)))], payload
-
-
-def not_found() -> tuple[int, list[tuple[str, str]], bytes]:
-    return json_bytes({"detail": "not found"}, HTTPStatus.NOT_FOUND)
-
-
-class Handler(BaseHTTPRequestHandler):
-    server_version = "ConflictStudio/0.1"
-
-    def log_message(self, format: str, *args: Any) -> None:
-        return
-
-    def _send(self, status: int, headers: list[tuple[str, str]], body: bytes) -> None:
-        self.send_response(status)
-        for key, value in headers:
-            self.send_header(key, value)
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0"))
-        if not length:
-            return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
-
-    def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
-        if path == "/api/health":
-            status, headers, body = json_bytes({"ok": True})
-            self._send(status, headers, body)
-            return
-        if path == "/api/samples":
-            status, headers, body = json_bytes([asdict(sample) for sample in SAMPLES])
-            self._send(status, headers, body)
-            return
-        if path == "/api/reviewers/me/statistics":
-            status, headers, body = json_bytes(
-                {
-                    "unique_reviewed": 2,
-                    "decision_counts": {"Conflict": 1, "Aligned": 1},
-                    "protocol_counts": {"VA": 1, "VT": 1},
-                    "activity_30d": 2,
-                    "revised_count": 1,
-                    "archived_count": 1,
-                    "needs_update_count": 0,
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_: Request, error: RequestValidationError) -> JSONResponse:
+        fields = [
+            {"field": ".".join(str(part) for part in item["loc"] if part != "body"), "message": item["msg"]}
+            for item in error.errors()
+        ]
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "validation_error",
+                    "message": "The request data is not valid",
+                    "details": {"fields": fields},
                 }
-            )
-            self._send(status, headers, body)
-            return
-        if path.startswith("/api/media/"):
-            asset_id = path.rsplit("/", 1)[-1]
-            media = ROOT / "backend" / "data" / f"{asset_id}.bin"
-            if not media.is_file():
-                status, headers, body = json_bytes({"detail": "media not found"}, HTTPStatus.NOT_FOUND)
-                self._send(status, headers, body)
-                return
-            data = media.read_bytes()
-            status, headers, body = text_bytes(data, "application/octet-stream")
-            self._send(status, headers, body)
-            return
-        if path.startswith("/assets/"):
-            relative_path = path.removeprefix("/assets/")
-            asset = FRONTEND_DIST / "assets" / relative_path
-            content_type = {
-                ".js": "text/javascript; charset=utf-8",
-                ".css": "text/css; charset=utf-8",
-            }.get(asset.suffix.lower())
-            if relative_path not in {"app.js", "app.css"} or not asset.is_file() or content_type is None:
-                self._send(*not_found())
-                return
-            self._send(*text_bytes(asset.read_bytes(), content_type))
-            return
-        index = FRONTEND_DIST / "index.html"
-        if index.is_file():
-            self._send(*text_bytes(index.read_bytes(), "text/html; charset=utf-8"))
-            return
-        status, headers, body = json_bytes({"detail": "frontend not built"}, HTTPStatus.NOT_FOUND)
-        self._send(status, headers, body)
+            },
+        )
 
-    def do_PUT(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
-        if not path.startswith("/api/samples/"):
-            status, headers, body = json_bytes({"detail": "not found"}, HTTPStatus.NOT_FOUND)
-            self._send(status, headers, body)
-            return
-        sample_id = path.rsplit("/", 1)[-1]
-        body = self._read_json()
-        for index, sample in enumerate(SAMPLES):
-            if sample.id == sample_id:
-                updated = Sample(
-                    id=sample.id,
-                    dataset_id=body["dataset_id"],
-                    protocol=body["protocol"],
-                    relation=body["relation"],
-                    payload=body["payload"],
-                    revision=sample.revision + 1,
-                    archive_status=sample.archive_status,
-                )
-                SAMPLES[index] = updated
-                status, headers, payload = json_bytes(asdict(updated))
-                self._send(status, headers, payload)
-                return
-        status, headers, payload = json_bytes({"detail": "sample not found"}, HTTPStatus.NOT_FOUND)
-        self._send(status, headers, payload)
+    app.include_router(router)
+
+    @app.get("/assets/{asset_path:path}", include_in_schema=False)
+    def frontend_asset(asset_path: str) -> Response:
+        root = (resolved_settings.frontend_dist / "assets").resolve()
+        candidate = (root / asset_path).resolve()
+        if not candidate.is_relative_to(root) or not candidate.is_file():
+            return _error_response(404, "not_found", "The requested file does not exist")
+        media_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        return Response(candidate.read_bytes(), media_type=media_type, headers={"Cache-Control": "no-store"})
+
+    @app.get("/{page_path:path}", include_in_schema=False)
+    def frontend_page(page_path: str) -> Response:
+        if page_path == "api" or page_path.startswith("api/"):
+            return _error_response(404, "not_found", "The requested API route does not exist")
+        index = resolved_settings.frontend_dist / "index.html"
+        if not index.is_file():
+            return _error_response(404, "frontend_not_built", "The frontend build is not available")
+        return Response(index.read_bytes(), media_type="text/html", headers={"Cache-Control": "no-store"})
+
+    return app
 
 
-def main() -> None:
-    server = ThreadingHTTPServer(("0.0.0.0", 8000), Handler)
-    server.serve_forever()
-
-
-if __name__ == "__main__":
-    main()
+def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"code": code, "message": message, "details": {}}},
+    )

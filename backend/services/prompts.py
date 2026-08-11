@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +8,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from backend.adapters.llm import PromptAdapterError, PromptModel
-from backend.domain.enums import Category, ConflictDirection, ContentMode, Ethnicity, Gender
+from backend.domain.enums import Category, ContentMode, Ethnicity, Gender
 from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
 from backend.domain.prompt_policy import POLICY_VERSION, POLICIES, direction_rule
 
@@ -210,4 +209,3 @@ class PromptService:
             Ethnicity.SOUTH_ASIAN: "South Asian",
             Ethnicity.LATINO: "Latino",
         }[value]
-

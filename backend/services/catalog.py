@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, select
+from pydantic import ValidationError
+from sqlmodel import Session, select
 
 from backend.adapters.database import Database
 from backend.domain.enums import ContentStatus, ExampleKind, ResourceStatus
@@ -98,9 +98,12 @@ class CatalogService:
             if "name" in values:
                 self._ensure_content_name_available(session, row.category, values["name"], content_id)
                 values["name_key"] = name_key(values["name"])
-            candidate = ContentPlanCreate.model_validate(
-                {**ContentPlanCreate.model_validate(row).model_dump(), **values}
-            )
+            try:
+                candidate = ContentPlanCreate.model_validate(
+                    {**ContentPlanCreate.model_validate(row).model_dump(), **values}
+                )
+            except ValidationError as error:
+                raise ServiceError(422, "validation_error", "The content plan is not valid") from error
             values = candidate.model_dump()
             values["name_key"] = name_key(candidate.name)
             self._apply_update(row, values)
