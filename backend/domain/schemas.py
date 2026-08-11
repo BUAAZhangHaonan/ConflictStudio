@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, field_validator, model_validator
 
@@ -421,6 +421,44 @@ class JobItemRead(ApiModel):
     prompt_result: JobItemPromptResultRead | None
 
 
+class JobEventPayloadRead(ApiModel):
+    prepared_count: int | None = Field(default=None, ge=0)
+    completed_count: int | None = Field(default=None, ge=0)
+    failed_count: int | None = Field(default=None, ge=0)
+    total_count: int | None = Field(default=None, ge=1)
+    slot_count: int | None = Field(default=None, ge=1, le=2)
+    sequence: int | None = Field(default=None, ge=1)
+    gpu_slot: GpuSlotName | None = None
+    failure_code: str | None = None
+    failure_reason: str | None = None
+
+
+JobEventType = Literal[
+    "JobQueued",
+    "JobStarted",
+    "CancelRequested",
+    "ItemPromptStarted",
+    "ItemPromptReady",
+    "ItemRenderStarted",
+    "ItemCompleted",
+    "ItemFailed",
+    "ItemCancelled",
+    "JobInterrupted",
+    "JobCompleted",
+    "JobFailed",
+    "JobCancelled",
+]
+
+
+class JobEventRead(ApiModel):
+    id: int
+    job_id: int
+    item_id: int | None
+    event_type: JobEventType
+    payload: JobEventPayloadRead
+    created_at: str
+
+
 class JobSummaryRead(ApiModel):
     id: int
     display_name: str
@@ -449,15 +487,6 @@ class JobSummaryRead(ApiModel):
 class JobDetailRead(JobSummaryRead):
     items: list[JobItemRead]
     events: list[JobEventRead] = Field(default_factory=list)
-
-
-class JobEventRead(ApiModel):
-    id: int
-    job_id: int
-    item_id: int | None
-    event_type: str
-    payload: dict[str, Any]
-    created_at: str
 
 
 class GpuSlotRead(ApiModel):

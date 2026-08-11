@@ -60,10 +60,11 @@ from backend.domain.schemas import (
     DemographicInput,
     GpuSlotRead,
     JobDetailRead,
+    JobEventPayloadRead,
+    JobEventRead,
     JobItemRead,
     JobItemPromptResultRead,
     JobSummaryRead,
-    JobEventRead,
     SelectionRead,
     SnapshotRead,
 )
@@ -333,6 +334,33 @@ class BatchService:
             if job is None:
                 raise not_found("job", job_id)
             return self._job_detail(session, job)
+
+    def job_exists(self, job_id: int) -> bool:
+        with self.database.read_session() as session:
+            return session.get(Job, job_id) is not None
+
+    def list_job_items(self, job_id: int, offset: int, limit: int) -> list[JobItemRead]:
+        with self.database.read_session() as session:
+            self._required(session, Job, job_id, "job")
+            items = session.exec(
+                select(JobItem)
+                .where(JobItem.job_id == job_id)
+                .order_by(JobItem.sequence, JobItem.id)
+                .offset(offset)
+                .limit(limit)
+            ).all()
+            return self._job_item_reads(session, items)
+
+    def list_job_events(self, job_id: int, after_event_id: int, limit: int) -> list[JobEventRead]:
+        with self.database.read_session() as session:
+            self._required(session, Job, job_id, "job")
+            events = session.exec(
+                select(JobEvent)
+                .where(JobEvent.job_id == job_id, JobEvent.id > after_event_id)
+                .order_by(JobEvent.id)
+                .limit(limit)
+            ).all()
+            return [self._job_event_read(event) for event in events]
 
     def list_gpu_slots(self) -> list[GpuSlotRead]:
         with self.database.read_session() as session:
@@ -712,14 +740,28 @@ class BatchService:
 
     @staticmethod
     def _job_detail(session: Session, job: Job) -> JobDetailRead:
-        items = session.exec(select(JobItem).where(JobItem.job_id == job.id).order_by(JobItem.sequence)).all()
-        prompt_results = session.exec(
-            select(JobItemPromptResult).where(
-                JobItemPromptResult.job_item_id.in_([item.id for item in items]),
-            )
+        items = session.exec(
+            select(JobItem).where(JobItem.job_id == job.id).order_by(JobItem.sequence, JobItem.id)
         ).all()
-        prompt_by_item = {row.job_item_id: row for row in prompt_results}
         events = session.exec(select(JobEvent).where(JobEvent.job_id == job.id).order_by(JobEvent.id)).all()
+        return JobDetailRead(
+            **JobSummaryRead.model_validate(job).model_dump(),
+            items=BatchService._job_item_reads(session, items),
+            events=[BatchService._job_event_read(event) for event in events],
+        )
+
+    @staticmethod
+    def _job_item_reads(session: Session, items: list[JobItem]) -> list[JobItemRead]:
+        prompt_results = (
+            session.exec(
+                select(JobItemPromptResult).where(
+                    JobItemPromptResult.job_item_id.in_([item.id for item in items]),
+                )
+            ).all()
+            if items
+            else []
+        )
+        prompt_by_item = {row.job_item_id: row for row in prompt_results}
         item_reads: list[JobItemRead] = []
         for item in items:
             snapshot = session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
@@ -745,18 +787,18 @@ class BatchService:
                     else None,
                 )
             )
-        event_reads = [
-            JobEventRead(
-                id=event.id,
-                job_id=event.job_id,
-                item_id=event.item_id,
-                event_type=event.event_type,
-                payload=json.loads(event.payload_json),
-                created_at=event.created_at,
-            )
-            for event in events
-        ]
-        return JobDetailRead(**JobSummaryRead.model_validate(job).model_dump(), items=item_reads, events=event_reads)
+        return item_reads
+
+    @staticmethod
+    def _job_event_read(event: JobEvent) -> JobEventRead:
+        return JobEventRead(
+            id=event.id,
+            job_id=event.job_id,
+            item_id=event.item_id,
+            event_type=event.event_type,
+            payload=JobEventPayloadRead.model_validate(json.loads(event.payload_json)),
+            created_at=event.created_at,
+        )
 
     @staticmethod
     def _get_draft(session: Session, draft_id: int) -> BatchDraft:

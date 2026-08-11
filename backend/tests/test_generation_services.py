@@ -498,7 +498,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
         assert all(slot.active_job_id == job.id for slot in slots)
         snapshot_id = job.items[0].input.id
     assert job.events and job.events[0].event_type == "JobQueued"
-    assert job.events[0].payload["slotCount"] == 2
+    assert job.events[0].payload.slot_count == 2
     with pytest.raises(IntegrityError):
         with database.immediate_session() as session:
             session.exec(

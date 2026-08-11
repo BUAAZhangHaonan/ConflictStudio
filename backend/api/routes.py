@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request, Response, status
+import asyncio
+
+from fastapi import APIRouter, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse
 from starlette.background import BackgroundTask
 
@@ -21,6 +23,8 @@ from backend.domain.schemas import (
     HealthRead,
     JobCancelRequest,
     JobDetailRead,
+    JobEventRead,
+    JobItemRead,
     JobSummaryRead,
     PromptPresetCreate,
     PromptPresetRead,
@@ -35,6 +39,10 @@ from backend.services.job_executor import JobExecutor
 
 
 router = APIRouter(prefix="/api")
+
+EVENT_REPLAY_LIMIT = 200
+EVENT_POLL_SECONDS = 0.25
+TERMINAL_EVENT_TYPES = {"JobCompleted", "JobFailed", "JobCancelled"}
 
 
 def catalog(request: Request) -> CatalogService:
@@ -51,6 +59,7 @@ def executor(request: Request) -> JobExecutor:
 
 async def notify_executor(job_executor: JobExecutor) -> None:
     job_executor.notify()
+    job_executor.notify_events()
 
 
 @router.get("/health", response_model=HealthRead)
@@ -233,6 +242,70 @@ def list_jobs(request: Request) -> list[JobSummaryRead]:
 @router.get("/jobs/{job_id}", response_model=JobDetailRead)
 def get_job(job_id: int, request: Request) -> JobDetailRead:
     return batches(request).get_job(job_id)
+
+
+@router.get("/jobs/{job_id}/items", response_model=list[JobItemRead])
+def list_job_items(
+    job_id: int,
+    request: Request,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[JobItemRead]:
+    return batches(request).list_job_items(job_id, offset, limit)
+
+
+@router.get("/jobs/{job_id}/events", response_model=list[JobEventRead])
+def list_job_events(
+    job_id: int,
+    request: Request,
+    after_event_id: int = Query(default=0, alias="afterEventId", ge=0),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[JobEventRead]:
+    return batches(request).list_job_events(job_id, after_event_id, limit)
+
+
+@router.websocket("/ws/jobs/{job_id}")
+async def replay_job_events(
+    websocket: WebSocket,
+    job_id: int,
+    after_event_id: int = Query(default=0, alias="afterEventId", ge=0),
+) -> None:
+    batch_service: BatchService = websocket.app.state.batch_service
+    job_executor: JobExecutor = websocket.app.state.job_executor
+    signal = job_executor.subscribe_events()
+    try:
+        if not batch_service.job_exists(job_id):
+            await websocket.accept()
+            await websocket.close(code=4404, reason="The requested job does not exist")
+            return
+
+        await websocket.accept()
+        cursor = after_event_id
+        while True:
+            signal.clear()
+            events = batch_service.list_job_events(job_id, cursor, EVENT_REPLAY_LIMIT)
+            terminal_sent = False
+            for event in events:
+                if event.id <= cursor:
+                    continue
+                await websocket.send_json(event.model_dump(mode="json", by_alias=True))
+                cursor = event.id
+                terminal_sent = terminal_sent or event.event_type in TERMINAL_EVENT_TYPES
+
+            if terminal_sent:
+                await websocket.close(code=1000, reason="Job event stream completed")
+                return
+            if len(events) == EVENT_REPLAY_LIMIT:
+                continue
+
+            try:
+                await asyncio.wait_for(signal.wait(), timeout=EVENT_POLL_SECONDS)
+            except TimeoutError:
+                pass
+    except WebSocketDisconnect:
+        return
+    finally:
+        job_executor.unsubscribe_events(signal)
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)

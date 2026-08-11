@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import defaultdict
+from contextlib import contextmanager
+from threading import Lock
+from typing import Iterator
 
 from sqlmodel import Session, select
 
@@ -45,6 +48,8 @@ class JobExecutor:
         self._wake = asyncio.Event()
         self._loop_task: asyncio.Task[None] | None = None
         self._active_tasks: dict[int, asyncio.Task[None]] = {}
+        self._event_subscribers: dict[asyncio.Event, asyncio.AbstractEventLoop] = {}
+        self._event_subscribers_lock = Lock()
         self._stopping = False
 
     async def start(self) -> None:
@@ -74,9 +79,39 @@ class JobExecutor:
         if not self._stopping:
             self._wake.set()
 
+    def subscribe_events(self) -> asyncio.Event:
+        signal = asyncio.Event()
+        with self._event_subscribers_lock:
+            self._event_subscribers[signal] = asyncio.get_running_loop()
+        return signal
+
+    def unsubscribe_events(self, signal: asyncio.Event) -> None:
+        with self._event_subscribers_lock:
+            self._event_subscribers.pop(signal, None)
+
+    def notify_events(self) -> None:
+        with self._event_subscribers_lock:
+            subscribers = tuple(self._event_subscribers.items())
+        stale: list[asyncio.Event] = []
+        for signal, loop in subscribers:
+            try:
+                loop.call_soon_threadsafe(signal.set)
+            except RuntimeError:
+                stale.append(signal)
+        if stale:
+            with self._event_subscribers_lock:
+                for signal in stale:
+                    self._event_subscribers.pop(signal, None)
+
+    @contextmanager
+    def _event_session(self) -> Iterator[Session]:
+        with self.database.immediate_session() as session:
+            yield session
+        self.notify_events()
+
     async def cancel_job(self, job_id: int, payload: JobCancelRequest) -> None:
         task_to_cancel: asyncio.Task[None] | None = None
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             if job is None:
                 raise not_found("job", job_id)
@@ -94,7 +129,12 @@ class JobExecutor:
                 job.updated_at = timestamp
                 job.revision += 1
                 self._release_owned_slots(session, job.id, GpuAvailability.AVAILABLE, timestamp)
-                self._append_event(session, job, "JobCancelled", reason="cancelled_before_start")
+                self._append_event(
+                    session,
+                    job,
+                    "JobCancelled",
+                    reason="The job was cancelled before it started",
+                )
             elif job.cancel_requested_at is None:
                 task_to_cancel = self._active_tasks.get(job_id)
                 if task_to_cancel is None:
@@ -112,7 +152,7 @@ class JobExecutor:
             task_to_cancel.cancel()
 
     def recover(self) -> None:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             running_jobs = session.exec(
                 select(Job).where(Job.status == JobStatus.RUNNING).order_by(Job.id)
             ).all()
@@ -180,7 +220,7 @@ class JobExecutor:
 
     def _claim_queued_jobs(self) -> list[int]:
         claimed: list[int] = []
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             jobs = session.exec(select(Job).where(Job.status == JobStatus.QUEUED).order_by(Job.id)).all()
             for job in jobs:
                 if not self._reservations_match(session, job):
@@ -270,7 +310,7 @@ class JobExecutor:
             self._fail_item(job_id, item_id, code, reason)
 
     def _begin_item(self, job_id: int, item_id: int) -> tuple[JobItem, BatchVideoInputSnapshot]:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
             if job is None or item is None or item.job_id != job_id:
@@ -315,7 +355,7 @@ class JobExecutor:
         )
 
     def _store_prompt_result(self, job_id: int, item_id: int, result: PromptResult) -> None:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
             if job is None or item is None:
@@ -345,7 +385,7 @@ class JobExecutor:
             self._append_event(session, job, "ItemPromptReady", item=item)
 
     def _record_rendering(self, job_id: int, item_id: int, prompt_id: str) -> None:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
             if job is None or item is None:
@@ -358,7 +398,7 @@ class JobExecutor:
             self._append_event(session, job, "ItemRenderStarted", item=item)
 
     def _complete_item(self, job_id: int, item_id: int) -> None:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
             if job is None or item is None:
@@ -374,7 +414,7 @@ class JobExecutor:
             self._append_event(session, job, "ItemCompleted", item=item)
 
     def _fail_item(self, job_id: int, item_id: int, code: str, reason: str) -> None:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
             if job is None or item is None or item.status in TERMINAL_STATUSES:
@@ -391,7 +431,7 @@ class JobExecutor:
             self._append_event(session, job, "ItemFailed", item=item, code=code, reason=reason)
 
     def _cancel_item(self, job_id: int, item_id: int) -> None:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
             if job is None or item is None or item.status in TERMINAL_STATUSES:
@@ -403,7 +443,7 @@ class JobExecutor:
             self._append_event(session, job, "ItemCancelled", item=item)
 
     def _finalize_job(self, job_id: int) -> None:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             if job is None or job.status in TERMINAL_STATUSES:
                 return
@@ -430,7 +470,7 @@ class JobExecutor:
             )
 
     def _finish_cancelled_job(self, job_id: int) -> None:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             if job is None or job.status in TERMINAL_STATUSES:
                 return
@@ -449,7 +489,7 @@ class JobExecutor:
         self._append_event(session, job, "JobCancelled")
 
     def _fail_job_execution(self, job_id: int) -> None:
-        with self.database.immediate_session() as session:
+        with self._event_session() as session:
             job = session.get(Job, job_id)
             if job is None or job.status in TERMINAL_STATUSES:
                 return

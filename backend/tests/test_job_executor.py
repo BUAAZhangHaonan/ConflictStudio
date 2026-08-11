@@ -300,7 +300,7 @@ def test_executor_persists_results_and_runs_two_gpu_channels(tmp_path: Path) -> 
         assert all(item.prompt_result is not None for item in completed.items)
         assert all(item.prompt_result.final_positive_prompt == VALID_PROMPT for item in completed.items)
         assert completed.events[-1].event_type == "JobCompleted"
-        assert completed.events[-1].payload == {
+        assert completed.events[-1].payload.model_dump(by_alias=True, exclude_none=True) == {
             "preparedCount": 4,
             "completedCount": 4,
             "failedCount": 0,
