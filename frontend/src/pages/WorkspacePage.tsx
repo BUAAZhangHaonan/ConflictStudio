@@ -333,7 +333,7 @@ export function WorkspacePage() {
                   </div>
                   <div>
                     <dt>{t(`${copyKey}.workspace.jobs.gpu`)}</dt>
-                    <dd>{job.gpu}</dd>
+                    <dd>{job.gpus.join(', ')}</dd>
                   </div>
                 </dl>
                 {job.failureReason ? (

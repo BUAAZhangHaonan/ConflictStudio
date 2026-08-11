@@ -103,6 +103,13 @@ export interface JobLog {
   occurredAt: string;
 }
 
+export interface JobItem {
+  sequence: number;
+  status: JobStatus;
+  gpu: GpuSlot | null;
+  contentItemId: string | null;
+}
+
 export interface Job extends Revisioned {
   id: string;
   parentJobId: string | null;
@@ -111,10 +118,12 @@ export interface Job extends Revisioned {
   category: Category;
   conflictDirection: ConflictDirection | null;
   model: ModelName;
-  gpu: GpuSlot;
+  gpus: GpuSlot[];
   status: JobStatus;
   failureReason: JobFailureReason | null;
   progress: number;
+  completedCount: number;
+  currentItemSequence: number | null;
   seed: number | null;
   quantity: number;
   batchInput?: BatchPreview;
@@ -123,6 +132,7 @@ export interface Job extends Revisioned {
   rerenderInput?: RerenderInput;
   steps: JobStep[];
   logs: JobLog[];
+  items: JobItem[];
   resultSampleIds: string[];
   createdAt: string;
   startedAt: string | null;
@@ -222,7 +232,7 @@ export interface BrowserPreferences {
 }
 
 export interface RepositoryData {
-  version: 4;
+  version: 5;
   datasets: Dataset[];
   reviewers: Reviewer[];
   gpuStates: GpuState[];
@@ -270,7 +280,7 @@ export interface BatchDraft {
   contentItemIds: string[];
   presetId: string;
   model: ModelName;
-  gpu: GpuSlot;
+  gpus: GpuSlot[];
   quantity: number;
   seed: number | null;
   ages: Array<25 | 35 | 45 | 60>;
@@ -288,7 +298,6 @@ export interface BatchAllocation {
   gender: 'Male' | 'Female';
   ethnicity: 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
   model: ModelName;
-  gpu: GpuSlot;
 }
 
 export interface BatchPreview {

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, ConfirmDialog, Field, StatusBadge, TableShell, useToast } from '../../components';
+import { Button, ConfirmDialog, Field, StatusBadge, useToast } from '../../components';
 import { useMockRepository, useRepositorySnapshot } from '../../store';
 import { formatDateTime } from '../../time';
+import { contentIsReferenced } from '../../generation';
 import { allowedDirections, type Category, type ConflictDirection, type ContentItem, type ContentItemInput, type ContentMode, type ContentStatus } from '../../types';
 import {
   categories,
@@ -14,6 +15,7 @@ import {
   useGenerationCopy,
   useGenerationDraft,
   useUnsavedChanges,
+  VideoPromptPreview,
 } from './shared';
 
 const contentStatuses: ContentStatus[] = ['Draft', 'Active', 'Disabled'];
@@ -79,9 +81,17 @@ export function ContentPage() {
   const [confirming, setConfirming] = useState(false);
   const [pendingChange, setPendingChange] = useState<PendingContentChange | null>(null);
   const [pendingStatus, setPendingStatus] = useState<ContentStatus | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [previewPresetId, setPreviewPresetId] = useState('');
   const [failure, setFailure] = useState<null | 'Conflict' | 'NotFound' | 'InvalidInput' | 'Unavailable'>(null);
   const [validation, setValidation] = useState(false);
   const locale = snapshot.preferences.locale;
+  const previewPresets = snapshot.data.presets.filter(item => item.category === draft.category);
+  const previewPreset = previewPresets.find(item => item.id === previewPresetId) ?? previewPresets[0] ?? null;
+  const referenced = selected
+    ? contentIsReferenced(selected.id, snapshot.data.jobs, snapshot.data.samples)
+    : false;
+  const canDelete = Boolean(selected && !creating && selected.status === 'Draft' && !referenced);
 
   const filtered = useMemo(() => {
     const filters = { search, category: categoryFilter, status: statusFilter };
@@ -92,6 +102,11 @@ export function ContentPage() {
     if (creating) return;
     if (selected) setDraft(contentInput(selected));
   }, [creating, selected?.id, selected?.revision]);
+
+  useEffect(() => {
+    if (previewPresets.some(item => item.id === previewPresetId)) return;
+    setPreviewPresetId(previewPresets[0]?.id ?? '');
+  }, [previewPresetId, previewPresets]);
 
   const applyChange = (change: PendingContentChange) => {
     if (change.kind === 'new') {
@@ -189,6 +204,22 @@ export function ContentPage() {
     showToast(g('content.saved'));
   };
 
+  const deleteContent = () => {
+    if (!selected || !canDelete) return;
+    const result = repository.deleteContentItem(selected.id, selected.revision);
+    setDeleteOpen(false);
+    if (!result.ok) {
+      setFailure(result.kind);
+      return;
+    }
+    const next = snapshot.data.contentItems.find(item => item.id !== selected.id) ?? null;
+    setSelectedId(next?.id ?? '');
+    setCreating(next === null);
+    setDraft(next ? contentInput(next) : emptyContent());
+    setFailure(null);
+    showToast(g('content.deleted'));
+  };
+
   useGenerationDraft('content-editor', { creating, selectedId, draft }, dirty);
   useUnsavedChanges(dirty);
   useCommandEnter(requestSave, !confirming && pendingChange === null && pendingStatus === null);
@@ -225,19 +256,25 @@ export function ContentPage() {
           {snapshot.data.contentItems.length === 0 || filtered.length === 0 ? (
             <div className="generation-list__empty"><p>{g(snapshot.data.contentItems.length === 0 ? 'content.empty' : 'content.filtered')}</p></div>
           ) : (
-            <TableShell caption={g('content.tableCaption')} columns={[
-              { key: 'name', label: g('content.name') }, { key: 'category', label: g('content.category') },
-              { key: 'status', label: g('content.status') }, { key: 'updated', label: g('common.updated') },
-            ]}>
+            <ul className="generation-selection-list" aria-label={g('content.tableCaption')}>
               {filtered.map(item => (
-                <tr key={item.id} className={!creating && item.id === selectedId ? 'is-selected' : undefined}>
-                  <th scope="row"><button type="button" className="table-link" aria-pressed={!creating && item.id === selectedId} onClick={() => choose(item)}>{item.name}</button></th>
-                  <td>{categoryLabel(g, item.category)}</td>
-                  <td><StatusBadge label={g(`content.status.${item.status}`)} kind={contentStatusKind(item.status)} /></td>
-                  <td>{formatDateTime(item.updatedAt)}</td>
-                </tr>
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className={!creating && item.id === selectedId ? 'generation-selection-card is-selected' : 'generation-selection-card'}
+                    aria-pressed={!creating && item.id === selectedId}
+                    onClick={() => choose(item)}
+                  >
+                    <span className="generation-selection-card__title">
+                      <strong>{item.name}</strong>
+                      <StatusBadge label={g(`content.status.${item.status}`)} kind={contentStatusKind(item.status)} />
+                    </span>
+                    <span>{categoryLabel(g, item.category)}</span>
+                    <time dateTime={item.updatedAt}>{formatDateTime(item.updatedAt)}</time>
+                  </button>
+                </li>
               ))}
-            </TableShell>
+            </ul>
           )}
         </section>
         <section className="panel generation-form generation-editor" aria-label={g('content.editorRegion')}>
@@ -294,13 +331,41 @@ export function ContentPage() {
             <Field className="generation-form__wide" label={g('content.sceneSupplement')} htmlFor="content-scene-supplement">
               <textarea id="content-scene-supplement" value={draft.sceneSupplement} onChange={event => setDraft(current => ({ ...current, sceneSupplement: event.target.value }))} placeholder={g('content.sceneSupplementPlaceholder')} />
             </Field>
+            <Field className="generation-form__wide" label={g('promptPreview.preset')} htmlFor="content-preview-preset">
+              <select id="content-preview-preset" value={previewPreset?.id ?? ''} onChange={event => setPreviewPresetId(event.target.value)}>
+                {previewPresets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </Field>
+            {previewPreset ? (
+              <div className="generation-form__wide">
+                <VideoPromptPreview content={draft} preset={previewPreset} />
+              </div>
+            ) : null}
           </div>
           {validation ? <p className="field__error" role="alert">{g('content.validation')}</p> : null}
-          <div className="generation-form__actions"><Button variant="primary" onClick={requestSave}>{g('common.save')}</Button></div>
+          {!creating && selected ? (
+            <p className="generation-delete-note">
+              {g(referenced ? 'content.deleteReferenced' : selected.status !== 'Draft' ? 'content.deleteDraftOnly' : 'content.deleteAvailable')}
+            </p>
+          ) : null}
+          <div className="generation-form__actions">
+            {!creating ? <Button className="button--danger" onClick={() => setDeleteOpen(true)} disabled={!canDelete}>{g('content.delete')}</Button> : null}
+            <Button variant="primary" onClick={requestSave}>{g('common.save')}</Button>
+          </div>
           <p className="generation-shortcut-hint">{g('content.saveShortcut')}</p>
         </section>
       </div>
       <ConfirmDialog open={confirming} title={g('content.saveConfirmTitle')} body={g('content.saveConfirmBody')} confirmLabel={g('common.save')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={save} onClose={() => setConfirming(false)} />
+      <ConfirmDialog
+        open={deleteOpen}
+        title={g('content.deleteTitle')}
+        body={selected ? g('content.deleteBody', { name: selected.name }) : g('content.deleteUnavailable')}
+        confirmLabel={g('content.delete')}
+        cancelLabel={g('common.cancel')}
+        closeLabel={g('common.close')}
+        onConfirm={deleteContent}
+        onClose={() => setDeleteOpen(false)}
+      />
       <ConfirmDialog
         open={pendingChange !== null}
         title={g('content.discardTitle')}

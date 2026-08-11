@@ -226,7 +226,8 @@ export function TestPage() {
     if (retryJobId === '') return;
     const selected = activeRunCards.find(card => card.job.id === retryJobId)?.job;
     if (!selected) return;
-    setRetryGpu(availableGpuSlots.includes(selected.gpu) ? selected.gpu : (availableGpuSlots[0] ?? ''));
+    const selectedGpu = selected.gpus[0];
+    setRetryGpu(selectedGpu && availableGpuSlots.includes(selectedGpu) ? selectedGpu : (availableGpuSlots[0] ?? ''));
     setRetrySeed(selected.seed == null ? '' : String(selected.seed));
   }, [retryJobId, availableGpuSlots, activeRunCards]);
 
@@ -327,7 +328,8 @@ export function TestPage() {
     const selected = activeRunCards.find(card => card.job.id === jobId);
     if (!selected || (selected.job.status !== 'Failed' && selected.job.status !== 'Cancelled')) return;
     setRetryJobId(jobId);
-    setRetryGpu(availableGpuSlots.includes(selected.job.gpu) ? selected.job.gpu : (availableGpuSlots[0] ?? ''));
+    const selectedGpu = selected.job.gpus[0];
+    setRetryGpu(selectedGpu && availableGpuSlots.includes(selectedGpu) ? selectedGpu : (availableGpuSlots[0] ?? ''));
     setRetrySeed(selected.job.seed == null ? '' : String(selected.job.seed));
     setRetryOpen(true);
   };

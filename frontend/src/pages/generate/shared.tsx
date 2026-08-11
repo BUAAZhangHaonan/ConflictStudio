@@ -4,14 +4,17 @@ import { Button, ConfirmDialog, PageHeader, StatusBadge, useToast } from '../../
 import { generationText, type GenerationKey } from '../../locales/features/generation';
 import { useMockRepository, useRepositorySnapshot } from '../../store';
 import { formatDateTime } from '../../time';
+import { composeVideoGenerationInput } from '../../generation';
 import type {
   Category,
+  ContentItem,
   ConflictDirection,
   ExamplePageState,
   GpuAvailability,
   JobStatus,
   JobStepStatus,
   ModelName,
+  Preset,
   RepositoryFailureKind,
 } from '../../types';
 
@@ -39,6 +42,10 @@ export function useGenerationCopy() {
 export function readGenerationDraft<T>(key: string): T | null {
   const value = window.sessionStorage.getItem(`${draftPrefix}${key}`);
   return value ? (JSON.parse(value) as T) : null;
+}
+
+export function saveGenerationDraft<T>(key: string, value: T): void {
+  window.sessionStorage.setItem(`${draftPrefix}${key}`, JSON.stringify(value));
 }
 
 export function useGenerationDraft<T>(key: string, value: T, dirty: boolean) {
@@ -245,6 +252,31 @@ export function GpuPanel() {
         onClose={() => setReleaseSlot(null)}
       />
     </>
+  );
+}
+
+export function VideoPromptPreview({
+  content,
+  preset,
+}: {
+  content: Pick<ContentItem, 'videoPrompt' | 'sceneSupplement'>;
+  preset: Pick<Preset, 'styleInstruction' | 'sceneSupplement' | 'renderNegativeConstraints'>;
+}) {
+  const g = useGenerationCopy();
+  const input = composeVideoGenerationInput(content, preset);
+  return (
+    <section className="generation-prompt-preview" aria-labelledby="video-prompt-preview-title">
+      <div className="section-header"><h3 id="video-prompt-preview-title">{g('promptPreview.title')}</h3></div>
+      <div className="generation-prompt-preview__field">
+        <strong>{g('promptPreview.positive')}</strong>
+        <pre>{input.positivePrompt || g('promptPreview.empty')}</pre>
+      </div>
+      <div className="generation-prompt-preview__field">
+        <strong>{g('promptPreview.negative')}</strong>
+        <pre>{input.negativePrompt || g('promptPreview.empty')}</pre>
+      </div>
+      <p>{g('promptPreview.note')}</p>
+    </section>
   );
 }
 

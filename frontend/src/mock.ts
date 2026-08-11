@@ -12,8 +12,9 @@ import type {
   Sample,
 } from './types';
 import { silentVideoDataUrl, voicedVideoDataUrl } from './mockMedia';
+import { buildJobItems } from './generation';
 
-export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v5';
+export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v6';
 export const LOCALE_STORAGE_KEY = 'conflictstudio.prototype.locale';
 export const REVIEWER_STORAGE_KEY = 'conflictstudio.prototype.reviewer.v2';
 
@@ -136,29 +137,43 @@ function makeJob(
 ): Job {
   const id = `job-${status.toLowerCase()}`;
   const model = index % 2 === 0 ? 'LTX-2.3' : 'MiniMax H3';
-  const gpu = status === 'Queued' ? 'GPU1' : index % 2 === 0 ? 'GPU0' : 'GPU1';
-  const category = source === 'Test' ? 'A-VA' : categories[index % categories.length];
+  const gpus = [status === 'Queued' ? 'GPU1' : index % 2 === 0 ? 'GPU0' : 'GPU1'] as Job['gpus'];
+  const category = source === 'Test'
+    ? 'A-VA'
+    : status === 'Running'
+      ? 'C-VA'
+      : categories[index % categories.length];
+  const conflictDirection: ConflictDirection | null = category === 'C-VA'
+    ? 'Audio'
+    : category === 'C-VT'
+      ? 'Text'
+      : null;
   const seed = 9000 + index;
-  const timestamp = new Date(Date.parse(baseDate) - index * 75_000).toISOString();
+  const timestamp = status === 'Running'
+    ? '2026-08-11T07:23:31.000Z'
+    : new Date(Date.parse(baseDate) - index * 75_000).toISOString();
   const job: Job = {
     id,
     parentJobId: null,
     source,
     datasetId: source === 'Test' ? null : 'dataset-main',
     category,
-    conflictDirection: null,
+    conflictDirection,
     model,
-    gpu,
+    gpus,
     status,
     failureReason: status === 'Failed' ? 'ModelServiceUnavailable' : null,
-    progress: status === 'Completed' ? 100 : status === 'Running' ? 54 : status === 'Queued' ? 0 : 38,
+    progress: status === 'Completed' ? 100 : status === 'Running' ? 26 : status === 'Queued' ? 0 : 38,
+    completedCount: status === 'Completed' ? 1 : status === 'Running' ? 33 : 0,
+    currentItemSequence: status === 'Running' ? 34 : status === 'Failed' ? 1 : null,
     seed,
-    quantity: index === 0 ? 8 : 1,
+    quantity: status === 'Running' ? 128 : index === 0 ? 8 : 1,
     steps: stepsFor(status, id, timestamp),
     logs: [
       { sequence: 1, stepId: `${id}-step-1`, messageKey: 'jobs.log.created', occurredAt: timestamp },
       { sequence: 2, stepId: `${id}-step-2`, messageKey: 'jobs.log.contentReady', occurredAt: timestamp },
     ],
+    items: [],
     resultSampleIds: [],
     revision: 1,
     createdAt: timestamp,
@@ -166,6 +181,13 @@ function makeJob(
     completedAt: status === 'Completed' || status === 'Failed' || status === 'Cancelled' ? timestamp : null,
     updatedAt: timestamp,
   };
+  job.items = buildJobItems(
+    job.quantity,
+    job.status,
+    job.gpus,
+    job.completedCount,
+    job.currentItemSequence,
+  );
   if (source === 'Test') {
     const content = contentItems.find(item =>
       item.category === category && item.conflictDirection === job.conflictDirection,
@@ -183,7 +205,7 @@ function makeJob(
       ethnicity: 'EastAsian',
       seed,
       models: [model],
-      assignments: [{ model, gpu, order: 1 }],
+      assignments: [{ model, gpu: gpus[0], order: 1 }],
       executionMode: 'Serial',
       dialogue: content.dialogue,
       displayText: content.displayText,
@@ -195,13 +217,68 @@ function makeJob(
     };
     job.testAssignmentOrder = 1;
   }
+  if (source === 'Production') {
+    const matching = contentItems.filter(item =>
+      item.status === 'Active'
+      && item.category === category
+      && item.conflictDirection === job.conflictDirection,
+    );
+    const preset = presets.find(item => item.category === category);
+    if (!preset || matching.length === 0) throw new Error(`Missing mock batch input for ${id}.`);
+    const contentIds = matching.map(item => item.id);
+    job.batchInput = {
+      draft: {
+        datasetId: 'dataset-main',
+        category,
+        conflictDirection: job.conflictDirection,
+        contentItemIds: contentIds,
+        presetId: preset.id,
+        model,
+        gpus,
+        quantity: job.quantity,
+        seed,
+        ages: [25, 35, 45, 60],
+        genders: ['Male', 'Female'],
+        ethnicities: ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'],
+      },
+      allocations: Array.from({ length: job.quantity }, (_, itemIndex) => {
+        const content = matching[itemIndex % matching.length];
+        const age = [25, 35, 45, 60] as const;
+        const gender = ['Male', 'Female'] as const;
+        const ethnicity = ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'] as const;
+        return {
+          sequence: itemIndex + 1,
+          contentItemId: content.id,
+          contentItemName: content.name,
+          category,
+          conflictDirection: job.conflictDirection,
+          age: age[itemIndex % age.length],
+          gender: gender[itemIndex % gender.length],
+          ethnicity: ethnicity[itemIndex % ethnicity.length],
+          model,
+        };
+      }),
+      datasetRevision: 3,
+      contentItemRevisions: Object.fromEntries(matching.map(item => [item.id, item.revision])),
+      presetRevision: preset.revision,
+    };
+    job.items = buildJobItems(
+      job.quantity,
+      job.status,
+      job.gpus,
+      job.completedCount,
+      job.currentItemSequence,
+      contentIds,
+    );
+  }
   return job;
 }
 
 const resultHistoryJobs: Job[] = [
   {
-    ...makeJob('Completed', 6, 'Production'),
+    ...makeJob('Completed', 6, 'Rerender'),
     id: 'job-result-previous',
+    source: 'Production',
     datasetId: 'dataset-main',
     steps: stepsFor('Completed', 'job-result-previous'),
     logs: [
@@ -235,11 +312,18 @@ const resultHistoryJobs: Job[] = [
 
 const contentItems: ContentItem[] = [
   ['content-a-va', '克制回应', 'A-VA', null, 'Fixed', 'Active'],
-  ['content-a-vt', '平静说明', 'A-VT', null, 'Generative', 'Draft'],
+  ['content-a-va-calm', '平静安慰', 'A-VA', null, 'Generative', 'Active'],
+  ['content-a-vt', '平静说明', 'A-VT', null, 'Generative', 'Active'],
+  ['content-a-vt-notice', '简短告知', 'A-VT', null, 'Fixed', 'Active'],
   ['content-c-va', '声音掩饰', 'C-VA', 'Audio', 'Fixed', 'Active'],
-  ['content-c-va-vision', '表情暴露', 'C-VA', 'Vision', 'Generative', 'Disabled'],
+  ['content-c-va-audio-2', '语气泄露', 'C-VA', 'Audio', 'Generative', 'Active'],
+  ['content-c-va-vision', '表情暴露', 'C-VA', 'Vision', 'Generative', 'Active'],
+  ['content-c-va-vision-2', '动作泄露', 'C-VA', 'Vision', 'Fixed', 'Active'],
   ['content-c-vt', '文字掩饰', 'C-VT', 'Text', 'Fixed', 'Active'],
-  ['content-c-vt-vision', '动作否认', 'C-VT', 'Vision', 'Generative', 'Draft'],
+  ['content-c-vt-text-2', '文字坦白', 'C-VT', 'Text', 'Generative', 'Active'],
+  ['content-c-vt-vision', '动作否认', 'C-VT', 'Vision', 'Generative', 'Active'],
+  ['content-c-vt-vision-2', '表情泄露', 'C-VT', 'Vision', 'Fixed', 'Active'],
+  ['content-draft', '候选场景草稿', 'A-VA', null, 'Generative', 'Draft'],
 ].map((entry, index) => ({
   id: entry[0] as string,
   name: entry[1] as string,
@@ -299,7 +383,7 @@ const archives: Archive[] = [
 ];
 
 export const initialData: RepositoryData = {
-  version: 4,
+  version: 5,
   datasets: [
     {
       id: 'dataset-main',
@@ -344,7 +428,11 @@ export const initialData: RepositoryData = {
   reviews,
   jobs: [
     ...(['Queued', 'Running', 'Completed', 'Failed', 'Cancelled'] as JobStatus[])
-      .map((status, index) => makeJob(status, index)),
+      .map((status, index) => makeJob(
+        status,
+        index,
+        status === 'Running' || status === 'Failed' ? 'Production' : 'Test',
+      )),
     ...resultHistoryJobs,
   ],
   contentItems,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, ConfirmDialog, Field, TableShell, useToast } from '../../components';
+import { Button, ConfirmDialog, Field, useToast } from '../../components';
 import { useMockRepository, useRepositorySnapshot } from '../../store';
 import { formatDateTime } from '../../time';
 import type { Category, Preset, PresetInput, PresetRuleKey } from '../../types';
@@ -14,6 +14,7 @@ import {
   useGenerationCopy,
   useGenerationDraft,
   useUnsavedChanges,
+  VideoPromptPreview,
 } from './shared';
 
 function presetInput(item: Preset): PresetInput {
@@ -75,7 +76,10 @@ export function PresetsPage() {
   const [pendingChange, setPendingChange] = useState<PendingPresetChange | null>(null);
   const [validation, setValidation] = useState(false);
   const [failure, setFailure] = useState<null | 'Conflict' | 'NotFound' | 'InvalidInput' | 'Unavailable'>(null);
+  const [previewContentId, setPreviewContentId] = useState('');
   const locale = snapshot.preferences.locale;
+  const previewContents = snapshot.data.contentItems.filter(item => item.status === 'Active' && item.category === draft.category);
+  const previewContent = previewContents.find(item => item.id === previewContentId) ?? previewContents[0] ?? null;
 
   const filtered = useMemo(() => {
     const filters = { search, category: categoryFilter };
@@ -91,6 +95,11 @@ export function PresetsPage() {
   useEffect(() => {
     if (!creating && selected) load(presetInput(selected));
   }, [creating, selected?.id, selected?.revision]);
+
+  useEffect(() => {
+    if (previewContents.some(item => item.id === previewContentId)) return;
+    setPreviewContentId(previewContents[0]?.id ?? '');
+  }, [previewContentId, previewContents]);
 
   const storedValue = { creating, selectedId, draft, positiveText, negativeText };
   const savedValue = selected ? presetInput(selected) : null;
@@ -204,16 +213,22 @@ export function PresetsPage() {
           {snapshot.data.presets.length === 0 || filtered.length === 0 ? (
             <div className="generation-list__empty"><p>{g(snapshot.data.presets.length === 0 ? 'presets.empty' : 'presets.filtered')}</p></div>
           ) : (
-            <TableShell caption={g('presets.tableCaption')} columns={[
-              { key: 'name', label: g('presets.name') }, { key: 'category', label: g('presets.category') }, { key: 'updated', label: g('common.updated') },
-            ]}>
+            <ul className="generation-selection-list" aria-label={g('presets.tableCaption')}>
               {filtered.map(item => (
-                <tr key={item.id} className={!creating && item.id === selectedId ? 'is-selected' : undefined}>
-                  <th scope="row"><button type="button" className="table-link" aria-pressed={!creating && item.id === selectedId} onClick={() => choose(item)}>{item.name}</button></th>
-                  <td>{categoryLabel(g, item.category)}</td><td>{formatDateTime(item.updatedAt)}</td>
-                </tr>
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className={!creating && item.id === selectedId ? 'generation-selection-card is-selected' : 'generation-selection-card'}
+                    aria-pressed={!creating && item.id === selectedId}
+                    onClick={() => choose(item)}
+                  >
+                    <strong>{item.name}</strong>
+                    <span>{categoryLabel(g, item.category)}</span>
+                    <time dateTime={item.updatedAt}>{formatDateTime(item.updatedAt)}</time>
+                  </button>
+                </li>
               ))}
-            </TableShell>
+            </ul>
           )}
         </section>
         <section className="panel generation-form generation-editor" aria-label={g('presets.editorRegion')}>
@@ -246,6 +261,16 @@ export function PresetsPage() {
             <Field className="generation-form__wide" label={g('presets.constraints')} htmlFor="preset-constraints" required>
               <textarea id="preset-constraints" value={draft.renderNegativeConstraints} onChange={event => setDraft(current => ({ ...current, renderNegativeConstraints: event.target.value }))} placeholder={g('presets.constraintsPlaceholder')} />
             </Field>
+            <Field className="generation-form__wide" label={g('promptPreview.content')} htmlFor="preset-preview-content">
+              <select id="preset-preview-content" value={previewContent?.id ?? ''} onChange={event => setPreviewContentId(event.target.value)}>
+                {previewContents.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </Field>
+            {previewContent ? (
+              <div className="generation-form__wide">
+                <VideoPromptPreview content={previewContent} preset={draft} />
+              </div>
+            ) : null}
           </div>
           {validation ? <p className="field__error" role="alert">{g('presets.validation')}</p> : null}
           <div className="generation-form__actions"><Button variant="primary" onClick={requestSave}>{g('common.save')}</Button></div>

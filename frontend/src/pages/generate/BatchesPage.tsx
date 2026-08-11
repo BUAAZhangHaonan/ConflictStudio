@@ -24,12 +24,13 @@ import {
   OperationFeedback,
   parseSeed,
   readGenerationDraft,
+  saveGenerationDraft,
   toggleArrayValue,
   useCommandEnter,
   useGenerationCopy,
-  useGenerationDraft,
   useUnsavedChanges,
 } from './shared';
+import { validateBatchGpuSelection } from '../../generation';
 
 type Age = (typeof ages)[number];
 type Gender = (typeof genders)[number];
@@ -44,7 +45,7 @@ interface StoredBatchDraft {
   contentItemIds?: string[];
   presetId?: string;
   model?: ModelName;
-  gpu?: GpuSlot;
+  gpus?: GpuSlot[];
   quantity?: number;
   seed?: number | null;
   ages?: Age[];
@@ -64,6 +65,7 @@ function sanitizeBatchDraft(
   raw: StoredBatchDraft | null,
   activeDatasets: readonly { id: string }[],
   presets: readonly { id: string; category: Category }[],
+  gpuStates: readonly { slot: GpuSlot; availability: string }[],
 ): BatchDraft {
   const category = raw?.category && categories.includes(raw.category) ? raw.category : 'A-VA';
   const directionCandidates = allowedDirections(category);
@@ -74,7 +76,10 @@ function sanitizeBatchDraft(
   const categoryPresets = presets.filter(item => item.category === category);
   const presetId = raw?.presetId && categoryPresets.some(item => item.id === raw.presetId) ? raw.presetId : categoryPresets[0]?.id ?? '';
   const validModel = raw?.model === 'LTX-2.3' || raw?.model === 'MiniMax H3' ? raw.model : 'LTX-2.3';
-  const gpu = raw?.gpu === 'GPU0' || raw?.gpu === 'GPU1' ? raw.gpu : 'GPU0';
+  const availableGpus = gpuStates.filter(item => item.availability === 'Available').map(item => item.slot);
+  const gpus = (raw?.gpus ?? []).filter((slot, index, values) =>
+    (slot === 'GPU0' || slot === 'GPU1') && values.indexOf(slot) === index && availableGpus.includes(slot),
+  ).slice(0, 2);
   const rawQuantity = raw?.quantity;
   const quantity = Number.isFinite(rawQuantity) && rawQuantity !== undefined
     ? Math.max(1, Math.min(200, Number.isInteger(rawQuantity) ? rawQuantity : Math.trunc(rawQuantity)))
@@ -92,7 +97,7 @@ function sanitizeBatchDraft(
     contentItemIds: raw?.contentItemIds?.slice() ?? [],
     presetId,
     model: validModel,
-    gpu,
+    gpus: gpus.length > 0 ? gpus : availableGpus.slice(0, 1),
     quantity,
     seed,
     ages: selectedAges.length === 0 ? [25, 35] : selectedAges,
@@ -112,14 +117,17 @@ export function BatchesPage() {
   const { showToast } = useToast();
   const activeDatasets = snapshot.data.datasets.filter(item => item.status === 'Active');
   const [storedDraft] = useState(() => readGenerationDraft(batchDraftStorageKey) as StoredBatchDraft | null);
-  const initialDraft = useMemo(() => sanitizeBatchDraft(storedDraft, activeDatasets, snapshot.data.presets), [storedDraft, activeDatasets, snapshot.data.presets]);
+  const initialDraft = useMemo(
+    () => sanitizeBatchDraft(storedDraft, activeDatasets, snapshot.data.presets, snapshot.data.gpuStates),
+    [storedDraft, activeDatasets, snapshot.data.gpuStates, snapshot.data.presets],
+  );
   const [datasetId, setDatasetId] = useState(() => initialDraft.datasetId);
   const [category, setCategory] = useState(() => initialDraft.category);
   const [direction, setDirection] = useState<ConflictDirection | null>(() => initialDraft.conflictDirection);
   const [contentIds, setContentIds] = useState<string[]>(() => initialDraft.contentItemIds);
   const [presetId, setPresetId] = useState(() => initialDraft.presetId);
   const [model, setModel] = useState<ModelName>(() => initialDraft.model);
-  const [gpu, setGpu] = useState<GpuSlot>(() => initialDraft.gpu);
+  const [selectedGpus, setSelectedGpus] = useState<GpuSlot[]>(() => initialDraft.gpus);
   const [quantity, setQuantity] = useState(() => initialDraft.quantity);
   const [seed, setSeed] = useState(() => {
     const value = initialDraft.seed;
@@ -135,10 +143,11 @@ export function BatchesPage() {
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const [failure, setFailure] = useState<null | 'Conflict' | 'NotFound' | 'InvalidInput' | 'Unavailable'>(null);
   const [validation, setValidation] = useState(false);
+  const [gpuValidation, setGpuValidation] = useState(false);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showReleaseConfirm, setShowReleaseConfirm] = useState(false);
+  const [savedDraft, setSavedDraft] = useState<BatchDraft>(() => initialDraft);
   const directions = allowedDirections(category);
-  const baselineDraft = initialDraft;
   const draft = useMemo(() => ({
     datasetId,
     category,
@@ -146,14 +155,14 @@ export function BatchesPage() {
     contentItemIds: contentIds,
     presetId,
     model,
-    gpu,
+    gpus: selectedGpus,
     quantity,
     seed: parseSeed(seed),
     ages: selectedAges,
     genders: selectedGenders,
     ethnicities: selectedEthnicities,
-  }), [datasetId, category, direction, contentIds, presetId, model, gpu, quantity, seed, selectedAges, selectedGenders, selectedEthnicities]);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(baselineDraft);
+  }), [datasetId, category, direction, contentIds, presetId, model, selectedGpus, quantity, seed, selectedAges, selectedGenders, selectedEthnicities]);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
   const matchingContent = useMemo(
     () => snapshot.data.contentItems.filter(item =>
       item.status === 'Active' && item.category === category && item.conflictDirection === direction,
@@ -165,10 +174,11 @@ export function BatchesPage() {
     [category, snapshot.data.presets],
   );
   const isPreviewCurrent = preview ? draftsMatch(preview.draft, draft) : false;
+  const gpuSelectionError = validateBatchGpuSelection(selectedGpus, snapshot.data.gpuStates);
 
-  const selectedGpu = snapshot.data.gpuStates.find(item => item.slot === gpu);
-  const isBlockedGpuState = (item: NonNullable<typeof selectedGpu>) => item.availability !== 'Available';
-  const needsModelRelease = (item: typeof selectedGpu, nextModel: ModelName) => {
+  const selectedGpuStates = selectedGpus.map(slot => snapshot.data.gpuStates.find(item => item.slot === slot)).filter(Boolean);
+  const isBlockedGpuState = (item: (typeof snapshot.data.gpuStates)[number]) => item.availability !== 'Available';
+  const needsModelRelease = (item: (typeof snapshot.data.gpuStates)[number] | undefined, nextModel: ModelName) => {
     if (!item) return false;
     if (!item.loadedModel || item.loadedModel === nextModel) return false;
     return item.availability === 'Available';
@@ -190,12 +200,43 @@ export function BatchesPage() {
     if (preview && !draftsMatch(preview.draft, draft)) setPreview(null);
   }, [draft, preview]);
 
-  useGenerationDraft(batchDraftStorageKey, draft, dirty);
   useUnsavedChanges(dirty);
 
+  const saveDraft = () => {
+    if (gpuSelectionError) {
+      setGpuValidation(gpuSelectionError !== 'Unavailable');
+      setFailure(gpuSelectionError === 'Unavailable' ? 'Unavailable' : null);
+      return;
+    }
+    saveGenerationDraft(batchDraftStorageKey, draft);
+    setSavedDraft(draft);
+    setGpuValidation(false);
+    setFailure(null);
+    showToast(g('batches.draftSaved'));
+  };
+
+  const toggleGpu = (slot: GpuSlot) => {
+    const state = snapshot.data.gpuStates.find(item => item.slot === slot);
+    if (!state || state.availability !== 'Available') return;
+    setSelectedGpus(current => current.includes(slot)
+      ? current.filter(item => item !== slot)
+      : current.length < 2
+        ? [...current, slot]
+        : current,
+    );
+  };
+
+  const selectAllContent = () => {
+    const allIds = matchingContent.map(item => item.id);
+    const allSelected = allIds.length > 0 && allIds.every(id => contentIds.includes(id));
+    setContentIds(allSelected ? [] : allIds);
+  };
+
   const buildPreview = () => {
-    if (!selectedGpu || isBlockedGpuState(selectedGpu)) {
-      setFailure('Unavailable');
+    const gpuError = gpuSelectionError;
+    if (gpuError) {
+      setFailure(gpuError === 'Unavailable' ? 'Unavailable' : null);
+      setGpuValidation(gpuError !== 'Unavailable');
       setValidation(false);
       setPreview(null);
       return;
@@ -207,6 +248,7 @@ export function BatchesPage() {
       return;
     }
     setValidation(false);
+    setGpuValidation(false);
     setFailure(null);
     setPreview(result.value);
   };
@@ -216,13 +258,15 @@ export function BatchesPage() {
       setPreview(null);
       return;
     }
-    const currentGpu = snapshot.data.gpuStates.find(item => item.slot === preview.draft.gpu);
-    if (!currentGpu || isBlockedGpuState(currentGpu)) {
+    if (validateBatchGpuSelection(preview.draft.gpus, snapshot.data.gpuStates)) {
       setFailure('Unavailable');
       setPreview(null);
       return;
     }
-    if (needsModelRelease(currentGpu, preview.draft.model)) {
+    if (preview.draft.gpus.some(slot => needsModelRelease(
+      snapshot.data.gpuStates.find(item => item.slot === slot),
+      preview.draft.model,
+    ))) {
       setShowReleaseConfirm(true);
       return;
     }
@@ -234,8 +278,10 @@ export function BatchesPage() {
       setShowReleaseConfirm(false);
       return;
     }
-    const currentGpu = snapshot.data.gpuStates.find(item => item.slot === preview.draft.gpu);
-    if (!currentGpu || !currentGpu.loadedModel || isBlockedGpuState(currentGpu) || currentGpu.loadedModel === preview.draft.model) {
+    const switchTargets = preview.draft.gpus
+      .map(slot => snapshot.data.gpuStates.find(item => item.slot === slot))
+      .filter(item => item && needsModelRelease(item, preview.draft.model));
+    if (switchTargets.length === 0 || switchTargets.some(item => !item || isBlockedGpuState(item))) {
       setShowReleaseConfirm(false);
       return;
     }
@@ -261,16 +307,16 @@ export function BatchesPage() {
     showToast(g('batches.success'));
   };
 
-  const currentGpuReleaseTarget = snapshot.data.gpuStates.find(item => item.slot === gpu);
+  const currentGpuReleaseTargets = selectedGpuStates.filter(item => item && needsModelRelease(item, model));
   const submitConfirmBody = preview
     ? g('batches.submitConfirmBody', { count: preview.allocations.length })
     : g('batches.confirmBody');
-  const releaseModelSwitchBody = currentGpuReleaseTarget?.loadedModel
-    ? g('batches.releaseModelBody', {
-      gpu: gpuLabel(g, currentGpuReleaseTarget.slot),
-      currentModel: modelLabel(g, currentGpuReleaseTarget.loadedModel),
+  const releaseModelSwitchBody = currentGpuReleaseTargets.length > 0
+    ? currentGpuReleaseTargets.map(item => g('batches.releaseModelBody', {
+      gpu: gpuLabel(g, item!.slot),
+      currentModel: modelLabel(g, item!.loadedModel!),
       nextModel: modelLabel(g, model),
-    })
+    })).join(' ')
     : g('batches.noLoadedModel');
 
   useCommandEnter(() => {
@@ -319,19 +365,23 @@ export function BatchesPage() {
             <Field label={g('batches.outputProfile')} htmlFor="batch-output-profile">
               <input id="batch-output-profile" value={modelSpecLabel(g, model)} readOnly />
             </Field>
-            <Field label={g('batches.gpu')} htmlFor="batch-gpu" required>
-              <select id="batch-gpu" value={gpu} onChange={event => setGpu(event.target.value as GpuSlot)}>
+            <fieldset className="generation-fieldset" aria-describedby="batch-gpu-hint">
+              <legend>{g('batches.gpu')}</legend>
+              <p id="batch-gpu-hint" className="field__hint">{g('batches.gpuHint')}</p>
+              <div className="generation-choice-grid">
                 {snapshot.data.gpuStates.map(item => (
-                  <option
-                    key={item.slot}
-                    value={item.slot}
-                    disabled={isBlockedGpuState(item)}
-                  >
-                    {gpuLabel(g, item.slot)} / {g(`gpu.${item.availability}`)}
-                  </option>
+                  <label key={item.slot}>
+                    <input
+                      type="checkbox"
+                      checked={selectedGpus.includes(item.slot)}
+                      disabled={isBlockedGpuState(item)}
+                      onChange={() => toggleGpu(item.slot)}
+                    />
+                    <span>{gpuLabel(g, item.slot)} / {g(`gpu.${item.availability}`)}</span>
+                  </label>
                 ))}
-              </select>
-            </Field>
+              </div>
+            </fieldset>
             <Field label={g('batches.quantity')} htmlFor="batch-quantity" required>
               <input id="batch-quantity" type="number" min="1" max="200" value={quantity} onChange={event => setQuantity(Number(event.target.value))} />
             </Field>
@@ -340,6 +390,13 @@ export function BatchesPage() {
             </Field>
             <fieldset className="generation-form__wide generation-fieldset" aria-describedby="batch-content-hint">
               <legend>{g('batches.content')}</legend>
+              <div className="generation-fieldset__toolbar">
+                {matchingContent.length > 0 ? (
+                  <Button variant="quiet" onClick={selectAllContent}>
+                    {g(matchingContent.every(item => contentIds.includes(item.id)) ? 'batches.clearAll' : 'batches.selectAll')}
+                  </Button>
+                ) : null}
+              </div>
               <p id="batch-content-hint" className="field__hint">{g('batches.contentHint')}</p>
               {matchingContent.length === 0 ? <p className="generation-empty-note">{g('batches.noContent')}</p> : (
                 <div className="generation-choice-grid">
@@ -377,8 +434,17 @@ export function BatchesPage() {
             </div>
           </fieldset>
           {validation ? <p className="field__error" role="alert">{g('batches.validation')}</p> : null}
+          {gpuValidation ? <p className="field__error" role="alert">{g('batches.gpuValidation')}</p> : null}
           <div className="generation-form__actions">
-            <Button variant="primary" onClick={buildPreview}>{g('batches.preview')}</Button>
+            <Button onClick={saveDraft} disabled={!dirty || gpuSelectionError === 'Unavailable'}>{g('batches.saveDraft')}</Button>
+            <Button
+              variant="primary"
+              onClick={buildPreview}
+              disabled={dirty}
+              title={dirty ? g('batches.saveBeforePreview') : undefined}
+            >
+              {g('batches.preview')}
+            </Button>
           </div>
           <p className="generation-shortcut-hint">{g('batches.submitShortcut')}</p>
         </section>
@@ -395,6 +461,12 @@ export function BatchesPage() {
         {preview ? (
           <>
             <p className="generation-preview-summary">{g('batches.previewIntro', { count: preview.allocations.length })}</p>
+            <p className="generation-preview-summary">
+              {g(preview.draft.gpus.length === 2 ? 'batches.dynamicGpuTwo' : 'batches.dynamicGpuOne', {
+                gpus: preview.draft.gpus.map(slot => gpuLabel(g, slot)).join(', '),
+                model: modelLabel(g, preview.draft.model),
+              })}
+            </p>
             <TableShell
               caption={g('batches.allocationCaption')}
               columns={[
@@ -403,7 +475,6 @@ export function BatchesPage() {
                 { key: 'category', label: g('batches.category') },
                 { key: 'allocation', label: g('batches.allocation') },
                 { key: 'model', label: g('batches.model') },
-                { key: 'gpu', label: g('batches.gpu') },
               ]}
             >
               {preview.allocations.map(row => (
@@ -413,7 +484,6 @@ export function BatchesPage() {
                   <td>{categoryLabel(g, row.category)}</td>
                   <td>{g(`demographic.age.${row.age}`)} / {g(`demographic.gender.${row.gender}`)} / {g(`demographic.ethnicity.${row.ethnicity}`)}</td>
                   <td>{modelLabel(g, row.model)}</td>
-                  <td>{gpuLabel(g, row.gpu)}</td>
                 </tr>
               ))}
             </TableShell>

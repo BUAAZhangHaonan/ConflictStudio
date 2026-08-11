@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Button, ConfirmDialog, Dialog, Field, StatusBadge, TableShell, useToast } from '../../components';
+import { Button, ConfirmDialog, Dialog, Field, StatusBadge, useToast } from '../../components';
 import { canKeepTestResult, useMockRepository, useRepositorySnapshot } from '../../store';
 import { formatDateTime } from '../../time';
+import { formatCompactDateTime } from '../../time';
+import { composeVideoGenerationInput } from '../../generation';
 import type { GpuSlot, Job, JobSource, JobStatus, Sample } from '../../types';
 import {
   GenerationScaffold,
@@ -24,6 +26,10 @@ function isCancellable(status: JobStatus) {
 
 function isRetryable(status: JobStatus) {
   return status === 'Failed' || status === 'Cancelled';
+}
+
+function jobName(job: Pick<Job, 'category' | 'createdAt'>): string {
+  return `${job.category}-${formatCompactDateTime(job.createdAt)}`;
 }
 
 interface ResultEdit {
@@ -107,7 +113,7 @@ export function JobsPage() {
         job.id,
         datasetName,
         job.model,
-        job.gpu,
+        job.gpus.join(' '),
         g(`jobs.source.${job.source}`),
       ].join(' ').toLocaleLowerCase(locale).includes(query);
       const matchesStatus = statusFilter === 'All' || job.status === statusFilter;
@@ -168,6 +174,22 @@ export function JobsPage() {
   const isLatestSelectedAttempt = attemptHistory[attemptHistory.length - 1]?.id === selected?.id;
   const runningCount = snapshot.data.jobs.filter(job => job.status === 'Running').length;
   const queuedCount = snapshot.data.jobs.filter(job => job.status === 'Queued').length;
+  const selectedCurrentItem = selected?.currentItemSequence
+    ? selected.items.find(item => item.sequence === selected.currentItemSequence) ?? null
+    : null;
+  const selectedCurrentAllocation = selected?.batchInput && selected.currentItemSequence
+    ? selected.batchInput.allocations[selected.currentItemSequence - 1] ?? null
+    : null;
+  const selectedCurrentContentId = selectedCurrentItem?.contentItemId
+    ?? selectedCurrentAllocation?.contentItemId
+    ?? selected?.testInput?.contentItemId
+    ?? null;
+  const selectedCurrentContent = selectedCurrentContentId ? contentById.get(selectedCurrentContentId) ?? null : null;
+  const selectedCurrentPresetId = selected?.batchInput?.draft.presetId ?? selected?.testInput?.presetId ?? null;
+  const selectedCurrentPreset = selectedCurrentPresetId ? presetsById.get(selectedCurrentPresetId) ?? null : null;
+  const selectedCurrentPrompt = selectedCurrentContent && selectedCurrentPreset
+    ? composeVideoGenerationInput(selectedCurrentContent, selectedCurrentPreset)
+    : null;
 
   const clearFilters = () => {
     setSearch('');
@@ -196,7 +218,8 @@ export function JobsPage() {
 
   const openRetryDialog = () => {
     if (!selected) return;
-    setRetryGpu(availableGpuSlots.includes(selected.gpu) ? selected.gpu : (availableGpuSlots[0] ?? ''));
+    const selectedGpu = selected.gpus[0];
+    setRetryGpu(selectedGpu && availableGpuSlots.includes(selectedGpu) ? selectedGpu : (availableGpuSlots[0] ?? ''));
     setRetrySeed(selected.seed == null ? '' : String(selected.seed));
     setRetryOpen(true);
   };
@@ -301,8 +324,9 @@ export function JobsPage() {
     const needsRerender = editDraft.videoPrompt !== saved.videoPrompt
       || (sample.category.endsWith('-VA') && editDraft.dialogue !== saved.dialogue);
     if (needsRerender) {
-      const nextGpu = availableGpuSlots.includes(selected?.gpu as GpuSlot)
-        ? selected!.gpu
+      const selectedGpu = selected?.gpus[0];
+      const nextGpu = selectedGpu && availableGpuSlots.includes(selectedGpu)
+        ? selectedGpu
         : availableGpuSlots[0] ?? null;
       if (!nextGpu) {
         setFailure('Unavailable');
@@ -333,7 +357,7 @@ export function JobsPage() {
   return (
     <GenerationScaffold title={'jobs.title'} subtitle={'jobs.subtitle'}>
       {failure ? <OperationFeedback kind={failure} onDismiss={() => setFailure(null)} /> : null}
-      <div className="generation-layout generation-layout--editor generation-jobs">
+      <div className="generation-layout generation-layout--jobs generation-jobs">
         <section className="panel generation-list" aria-labelledby="jobs-list-title">
           <div className="section-header">
             <div>
@@ -384,59 +408,52 @@ export function JobsPage() {
               <p>{g(snapshot.data.jobs.length === 0 ? 'jobs.empty' : 'jobs.filtered')}</p>
             </div>
           ) : (
-            <div className="generation-jobs__table">
-              <TableShell
-                caption={g('jobs.tableCaption')}
-                columns={[
-                  { key: 'job', label: g('jobs.id') },
-                  { key: 'source', label: g('jobs.source') },
-                  { key: 'model', label: g('jobs.model') },
-                  { key: 'gpu', label: g('jobs.gpu') },
-                  { key: 'status', label: g('jobs.status') },
-                  { key: 'progress', label: g('jobs.progress') },
-                ]}
-              >
-                {filtered.map(job => (
-                  <tr key={job.id} className={job.id === selectedId ? 'is-selected' : undefined}>
-                    <th scope="row">
-                      <button
-                        type="button"
-                        className="table-link"
-                        aria-label={g('jobs.selectLabel', { id: job.id })}
-                        aria-controls="generation-job-detail"
-                        aria-pressed={job.id === selectedId}
-                        onClick={() => selectJob(job)}
-                      >
-                        {job.id}
-                      </button>
-                    </th>
-                    <td>{g(`jobs.source.${job.source}`)}</td>
-                    <td>{g(`model.${job.model}`)}</td>
-                    <td>{g(`gpu.${job.gpu}`)}</td>
-                    <td>
+            <ul className="generation-job-list" aria-label={g('jobs.tableCaption')}>
+              {filtered.map(job => (
+                <li key={job.id}>
+                  <button
+                    type="button"
+                    className={job.id === selectedId ? 'generation-job-row is-selected' : 'generation-job-row'}
+                    aria-label={g('jobs.selectLabel', { id: jobName(job) })}
+                    aria-controls="generation-job-detail"
+                    aria-pressed={job.id === selectedId}
+                    onClick={() => selectJob(job)}
+                  >
+                    <span className="generation-job-row__header">
+                      <strong>{jobName(job)}</strong>
                       <StatusBadge label={g(`jobs.status.${job.status}`)} kind={jobStatusKind(job.status)} />
-                    </td>
-                    <td>
-                      <div className="generation-progress">
-                        <progress value={job.progress} max={100} aria-label={g('jobs.progressLabel', { progress: job.progress })} />
-                        <span>{job.progress}%</span>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </TableShell>
-            </div>
+                    </span>
+                    <span className="generation-job-row__meta">
+                      <span>{g(`model.${job.model}`)}</span>
+                      <span>{job.gpus.map(slot => g(`gpu.${slot}`)).join(', ')}</span>
+                      <span>{g(`jobs.source.${job.source}`)}</span>
+                    </span>
+                    <span className="generation-job-row__progress">
+                      <progress value={job.completedCount} max={job.quantity} aria-label={g('jobs.countProgressLabel', { completed: job.completedCount, total: job.quantity })} />
+                      <span>{job.completedCount}/{job.quantity}</span>
+                    </span>
+                    {job.failureReason ? <span className="generation-job-row__failure">{g(`jobs.failure.${job.failureReason}`)}</span> : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </section>
 
         {selected ? (
           <section
             id="generation-job-detail"
-            className="panel generation-job-detail generation-editor"
+            className="panel generation-job-detail"
             aria-label={g('jobs.detailRegion')}
           >
-            <div className="section-header">
-              <h2>{g('jobs.details')}</h2>
+            <div className="section-header generation-job-header">
+              <div>
+                <span className="generation-job-header__status">
+                  <h2>{jobName(selected)}</h2>
+                  <StatusBadge label={g(`jobs.status.${selected.status}`)} kind={jobStatusKind(selected.status)} />
+                </span>
+                <p>{g(`jobs.source.${selected.source}`)}, {g(`model.${selected.model}`)}, {selected.gpus.map(slot => g(`gpu.${slot}`)).join(', ')}</p>
+              </div>
               <div className="generation-detail-actions">
                 {isLatestSelectedAttempt && isCancellable(selected.status) ? (
                   <Button variant="secondary" onClick={() => setCancelOpen(true)}>{g('jobs.cancel')}</Button>
@@ -454,119 +471,61 @@ export function JobsPage() {
               </div>
             </div>
 
-            <dl className="generation-job-summary">
+            <section className="generation-job-progress" aria-labelledby="job-progress-title">
               <div>
-                <dt>{g('jobs.status')}</dt>
-                <dd><StatusBadge label={g(`jobs.status.${selected.status}`)} kind={jobStatusKind(selected.status)} /></dd>
+                <h3 id="job-progress-title">{g('jobs.progress')}</h3>
+                <strong>{selected.completedCount}/{selected.quantity}</strong>
               </div>
-              <div>
-                <dt>{g('jobs.source')}</dt>
-                <dd>{g(`jobs.source.${selected.source}`)}</dd>
-              </div>
-              <div>
-                <dt>{g('jobs.category')}</dt>
-                <dd>{categoryLabel(g, selected.category)}</dd>
-              </div>
-              <div>
-                <dt>{g('batches.direction')}</dt>
-                <dd>{directionLabel(g, selected.conflictDirection)}</dd>
-              </div>
-              <div>
-                <dt>{g('jobs.model')}</dt>
-                <dd>{g(`model.${selected.model}`)}</dd>
-              </div>
-              <div>
-                <dt>{g('jobs.gpu')}</dt>
-                <dd>{g(`gpu.${selected.gpu}`)}</dd>
-              </div>
-              <div>
-                <dt>{g('jobs.dataset')}</dt>
-                <dd>{selected.datasetId ? (datasetsById.get(selected.datasetId)?.name ?? selected.datasetId) : g('common.none')}</dd>
-              </div>
-              <div>
-                <dt>{g('jobs.seed')}</dt>
-                <dd>{selected.seed ?? g('common.none')}</dd>
-              </div>
-              <div>
-                <dt>{g('jobs.quantity')}</dt>
-                <dd>{selected.quantity}</dd>
-              </div>
-              <div>
-                <dt>{g('batches.outputProfile')}</dt>
-                <dd>{modelSpecLabel(g, selected.model)}</dd>
-              </div>
-              <div>
-                <dt>{g('jobs.created')}</dt>
-                <dd>{formatDateTime(selected.createdAt)}</dd>
-              </div>
-              <div>
-                <dt>{g('common.updated')}</dt>
-                <dd>{formatDateTime(selected.updatedAt)}</dd>
-              </div>
-              <div>
-                <dt>{g('jobs.progress')}</dt>
-                <dd>
-                  <div className="generation-progress">
-                    <progress value={selected.progress} max={100} aria-label={g('jobs.progressLabel', { progress: selected.progress })} />
-                    <span>{selected.progress}%</span>
-                  </div>
-                </dd>
-              </div>
+              <progress value={selected.completedCount} max={selected.quantity} aria-label={g('jobs.countProgressLabel', { completed: selected.completedCount, total: selected.quantity })} />
+            </section>
+
+            <dl className="generation-job-meta">
+              <div><dt>{g('jobs.dataset')}</dt><dd>{selected.datasetId ? (datasetsById.get(selected.datasetId)?.name ?? selected.datasetId) : g('common.none')}</dd></div>
+              <div><dt>{g('jobs.category')}</dt><dd>{categoryLabel(g, selected.category)}</dd></div>
+              <div><dt>{g('batches.direction')}</dt><dd>{directionLabel(g, selected.conflictDirection)}</dd></div>
+              <div><dt>{g('jobs.created')}</dt><dd>{formatDateTime(selected.createdAt)}</dd></div>
+              <div><dt>{g('batches.outputProfile')}</dt><dd>{modelSpecLabel(g, selected.model)}</dd></div>
+              <div><dt>{g('jobs.seed')}</dt><dd>{selected.seed ?? g('common.none')}</dd></div>
             </dl>
 
             <div className="generation-job-sections">
-              <section className="generation-job-section generation-job-section--wide" aria-labelledby="job-inputs-title">
-                <h3 id="job-inputs-title">{g('jobs.inputs')}</h3>
-                {selected.batchInput ? (
-                  <div className="generation-job-inputs">
-                    <dl>
-                      <div><dt>{g('batches.preset')}</dt><dd>{presetsById.get(selected.batchInput.draft.presetId)?.name ?? `${g('jobs.linkUnavailable')} (${selected.batchInput.draft.presetId})`}</dd></div>
-                      <div><dt>{g('batches.content')}</dt><dd>{selected.batchInput.draft.contentItemIds.map(id => contentById.get(id)?.name ?? `${g('jobs.linkUnavailable')} (${id})`).join(', ')}</dd></div>
-                    </dl>
-                    <ol className="generation-allocation-list">
-                      {selected.batchInput.allocations.map(row => (
-                        <li key={row.sequence}>
-                          <strong>{g('batches.sequence')} {row.sequence}</strong>
-                          <span>{row.contentItemName}</span>
-                          <span>{g(`demographic.age.${row.age}`)}, {g(`demographic.gender.${row.gender}`)}, {g(`demographic.ethnicity.${row.ethnicity}`)}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                ) : selected.testInput ? (
-                  <dl className="generation-job-inputs">
-                    <div><dt>{g('test.content')}</dt><dd>{contentById.get(selected.testInput.contentItemId)?.name ?? `${g('jobs.linkUnavailable')} (${selected.testInput.contentItemId})`}</dd></div>
-                    <div><dt>{g('test.preset')}</dt><dd>{presetsById.get(selected.testInput.presetId)?.name ?? `${g('jobs.linkUnavailable')} (${selected.testInput.presetId})`}</dd></div>
-                    <div><dt>{g('test.age')}</dt><dd>{g(`demographic.age.${selected.testInput.age}`)}</dd></div>
-                    <div><dt>{g('test.gender')}</dt><dd>{g(`demographic.gender.${selected.testInput.gender}`)}</dd></div>
-                    <div><dt>{g('test.ethnicity')}</dt><dd>{g(`demographic.ethnicity.${selected.testInput.ethnicity}`)}</dd></div>
+              <section className="generation-job-section" aria-labelledby="job-inputs-title">
+                <h3 id="job-inputs-title">{g('jobs.currentInput')}</h3>
+                {selectedCurrentItem || selected.testInput ? (
+                  <dl className="generation-current-input">
+                    <div><dt>{g('jobs.currentNumber')}</dt><dd>{selected.currentItemSequence ?? 1}/{selected.quantity}</dd></div>
+                    <div><dt>{g('batches.content')}</dt><dd>{selectedCurrentContent?.name ?? g('jobs.linkUnavailable')}</dd></div>
+                    <div><dt>{g('batches.preset')}</dt><dd>{selectedCurrentPreset?.name ?? g('jobs.linkUnavailable')}</dd></div>
+                    <div><dt>{g('jobs.gpu')}</dt><dd>{selectedCurrentItem?.gpu ? g(`gpu.${selectedCurrentItem.gpu}`) : selected.gpus.map(slot => g(`gpu.${slot}`)).join(', ')}</dd></div>
+                    {selectedCurrentAllocation ? (
+                      <div><dt>{g('jobs.person')}</dt><dd>{g(`demographic.age.${selectedCurrentAllocation.age}`)}, {g(`demographic.gender.${selectedCurrentAllocation.gender}`)}, {g(`demographic.ethnicity.${selectedCurrentAllocation.ethnicity}`)}</dd></div>
+                    ) : null}
+                    <div><dt>{g('promptPreview.positive')}</dt><dd className="generation-current-input__prompt">{selectedCurrentPrompt?.positivePrompt ?? selected.testInput?.videoPrompt ?? g('jobs.linkUnavailable')}</dd></div>
+                    <div><dt>{g('promptPreview.negative')}</dt><dd className="generation-current-input__prompt">{selectedCurrentPrompt?.negativePrompt ?? g('jobs.linkUnavailable')}</dd></div>
                   </dl>
-                ) : <p className="generation-empty-note">{g('jobs.noInputs')}</p>}
+                ) : <p className="generation-empty-note">{g('jobs.noCurrentInput')}</p>}
               </section>
 
-              <section className="generation-job-section" aria-labelledby="job-attempts-title">
-                <h3 id="job-attempts-title">{g('jobs.attemptHistory')}</h3>
-                <ol className="generation-attempt-list">
-                  {attemptHistory.map((attempt, index) => {
-                    const latest = index === attemptHistory.length - 1;
-                    return (
-                      <li key={attempt.id}>
-                        <div>
-                          <strong>{g('jobs.attempt', { number: index + 1 })}</strong>
-                          <span>{formatDateTime(attempt.createdAt)}</span>
-                        </div>
-                        <StatusBadge label={g(`jobs.status.${attempt.status}`)} kind={jobStatusKind(attempt.status)} />
-                        {latest ? <StatusBadge label={g('jobs.latestAttempt')} kind="active" /> : null}
-                        {attempt.id !== selected.id ? (
-                          <Button variant="quiet" onClick={() => selectJob(attempt)}>
-                            {g('jobs.openAttempt', { number: index + 1 })}
-                          </Button>
-                        ) : null}
-                      </li>
-                    );
-                  })}
+              <section className="generation-job-section" aria-labelledby="job-items-title">
+                <h3 id="job-items-title">{g('jobs.items')}</h3>
+                <ol className="generation-item-list">
+                  {selected.items.map(item => (
+                    <li key={item.sequence} className={item.sequence === selected.currentItemSequence ? 'is-current' : undefined}>
+                      <strong>{item.sequence}</strong>
+                      <span>{item.contentItemId ? contentById.get(item.contentItemId)?.name ?? g('jobs.linkUnavailable') : g('common.none')}</span>
+                      <span>{item.gpu ? g(`gpu.${item.gpu}`) : g('jobs.notAssigned')}</span>
+                      <StatusBadge label={g(`jobs.status.${item.status}`)} kind={jobStatusKind(item.status)} />
+                    </li>
+                  ))}
                 </ol>
               </section>
+
+              {selected.failureReason ? (
+                <section className="generation-job-section generation-job-failure" aria-labelledby="job-failure-title">
+                  <h3 id="job-failure-title">{g('jobs.failureTitle')}</h3>
+                  <p>{g(`jobs.failure.${selected.failureReason}`)}</p>
+                </section>
+              ) : null}
 
               <section className="generation-job-section" aria-labelledby="job-steps-title">
                 <h3 id="job-steps-title">{g('jobs.steps')}</h3>
@@ -629,6 +588,29 @@ export function JobsPage() {
                     })}
                   </ul>
                 )}
+                <details className="generation-attempts">
+                  <summary>{g('jobs.attemptHistory')}</summary>
+                  <ol className="generation-attempt-list">
+                    {attemptHistory.map((attempt, index) => {
+                      const latest = index === attemptHistory.length - 1;
+                      return (
+                        <li key={attempt.id}>
+                          <div>
+                            <strong>{g('jobs.attempt', { number: index + 1 })}</strong>
+                            <span>{formatDateTime(attempt.createdAt)}</span>
+                          </div>
+                          <StatusBadge label={g(`jobs.status.${attempt.status}`)} kind={jobStatusKind(attempt.status)} />
+                          {latest ? <StatusBadge label={g('jobs.latestAttempt')} kind="active" /> : null}
+                          {attempt.id !== selected.id ? (
+                            <Button variant="quiet" onClick={() => selectJob(attempt)}>
+                              {g('jobs.openAttempt', { number: index + 1 })}
+                            </Button>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </details>
               </section>
             </div>
           </section>

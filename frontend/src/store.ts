@@ -53,6 +53,7 @@ import {
 } from './types';
 import { allocatePrototypeId } from './id';
 import { formatCompactDateTime, formatDate } from './time';
+import { buildJobItems, contentIsReferenced, validateBatchGpuSelection } from './generation';
 
 type Listener = () => void;
 
@@ -83,7 +84,7 @@ function loadData(storage: Storage): RepositoryData {
     typeof parsed !== 'object' ||
     parsed === null ||
     !('version' in parsed) ||
-    parsed.version !== 4
+    parsed.version !== 5
   ) {
     throw new Error('Prototype data has an unsupported shape.');
   }
@@ -96,7 +97,7 @@ function loadLocale(storage: Storage): Locale {
 }
 
 function createJob(
-  input: Pick<Job, 'source' | 'datasetId' | 'category' | 'conflictDirection' | 'model' | 'gpu' | 'status' | 'seed' | 'quantity'>,
+  input: Pick<Job, 'source' | 'datasetId' | 'category' | 'conflictDirection' | 'model' | 'gpus' | 'status' | 'seed' | 'quantity'>,
   timestamp: string,
   startedAt: string | null,
 ): Job {
@@ -106,8 +107,11 @@ function createJob(
     ...input,
     failureReason: null,
     progress: 0,
+    completedCount: 0,
+    currentItemSequence: null,
     steps: [],
     logs: [],
+    items: buildJobItems(input.quantity, input.status, input.gpus),
     resultSampleIds: [],
     revision: 1,
     createdAt: timestamp,
@@ -145,7 +149,9 @@ function reserveRunningJobs(
   timestamp: string,
 ): RepositoryData['gpuStates'] {
   const runningByGpu = new Map<GpuSlot, Job>();
-  jobs.filter(job => job.status === 'Running').forEach(job => runningByGpu.set(job.gpu, job));
+  jobs.filter(job => job.status === 'Running').forEach(job => {
+    job.gpus.forEach(slot => runningByGpu.set(slot, job));
+  });
   return gpuStates.map(item => {
     const job = runningByGpu.get(item.slot);
     return job
@@ -360,8 +366,10 @@ export class MockRepository {
     }
     const preset = this.snapshot.data.presets.find(item => item.id === draft.presetId);
     if (!preset || preset.category !== draft.category) return failure('InvalidInput', { field: 'presetId' });
-    const gpu = this.snapshot.data.gpuStates.find(item => item.slot === draft.gpu);
-    if (!gpu || gpu.availability !== 'Available') return failure('Unavailable', { field: 'gpu' });
+    const gpuSelectionError = validateBatchGpuSelection(draft.gpus, this.snapshot.data.gpuStates);
+    if (gpuSelectionError) {
+      return failure(gpuSelectionError === 'Unavailable' ? 'Unavailable' : 'InvalidInput', { field: 'gpus' });
+    }
 
     const combinations = draft.ages.flatMap(age =>
       draft.genders.flatMap(gender => draft.ethnicities.map(ethnicity => ({ age, gender, ethnicity }))),
@@ -377,7 +385,6 @@ export class MockRepository {
         conflictDirection: draft.conflictDirection,
         ...demographics,
         model: draft.model,
-        gpu: draft.gpu,
       };
     });
     return success({
@@ -407,8 +414,9 @@ export class MockRepository {
     if (preset.revision !== preview.presetRevision) {
       return failure('Conflict', { currentRevision: preset.revision });
     }
-    const gpu = this.snapshot.data.gpuStates.find(item => item.slot === preview.draft.gpu);
-    if (!gpu || gpu.availability !== 'Available') return failure('Unavailable', { field: 'gpu' });
+    if (validateBatchGpuSelection(preview.draft.gpus, this.snapshot.data.gpuStates)) {
+      return failure('Unavailable', { field: 'gpus' });
+    }
 
     const timestamp = now();
     const job = createJob(
@@ -418,7 +426,7 @@ export class MockRepository {
         category: preview.draft.category,
         conflictDirection: preview.draft.conflictDirection,
         model: preview.draft.model,
-        gpu: preview.draft.gpu,
+        gpus: preview.draft.gpus,
         status: 'Queued',
         seed: preview.draft.seed,
         quantity: preview.draft.quantity,
@@ -427,10 +435,18 @@ export class MockRepository {
       null,
     );
     job.batchInput = copy(preview);
+    job.items = buildJobItems(
+      job.quantity,
+      job.status,
+      job.gpus,
+      0,
+      null,
+      preview.draft.contentItemIds,
+    );
     const data = copy(this.snapshot.data);
     data.jobs.unshift(job);
     data.gpuStates = data.gpuStates.map(item =>
-      item.slot === job.gpu
+      job.gpus.includes(item.slot)
         ? { ...item, availability: 'Reserved', loadedModel: job.model, activeJobId: job.id, checkedAt: timestamp }
         : item,
     );
@@ -505,7 +521,7 @@ export class MockRepository {
             category: prepared.category,
             conflictDirection: prepared.conflictDirection,
             model: assignment.model,
-            gpu: assignment.gpu,
+            gpus: [assignment.gpu],
             status: immediatelyRunning ? 'Running' : 'Queued',
             seed: prepared.seed,
             quantity: 1,
@@ -543,8 +559,14 @@ export class MockRepository {
       ...job,
       status: 'Cancelled',
       completedAt: timestamp,
+      currentItemSequence: null,
       updatedAt: timestamp,
       revision: job.revision + 1,
+      items: job.items.map(item =>
+        item.status === 'Queued' || item.status === 'Running'
+          ? { ...item, status: 'Cancelled' }
+          : item,
+      ),
       steps: job.steps.map(step =>
         step.status === 'Running' || step.status === 'Waiting'
           ? { ...step, status: 'Cancelled', completedAt: timestamp }
@@ -581,13 +603,16 @@ export class MockRepository {
       id,
       parentJobId: source.id,
       source: 'Rerender',
-      gpu,
+      gpus: [gpu],
       seed,
       status: 'Queued',
       failureReason: null,
       progress: 0,
+      completedCount: 0,
+      currentItemSequence: null,
       steps: createSteps(id),
       logs: [{ sequence: 1, stepId: `${id}-step-1`, messageKey: 'jobs.log.created', occurredAt: timestamp }],
+      items: buildJobItems(source.quantity, 'Queued', [gpu]),
       resultSampleIds: [],
       revision: 1,
       createdAt: timestamp,
@@ -735,7 +760,7 @@ export class MockRepository {
             category: sample.category,
             conflictDirection: sample.conflictDirection,
             model: sample.model,
-            gpu: input.rerenderGpu!,
+            gpus: [input.rerenderGpu!],
             status: 'Queued',
             seed: sample.seed,
             quantity: 1,
@@ -790,7 +815,7 @@ export class MockRepository {
     ];
     if (rerenderJob) {
       data.gpuStates = data.gpuStates.map(item =>
-        item.slot === rerenderJob.gpu
+        rerenderJob.gpus.includes(item.slot)
           ? {
               ...item,
               availability: 'Reserved',
@@ -861,6 +886,22 @@ export class MockRepository {
     expectedRevision: number,
   ): RepositoryResult<ContentItem> {
     return this.updateContentItem(contentId, { status }, expectedRevision);
+  }
+
+  deleteContentItem(contentId: string, expectedRevision: number): RepositoryResult<string> {
+    const item = this.snapshot.data.contentItems.find(entry => entry.id === contentId);
+    if (!item) return failure('NotFound', { field: 'contentId' });
+    if (item.revision !== expectedRevision) return failure('Conflict', { currentRevision: item.revision });
+    if (
+      item.status !== 'Draft'
+      || contentIsReferenced(contentId, this.snapshot.data.jobs, this.snapshot.data.samples)
+    ) {
+      return failure('InvalidInput', { field: 'contentId' });
+    }
+    const data = copy(this.snapshot.data);
+    data.contentItems = data.contentItems.filter(entry => entry.id !== contentId);
+    this.commitData(data);
+    return success(contentId);
   }
 
   createPreset(input: PresetInput): RepositoryResult<Preset> {
