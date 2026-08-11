@@ -101,6 +101,11 @@ export function AppShell({ children }: PropsWithChildren) {
     if (!dialog) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setDrawerOpen(false);
+        return;
+      }
       if (event.key !== 'Tab') return;
       const focusable = [...dialog.querySelectorAll<HTMLElement>(focusableSelector)];
       if (focusable.length === 0) {

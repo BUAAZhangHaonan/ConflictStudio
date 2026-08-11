@@ -44,12 +44,14 @@ test('accepts one or two distinct available GPUs', () => {
   assert.equal(validateBatchGpuSelection(['GPU0', 'GPU0'], states), 'Duplicate');
 });
 
-test('tracks two running videos from item status and GPU assignments', () => {
-  const items = buildJobItems(5, 'Running', ['GPU0', 'GPU1'], 2, [3, 4], ['content-a', 'content-b']);
+test('starts production videos on selected GPUs without completed results', () => {
+  const items = buildJobItems(5, 'Running', ['GPU0', 'GPU1'], 0, [1, 2], ['content-a', 'content-b']);
 
-  assert.deepEqual(items.map(item => item.status), ['Completed', 'Completed', 'Running', 'Running', 'Queued']);
-  assert.deepEqual(items.map(item => item.gpuId), ['GPU0', 'GPU1', 'GPU0', 'GPU1', null]);
+  assert.deepEqual(items.map(item => item.status), ['Running', 'Running', 'Queued', 'Queued', 'Queued']);
+  assert.deepEqual(items.map(item => item.gpuId), ['GPU0', 'GPU1', null, null, null]);
   assert.deepEqual(items.map(item => item.contentItemId), ['content-a', 'content-b', 'content-a', 'content-b', 'content-a']);
+  assert.equal(items.filter(item => item.status === 'Completed').length, 0);
+  assert.equal(jobProgress(0, items.length), 0);
 });
 
 test('stores immutable prompt and reference snapshots for every video', () => {

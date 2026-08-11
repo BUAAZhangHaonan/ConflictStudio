@@ -64,6 +64,11 @@ export function Dialog({
     const dialog = dialogRef.current;
     if (!dialog) return;
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (dismissible) onClose();
+        return;
+      }
       if (event.key !== 'Tab') return;
       const focusable = [...dialog.querySelectorAll<HTMLElement>(focusableSelector)].filter(
         element => !element.hasAttribute('disabled'),
@@ -85,7 +90,7 @@ export function Dialog({
     };
     dialog.addEventListener('keydown', handleKeyDown);
     return () => dialog.removeEventListener('keydown', handleKeyDown);
-  }, [open]);
+  }, [dismissible, onClose, open]);
 
   return (
     <dialog

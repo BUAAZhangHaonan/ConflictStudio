@@ -160,7 +160,7 @@ export function StatisticsPage() {
                   {t('workspaceSettingsStatistics.statistics.activityChartCaption')}
                 </h2>
               </div>
-              <figure className="statistics-chart">
+              <figure className="statistics-chart" aria-hidden="true">
                 <figcaption>
                   {t('workspaceSettingsStatistics.statistics.activityChartLabel', {
                     startDate: statistics.startDate,
@@ -169,11 +169,6 @@ export function StatisticsPage() {
                 </figcaption>
                 <div
                   className="statistics-chart__plot"
-                  role="img"
-                  aria-label={t('workspaceSettingsStatistics.statistics.activityChartLabel', {
-                    startDate: statistics.startDate,
-                    endDate: statistics.endDate,
-                  })}
                   style={{
                     '--statistics-column-count': statistics.activity.length,
                   } as CSSProperties}
@@ -182,12 +177,6 @@ export function StatisticsPage() {
                     <div
                       className="statistics-chart__column"
                       key={item.date}
-                      tabIndex={0}
-                      role="img"
-                      aria-label={t('workspaceSettingsStatistics.statistics.activityPoint', {
-                        date: formatDate(item.date),
-                        count: item.reviewedCount,
-                      })}
                     >
                       <span
                         className="statistics-chart__bar"
@@ -200,31 +189,26 @@ export function StatisticsPage() {
                   ))}
                 </div>
               </figure>
-              <TableShell
-                caption={t('workspaceSettingsStatistics.statistics.activityTableCaption')}
-                columns={[
-                  { key: 'date', label: t('workspaceSettingsStatistics.statistics.startDateLabel') },
-                  {
-                    key: 'count',
-                    label: t('workspaceSettingsStatistics.statistics.activityChartCaption'),
-                    align: 'right',
-                  },
-                ]}
-              >
-                {statistics.activity.map(item => (
-                  <tr key={item.date}>
-                    <th scope="row" data-label={t('workspaceSettingsStatistics.statistics.startDateLabel')}>
-                      {item.date}
-                    </th>
-                    <td
-                      className="is-numeric"
-                      data-label={t('workspaceSettingsStatistics.statistics.activityCountLabel')}
-                    >
-                      {item.reviewedCount}
-                    </td>
-                  </tr>
-                ))}
-              </TableShell>
+              <div className="visually-hidden statistics-activity__table-alternative">
+                <TableShell
+                  caption={t('workspaceSettingsStatistics.statistics.activityTableCaption')}
+                  columns={[
+                    { key: 'date', label: t('workspaceSettingsStatistics.statistics.startDateLabel') },
+                    {
+                      key: 'count',
+                      label: t('workspaceSettingsStatistics.statistics.activityChartCaption'),
+                      align: 'right',
+                    },
+                  ]}
+                >
+                  {statistics.activity.map(item => (
+                    <tr key={item.date}>
+                      <th scope="row">{item.date}</th>
+                      <td className="is-numeric">{item.reviewedCount}</td>
+                    </tr>
+                  ))}
+                </TableShell>
+              </div>
             </section>
           </>
         )}

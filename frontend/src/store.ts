@@ -438,12 +438,12 @@ export class MockRepository {
         conflictDirection: preview.draft.conflictDirection,
         model: preview.draft.model,
         gpus: preview.draft.gpus,
-        status: 'Queued',
+        status: 'Running',
         seed: preview.draft.seed,
         quantity: preview.draft.quantity,
       },
       timestamp,
-      null,
+      timestamp,
     );
     job.batchInput = copy(preview);
     job.items = buildJobItems(
@@ -451,7 +451,7 @@ export class MockRepository {
       job.status,
       job.gpus,
       0,
-      [],
+      job.gpus.map((_, index) => index + 1),
       preview.draft.contentItemIds,
     );
     const data = copy(this.snapshot.data);

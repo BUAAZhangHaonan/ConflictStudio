@@ -81,6 +81,11 @@ async function expectDialogBasics(page, message, dismissible = true) {
   }
 }
 
+async function expectFocus(page, locator, message) {
+  await page.waitForFunction(element => element === document.activeElement, await locator.elementHandle());
+  equal(await locator.evaluate(element => element === document.activeElement), true, message);
+}
+
 async function resetPrototypeState(page) {
   await page.evaluate(key => {
     localStorage.removeItem(key);
@@ -129,9 +134,14 @@ try {
   });
   const page = await context.newPage();
   const pageErrors = [];
+  const consoleErrors = [];
   const routerWarnings = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   page.on('console', message => {
+    if (message.type() === 'error') {
+      const source = message.location().url;
+      consoleErrors.push(source ? `${message.text()} at ${source}` : message.text());
+    }
     if (message.type() === 'warning' && message.text().includes('React Router Future Flag Warning')) {
       routerWarnings.push(message.text());
     }
@@ -155,12 +165,15 @@ try {
   equal(await contentChecks.count(), await contentChecks.evaluateAll(nodes => nodes.filter(node => node.checked).length), 'Select all must cover the enabled content shown for the batch.');
 
   await page.locator('#batch-quantity').fill('9');
-  await page.locator('.app-shell__sidebar .primary-nav__link[href="/workspace"]').click();
+  const leaveTrigger = page.locator('.app-shell__sidebar .primary-nav__link[href="/workspace"]');
+  await leaveTrigger.click();
   const leaveDialog = page.getByRole('dialog');
   await leaveDialog.waitFor();
   equal(await leaveDialog.locator('.dialog__header h2').textContent(), 'Unsaved changes', 'Unsaved navigation must use the application dialog.');
-  await leaveDialog.locator('.dialog__footer button').first().click();
+  await page.keyboard.press('Escape');
+  await leaveDialog.waitFor({ state: 'hidden' });
   equal(new URL(page.url()).pathname, '/generate/batches', 'Cancelling the dialog must keep the batch page open.');
+  await expectFocus(page, leaveTrigger, 'Escape from the unsaved dialog must restore the navigation trigger focus.');
   await page.getByRole('button', { name: 'Save batch draft' }).click();
 
   await page.locator('.app-shell__sidebar .primary-nav__link[href="/workspace"]').click();
@@ -270,6 +283,45 @@ try {
   await page.keyboard.press('j');
   equal(await selectedSample(), secondId, 'J must not run inside a text area.');
 
+  await open(page, '/review?sample=CS-0008');
+  let reviewVideo = page.locator('.review-media video');
+  equal(await reviewVideo.evaluate(video => video.muted), false, 'VA review media must remain unmuted.');
+  await page.locator('body').press('Space');
+  await page.waitForTimeout(500);
+  const vaPlayback = await reviewVideo.evaluate(video => ({
+    currentTime: video.currentTime,
+    paused: video.paused,
+    readyState: video.readyState,
+    error: video.error?.message ?? null,
+  }));
+  equal(
+    vaPlayback.currentTime > 0.08 && !vaPlayback.paused,
+    true,
+    `Space must start actual VA playback. State: ${JSON.stringify(vaPlayback)}`,
+  );
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.review-grid')?.getAttribute('data-selected-sample') !== 'CS-0008');
+  equal(await reviewVideo.evaluate(video => video.paused && video.currentTime === 0), true, 'Switching samples must pause and reset review media.');
+
+  await open(page, '/review?sample=CS-0010');
+  reviewVideo = page.locator('.review-media video');
+  equal(await reviewVideo.evaluate(video => video.muted), true, 'VT review media must remain muted.');
+  equal(await reviewVideo.evaluate(video => video.controls), true, 'Review media must expose native playback controls.');
+  await page.locator('body').press('Space');
+  await page.waitForTimeout(500);
+  const vtPlayback = await reviewVideo.evaluate(video => ({
+    currentTime: video.currentTime,
+    paused: video.paused,
+    readyState: video.readyState,
+    error: video.error?.message ?? null,
+  }));
+  equal(
+    vtPlayback.currentTime > 0.08 && !vtPlayback.paused,
+    true,
+    `Space must start actual VT playback. State: ${JSON.stringify(vtPlayback)}`,
+  );
+  equal(consoleErrors.length, 0, `Review playback console errors: ${consoleErrors.join(' | ')}`);
+
   for (const [width, height] of [[1024, 768], [768, 900], [390, 844]]) {
     await page.setViewportSize({ width, height });
     await open(page, '/review?sample=CS-0008');
@@ -318,6 +370,7 @@ try {
     element.dispatchEvent(new Event('change', { bubbles: true }));
   });
   await page.waitForURL('**/generate/presets');
+  await page.waitForFunction(() => window.scrollY === 0);
   equal(await page.evaluate(() => window.scrollY), 0, 'Switching generate sections must return to the page top.');
 
   await open(page, '/settings');
@@ -374,7 +427,7 @@ try {
   const renameButton = page.getByRole('button', { name: 'Rename current name' });
   await renameButton.click();
   await expectDialogBasics(page, 'The rename dialog');
-  equal(await renameButton.evaluate(element => element === document.activeElement), true, 'Closing the rename dialog must restore trigger focus.');
+  await expectFocus(page, renameButton, 'Closing the rename dialog must restore trigger focus.');
 
   await open(page, '/generate/content');
   await page.locator('.generation-selection-card').first().click();
@@ -401,13 +454,17 @@ try {
     options.map(option => option.value).find(value => value !== current) ?? '', currentModality);
   if (nextModality) {
     await modality.selectOption(nextModality);
-    await page.getByRole('button', { name: 'Save modality' }).click();
+    const saveModalityButton = page.getByRole('button', { name: 'Save modality' });
+    await saveModalityButton.click();
     await expectDialogBasics(page, 'The modality dialog');
+    await expectFocus(page, saveModalityButton, 'Escape from the modality dialog must restore its trigger focus.');
   }
 
   await open(page, '/archive');
-  await page.getByRole('button', { name: 'Preview sync' }).click();
+  const previewSyncButton = page.getByRole('button', { name: 'Preview sync' });
+  await previewSyncButton.click();
   await expectDialogBasics(page, 'The archive preview dialog');
+  await expectFocus(page, previewSyncButton, 'Escape from the archive preview must restore its trigger focus.');
 
   await open(page, '/workspace');
   await page.getByRole('button', { name: /Edit dataset/u }).first().click();
@@ -423,12 +480,49 @@ try {
   await expectDialogBasics(page, 'The batch allocation dialog');
 
   await resetPrototypeState(page);
+  const productionGpuChecks = page.locator('fieldset[aria-describedby="batch-gpu-hint"] input[type="checkbox"]');
+  if (!(await productionGpuChecks.nth(0).isChecked())) await productionGpuChecks.nth(0).check();
+  if (!(await productionGpuChecks.nth(1).isChecked())) await productionGpuChecks.nth(1).check();
+  batchContent = page.locator('fieldset[aria-describedby="batch-content-hint"]');
+  await batchContent.getByRole('button').click();
+  await page.getByRole('button', { name: 'Save batch draft' }).click();
+  await page.getByRole('button', { name: 'Preview allocation' }).click();
+  let submitBatchButton = page.getByRole('dialog').getByRole('button', { name: 'Submit batch' });
+  await submitBatchButton.click();
+  await expectDialogBasics(page, 'The loaded model replacement dialog');
+  await expectFocus(page, submitBatchButton, 'Escape from model replacement must restore its trigger focus.');
+  await submitBatchButton.click();
+  await page.locator('dialog[open]').last().getByRole('button', { name: 'Yes' }).click();
+  const submitConfirmation = page.locator('dialog[open]').last();
+  await submitConfirmation.waitFor();
+  await submitConfirmation.getByRole('button', { name: 'Yes' }).click();
+  const submittedJob = await page.evaluate(key => {
+    const data = JSON.parse(localStorage.getItem(key));
+    const job = data.jobs[0];
+    return {
+      id: job.id,
+      status: job.status,
+      completedCount: job.completedCount,
+      itemStatuses: job.items.map(item => item.status),
+      itemGpus: job.items.map(item => item.gpuId),
+    };
+  }, dataKey);
+  equal(submittedJob.status, 'Running', 'A submitted production batch must start immediately.');
+  equal(submittedJob.completedCount, 0, 'A new production batch must not fabricate completed videos.');
+  equal(submittedJob.itemStatuses.slice(0, 2).join(','), 'Running,Running', 'A dual GPU batch must start its first two videos.');
+  equal(submittedJob.itemStatuses.slice(2).every(status => status === 'Queued'), true, 'Remaining production videos must wait in order.');
+  equal(submittedJob.itemGpus.slice(0, 2).join(','), 'GPU0,GPU1', 'The first two videos must run on separate selected GPUs.');
+  await open(page, `/generate/jobs?job=${submittedJob.id}`);
+  equal(await page.locator('.generation-current-input').count(), 2, 'Task details must immediately show both running videos.');
+  equal(await page.getByText(/^0\//u).first().isVisible(), true, 'New task progress must start from zero completed videos.');
+  await open(page, '/generate/batches');
+  await resetPrototypeState(page);
   batchContent = page.locator('fieldset[aria-describedby="batch-content-hint"]');
   await batchContent.getByRole('button').click();
   await page.getByRole('button', { name: 'Save batch draft' }).click();
   await page.getByRole('button', { name: 'Preview allocation' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Submit batch' }).click();
-  await expectDialogBasics(page, 'The batch submission dialog');
+  await page.locator('dialog[open]').last().waitFor();
   await page.keyboard.press('Escape');
 
   await resetPrototypeState(page);
@@ -449,8 +543,10 @@ try {
   await expectDialogBasics(page, 'The content activation dialog');
   await page.locator('#content-status').selectOption('Disabled');
   await expectDialogBasics(page, 'The content disable dialog');
-  await page.getByRole('button', { name: 'Delete content' }).click();
+  const deleteContentButton = page.getByRole('button', { name: 'Delete content' });
+  await deleteContentButton.click();
   await expectDialogBasics(page, 'The content deletion dialog');
+  await expectFocus(page, deleteContentButton, 'Escape from content deletion must restore its trigger focus.');
   await page.locator('#content-name').fill('Unsaved content edit');
   await page.locator('.generation-selection-card').first().click();
   await expectDialogBasics(page, 'The content discard dialog');
@@ -513,6 +609,19 @@ try {
 
   await open(page, '/me/statistics');
   await expectNamedControls(page, '.app-shell', 'Global navigation and statistics controls must have accessible names');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page, '/me/statistics');
+  equal(await page.locator('.statistics-chart').getAttribute('aria-hidden'), 'true', 'The visual trend chart must be hidden from screen readers.');
+  equal(await page.getByRole('table').count(), 1, 'The trend must expose one table alternative to screen readers.');
+  const statisticsTableAlternative = await page.locator('.statistics-activity__table-alternative').evaluate(element => ({
+    position: getComputedStyle(element).position,
+    width: element.getBoundingClientRect().width,
+    height: element.getBoundingClientRect().height,
+  }));
+  equal(statisticsTableAlternative.position, 'absolute', 'The table alternative must not occupy the visual layout.');
+  equal(statisticsTableAlternative.width <= 1 && statisticsTableAlternative.height <= 1, true, 'The table alternative must use standard visual hiding.');
+  const statisticsHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+  equal(statisticsHeight < 2200, true, `The mobile statistics page must stay compact. Height: ${statisticsHeight}`);
   await page.locator('#statistics-start-date').fill('2020-01-01');
   await page.locator('#statistics-end-date').fill('2020-01-30');
   await page.getByRole('heading', { name: 'No matching records' }).waitFor();
@@ -576,6 +685,7 @@ try {
   }
 
   equal(routerWarnings.length, 0, `React Router warnings: ${routerWarnings.join(' | ')}`);
+  equal(consoleErrors.length, 0, `Browser console errors: ${consoleErrors.join(' | ')}`);
   equal(pageErrors.length, 0, `Browser page errors: ${pageErrors.join(' | ')}`);
   console.log('Browser checks passed: core interactions, dialogs, states, and bilingual viewport checks.');
 } finally {

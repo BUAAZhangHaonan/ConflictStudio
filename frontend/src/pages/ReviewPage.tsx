@@ -222,6 +222,15 @@ export function ReviewPage() {
   }, [selected?.id]);
 
   useEffect(() => {
+    const video = reviewVideoRef.current;
+    if (!video || !selected) return;
+    video.pause();
+    video.currentTime = 0;
+    video.muted = protocolForCategory(selected.category) === 'VT';
+    video.load();
+  }, [selected?.category, selected?.id]);
+
+  useEffect(() => {
     if (!targetCategory) {
       setTransferDirection(null);
       return;
