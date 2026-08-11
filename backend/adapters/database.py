@@ -91,21 +91,13 @@ class Database:
                     END
                     """
                 )
+            connection.exec_driver_sql("DROP TRIGGER IF EXISTS prevent_generation_attempt_critical_update")
             connection.exec_driver_sql(
                 """
-                CREATE TRIGGER IF NOT EXISTS prevent_generation_attempt_critical_update
+                CREATE TRIGGER IF NOT EXISTS prevent_generation_attempt_update
                 BEFORE UPDATE ON generation_attempts
-                WHEN NEW.job_item_id != OLD.job_item_id
-                  OR NEW.attempt_number != OLD.attempt_number
-                  OR NEW.model != OLD.model
-                  OR NEW.gpu_slot != OLD.gpu_slot
-                  OR NEW.seed != OLD.seed
-                  OR NEW.source_asset_id IS NOT OLD.source_asset_id
-                  OR (OLD.primary_asset_id IS NOT NULL AND NEW.primary_asset_id IS NOT OLD.primary_asset_id)
-                  OR NEW.renderer_prompt_id IS NOT OLD.renderer_prompt_id
-                  OR NEW.started_at IS NOT OLD.started_at
                 BEGIN
-                    SELECT RAISE(ABORT, 'generation attempt critical fields are immutable');
+                    SELECT RAISE(ABORT, 'generation attempts are terminal and immutable');
                 END
                 """
             )

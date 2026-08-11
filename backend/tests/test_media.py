@@ -12,11 +12,20 @@ from backend.adapters.media import MediaError, MediaStore
 from backend.domain.enums import Category, GpuSlotName, ModelName
 
 
-def compact_probe(*, frames: str = "121", width: int = 1344, height: int = 768, fps: str = "24/1", duration: str = "5.0", audio: bool = True) -> str:
-    streams = [{"codec_type": "video", "width": width, "height": height, "r_frame_rate": fps, "nb_frames": frames}]
+def compact_probe(*, frames: str | None = "121", width: int = 1344, height: int = 768, fps: str = "24/1", duration: str = "5.0416667", audio: bool = True, read_frames: str | None = None, wrapper: bool = False) -> str:
+    stream = {"codec_type": "video", "width": width, "height": height, "r_frame_rate": fps}
+    if frames is not None:
+        stream["nb_frames"] = frames
+    if read_frames is not None:
+        stream["nb_read_frames"] = read_frames
+    streams = [stream]
     if audio:
         streams.append({"codec_type": "audio"})
-    return str({"streams": streams, "format": {"duration": duration}}).replace("'", '"')
+    payload = {"streams": streams, "format": {"duration": duration}}
+    if wrapper:
+        payload["programs"] = []
+        payload["version"] = {"version": "6.1"}
+    return str(payload).replace("'", '"')
 
 
 def test_media_paths_reject_absolute_dotdot_and_symlink_escape(tmp_path: Path) -> None:
@@ -65,9 +74,20 @@ def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path
         store.probe(media, require_audio=True, model=ModelName.LTX)
     install(compact_probe(frames="121"))
     assert store.probe(media, require_audio=True, model=ModelName.LTX).has_audio
+    install(compact_probe(frames="121", read_frames="121", wrapper=True))
+    assert store.probe(media, require_audio=True, model=ModelName.LTX).frame_count == 121
+    install(compact_probe(frames="121", read_frames=None).replace('"nb_frames": "121"', '"nb_read_frames": "121"'))
+    assert store.probe(media, require_audio=True, model=ModelName.LTX).frame_count == 121
+    install(compact_probe(frames="121", duration="4.9"))
+    with pytest.raises(MediaError, match="duration"):
+        store.probe(media, require_audio=True, model=ModelName.LTX)
+    install(compact_probe(frames=None))
+    with pytest.raises(MediaError, match="frame count"):
+        store.probe(media, require_audio=True, model=ModelName.LTX)
 
 
-def test_vt_atomic_replace_failure_leaves_no_primary_or_partial_database_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("failure", ("ffmpeg", "silent_probe", "replace"))
+def test_vt_failure_persists_source_and_failed_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
     store = MediaStore(tmp_path)
     source, primary, temporary = store.attempt_paths(1, 1, 1)
     source.parent.mkdir(parents=True)
@@ -75,15 +95,25 @@ def test_vt_atomic_replace_failure_leaves_no_primary_or_partial_database_record(
 
     def fake_run(args: list[str], **kwargs: object) -> CompletedProcess[str]:
         if args[0] == "ffmpeg":
+            if failure == "ffmpeg":
+                return CompletedProcess(args, 1, "", "")
             temporary.write_bytes(b"silent")
             return CompletedProcess(args, 0, "", "")
+        if failure == "silent_probe" and str(args[-1]) == str(temporary):
+            return CompletedProcess(args, 0, compact_probe(frames=None), "")
         has_audio = str(args[-1]) == str(source)
         return CompletedProcess(args, 0, compact_probe(audio=has_audio), "")
 
     monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
-    monkeypatch.setattr("backend.adapters.media.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace failed")))
-    with pytest.raises(OSError):
-        store.make_vt_primary(1, 1, 1, model=ModelName.LTX)
+    if failure == "replace":
+        monkeypatch.setattr("backend.adapters.media.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace failed")))
+    session = type("SessionStub", (), {"rows": [], "add": lambda self, row: (setattr(row, "id", len(self.rows) + 1) if getattr(row, "id", None) is None else None) or self.rows.append(row), "flush": lambda self: None})()
+    attempt = store.finalize_attempt(session, job_item_id=1, job_id=1, item_sequence=1, attempt_number=1, category=Category.A_VT, model=ModelName.LTX, gpu_slot=GpuSlotName.GPU0, seed=1, renderer_prompt_id=None, started_at="2026-08-12T00:00:00Z")
+    assert attempt.status.value == "Failed"
+    assert attempt.failure_reason
+    assert any(getattr(row, "relative_path", "") == "media/jobs/1/items/1/attempts/1/source.mp4" for row in session.rows)
+    assert attempt.primary_asset_id is None
+    assert not any(getattr(row, "relative_path", "") == "media/jobs/1/items/1/attempts/1/primary.mp4" for row in session.rows)
     assert not primary.exists()
     assert not temporary.exists()
 
@@ -117,7 +147,7 @@ def test_va_and_vt_assets_preserve_rerender_attempt_history(tmp_path: Path, monk
         source, _, _ = store.attempt_paths(7, 3, attempt_number)
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_bytes(b"source")
-        attempt = store.persist_completed_attempt(
+        attempt = store.finalize_attempt(
             session,  # type: ignore[arg-type]
             job_item_id=99,
             job_id=7,

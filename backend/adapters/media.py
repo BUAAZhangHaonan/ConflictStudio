@@ -77,7 +77,16 @@ class MediaStore:
         if not checked_path.is_file() or checked_path.stat().st_size <= 0:
             raise MediaError("Media file must exist and be nonzero")
         result = subprocess.run(
-            [self.ffprobe_binary, "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(checked_path)],
+            [
+                self.ffprobe_binary,
+                "-v",
+                "error",
+                "-print_format",
+                "json",
+                "-show_entries",
+                "stream=codec_type,width,height,r_frame_rate,nb_frames,nb_read_frames:format=duration",
+                str(checked_path),
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -88,19 +97,26 @@ class MediaStore:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError as error:
             raise MediaError("ffprobe returned invalid JSON") from error
-        if not isinstance(payload, dict) or set(payload) != {"streams", "format"}:
+        if not isinstance(payload, dict) or not {"streams", "format"} <= set(payload):
             raise MediaError("ffprobe JSON has an unexpected shape")
         streams = payload["streams"]
         format_info = payload["format"]
-        if not isinstance(streams, list) or not isinstance(format_info, dict) or set(format_info) != {"duration"}:
+        if not isinstance(streams, list) or not isinstance(format_info, dict):
             raise MediaError("ffprobe JSON has an unexpected shape")
         video_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"]
         audio_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"]
         if len(video_streams) != 1:
             raise MediaError("Media must contain exactly one video stream")
         video = video_streams[0]
-        required_video = {"codec_type", "width", "height", "r_frame_rate", "nb_frames"}
-        if set(video) != required_video:
+        required_video = {"codec_type", "width", "height", "r_frame_rate"}
+        if not required_video <= set(video):
+            raise MediaError("ffprobe video stream is incomplete")
+        if (
+            not isinstance(video["codec_type"], str)
+            or type(video["width"]) is not int
+            or type(video["height"]) is not int
+            or not isinstance(video["r_frame_rate"], str)
+        ):
             raise MediaError("ffprobe video stream is incomplete")
         if video["width"] != VIDEO_WIDTH or video["height"] != VIDEO_HEIGHT:
             raise MediaError("Video must be 1344x768")
@@ -110,16 +126,28 @@ class MediaStore:
             raise MediaError("Video fps is invalid") from error
         if fps != VIDEO_FPS:
             raise MediaError("Video must be 24fps")
-        frame_count = self._positive_int(video["nb_frames"], "frame count")
+        frame_values = [video.get(name) for name in ("nb_frames", "nb_read_frames") if name in video]
+        usable_frame_values = [self._positive_int(value, "frame count") for value in frame_values if value not in (None, "N/A")]
+        if not usable_frame_values:
+            raise MediaError("Video frame count is missing or unusable")
+        if len(set(usable_frame_values)) != 1:
+            raise MediaError("Video frame counts are inconsistent")
+        frame_count = usable_frame_values[0]
         expected_frames = 121 if model is ModelName.LTX else 124
         if frame_count != expected_frames:
             raise MediaError("Video frame count does not match the model")
+        duration_value = format_info.get("duration")
+        if not isinstance(duration_value, str):
+            raise MediaError("Media duration is invalid")
         try:
-            duration_seconds = float(format_info["duration"])
+            duration_seconds = float(duration_value)
         except (TypeError, ValueError) as error:
             raise MediaError("Media duration is invalid") from error
         if duration_seconds <= 0:
             raise MediaError("Media duration must be positive")
+        expected_duration = expected_frames / VIDEO_FPS
+        if abs(duration_seconds - expected_duration) > 1 / VIDEO_FPS:
+            raise MediaError("Media duration does not match the model frame count")
         if require_audio and not audio_streams:
             raise MediaError("Source media must contain audio")
         return ProbeEvidence(
@@ -161,7 +189,7 @@ class MediaStore:
             raise
         return primary_path
 
-    def persist_completed_attempt(
+    def finalize_attempt(
         self,
         session: Session,
         *,
@@ -185,13 +213,31 @@ class MediaStore:
         if protocol_for(category) == "VA":
             primary_asset = source_asset
         else:
-            primary_path = self.make_vt_primary(job_id, item_sequence, attempt_number, model=model)
-            primary_evidence = self.probe(primary_path, require_audio=False, model=model)
-            if primary_evidence.has_audio:
-                raise MediaError("Silent primary unexpectedly contains audio")
-            primary_asset = self._asset(primary_path, primary_evidence)
-            session.add(primary_asset)
-            session.flush()
+            try:
+                primary_path = self.make_vt_primary(job_id, item_sequence, attempt_number, model=model)
+                primary_evidence = self.probe(primary_path, require_audio=False, model=model)
+                if primary_evidence.has_audio:
+                    raise MediaError("Silent primary unexpectedly contains audio")
+                primary_asset = self._asset(primary_path, primary_evidence)
+                session.add(primary_asset)
+                session.flush()
+            except (MediaError, OSError) as error:
+                failed = GenerationAttempt(
+                    job_item_id=job_item_id,
+                    attempt_number=attempt_number,
+                    model=model,
+                    gpu_slot=gpu_slot,
+                    seed=seed,
+                    source_asset_id=source_asset.id,
+                    primary_asset_id=None,
+                    renderer_prompt_id=renderer_prompt_id,
+                    status=GenerationAttemptStatus.FAILED,
+                    failure_reason=str(error),
+                    started_at=started_at,
+                    finished_at=finished_at or utc_now(),
+                )
+                session.add(failed)
+                return failed
         attempt = GenerationAttempt(
             job_item_id=job_item_id,
             attempt_number=attempt_number,

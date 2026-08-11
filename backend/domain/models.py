@@ -501,8 +501,8 @@ class GenerationAttempt(SQLModel, table=True):
         CheckConstraint(
             "(status = 'Completed' AND source_asset_id IS NOT NULL AND primary_asset_id IS NOT NULL "
             "AND finished_at IS NOT NULL AND failure_reason IS NULL) OR "
-            "(status = 'Failed' AND failure_reason IS NOT NULL AND finished_at IS NOT NULL) OR "
-            "(status = 'Running' AND finished_at IS NULL)",
+            "(status = 'Failed' AND source_asset_id IS NOT NULL AND primary_asset_id IS NULL "
+            "AND failure_reason IS NOT NULL AND finished_at IS NOT NULL)",
             name="ck_generation_attempts_status",
         ),
     )
@@ -516,10 +516,8 @@ class GenerationAttempt(SQLModel, table=True):
     source_asset_id: int | None = Field(default=None, sa_column=Column(Integer, ForeignKey("assets.id", ondelete="RESTRICT"), nullable=True))
     primary_asset_id: int | None = Field(default=None, sa_column=Column(Integer, ForeignKey("assets.id", ondelete="RESTRICT"), nullable=True))
     renderer_prompt_id: str | None = Field(default=None, sa_column=Column(String(160), nullable=True))
-    status: GenerationAttemptStatus = Field(
-        default=GenerationAttemptStatus.RUNNING,
-        sa_column=enum_column(GenerationAttemptStatus),
-    )
+    # Attempts are inserted only in a terminal state by MediaStore.finalize_attempt.
+    status: GenerationAttemptStatus = Field(sa_column=enum_column(GenerationAttemptStatus))
     failure_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     started_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
     finished_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
