@@ -15,7 +15,7 @@ import type {
 import { silentVideoDataUrl, voicedVideoDataUrl } from './mockMedia';
 import { buildJobItems, createBatchAllocationSnapshot } from './generation';
 
-export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v8';
+export const DATA_STORAGE_KEY = 'conflictstudio.prototype.data.v9';
 export const LOCALE_STORAGE_KEY = 'conflictstudio.prototype.locale';
 export const REVIEWER_STORAGE_KEY = 'conflictstudio.prototype.reviewer.v2';
 
@@ -179,15 +179,18 @@ function makeJob(
   source: Job['source'] = status === 'Queued' || status === 'Running' || status === 'Completed' || status === 'Failed'
     ? 'Test'
     : 'Rerender',
+  historicalDual = false,
 ): Job {
-  const id = `job-${status.toLowerCase()}`;
+  const id = historicalDual ? 'job-dual-history' : `job-${status.toLowerCase()}`;
   const model = index % 2 === 0 ? 'LTX-2.3' : 'MiniMax H3';
-  const gpus = (status === 'Running'
+  const gpus = (historicalDual
+    ? ['GPU0', 'GPU1']
+    : status === 'Running'
     ? ['GPU0', 'GPU1']
     : [status === 'Queued' ? 'GPU1' : index % 2 === 0 ? 'GPU0' : 'GPU1']) as Job['gpus'];
   const category = source === 'Test'
     ? 'A-VA'
-    : status === 'Running'
+    : historicalDual || status === 'Running'
       ? 'C-VA'
       : categories[index % categories.length];
   const conflictDirection: ConflictDirection | null = category === 'C-VA'
@@ -196,7 +199,7 @@ function makeJob(
       ? 'Text'
       : null;
   const seed = 9000 + index;
-  const timestamp = status === 'Running'
+  const timestamp = historicalDual || status === 'Running'
     ? '2026-08-11T07:23:31.000Z'
     : new Date(Date.parse(baseDate) - index * 75_000).toISOString();
   const job: Job = {
@@ -210,9 +213,9 @@ function makeJob(
     gpus,
     status,
     failureReason: status === 'Failed' ? 'ModelServiceUnavailable' : null,
-    completedCount: status === 'Completed' ? 1 : status === 'Running' ? 33 : 0,
+    completedCount: historicalDual ? 128 : status === 'Completed' ? 1 : status === 'Running' ? 33 : 0,
     seed,
-    quantity: status === 'Running' ? 128 : index === 0 ? 8 : 1,
+    quantity: historicalDual || status === 'Running' ? 128 : index === 0 ? 8 : 1,
     steps: stepsFor(status, id, timestamp),
     logs: [
       { sequence: 1, stepId: `${id}-step-1`, messageKey: 'jobs.log.created', occurredAt: timestamp },
@@ -378,7 +381,7 @@ const contentItems: ContentItem[] = [
   explanation: '视觉、声音或文本的关系由类别和方向决定。',
   videoPrompt: 'A restrained two-person conversation in a quiet room, realistic movement, fixed camera.',
   contentInstruction: '生成简短、自然、可直接拍摄的日常场景。',
-  sceneSupplement: '避免夸张表演和复杂镜头。',
+  sceneSupplement: 'Avoid exaggerated acting and complex camera movement.',
   revision: 1,
   createdAt: baseDate,
   updatedAt: baseDate,
@@ -394,11 +397,11 @@ const presets: Preset[] = categories.map((category, index) => ({
     'presets.rule.signal',
     'presets.rule.camera',
   ],
-  styleInstruction: '保持自然、克制和可观察。',
-  sceneSupplement: '使用简单室内场景。',
+  styleInstruction: 'Keep the acting natural, restrained, and clearly observable.',
+  sceneSupplement: 'Use a simple indoor setting with stable framing.',
   positiveExamples: ['动作与目标关系清楚。'],
   negativeExamples: ['避免旁白解释关系。'],
-  renderNegativeConstraints: 'No subtitles, no camera cuts, no exaggerated gestures.',
+  renderNegativeConstraints: 'No subtitles, no camera cuts, no exaggerated gestures, no distorted hands.',
   revision: 1,
   createdAt: baseDate,
   updatedAt: `2026-08-0${index + 1}T09:00:00.000Z`,
@@ -462,13 +465,14 @@ export const initialData: RepositoryData = {
     { id: 'reviewer-chen', name: '陈宁', revision: 2, createdAt: baseDate, updatedAt: baseDate },
   ],
   gpuStates: [
-    { slot: 'GPU0', availability: 'Reserved', loadedModel: 'LTX-2.3', activeJobId: 'job-running', checkedAt: baseDate },
-    { slot: 'GPU1', availability: 'Reserved', loadedModel: 'MiniMax H3', activeJobId: 'job-running', checkedAt: baseDate },
+    { slot: 'GPU0', availability: 'Available', loadedModel: 'LTX-2.3', activeJobId: null, checkedAt: baseDate },
+    { slot: 'GPU1', availability: 'Available', loadedModel: 'MiniMax H3', activeJobId: null, checkedAt: baseDate },
   ],
   samples,
   reviews,
   jobs: [
-    ...(['Queued', 'Running', 'Completed', 'Failed', 'Cancelled'] as JobStatus[])
+    makeJob('Completed', 1, 'Production', true),
+    ...(['Queued', 'Completed', 'Failed', 'Cancelled'] as JobStatus[])
       .map((status, index) => makeJob(
         status,
         index,

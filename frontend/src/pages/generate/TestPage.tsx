@@ -27,6 +27,7 @@ import {
   parseSeed,
   useCommandEnter,
   useGenerationCopy,
+  VideoPromptPreview,
 } from './shared';
 
 type Assignment = { model: ModelName; gpu: GpuSlot; order: number };
@@ -411,10 +412,12 @@ export function TestPage() {
   return (
     <GenerationScaffold title={'test.title'} subtitle={'test.subtitle'}>
       {failure ? <OperationFeedback kind={failure} onDismiss={() => setFailure(null)} /> : null}
-      <div className="generation-layout">
+      <div className="generation-test-workflow">
+        <GpuPanel />
         <section className="panel generation-form" aria-label={g('test.formRegion')}>
-          <div className="section-header"><h2>{g('test.setup')}</h2></div>
-          <div className="generation-form__grid">
+          <section className="generation-test-section" aria-labelledby="test-setup-title">
+            <div className="section-header"><h2 id="test-setup-title">{g('test.setup')}</h2></div>
+            <div className="generation-form__grid generation-test-config-grid">
             <Field label={g('test.category')} htmlFor="test-category" required>
               <select id="test-category" value={category} onChange={event => changeCategory(event.target.value as Category)}>
                 {categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}
@@ -459,25 +462,26 @@ export function TestPage() {
             <Field label={g('test.outputProfile')} htmlFor="test-output-profile">
               <input id="test-output-profile" value={g('test.outputProfileValue')} readOnly />
             </Field>
-          </div>
-          <fieldset>
-            <legend>{g('test.execution')}</legend>
-            <div className="generation-choice-grid">
-              {(['Serial', 'Parallel'] as TestExecutionMode[]).map(value => (
-                <label key={value}>
-                  <input type="radio" name="execution" value={value} checked={executionMode === value} onChange={() => setExecutionMode(value)} />
-                  <span>{g(value === 'Serial' ? 'test.serial' : 'test.parallel')}</span>
-                </label>
-              ))}
             </div>
-          </fieldset>
-          <section aria-labelledby="test-models-title">
-            <div className="section-header">
+          </section>
+          <section className="generation-test-section" aria-labelledby="test-models-title">
+            <div className="section-header generation-test-model-heading">
               <h2 id="test-models-title">{g('test.models')}</h2>
               <Button variant="quiet" onClick={assignments.length === 1 ? addSecond : () => setAssignments(current => current.slice(0, 1))}>
                 {g(assignments.length === 1 ? 'test.addSecond' : 'test.removeSecond')}
               </Button>
             </div>
+            <fieldset className="generation-fieldset">
+              <legend>{g('test.execution')}</legend>
+              <div className="generation-choice-grid">
+                {(['Serial', 'Parallel'] as TestExecutionMode[]).map(value => (
+                  <label key={value}>
+                    <input type="radio" name="execution" value={value} checked={executionMode === value} onChange={() => setExecutionMode(value)} />
+                    <span>{g(value === 'Serial' ? 'test.serial' : 'test.parallel')}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div className="generation-form">
               {assignments.map((assignment, index) => (
                 <div key={assignment.order} className="generation-assignment">
@@ -500,11 +504,15 @@ export function TestPage() {
               ))}
             </div>
           </section>
+          {currentContent && currentPreset ? (
+            <section className="generation-test-section" aria-label={g('promptPreview.title')}>
+              <VideoPromptPreview content={currentContent} preset={currentPreset} />
+            </section>
+          ) : null}
           {validation ? <p className="field__error" role="alert">{g(validation === 'parallel' ? 'test.parallelValidation' : 'test.validation')}</p> : null}
           <div className="generation-form__actions"><Button variant="primary" onClick={prepare}>{g('test.prepare')}</Button></div>
           <p className="generation-shortcut-hint">{g('test.runShortcut')}</p>
         </section>
-        <GpuPanel />
       </div>
 
       <section className="panel generation-result-panel generation-form" aria-label={g('test.resultsTitle')}>
@@ -532,27 +540,29 @@ export function TestPage() {
                       <StatusBadge label={g(`jobs.status.${card.job.status}`)} kind={card.job.status === 'Failed' || card.job.status === 'Cancelled' ? 'problem' : card.job.status === 'Completed' ? 'complete' : card.job.status === 'Running' ? 'active' : 'neutral'} />
                     </div>
                   </div>
-                  <div className="generation-result-card__meta">
-                    <dl>
-                      <div>
-                        <dt>{g('test.seed')}</dt>
-                        <dd>{card.prepared.seed == null ? g('test.randomSeed') : String(card.prepared.seed)}</dd>
-                      </div>
-                      <div>
-                        <dt>{g('jobs.audio')}</dt>
-                        <dd>{hasAudio ? g('test.audioIncluded') : g('test.audioMissing')}</dd>
-                      </div>
-                      <div>
-                        <dt>{g('jobs.progress')}</dt>
-                        <dd>{Math.round(jobProgress(card.job.completedCount, card.job.quantity))}%</dd>
-                      </div>
-                      <div>
-                        <dt>{g('jobs.source')}</dt>
-                        <dd>{g(`jobs.source.${card.job.source}`)}</dd>
-                      </div>
-                    </dl>
-                  </div>
-                  <div className="generation-result-card__asset">
+                  <details className="generation-result-card__body">
+                    <summary>{g('test.resultContent')}</summary>
+                    <div className="generation-result-card__meta">
+                      <dl>
+                        <div>
+                          <dt>{g('test.seed')}</dt>
+                          <dd>{card.prepared.seed == null ? g('test.randomSeed') : String(card.prepared.seed)}</dd>
+                        </div>
+                        <div>
+                          <dt>{g('jobs.audio')}</dt>
+                          <dd>{hasAudio ? g('test.audioIncluded') : g('test.audioMissing')}</dd>
+                        </div>
+                        <div>
+                          <dt>{g('jobs.progress')}</dt>
+                          <dd>{Math.round(jobProgress(card.job.completedCount, card.job.quantity))}%</dd>
+                        </div>
+                        <div>
+                          <dt>{g('jobs.source')}</dt>
+                          <dd>{g(`jobs.source.${card.job.source}`)}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                    <div className="generation-result-card__asset">
                     {card.job.status === 'Completed' ? (
                       <video
                         controls
@@ -564,29 +574,30 @@ export function TestPage() {
                         {g('test.videoUnsupported')}
                       </video>
                     ) : <span role="status">{g('test.mediaPlaceholder')}</span>}
-                  </div>
-                  <div className="generation-result-card__details">
-                    <h4>{g('test.outputProfile')}</h4>
-                    <p>{modelSpecLabel(g, assignment.model)}</p>
-                    <dl>
-                      <div>
-                        <dt>{g('test.dialogue')}</dt>
-                        <dd>{card.prepared.dialogue ?? g('common.none')}</dd>
-                      </div>
-                      <div>
-                        <dt>{g('test.displayText')}</dt>
-                        <dd>{card.prepared.displayText ?? g('common.none')}</dd>
-                      </div>
-                      <div>
-                        <dt>{g('test.explanation')}</dt>
-                        <dd>{card.prepared.explanation}</dd>
-                      </div>
-                      <div>
-                        <dt>{g('test.videoPrompt')}</dt>
-                        <dd>{card.prepared.videoPrompt}</dd>
-                      </div>
-                    </dl>
-                  </div>
+                    </div>
+                    <div className="generation-result-card__details">
+                      <h4>{g('test.outputProfile')}</h4>
+                      <p>{modelSpecLabel(g, assignment.model)}</p>
+                      <dl>
+                        <div>
+                          <dt>{g('test.dialogue')}</dt>
+                          <dd>{card.prepared.dialogue ?? g('common.none')}</dd>
+                        </div>
+                        <div>
+                          <dt>{g('test.displayText')}</dt>
+                          <dd>{card.prepared.displayText ?? g('common.none')}</dd>
+                        </div>
+                        <div>
+                          <dt>{g('test.explanation')}</dt>
+                          <dd>{card.prepared.explanation}</dd>
+                        </div>
+                        <div>
+                          <dt>{g('test.videoPrompt')}</dt>
+                          <dd>{card.prepared.videoPrompt}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  </details>
                   <div className="generation-detail-actions generation-result-card__actions">
                     {isCurrentAttempt && (card.job.status === 'Queued' || card.job.status === 'Running') ? (
                       <Button variant="secondary" onClick={() => openCancel(card.job.id)}>{g('jobs.cancel')}</Button>

@@ -8,6 +8,7 @@ import {
   categories,
   categoryLabel,
   directionLabel,
+  emotions,
   GenerationScaffold,
   OperationFeedback,
   readGenerationDraft,
@@ -221,7 +222,7 @@ export function ContentPage() {
   };
 
   useGenerationDraft('content-editor', { creating, selectedId, draft }, dirty);
-  useUnsavedChanges(dirty);
+  const unsavedChangesDialog = useUnsavedChanges(dirty);
   useCommandEnter(requestSave, !confirming && pendingChange === null && pendingStatus === null);
 
   const hasFilters = search !== '' || categoryFilter !== 'All' || statusFilter !== 'All';
@@ -305,7 +306,10 @@ export function ContentPage() {
               </select>
             </Field>
             <Field label={g('content.emotion')} htmlFor="content-emotion" required>
-              <input id="content-emotion" value={draft.emotion} onChange={event => setDraft(current => ({ ...current, emotion: event.target.value }))} placeholder={g('content.emotionPlaceholder')} />
+              <select id="content-emotion" value={draft.emotion} onChange={event => setDraft(current => ({ ...current, emotion: event.target.value }))}>
+                {draft.emotion === '' ? <option value="">{g('content.emotionPlaceholder')}</option> : null}
+                {emotions.map(value => <option key={value} value={value}>{g(`emotion.${value}`)}</option>)}
+              </select>
             </Field>
             <Field className="generation-form__wide" label={g('content.scene')} htmlFor="content-scene" required>
               <textarea id="content-scene" value={draft.scene} onChange={event => setDraft(current => ({ ...current, scene: event.target.value }))} placeholder={g('content.scenePlaceholder')} />
@@ -355,6 +359,7 @@ export function ContentPage() {
           <p className="generation-shortcut-hint">{g('content.saveShortcut')}</p>
         </section>
       </div>
+      {unsavedChangesDialog}
       <ConfirmDialog open={confirming} title={g('content.saveConfirmTitle')} body={g('content.saveConfirmBody')} confirmLabel={g('common.save')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={save} onClose={() => setConfirming(false)} />
       <ConfirmDialog
         open={deleteOpen}

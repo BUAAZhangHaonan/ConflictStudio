@@ -72,6 +72,9 @@ export function JobsPage() {
       ?? snapshot.data.jobs[0]?.id
       ?? '';
   });
+  const [mobileDetail, setMobileDetail] = useState(() =>
+    window.matchMedia('(max-width: 768px)').matches && searchParams.has('job'),
+  );
   const [failure, setFailure] = useState<null | 'Conflict' | 'NotFound' | 'InvalidInput' | 'Unavailable'>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [retryOpen, setRetryOpen] = useState(false);
@@ -198,6 +201,8 @@ export function JobsPage() {
     setKeepOpen(false);
     setEditSampleId('');
     setEditDraft(null);
+    setSearchParams({ job: job.id }, { replace: true });
+    if (window.matchMedia('(max-width: 768px)').matches) setMobileDetail(true);
   };
 
   const revealJob = (job: Job) => {
@@ -206,6 +211,7 @@ export function JobsPage() {
     setSourceFilter('All');
     setSelectedId(job.id);
     setSearchParams({ job: job.id }, { replace: true });
+    if (window.matchMedia('(max-width: 768px)').matches) setMobileDetail(true);
   };
 
   const openRetryDialog = () => {
@@ -349,7 +355,7 @@ export function JobsPage() {
   return (
     <GenerationScaffold title={'jobs.title'} subtitle={'jobs.subtitle'}>
       {failure ? <OperationFeedback kind={failure} onDismiss={() => setFailure(null)} /> : null}
-      <div className="generation-layout generation-layout--jobs generation-jobs">
+      <div className={`generation-layout generation-layout--jobs generation-jobs ${mobileDetail ? 'generation-layout--job-detail' : ''}`}>
         <section className="panel generation-list" aria-labelledby="jobs-list-title">
           <div className="section-header">
             <div>
@@ -441,6 +447,7 @@ export function JobsPage() {
             <div className="section-header generation-job-header">
               <div>
                 <span className="generation-job-header__status">
+                  <Button className="generation-job-back" variant="quiet" onClick={() => setMobileDetail(false)}>{g('jobs.backToList')}</Button>
                   <h2>{jobName(selected)}</h2>
                   <StatusBadge label={g(`jobs.status.${selected.status}`)} kind={jobStatusKind(selected.status)} />
                 </span>

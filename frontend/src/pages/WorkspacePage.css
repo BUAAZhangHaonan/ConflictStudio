@@ -324,7 +324,7 @@
   }
 }
 
-@media (max-width: 390px) {
+@media (max-width: 768px) {
   .workspace-page {
     max-width: 100%;
     overflow-x: clip;
@@ -340,8 +340,8 @@
     border: 0;
   }
 
-  .workspace-datasets .table-shell table,
-  .workspace-datasets .table-shell tbody {
+  .workspace-page .workspace-datasets .table-shell table,
+  .workspace-page .workspace-datasets .table-shell tbody {
     display: block;
     width: 100%;
     min-width: 0;
@@ -419,6 +419,12 @@
   .workspace-datasets__actions .button {
     max-width: 100%;
     white-space: normal;
+  }
+
+  .workspace-dataset-purpose__tooltip {
+    left: 0;
+    width: min(320px, calc(100vw - 64px));
+    transform: none;
   }
 
   .workspace-job-card__header,

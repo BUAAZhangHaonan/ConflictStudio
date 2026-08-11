@@ -8,6 +8,7 @@
 .generation-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
 .generation-layout--editor { grid-template-columns: minmax(340px, 5fr) minmax(0, 7fr); }
 .generation-layout--jobs { grid-template-columns: minmax(340px, 5fr) minmax(0, 7fr); }
+.generation-layout--jobs > * { min-width: 0; }
 .generation-layout--editor > .panel { max-height: calc(100dvh - 190px); overflow-y: auto; }
 .generation-form { display: grid; gap: 16px; }
 .generation-fieldset { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; }
@@ -24,6 +25,7 @@
 .generation-form input, .generation-form select, .generation-form textarea,
 .generation-filters input, .generation-filters select { width: 100%; }
 .generation-form textarea { min-height: 92px; resize: vertical; }
+.generation-form .generation-output-profile { min-height: 58px; resize: none; }
 .generation-form input[readonly] { color: var(--color-text-muted); background: var(--color-surface-muted); cursor: default; }
 .generation-choice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .generation-choice-grid--compact { grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); }
@@ -37,9 +39,19 @@
 .generation-gpu-card .status-badge { max-width: 100%; white-space: normal; }
 .generation-gpu-card p { margin: 0; color: var(--color-text-muted); font-size: 12px; }
 .generation-gpu-card > .button { justify-self: start; }
+.generation-test-workflow { display: grid; gap: 16px; }
+.generation-test-workflow > .generation-gpus .generation-gpus__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.generation-test-section { display: grid; gap: 14px; padding-bottom: 16px; border-bottom: 1px solid var(--color-border); }
+.generation-test-section:last-of-type { padding-bottom: 0; border-bottom: 0; }
+.generation-test-config-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.generation-test-model-heading { margin-top: 4px; }
 .generation-preview-summary { margin-bottom: 12px; color: var(--color-text-muted); }
 .generation-preview-table table { min-width: 720px; }
 .generation-filters { display: grid; grid-template-columns: minmax(180px, 1fr) repeat(2, minmax(150px, .45fr)); gap: 10px; margin-bottom: 12px; }
+.generation-layout--jobs .generation-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.generation-layout--jobs .generation-filters > :first-child { grid-column: 1 / -1; }
+.generation-layout--jobs .generation-filters input,
+.generation-layout--jobs .generation-filters select { min-width: 0; }
 .generation-layout--editor .generation-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .generation-layout--editor .generation-filters > :first-child { grid-column: 1 / -1; }
 .generation-list { min-width: 0; }
@@ -51,6 +63,8 @@
 .generation-selection-card__title { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; grid-column: 1 / -1; }
 .generation-selection-card strong, .generation-selection-card span { min-width: 0; overflow-wrap: anywhere; }
 .generation-selection-card time { color: var(--color-text-muted); font-size: 12px; white-space: nowrap; }
+.generation-selection-card--preset { grid-template-columns: 1fr; }
+.generation-selection-card--preset time { justify-self: start; }
 .generation-prompt-preview { display: grid; gap: 10px; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .generation-prompt-preview h3 { margin: 0; font-size: 15px; }
 .generation-prompt-preview__field { display: grid; gap: 5px; }
@@ -79,6 +93,7 @@
 .generation-job-summary dt { color: var(--color-text-muted); font-size: 12px; }
 .generation-job-summary dd { margin: 4px 0 0; overflow-wrap: anywhere; }
 .generation-job-header { align-items: flex-start; }
+.generation-job-back { display: none; }
 .generation-job-header h2, .generation-job-header p { margin: 0; }
 .generation-job-header p { margin-top: 5px; color: var(--color-text-muted); font-size: 13px; }
 .generation-job-header__status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -152,6 +167,8 @@
 .generation-result-card dd { margin: 3px 0 0; overflow-wrap: anywhere; }
 .generation-result-card__asset { display: grid; min-height: 150px; place-items: center; padding: 12px; border: 1px dashed var(--color-border-strong); border-radius: var(--radius-small); background: var(--color-surface-muted); color: var(--color-text-muted); text-align: center; }
 .generation-result-card__asset video { display: block; width: 100%; max-height: 320px; border-radius: var(--radius-small); background: #111; }
+.generation-result-card__body > summary { font-weight: 600; cursor: pointer; }
+.generation-result-card__body[open] { display: grid; gap: 14px; }
 .generation-result-card__details { display: grid; gap: 10px; }
 .generation-result-card__details h4, .generation-result-card__details p { margin: 0; overflow-wrap: anywhere; }
 .generation-result-card__details ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -163,16 +180,24 @@
   .generation-layout > .generation-gpus .generation-gpus__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .generation-editor { position: static; }
   .generation-layout--editor > .panel { max-height: none; overflow-y: visible; }
+  .generation-test-config-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 768px) {
   .generation-form__grid, .generation-form__grid--three, .generation-filters, .generation-job-inputs dl, dl.generation-job-inputs, .generation-allocation-list li { grid-template-columns: 1fr; }
+  .generation-layout--editor .generation-filters { grid-template-columns: 1fr; }
   .generation-layout--editor .generation-filters > :first-child { grid-column: auto; }
   .generation-gpus__grid, .generation-layout > .generation-gpus .generation-gpus__grid { grid-template-columns: 1fr; }
   .generation-job-meta, .generation-current-input { grid-template-columns: 1fr; }
   .generation-form input, .generation-form select, .generation-form textarea, .generation-form .button,
   .generation-filters input, .generation-filters select { min-height: 44px; }
   .generation-result-cards { grid-template-columns: 1fr; }
+  .generation-test-config-grid { grid-template-columns: 1fr; }
+  .generation-layout--jobs { display: block; }
+  .generation-layout--jobs:not(.generation-layout--job-detail) .generation-job-detail { display: none; }
+  .generation-layout--jobs.generation-layout--job-detail .generation-list { display: none; }
+  .generation-layout--jobs .generation-job-back { display: inline-flex; margin-bottom: 8px; }
+  .generation-test-workflow .generation-prompt-preview pre { max-height: 120px; }
 }
 
 @media (max-width: 599px) {

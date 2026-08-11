@@ -23,6 +23,7 @@ export const models = ['LTX-2.3', 'MiniMax H3'] as const;
 export const ages = [25, 35, 45, 60] as const;
 export const genders = ['Male', 'Female'] as const;
 export const ethnicities = ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'] as const;
+export const emotions = ['neutral', 'joy', 'sadness', 'anger', 'fear', 'surprise', 'disgust'] as const;
 
 const draftPrefix = 'conflictstudio.generation.draft.';
 export function useGenerationCopy() {
@@ -52,15 +53,14 @@ export function useGenerationDraft<T>(key: string, value: T, dirty: boolean) {
 
 export function useUnsavedChanges(dirty: boolean) {
   const g = useGenerationCopy();
+  const [leaveOpen, setLeaveOpen] = useState(false);
   const blocker = useBlocker(({ currentLocation, nextLocation }) =>
     dirty && `${currentLocation.pathname}${currentLocation.search}` !== `${nextLocation.pathname}${nextLocation.search}`,
   );
 
   useEffect(() => {
-    if (blocker.state !== 'blocked') return;
-    if (window.confirm(g('generate.leaveConfirm'))) blocker.proceed();
-    else blocker.reset();
-  }, [blocker, g]);
+    setLeaveOpen(blocker.state === 'blocked');
+  }, [blocker.state]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -73,6 +73,25 @@ export function useUnsavedChanges(dirty: boolean) {
       window.removeEventListener('beforeunload', warn);
     };
   }, [dirty, g]);
+
+  return (
+    <ConfirmDialog
+      open={leaveOpen}
+      title={g('generate.leaveTitle')}
+      body={g('generate.leaveConfirm')}
+      confirmLabel={g('generate.leaveAction')}
+      cancelLabel={g('common.cancel')}
+      closeLabel={g('common.close')}
+      onConfirm={() => {
+        setLeaveOpen(false);
+        if (blocker.state === 'blocked') blocker.proceed();
+      }}
+      onClose={() => {
+        setLeaveOpen(false);
+        if (blocker.state === 'blocked') blocker.reset();
+      }}
+    />
+  );
 }
 
 export function useCommandEnter(action: () => void, enabled = true) {

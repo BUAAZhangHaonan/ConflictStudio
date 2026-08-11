@@ -176,7 +176,7 @@ export function BatchesPage() {
     if (preview && !draftsMatch(preview.draft, draft)) setPreview(null);
   }, [draft, preview]);
 
-  useUnsavedChanges(dirty);
+  const unsavedChangesDialog = useUnsavedChanges(dirty);
 
   const saveDraft = () => {
     saveGenerationDraft(batchDraftStorageKey, draft);
@@ -347,7 +347,7 @@ export function BatchesPage() {
               </select>
             </Field>
             <Field label={g('batches.outputProfile')} htmlFor="batch-output-profile">
-              <input id="batch-output-profile" value={modelSpecLabel(g, model)} readOnly />
+              <textarea className="generation-output-profile" id="batch-output-profile" value={modelSpecLabel(g, model)} readOnly rows={2} />
             </Field>
             <fieldset className="generation-fieldset" aria-describedby="batch-gpu-hint">
               <legend>{g('batches.gpu')}</legend>
@@ -443,6 +443,7 @@ export function BatchesPage() {
         </section>
         <GpuPanel />
       </div>
+      {unsavedChangesDialog}
       <Dialog
         open={preview !== null}
         title={g('batches.previewTitle')}

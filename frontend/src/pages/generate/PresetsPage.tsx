@@ -186,7 +186,7 @@ export function PresetsPage() {
   };
 
   useGenerationDraft('preset-editor', storedValue, dirty);
-  useUnsavedChanges(dirty);
+  const unsavedChangesDialog = useUnsavedChanges(dirty);
   useCommandEnter(requestSave, !confirming && pendingChange === null);
 
   const hasFilters = search !== '' || categoryFilter !== 'All';
@@ -218,7 +218,7 @@ export function PresetsPage() {
                 <li key={item.id}>
                   <button
                     type="button"
-                    className={!creating && item.id === selectedId ? 'generation-selection-card is-selected' : 'generation-selection-card'}
+                    className={!creating && item.id === selectedId ? 'generation-selection-card generation-selection-card--preset is-selected' : 'generation-selection-card generation-selection-card--preset'}
                     aria-pressed={!creating && item.id === selectedId}
                     onClick={() => choose(item)}
                   >
@@ -277,6 +277,7 @@ export function PresetsPage() {
           <p className="generation-shortcut-hint">{g('presets.saveShortcut')}</p>
         </section>
       </div>
+      {unsavedChangesDialog}
       <ConfirmDialog open={confirming} title={g('presets.saveConfirmTitle')} body={g('presets.saveConfirmBody')} confirmLabel={g('common.save')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={save} onClose={() => setConfirming(false)} />
       <ConfirmDialog
         open={pendingChange !== null}
