@@ -328,9 +328,12 @@ async def replay_job_events(
         pending = [task for task in (receive_task, signal_task, poll_task) if task is not None and not task.done()]
         for task in pending:
             task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
         job_executor.unsubscribe_events(signal)
+        if pending:
+            try:
+                await asyncio.gather(*pending, return_exceptions=True)
+            except asyncio.CancelledError:
+                pass
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)
