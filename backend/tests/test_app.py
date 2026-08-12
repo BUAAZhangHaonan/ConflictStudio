@@ -20,6 +20,14 @@ def client_for(tmp_path: Path, renderer: object | None = None) -> TestClient:
     return TestClient(create_app(Settings(data_root=tmp_path, frontend_dist=frontend), UnconfiguredPromptModel(), renderer))
 
 
+def write_frontend(frontend: Path) -> None:
+    frontend.mkdir(exist_ok=True)
+    (frontend / "index.html").write_text("<!doctype html><title>ConflictStudio</title><main>index</main>", encoding="utf-8")
+    assets = frontend / "assets"
+    assets.mkdir(exist_ok=True)
+    (assets / "app.js").write_text("console.log('app')", encoding="utf-8")
+
+
 class _ConfiguredRendererGateway:
     configured = True
 
@@ -134,7 +142,7 @@ def content_plan_request(**overrides: object) -> dict[str, object]:
         "scene": "A private office.",
         "triggerEvent": "A timer sounds.",
         "psychologicalBackground": "The subject prepares a brief response.",
-        "contentInstruction": "Describe one adult responding in the room.",
+        "contentRequirements": "Describe one adult responding in the room.",
     }
     values.update(overrides)
     return values
@@ -163,27 +171,28 @@ def background_request(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "name": "Private office",
         "scene": "A private office containing one chair and one desk.",
-        "ambientAudio": "A steady ventilation hum remains audible.",
-        "relationship": "The subject is the only occupant in view.",
+        "ambientSound": "A steady ventilation hum remains audible.",
+        "participantRelationship": "The subject is the only occupant in view.",
         "lighting": "Soft daylight enters through one window.",
-        "framingSupplement": "Use a static eye-level medium shot.",
+        "framing": "Use a static eye-level medium shot.",
     }
     values.update(overrides)
     return values
 
 
 @pytest.mark.parametrize(
-    ("field", "value", "message"),
+    ("field", "expected_field", "value", "message"),
     [
-        ("relationship", "A second person stands off camera.", "another person"),
-        ("ambientAudio", "A soft soundtrack plays nearby.", "music or score terms"),
-        ("lighting", "The lighting creates a sad atmosphere.", "emotion labels"),
-        ("scene", "The A-VT protocol applies in this office.", "internal category or protocol names"),
+        ("participantRelationship", "participantRelationship", "A second person stands off camera.", "another person"),
+        ("ambientSound", "ambientSound", "A soft soundtrack plays nearby.", "music or score terms"),
+        ("lighting", "lighting", "The lighting creates a sad atmosphere.", "emotion labels"),
+        ("scene", "scene", "The A-VT protocol applies in this office.", "internal category or protocol names"),
     ],
 )
 def test_background_create_returns_field_specific_policy_error(
     tmp_path: Path,
     field: str,
+    expected_field: str,
     value: str,
     message: str,
 ) -> None:
@@ -196,22 +205,23 @@ def test_background_create_returns_field_specific_policy_error(
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
     fields = response.json()["error"]["details"]["fields"]
-    assert fields[0]["field"] == field
+    assert fields[0]["field"] == expected_field
     assert message in fields[0]["message"]
 
 
 @pytest.mark.parametrize(
-    ("field", "value", "message"),
+    ("field", "expected_field", "value", "message"),
     [
-        ("relationship", "A second person stands off camera.", "another person"),
-        ("ambientAudio", "A soft soundtrack plays nearby.", "music or score terms"),
-        ("lighting", "The lighting creates a sad atmosphere.", "emotion labels"),
-        ("scene", "The A-VT protocol applies in this office.", "internal category or protocol names"),
+        ("participantRelationship", "participantRelationship", "A second person stands off camera.", "another person"),
+        ("ambientSound", "ambientSound", "A soft soundtrack plays nearby.", "music or score terms"),
+        ("lighting", "lighting", "The lighting creates a sad atmosphere.", "emotion labels"),
+        ("scene", "scene", "The A-VT protocol applies in this office.", "internal category or protocol names"),
     ],
 )
 def test_background_update_returns_field_specific_policy_error(
     tmp_path: Path,
     field: str,
+    expected_field: str,
     value: str,
     message: str,
 ) -> None:
@@ -226,7 +236,7 @@ def test_background_update_returns_field_specific_policy_error(
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
     fields = response.json()["error"]["details"]["fields"]
-    assert fields[0]["field"] == field
+    assert fields[0]["field"] == expected_field
     assert message in fields[0]["message"]
 
 
@@ -235,6 +245,37 @@ def test_unknown_api_route_does_not_return_frontend(tmp_path: Path) -> None:
         response = client.get("/api/removed-placeholder")
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "not_found"
+
+
+def test_frontend_deep_links_use_index_and_api_paths_stay_on_api(tmp_path: Path) -> None:
+    frontend = tmp_path / "frontend"
+    write_frontend(frontend)
+    client = TestClient(create_app(Settings(data_root=tmp_path, frontend_dist=frontend), UnconfiguredPromptModel()))
+    try:
+        index = client.get("/")
+        deep_link = client.get("/review/42")
+        asset = client.get("/assets/app.js")
+        unknown_extension = client.get("/missing-file.txt")
+        api = client.get("/api/health")
+        api_ws = client.get("/api/ws/jobs/1")
+    finally:
+        client.close()
+
+    assert index.status_code == 200
+    assert index.text.startswith("<!doctype html>")
+    assert index.headers["cache-control"] == "no-store"
+    assert "etag" not in index.headers
+    assert deep_link.status_code == 200
+    assert deep_link.text == index.text
+    assert asset.status_code == 200
+    assert asset.text == "console.log('app')"
+    assert "etag" not in asset.headers
+    assert unknown_extension.status_code == 404
+    assert unknown_extension.json()["error"]["code"] == "not_found"
+    assert api.status_code == 200
+    assert api.json()["database"] == "ready"
+    assert api_ws.status_code == 404
+    assert api_ws.json()["error"]["code"] == "not_found"
 
 
 def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) -> None:
@@ -309,7 +350,7 @@ def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
                 "scene": "A private office.",
                 "triggerEvent": "A timer sounds.",
                 "psychologicalBackground": "The subject prepares a brief response.",
-                "contentInstruction": "Describe one adult responding in the room.",
+                "contentRequirements": "Describe one adult responding in the room.",
             },
         )
         prompt = client.post(
@@ -317,8 +358,8 @@ def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
             json={
                 "name": "Natural shot",
                 "category": "A-VA",
-                "styleInstruction": "Use a static medium shot.",
-                "finalNegativePrompt": "subtitles, captions, distortion",
+                "styleGuidance": "Use a static medium shot.",
+                "finalRenderNegativeConstraints": "subtitles, captions, distortion",
             },
         )
         background = client.post(
@@ -326,9 +367,9 @@ def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
             json={
                 "name": "Private study",
                 "scene": "A private study containing one chair and one desk.",
-                "ambientAudio": "A steady ventilation hum is audible.",
+                "ambientSound": "A steady ventilation hum is audible.",
                 "lighting": "Soft daylight from one window.",
-                "framingSupplement": "Use a static eye-level medium shot.",
+                "framing": "Use a static eye-level medium shot.",
             },
         )
         draft = client.post(

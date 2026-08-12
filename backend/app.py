@@ -14,6 +14,7 @@ from backend.adapters.llm import OpenAICompatiblePromptModel, PromptModel
 from backend.adapters.production_renderer import ProductionRendererGateway
 from backend.adapters.renderer import RendererGateway, UnconfiguredRendererGateway
 from backend.api.routes import router
+from backend.services.assets import AssetService
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.errors import ServiceError
@@ -62,6 +63,7 @@ def create_app(
     app.state.prompt_model = model
     app.state.renderer = renderer_gateway
     app.state.catalog_service = CatalogService(database)
+    app.state.asset_service = AssetService(database)
     app.state.batch_service = batch_service
     app.state.job_executor = job_executor
 
@@ -98,23 +100,22 @@ def create_app(
 
     app.include_router(router)
 
-    @app.get("/assets/{asset_path:path}", include_in_schema=False)
-    def frontend_asset(asset_path: str) -> Response:
-        root = (resolved_settings.frontend_dist / "assets").resolve()
-        candidate = (root / asset_path).resolve()
-        if not candidate.is_relative_to(root) or not candidate.is_file():
-            return _error_response(404, "not_found", "The requested file does not exist")
-        media_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
-        return Response(candidate.read_bytes(), media_type=media_type, headers={"Cache-Control": "no-store"})
-
     @app.get("/{page_path:path}", include_in_schema=False)
     def frontend_page(page_path: str) -> Response:
         if page_path == "api" or page_path.startswith("api/"):
             return _error_response(404, "not_found", "The requested API route does not exist")
-        index = resolved_settings.frontend_dist / "index.html"
+        root = resolved_settings.frontend_dist.resolve()
+        candidate = (root / page_path).resolve()
+        if not candidate.is_relative_to(root):
+            return _error_response(404, "not_found", "The requested file does not exist")
+        if candidate.is_file():
+            return _frontend_file_response(candidate)
+        if Path(page_path.rsplit("/", 1)[-1]).suffix:
+            return _error_response(404, "not_found", "The requested file does not exist")
+        index = root / "index.html"
         if not index.is_file():
             return _error_response(404, "frontend_not_built", "The frontend build is not available")
-        return Response(index.read_bytes(), media_type="text/html", headers={"Cache-Control": "no-store"})
+        return _frontend_file_response(index, no_store=True)
 
     return app
 
@@ -124,3 +125,9 @@ def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
         status_code=status_code,
         content={"error": {"code": code, "message": message, "details": {}}},
     )
+
+
+def _frontend_file_response(path: Path, *, no_store: bool = False) -> Response:
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    headers = {"Cache-Control": "no-store"} if no_store else None
+    return Response(path.read_bytes(), media_type=media_type, headers=headers)
