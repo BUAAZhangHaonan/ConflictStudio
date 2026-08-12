@@ -9,8 +9,8 @@ from pathlib import Path, PurePosixPath
 
 from sqlmodel import Session
 
-from backend.domain.enums import Category, GenerationAttemptStatus, GpuSlotName, ModelName, protocol_for
-from backend.domain.models import Asset, GenerationAttempt, utc_now
+from backend.domain.enums import GenerationAttemptStatus, ModelName
+from backend.domain.models import Asset, GenerationAttempt
 
 
 VIDEO_WIDTH = 1344
@@ -32,6 +32,15 @@ class ProbeEvidence:
     frame_count: int
     duration_seconds: float
     has_audio: bool
+
+
+@dataclass(frozen=True)
+class PreparedMedia:
+    source_path: Path
+    source_evidence: ProbeEvidence
+    primary_path: Path
+    primary_evidence: ProbeEvidence
+    derived_primary: bool
 
 
 class MediaStore:
@@ -166,8 +175,17 @@ class MediaStore:
             raise MediaError(f"Video {name} is missing or invalid")
         return int(value)
 
-    def make_vt_primary(self, job_id: int, item_sequence: int, attempt_number: int, *, model: ModelName) -> Path:
-        source_path, primary_path, temporary_path = self.attempt_paths(job_id, item_sequence, attempt_number)
+    def make_vt_primary(
+        self,
+        source_path: Path,
+        primary_path: Path,
+        temporary_path: Path,
+        *,
+        model: ModelName,
+    ) -> Path:
+        self.relative_path(source_path)
+        self.relative_path(primary_path)
+        self.relative_path(temporary_path)
         self.probe(source_path, require_audio=True, model=model)
         primary_path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -189,70 +207,75 @@ class MediaStore:
             raise
         return primary_path
 
-    def finalize_attempt(
+    def prepare_attempt(
         self,
-        session: Session,
         *,
-        job_item_id: int,
+        source_relative_path: str,
         job_id: int,
         item_sequence: int,
         attempt_number: int,
-        category: Category,
         model: ModelName,
-        gpu_slot: GpuSlotName,
-        seed: int,
-        renderer_prompt_id: str | None,
-        started_at: str,
-        finished_at: str | None = None,
-    ) -> GenerationAttempt:
-        source_path, _, _ = self.attempt_paths(job_id, item_sequence, attempt_number)
+        derive_silent_primary: bool,
+    ) -> PreparedMedia:
+        source_path = self.resolve(source_relative_path)
         source_evidence = self.probe(source_path, require_audio=True, model=model)
-        source_asset = self._asset(source_path, source_evidence)
+        if not derive_silent_primary:
+            return PreparedMedia(
+                source_path=source_path,
+                source_evidence=source_evidence,
+                primary_path=source_path,
+                primary_evidence=source_evidence,
+                derived_primary=False,
+            )
+
+        _, primary_path, temporary_path = self.attempt_paths(job_id, item_sequence, attempt_number)
+        self.make_vt_primary(
+            source_path,
+            primary_path,
+            temporary_path,
+            model=model,
+        )
+        primary_evidence = self.probe(primary_path, require_audio=False, model=model)
+        if primary_evidence.has_audio:
+            primary_path.unlink(missing_ok=True)
+            raise MediaError("Silent primary unexpectedly contains audio")
+        return PreparedMedia(
+            source_path=source_path,
+            source_evidence=source_evidence,
+            primary_path=primary_path,
+            primary_evidence=primary_evidence,
+            derived_primary=True,
+        )
+
+    def persist_completed_attempt(
+        self,
+        session: Session,
+        attempt: GenerationAttempt,
+        prepared: PreparedMedia,
+        *,
+        finished_at: str,
+    ) -> tuple[Asset, Asset]:
+        if attempt.status is not GenerationAttemptStatus.RUNNING:
+            raise MediaError("Generation attempt is not running")
+        source_asset = self._asset(prepared.source_path, prepared.source_evidence)
         session.add(source_asset)
         session.flush()
-        if protocol_for(category) == "VA":
-            primary_asset = source_asset
+        if prepared.derived_primary:
+            primary_asset = self._asset(prepared.primary_path, prepared.primary_evidence)
+            session.add(primary_asset)
+            session.flush()
         else:
-            try:
-                primary_path = self.make_vt_primary(job_id, item_sequence, attempt_number, model=model)
-                primary_evidence = self.probe(primary_path, require_audio=False, model=model)
-                if primary_evidence.has_audio:
-                    raise MediaError("Silent primary unexpectedly contains audio")
-                primary_asset = self._asset(primary_path, primary_evidence)
-                session.add(primary_asset)
-                session.flush()
-            except (MediaError, OSError) as error:
-                failed = GenerationAttempt(
-                    job_item_id=job_item_id,
-                    attempt_number=attempt_number,
-                    model=model,
-                    gpu_slot=gpu_slot,
-                    seed=seed,
-                    source_asset_id=source_asset.id,
-                    primary_asset_id=None,
-                    renderer_prompt_id=renderer_prompt_id,
-                    status=GenerationAttemptStatus.FAILED,
-                    failure_reason=str(error),
-                    started_at=started_at,
-                    finished_at=finished_at or utc_now(),
-                )
-                session.add(failed)
-                return failed
-        attempt = GenerationAttempt(
-            job_item_id=job_item_id,
-            attempt_number=attempt_number,
-            model=model,
-            gpu_slot=gpu_slot,
-            seed=seed,
-            source_asset_id=source_asset.id,
-            primary_asset_id=primary_asset.id,
-            renderer_prompt_id=renderer_prompt_id,
-            status=GenerationAttemptStatus.COMPLETED,
-            started_at=started_at,
-            finished_at=finished_at or utc_now(),
-        )
-        session.add(attempt)
-        return attempt
+            primary_asset = source_asset
+        attempt.source_asset_id = source_asset.id
+        attempt.primary_asset_id = primary_asset.id
+        attempt.status = GenerationAttemptStatus.COMPLETED
+        attempt.finished_at = finished_at
+        return source_asset, primary_asset
+
+    @staticmethod
+    def discard_prepared(prepared: PreparedMedia) -> None:
+        if prepared.derived_primary:
+            prepared.primary_path.unlink(missing_ok=True)
 
     def _asset(self, path: Path, evidence: ProbeEvidence) -> Asset:
         return Asset(

@@ -427,6 +427,8 @@ class JobItemRead(ApiModel):
     failure_code: str | None
     failure_reason: str | None
     renderer_prompt_id: str | None
+    source_asset_id: int | None
+    primary_asset_id: int | None
     revision: int
     created_at: str
     updated_at: str
@@ -444,6 +446,8 @@ class JobEventPayloadRead(ApiModel):
     gpu_slot: GpuSlotName | None = None
     failure_code: str | None = None
     failure_reason: str | None = None
+    progress_value: int | None = Field(default=None, ge=0)
+    progress_maximum: int | None = Field(default=None, ge=1)
 
 
 JobEventType = Literal[
@@ -453,6 +457,8 @@ JobEventType = Literal[
     "ItemPromptStarted",
     "ItemPromptReady",
     "ItemRenderStarted",
+    "ItemRenderProgress",
+    "ItemMediaProcessing",
     "ItemCompleted",
     "ItemFailed",
     "ItemCancelled",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Mapping
 
 import httpx
 
@@ -25,6 +26,7 @@ class ModelServiceController:
         command_runner: CommandRunner = run_command,
         http_client: httpx.AsyncClient | None = None,
         *,
+        slot_urls: Mapping[GpuSlotName, str] | None = None,
         readiness_timeout_seconds: float = 60.0,
         readiness_poll_seconds: float = 0.5,
     ) -> None:
@@ -34,6 +36,13 @@ class ModelServiceController:
         self._run = command_runner
         self._client = http_client or httpx.AsyncClient()
         self._owns_client = http_client is None
+        self._slot_urls = dict(slot_urls) if slot_urls is not None else {
+            slot: f"http://127.0.0.1:{port}" for slot, port in PORTS.items()
+        }
+        if set(self._slot_urls) != set(GpuSlotName) or any(
+            not isinstance(url, str) or not url for url in self._slot_urls.values()
+        ):
+            raise ValueError("One model service URL is required for every GPU slot")
         self._readiness_timeout = readiness_timeout_seconds
         self._readiness_poll = readiness_poll_seconds
 
@@ -111,7 +120,7 @@ class ModelServiceController:
 
     async def _wait_ready(self, slot: GpuSlotName) -> None:
         deadline = time.monotonic() + self._readiness_timeout
-        url = f"http://127.0.0.1:{PORTS[slot]}/object_info"
+        url = f"{self._slot_urls[slot].rstrip('/')}/object_info"
         last_error = "no successful response"
         while True:
             try:

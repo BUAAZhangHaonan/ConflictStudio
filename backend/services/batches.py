@@ -791,6 +791,8 @@ class BatchService:
                     failure_reason=item.failure_reason,
                     failure_code=item.failure_code,
                     renderer_prompt_id=item.renderer_prompt_id,
+                    source_asset_id=item.source_asset_id,
+                    primary_asset_id=item.primary_asset_id,
                     revision=item.revision,
                     created_at=item.created_at,
                     updated_at=item.updated_at,

@@ -9,7 +9,8 @@ import pytest
 
 from backend.adapters.database import Database
 from backend.adapters.media import MediaError, MediaStore
-from backend.domain.enums import Category, GpuSlotName, ModelName
+from backend.domain.enums import GenerationAttemptStatus, GpuSlotName, ModelName
+from backend.domain.models import GenerationAttempt
 
 
 def compact_probe(*, frames: str | None = "121", width: int = 1344, height: int = 768, fps: str = "24/1", duration: str = "5.0416667", audio: bool = True, read_frames: str | None = None, wrapper: bool = False) -> str:
@@ -87,7 +88,7 @@ def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path
 
 
 @pytest.mark.parametrize("failure", ("ffmpeg", "silent_probe", "replace"))
-def test_vt_failure_persists_source_and_failed_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
     store = MediaStore(tmp_path)
     source, primary, temporary = store.attempt_paths(1, 1, 1)
     source.parent.mkdir(parents=True)
@@ -107,13 +108,15 @@ def test_vt_failure_persists_source_and_failed_attempt(tmp_path: Path, monkeypat
     monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
     if failure == "replace":
         monkeypatch.setattr("backend.adapters.media.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace failed")))
-    session = type("SessionStub", (), {"rows": [], "add": lambda self, row: (setattr(row, "id", len(self.rows) + 1) if getattr(row, "id", None) is None else None) or self.rows.append(row), "flush": lambda self: None})()
-    attempt = store.finalize_attempt(session, job_item_id=1, job_id=1, item_sequence=1, attempt_number=1, category=Category.A_VT, model=ModelName.LTX, gpu_slot=GpuSlotName.GPU0, seed=1, renderer_prompt_id=None, started_at="2026-08-12T00:00:00Z")
-    assert attempt.status.value == "Failed"
-    assert attempt.failure_reason
-    assert any(getattr(row, "relative_path", "") == "media/jobs/1/items/1/attempts/1/source.mp4" for row in session.rows)
-    assert attempt.primary_asset_id is None
-    assert not any(getattr(row, "relative_path", "") == "media/jobs/1/items/1/attempts/1/primary.mp4" for row in session.rows)
+    with pytest.raises((MediaError, OSError)):
+        store.prepare_attempt(
+            source_relative_path=store.relative_path(source),
+            job_id=1,
+            item_sequence=1,
+            attempt_number=1,
+            model=ModelName.LTX,
+            derive_silent_primary=True,
+        )
     assert not primary.exists()
     assert not temporary.exists()
 
@@ -138,29 +141,41 @@ def test_va_and_vt_assets_preserve_rerender_attempt_history(tmp_path: Path, monk
         if args[0] == "ffmpeg":
             output.write_bytes(b"silent")
             return CompletedProcess(args, 0, "", "")
-        source = output.name == "source.mp4"
+        source = "gpu0/output" in output.as_posix()
         return CompletedProcess(args, 0, compact_probe(audio=source), "")
 
     monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
     session = SessionStub()
-    for attempt_number, category in ((1, Category.A_VA), (2, Category.A_VT)):
-        source, _, _ = store.attempt_paths(7, 3, attempt_number)
+    for attempt_number, derive_silent in ((1, False), (2, True)):
+        source = store.resolve(f"gpu0/output/7/{attempt_number}_00001_.mp4")
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_bytes(b"source")
-        attempt = store.finalize_attempt(
-            session,  # type: ignore[arg-type]
-            job_item_id=99,
+        prepared = store.prepare_attempt(
+            source_relative_path=store.relative_path(source),
             job_id=7,
             item_sequence=3,
             attempt_number=attempt_number,
-            category=category,
+            model=ModelName.LTX,
+            derive_silent_primary=derive_silent,
+        )
+        attempt = GenerationAttempt(
+            job_item_id=99,
+            attempt_number=attempt_number,
             model=ModelName.LTX,
             gpu_slot=GpuSlotName.GPU0,
             seed=11,
             renderer_prompt_id="renderer-1",
+            status=GenerationAttemptStatus.RUNNING,
             started_at="2026-08-12T00:00:00Z",
         )
-        if category is Category.A_VA:
+        store.persist_completed_attempt(
+            session,  # type: ignore[arg-type]
+            attempt,
+            prepared,
+            finished_at="2026-08-12T00:01:00Z",
+        )
+        session.rows.append(attempt)
+        if not derive_silent:
             assert attempt.source_asset_id == attempt.primary_asset_id
         else:
             assert attempt.source_asset_id != attempt.primary_asset_id

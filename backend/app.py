@@ -11,7 +11,10 @@ from fastapi.responses import JSONResponse, Response
 from backend.adapters.config import Settings
 from backend.adapters.database import Database, DatabaseBusyError
 from backend.adapters.llm import OpenAICompatiblePromptModel, PromptModel
+from backend.adapters.media import MediaError
+from backend.adapters.production_renderer import ProductionRendererGateway
 from backend.adapters.renderer import RendererGateway, UnconfiguredRendererGateway
+from backend.adapters.workflows import WorkflowTemplateError
 from backend.api.routes import router
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
@@ -29,10 +32,24 @@ def create_app(
     database = Database(resolved_settings.data_root)
     database.initialize()
     model = prompt_model or OpenAICompatiblePromptModel.from_environment()
-    renderer_gateway = renderer or UnconfiguredRendererGateway()
+    renderer_gateway: RendererGateway
+    if renderer is not None:
+        renderer_gateway = renderer
+    elif resolved_settings.renderer is not None:
+        try:
+            renderer_gateway = ProductionRendererGateway.from_settings(
+                database,
+                resolved_settings.renderer,
+            )
+        except (MediaError, ValueError, WorkflowTemplateError):
+            renderer_gateway = UnconfiguredRendererGateway()
+    else:
+        renderer_gateway = UnconfiguredRendererGateway()
     prompt_service = PromptService(model)
     batch_service = BatchService(database, prompt_service, renderer_gateway)
     job_executor = JobExecutor(database, prompt_service, renderer_gateway)
+    if isinstance(renderer_gateway, ProductionRendererGateway):
+        renderer_gateway.set_event_notifier(job_executor.notify_events)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

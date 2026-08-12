@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName
+from backend.domain.enums import Category, GpuAvailability, GpuSlotName, ModelName
 
 
 class RendererGatewayError(Exception):
@@ -24,8 +24,11 @@ class RendererSlotState:
 class RenderRequest:
     job_id: int
     job_item_id: int
+    item_sequence: int
     gpu_slot: GpuSlotName
     model: ModelName
+    category: Category
+    confirm_model_switch: bool
     seed: int
     width: int
     height: int
@@ -46,6 +49,7 @@ class RenderResult:
 
 class RendererGateway(Protocol):
     configured: bool
+    persists_render_state: bool
 
     async def probe(self, slot: GpuSlotName) -> RendererSlotState: ...
 
@@ -60,6 +64,7 @@ class RendererGateway(Protocol):
 
 class UnconfiguredRendererGateway:
     configured = False
+    persists_render_state = False
 
     async def probe(self, slot: GpuSlotName) -> RendererSlotState:
         return RendererSlotState(
@@ -88,3 +93,11 @@ class UnconfiguredRendererGateway:
 
     async def close(self) -> None:
         return None
+
+
+def __getattr__(name: str) -> object:
+    if name == "ProductionRendererGateway":
+        from backend.adapters.production_renderer import ProductionRendererGateway
+
+        return ProductionRendererGateway
+    raise AttributeError(name)

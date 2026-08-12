@@ -92,12 +92,32 @@ class Database:
                     """
                 )
             connection.exec_driver_sql("DROP TRIGGER IF EXISTS prevent_generation_attempt_critical_update")
+            connection.exec_driver_sql("DROP TRIGGER IF EXISTS prevent_generation_attempt_update")
+            connection.exec_driver_sql("DROP TRIGGER IF EXISTS prevent_generation_attempt_delete")
             connection.exec_driver_sql(
                 """
-                CREATE TRIGGER IF NOT EXISTS prevent_generation_attempt_update
+                CREATE TRIGGER prevent_generation_attempt_update
                 BEFORE UPDATE ON generation_attempts
+                WHEN OLD.status != 'Running'
+                  OR NEW.status NOT IN ('Completed', 'Failed')
+                  OR NEW.job_item_id != OLD.job_item_id
+                  OR NEW.attempt_number != OLD.attempt_number
+                  OR NEW.model != OLD.model
+                  OR NEW.gpu_slot != OLD.gpu_slot
+                  OR NEW.seed != OLD.seed
+                  OR NEW.renderer_prompt_id != OLD.renderer_prompt_id
+                  OR NEW.started_at != OLD.started_at
                 BEGIN
-                    SELECT RAISE(ABORT, 'generation attempts are terminal and immutable');
+                    SELECT RAISE(ABORT, 'generation attempt transition is not allowed');
+                END
+                """
+            )
+            connection.exec_driver_sql(
+                """
+                CREATE TRIGGER prevent_generation_attempt_delete
+                BEFORE DELETE ON generation_attempts
+                BEGIN
+                    SELECT RAISE(ABORT, 'generation attempts cannot be deleted');
                 END
                 """
             )

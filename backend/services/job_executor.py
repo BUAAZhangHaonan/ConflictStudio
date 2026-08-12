@@ -11,10 +11,17 @@ from sqlmodel import Session, select
 
 from backend.adapters.database import Database
 from backend.adapters.renderer import RenderRequest, RendererGateway, RendererGatewayError
-from backend.domain.enums import GpuAvailability, GpuSlotName, JobItemStage, JobStatus
+from backend.domain.enums import (
+    GenerationAttemptStatus,
+    GpuAvailability,
+    GpuSlotName,
+    JobItemStage,
+    JobStatus,
+)
 from backend.domain.models import (
     BatchVideoInputSnapshot,
     GpuSlot,
+    GenerationAttempt,
     Job,
     JobEvent,
     JobItem,
@@ -272,7 +279,7 @@ class JobExecutor:
         prompt_id: str | None = None
         gpu_slot: GpuSlotName | None = None
         try:
-            item, snapshot = self._begin_item(job_id, item_id)
+            job, item, snapshot = self._begin_item(job_id, item_id)
             gpu_slot = item.gpu_slot
             prepared = self._prepared_prompt(snapshot)
             result = await self.prompts.complete(prepared, snapshot.category)
@@ -281,8 +288,11 @@ class JobExecutor:
             request = RenderRequest(
                 job_id=job_id,
                 job_item_id=item_id,
+                item_sequence=item.sequence,
                 gpu_slot=item.gpu_slot,
                 model=snapshot.model,
+                category=snapshot.category,
+                confirm_model_switch=job.confirm_model_switch,
                 seed=snapshot.seed,
                 width=snapshot.width,
                 height=snapshot.height,
@@ -296,12 +306,18 @@ class JobExecutor:
                 derive_silent_primary=snapshot.derive_silent_primary,
             )
             prompt_id = await self.renderer.submit(request)
-            self._record_rendering(job_id, item_id, prompt_id)
+            if not getattr(self.renderer, "persists_render_state", False):
+                self._record_rendering(job_id, item_id, prompt_id)
             await self.renderer.wait(item.gpu_slot, prompt_id)
             self._complete_item(job_id, item_id)
         except asyncio.CancelledError:
             if gpu_slot is not None and prompt_id is not None:
-                await self.renderer.cancel(gpu_slot, prompt_id)
+                try:
+                    await self.renderer.cancel(gpu_slot, prompt_id)
+                except Exception as error:
+                    code, reason = self._failure_details(error)
+                    self._fail_item(job_id, item_id, code, reason)
+                    raise
             if not self._stopping:
                 self._cancel_item(job_id, item_id)
             raise
@@ -309,7 +325,11 @@ class JobExecutor:
             code, reason = self._failure_details(error)
             self._fail_item(job_id, item_id, code, reason)
 
-    def _begin_item(self, job_id: int, item_id: int) -> tuple[JobItem, BatchVideoInputSnapshot]:
+    def _begin_item(
+        self,
+        job_id: int,
+        item_id: int,
+    ) -> tuple[Job, JobItem, BatchVideoInputSnapshot]:
         with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
@@ -331,7 +351,7 @@ class JobExecutor:
             item.revision += 1
             self._append_event(session, job, "ItemPromptStarted", item=item)
             session.flush()
-            return item, snapshot
+            return job, item, snapshot
 
     @staticmethod
     def _prepared_prompt(snapshot: BatchVideoInputSnapshot) -> PreparedPrompt:
@@ -405,6 +425,10 @@ class JobExecutor:
             item = session.get(JobItem, item_id)
             if job is None or item is None:
                 raise RuntimeError("The running job item no longer exists")
+            if getattr(self.renderer, "persists_render_state", False) and (
+                item.source_asset_id is None or item.primary_asset_id is None
+            ):
+                raise RuntimeError("The renderer did not persist completed media")
             timestamp = utc_now()
             item.status = JobStatus.COMPLETED
             item.stage = JobItemStage.COMPLETED
@@ -422,6 +446,16 @@ class JobExecutor:
             if job is None or item is None or item.status in TERMINAL_STATUSES:
                 return
             timestamp = utc_now()
+            attempt = session.exec(
+                select(GenerationAttempt).where(
+                    GenerationAttempt.job_item_id == item_id,
+                    GenerationAttempt.status == GenerationAttemptStatus.RUNNING,
+                )
+            ).one_or_none()
+            if attempt is not None:
+                attempt.status = GenerationAttemptStatus.FAILED
+                attempt.failure_reason = reason
+                attempt.finished_at = timestamp
             item.status = JobStatus.FAILED
             item.failure_code = code
             item.failure_reason = reason
@@ -439,6 +473,16 @@ class JobExecutor:
             if job is None or item is None or item.status in TERMINAL_STATUSES:
                 return
             timestamp = utc_now()
+            attempt = session.exec(
+                select(GenerationAttempt).where(
+                    GenerationAttempt.job_item_id == item_id,
+                    GenerationAttempt.status == GenerationAttemptStatus.RUNNING,
+                )
+            ).one_or_none()
+            if attempt is not None:
+                attempt.status = GenerationAttemptStatus.FAILED
+                attempt.failure_reason = "The render was cancelled"
+                attempt.finished_at = timestamp
             item.status = JobStatus.CANCELLED
             item.updated_at = timestamp
             item.revision += 1
@@ -579,6 +623,16 @@ class JobExecutor:
         changed: list[JobItem] = []
         for item in items:
             if item.status not in TERMINAL_STATUSES:
+                attempt = session.exec(
+                    select(GenerationAttempt).where(
+                        GenerationAttempt.job_item_id == item.id,
+                        GenerationAttempt.status == GenerationAttemptStatus.RUNNING,
+                    )
+                ).one_or_none()
+                if attempt is not None:
+                    attempt.status = GenerationAttemptStatus.FAILED
+                    attempt.failure_reason = reason
+                    attempt.finished_at = timestamp
                 item.status = JobStatus.FAILED
                 item.failure_code = code
                 item.failure_reason = reason
