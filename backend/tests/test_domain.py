@@ -31,7 +31,7 @@ def content_plan_payload(**overrides: object) -> dict[str, object]:
         "scene": "A private office.",
         "triggerEvent": "A timer sounds.",
         "psychologicalBackground": "The subject prepares to answer.",
-        "contentInstruction": "Describe one adult responding in the room.",
+        "contentRequirements": "Describe one adult responding in the room.",
     }
     values.update(overrides)
     return values
