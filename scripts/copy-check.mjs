@@ -1,12 +1,12 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, '..');
-const sourceRoot = join(projectRoot, 'frontend', 'src');
-const localeRoot = join(sourceRoot, 'locales');
-const timeSourcePath = join(sourceRoot, 'time.ts');
+const frontendRequire = createRequire(join(projectRoot, 'frontend', 'package.json'));
+const ts = frontendRequire('typescript');
 
 const blockedPatterns = [
   /[·—–“”「」『』]/u,
@@ -71,6 +71,17 @@ const technicalTokens = [
   'K',
 ];
 
+const visibleAttributeNames = new Set([
+  'alt',
+  'aria-label',
+  'caption',
+  'description',
+  'label',
+  'message',
+  'placeholder',
+  'title',
+]);
+
 function filesUnder(directory, acceptedExtensions) {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
     const fullPath = join(directory, entry.name);
@@ -100,97 +111,141 @@ function isChineseLocaleValue(file, source, index) {
   return file.endsWith('zh-CN.ts');
 }
 
-const failures = [];
-const localeFiles = filesUnder(localeRoot, new Set(['.ts']));
-const jsxFiles = filesUnder(sourceRoot, new Set(['.tsx']));
-const sourceFiles = filesUnder(sourceRoot, new Set(['.ts', '.tsx']));
-
-for (const file of [...localeFiles, ...jsxFiles]) {
-  const source = readFileSync(file, 'utf8');
-  for (const pattern of blockedPatterns) {
-    const match = pattern.exec(source);
-    if (match) {
-      failures.push(`${relative(projectRoot, file)}:${lineNumber(source, match.index)} blocked copy: ${match[0]}`);
-    }
-    pattern.lastIndex = 0;
-  }
+function staticString(expression) {
+  return expression && (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression))
+    ? expression.text
+    : null;
 }
 
-for (const file of sourceFiles) {
-  const source = readFileSync(file, 'utf8');
-  const forbiddenTimeFormatting = [
-    /\.toLocaleString\s*\(/u,
-    /\.toLocaleDateString\s*\(/u,
-    /\.toLocaleTimeString\s*\(/u,
-    /timeZone:\s*['"]UTC['"]/u,
-  ];
-  for (const pattern of forbiddenTimeFormatting) {
-    const match = pattern.exec(source);
-    if (match) {
-      failures.push(`${relative(projectRoot, file)}:${lineNumber(source, match.index)} local time formatting bypass: ${match[0]}`);
-    }
-  }
-}
-
-for (const file of jsxFiles) {
-  const source = readFileSync(file, 'utf8');
-  const lines = source.split(/\r?\n/u);
-  lines.forEach((line, index) => {
-    const visibleText = [
-      ...line.matchAll(/>([^<>{}]+)</gu),
-      ...line.matchAll(/>\s*\{["'`]([^"'`]+)["'`]\}\s*</gu),
-      ...line.matchAll(/\b(?:aria-label|title|alt|placeholder|label|caption|description|message)=["']([^"']+)["']/gu),
-      ...line.matchAll(/\b(?:aria-label|title|alt|placeholder)=\{\s*["'`]([^"'`]+)["'`]\s*\}/gu),
-    ];
-    for (const match of visibleText) {
-      if (/^[a-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/u.test(match[1])) continue;
-      const value = withoutTechnicalTokens(match[1]).replace(/[\s\d.,:;!?()（）·—–\-+/%×●○✓▶☰*]/gu, '');
-      if (value.length > 0) {
-        failures.push(`${relative(projectRoot, file)}:${index + 1} hard-coded visible copy: ${match[1].trim()}`);
+function jsxVisibleText(sourceFile) {
+  const values = [];
+  const add = (value, position) => {
+    if (value.trim()) values.push({ value, position });
+  };
+  const visit = node => {
+    if (ts.isJsxText(node)) {
+      add(node.getText(sourceFile), node.getStart(sourceFile));
+    } else if (ts.isJsxExpression(node) && !ts.isJsxAttribute(node.parent)) {
+      const value = staticString(node.expression);
+      if (value !== null) add(value, node.getStart(sourceFile));
+    } else if (ts.isJsxAttribute(node) && visibleAttributeNames.has(node.name.text)) {
+      if (node.initializer && ts.isStringLiteral(node.initializer)) {
+        add(node.initializer.text, node.initializer.getStart(sourceFile));
+      } else if (node.initializer && ts.isJsxExpression(node.initializer)) {
+        const value = staticString(node.initializer.expression);
+        if (value !== null) add(value, node.initializer.getStart(sourceFile));
       }
     }
-    if (/document\.title\s*=/u.test(line) && !/\bt\(\s*['"]/u.test(line)) {
-      failures.push(`${relative(projectRoot, file)}:${index + 1} document title is not localized`);
-    }
-    if (/\b(?:showToast|window\.confirm)\(\s*["'`]/u.test(line)) {
-      failures.push(`${relative(projectRoot, file)}:${index + 1} hard-coded visible message`);
-    }
-  });
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return values;
 }
 
-for (const file of localeFiles) {
-  const source = readFileSync(file, 'utf8');
-  for (const match of source.matchAll(/:\s*'([^']*)'/gu)) {
-    const value = withoutTechnicalTokens(match[1]);
-    const isChinese = isChineseLocaleValue(file, source, match.index);
-    if (isChinese && /[A-Za-z]/u.test(value)) {
-      failures.push(`${relative(projectRoot, file)}:${lineNumber(source, match.index)} mixed language: ${match[1]}`);
-    }
-    if (!isChinese && /[\u3400-\u9fff]/u.test(value)) {
-      failures.push(`${relative(projectRoot, file)}:${lineNumber(source, match.index)} mixed language: ${match[1]}`);
-    }
-  }
+function sourceLine(sourceFile, position) {
+  return sourceFile.getLineAndCharacterOfPosition(position).line + 1;
 }
 
-if (!existsSync(sourceRoot)) failures.push('frontend/src is missing');
-if (!existsSync(timeSourcePath)) {
-  failures.push('frontend/src/time.ts is missing');
-} else {
-  const timeSource = readFileSync(timeSourcePath, 'utf8');
-  if (!timeSource.includes("const SHANGHAI_TIME_ZONE = 'Asia/Shanghai';")) {
-    failures.push('frontend/src/time.ts does not use Asia/Shanghai');
+export function collectCopyFailures(root = projectRoot) {
+  const sourceRoot = join(root, 'frontend', 'src');
+  const localeRoot = join(sourceRoot, 'locales');
+  const timeSourcePath = join(sourceRoot, 'time.ts');
+  if (!existsSync(sourceRoot)) return ['frontend/src is missing'];
+
+  const failures = [];
+  const localeFiles = existsSync(localeRoot) ? filesUnder(localeRoot, new Set(['.ts'])) : [];
+  const jsxFiles = filesUnder(sourceRoot, new Set(['.tsx']));
+  const sourceFiles = filesUnder(sourceRoot, new Set(['.ts', '.tsx']));
+
+  for (const file of [...localeFiles, ...jsxFiles]) {
+    const source = readFileSync(file, 'utf8');
+    for (const pattern of blockedPatterns) {
+      const match = pattern.exec(source);
+      if (match) {
+        failures.push(`${relative(root, file)}:${lineNumber(source, match.index)} blocked copy: ${match[0]}`);
+      }
+      pattern.lastIndex = 0;
+    }
   }
-  if (!timeSource.includes('`${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`')) {
-    failures.push('frontend/src/time.ts does not provide YYYY-MM-DD HH:mm:ss');
+
+  for (const file of sourceFiles) {
+    const source = readFileSync(file, 'utf8');
+    const forbiddenTimeFormatting = [
+      /\.toLocaleString\s*\(/u,
+      /\.toLocaleDateString\s*\(/u,
+      /\.toLocaleTimeString\s*\(/u,
+      /timeZone:\s*['"]UTC['"]/u,
+    ];
+    for (const pattern of forbiddenTimeFormatting) {
+      const match = pattern.exec(source);
+      if (match) {
+        failures.push(`${relative(root, file)}:${lineNumber(source, match.index)} local time formatting bypass: ${match[0]}`);
+      }
+    }
   }
-  if (!timeSource.includes('`${parts.hour}:${parts.minute}:${parts.second}`')) {
-    failures.push('frontend/src/time.ts does not provide HH:mm:ss');
+
+  for (const file of jsxFiles) {
+    const source = readFileSync(file, 'utf8');
+    const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    for (const visible of jsxVisibleText(sourceFile)) {
+      if (/^[a-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)+$/u.test(visible.value)) continue;
+      if (/[·“”‘’]/u.test(visible.value) || /(^|\s)[-–—](?=\s|$)/u.test(visible.value)) {
+        failures.push(`${relative(root, file)}:${sourceLine(sourceFile, visible.position)} visible delimiter: ${visible.value.trim()}`);
+      }
+      const value = withoutTechnicalTokens(visible.value).replace(/[\p{N}\p{P}\p{S}\s]/gu, '');
+      if (value.length > 0) {
+        failures.push(`${relative(root, file)}:${sourceLine(sourceFile, visible.position)} hard-coded visible copy: ${visible.value.trim()}`);
+      }
+    }
+    const lines = source.split(/\r?\n/u);
+    lines.forEach((line, index) => {
+      if (/document\.title\s*=/u.test(line) && !/\bt\(\s*['"]/u.test(line)) {
+        failures.push(`${relative(root, file)}:${index + 1} document title is not localized`);
+      }
+      if (/\b(?:showToast|window\.confirm)\(\s*["'`]/u.test(line)) {
+        failures.push(`${relative(root, file)}:${index + 1} hard-coded visible message`);
+      }
+    });
   }
+
+  for (const file of localeFiles) {
+    const source = readFileSync(file, 'utf8');
+    for (const match of source.matchAll(/:\s*'([^']*)'/gu)) {
+      const value = withoutTechnicalTokens(match[1]);
+      const isChinese = isChineseLocaleValue(file, source, match.index);
+      if (isChinese && /[A-Za-z]/u.test(value)) {
+        failures.push(`${relative(root, file)}:${lineNumber(source, match.index)} mixed language: ${match[1]}`);
+      }
+      if (!isChinese && /[\u3400-\u9fff]/u.test(value)) {
+        failures.push(`${relative(root, file)}:${lineNumber(source, match.index)} mixed language: ${match[1]}`);
+      }
+    }
+  }
+
+  if (!existsSync(timeSourcePath)) {
+    failures.push('frontend/src/time.ts is missing');
+  } else {
+    const timeSource = readFileSync(timeSourcePath, 'utf8');
+    if (!timeSource.includes("const SHANGHAI_TIME_ZONE = 'Asia/Shanghai';")) {
+      failures.push('frontend/src/time.ts does not use Asia/Shanghai');
+    }
+    if (!timeSource.includes('`${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`')) {
+      failures.push('frontend/src/time.ts does not provide YYYY-MM-DD HH:mm:ss');
+    }
+    if (!timeSource.includes('`${parts.hour}:${parts.minute}:${parts.second}`')) {
+      failures.push('frontend/src/time.ts does not provide HH:mm:ss');
+    }
+  }
+
+  return failures;
 }
 
-if (failures.length > 0) {
-  console.error(failures.join('\n'));
-  process.exitCode = 1;
-} else {
-  console.log('Static copy check passed.');
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const failures = collectCopyFailures();
+  if (failures.length > 0) {
+    console.error(failures.join('\n'));
+    process.exitCode = 1;
+  } else {
+    console.log('Static copy check passed.');
+  }
 }

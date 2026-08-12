@@ -54,10 +54,61 @@ export const generationQueries = {
   batchDrafts: () => queryOptions({ queryKey: queryKeys.batchDrafts, queryFn: () => apiRequest<BatchDraft[]>('/api/batch-drafts') }),
   jobs: () => queryOptions({ queryKey: queryKeys.jobs, queryFn: () => apiRequest<JobSummary[]>('/api/jobs') }),
   job: (id: number) => queryOptions({ queryKey: queryKeys.job(id), queryFn: () => apiRequest<JobDetail>(`/api/jobs/${id}`) }),
-  jobItems: (id: number) => queryOptions({ queryKey: queryKeys.jobItems(id), queryFn: () => apiRequest<JobItem[]>(`/api/jobs/${id}/items?offset=0&limit=500`) }),
-  jobEvents: (id: number) => queryOptions({ queryKey: queryKeys.jobEvents(id), queryFn: () => apiRequest<JobEvent[]>(`/api/jobs/${id}/events?afterEventId=0&limit=500`) }),
+  jobItems: (id: number) => queryOptions({ queryKey: queryKeys.jobItems(id), queryFn: () => fetchAllJobItems(id) }),
+  jobEvents: (id: number) => queryOptions({ queryKey: queryKeys.jobEvents(id), queryFn: () => fetchAllJobEvents(id) }),
   gpuSlots: () => queryOptions({ queryKey: queryKeys.gpuSlots, queryFn: () => apiRequest<GpuSlot[]>('/api/gpu-slots') }),
 };
+
+const pageSize = 500;
+
+export async function fetchAllJobItems(id: number): Promise<JobItem[]> {
+  const items: JobItem[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await apiRequest<JobItem[]>(`/api/jobs/${id}/items?offset=${offset}&limit=${pageSize}`);
+    items.push(...page);
+    if (page.length < pageSize) return items;
+  }
+}
+
+export async function fetchJobEventsAfter(id: number, afterEventId: number): Promise<JobEvent[]> {
+  const events: JobEvent[] = [];
+  let cursor = afterEventId;
+  for (;;) {
+    const page = await apiRequest<JobEvent[]>(`/api/jobs/${id}/events?afterEventId=${cursor}&limit=${pageSize}`);
+    for (const event of page) {
+      if (event.id > cursor) events.push(event);
+      cursor = Math.max(cursor, event.id);
+    }
+    if (page.length < pageSize) return events;
+  }
+}
+
+export function fetchAllJobEvents(id: number): Promise<JobEvent[]> {
+  return fetchJobEventsAfter(id, 0);
+}
+
+export function setJobDetailData(queryClient: QueryClient, value: JobDetail): void {
+  queryClient.setQueryData(queryKeys.job(value.id), value);
+  queryClient.setQueryData(queryKeys.jobItems(value.id), value.items);
+  queryClient.setQueryData(queryKeys.jobEvents(value.id), value.events);
+}
+
+export async function invalidateJobAuthority(
+  queryClient: QueryClient,
+  id: number,
+  includeEvents = true,
+): Promise<void> {
+  const invalidations = [
+    queryClient.invalidateQueries({ queryKey: queryKeys.jobs, exact: true }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.job(id), exact: true }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.jobItems(id), exact: true }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.gpuSlots, exact: true }),
+  ];
+  if (includeEvents) {
+    invalidations.push(queryClient.invalidateQueries({ queryKey: queryKeys.jobEvents(id), exact: true }));
+  }
+  await Promise.all(invalidations);
+}
 
 function json(value: unknown): RequestInit {
   return { body: JSON.stringify(value) };
@@ -76,7 +127,17 @@ export function useJobsQuery() { return useQuery(generationQueries.jobs()); }
 export function useGpuSlotsQuery() { return useQuery(generationQueries.gpuSlots()); }
 
 export function useJobQuery(id: number | null) {
-  return useQuery({ ...generationQueries.job(id ?? 0), enabled: id !== null });
+  const client = useQueryClient();
+  const jobId = id ?? 0;
+  return useQuery({
+    ...generationQueries.job(jobId),
+    queryFn: async () => {
+      const value = await apiRequest<JobDetail>(`/api/jobs/${jobId}`);
+      setJobDetailData(client, value);
+      return value;
+    },
+    enabled: id !== null,
+  });
 }
 
 export function useJobItemsQuery(id: number | null) {
@@ -202,7 +263,7 @@ export function useSubmitBatchMutation() {
       ...json({ expectedRevision, expectedGpuRevisions, confirmModelSwitch }),
     }),
     onSuccess: async value => {
-      client.setQueryData(queryKeys.job(value.id), value);
+      setJobDetailData(client, value);
       await Promise.all([
         invalidateCatalog(client, queryKeys.jobs),
         invalidateCatalog(client, queryKeys.batchDrafts),
@@ -223,11 +284,8 @@ export function useCancelJobMutation() {
   return useMutation({
     mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<JobDetail>(`/api/jobs/${id}/cancel`, { method: 'POST', ...json({ expectedRevision }) }),
     onSuccess: async value => {
-      client.setQueryData(queryKeys.job(value.id), value);
-      await Promise.all([
-        invalidateCatalog(client, queryKeys.jobs),
-        invalidateCatalog(client, queryKeys.gpuSlots),
-      ]);
+      setJobDetailData(client, value);
+      await invalidateJobAuthority(client, value.id);
     },
   });
 }

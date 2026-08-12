@@ -295,6 +295,10 @@ export interface JobItem {
   rendererPromptId: string | null;
   sourceAssetId: number | null;
   primaryAssetId: number | null;
+  renderProgress?: {
+    value: number;
+    maximum: number;
+  } | null;
   revision: number;
   createdAt: string;
   updatedAt: string;
