@@ -414,3 +414,30 @@ def test_background_policy_rejects_person_music_emotion_internal_and_protocol_co
 def test_background_policy_returns_valid_text_unchanged() -> None:
     value = "Low room tone and steady ventilation remain audible."
     assert validate_background_policy_text(value, "ambientAudio") is value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Alone in a small kitchen, preparing a surprise breakfast.",
+        "A surprise birthday card lies unopened on the table.",
+        "A happy hour notice hangs near the empty counter.",
+    ],
+)
+def test_background_policy_allows_emotion_words_used_as_scene_content(value: str) -> None:
+    assert validate_background_policy_text(value, "scene") is value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "surprise",
+        "Emotion: surprise",
+        "Surprise is the true emotion.",
+        "The room feels surprised.",
+        "The lighting creates a sad atmosphere.",
+    ],
+)
+def test_background_policy_rejects_explicit_emotion_annotations(value: str) -> None:
+    with pytest.raises(PromptPolicyViolation, match="emotion labels"):
+        validate_background_policy_text(value, "scene")

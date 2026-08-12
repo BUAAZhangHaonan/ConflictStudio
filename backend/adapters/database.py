@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from backend.domain.enums import GpuAvailability, GpuSlotName
 from backend.domain.models import GpuSlot
-from backend.domain.prompt_policy import BACKGROUND_DATABASE_FORBIDDEN_PHRASES
+from backend.domain.prompt_policy import BANNED_EMOTION_LABELS, BACKGROUND_DATABASE_FORBIDDEN_PHRASES
 
 
 SQLITE_BUSY_TIMEOUT_MS = 100
@@ -123,15 +123,20 @@ class Database:
                 END
                 """
             )
-            background_text = (
-                "lower(coalesce(NEW.scene, '') || ' ' || coalesce(NEW.ambient_audio, '') || ' ' || "
-                "coalesce(NEW.relationship, '') || ' ' || coalesce(NEW.lighting, '') || ' ' || "
-                "coalesce(NEW.framing_supplement, ''))"
-            )
-            forbidden_checks = " OR ".join(
+            background_columns = ("scene", "ambient_audio", "relationship", "lighting", "framing_supplement")
+            background_text = "lower(" + " || ' ' || ".join(
+                f"coalesce(NEW.{column}, '')" for column in background_columns
+            ) + ")"
+            forbidden_checks = [
                 f"instr({background_text}, '{phrase.casefold().replace(chr(39), chr(39) * 2)}') > 0"
                 for phrase in BACKGROUND_DATABASE_FORBIDDEN_PHRASES
+            ]
+            forbidden_checks.extend(
+                f"lower(trim(coalesce(NEW.{column}, ''))) = '{label.casefold()}'"
+                for column in background_columns
+                for label in BANNED_EMOTION_LABELS
             )
+            invalid_background = " OR ".join(forbidden_checks)
             for operation in ("INSERT", "UPDATE"):
                 trigger_name = f"reject_video_background_presets_{operation.casefold()}"
                 connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
@@ -139,7 +144,7 @@ class Database:
                     f"""
                     CREATE TRIGGER {trigger_name}
                     BEFORE {operation} ON video_background_presets
-                    WHEN {forbidden_checks}
+                    WHEN {invalid_background}
                     BEGIN
                         SELECT RAISE(ABORT, 'video background preset violates prompt policy');
                     END

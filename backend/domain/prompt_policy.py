@@ -209,14 +209,54 @@ FORBIDDEN_BACKGROUND_PERSON_PHRASES: tuple[str, ...] = (
     "background people",
 )
 
+_EXPLICIT_EMOTION_PREFIXES: tuple[str, ...] = (
+    "emotion: ",
+    "emotion = ",
+    "emotion is ",
+    "mood: ",
+    "mood = ",
+    "mood is ",
+    "feels ",
+    "seems ",
+    "appears ",
+    "looks ",
+    "sounds ",
+    "conveys ",
+    "expresses ",
+    "evokes ",
+    "shows ",
+    "indicates ",
+    "signals ",
+)
+
+_EXPLICIT_EMOTION_SUFFIXES: tuple[str, ...] = (
+    " emotion",
+    " mood",
+    " feeling",
+    " affect",
+    " emotional state",
+    " atmosphere",
+    " tone",
+    " expression",
+)
+
 BACKGROUND_DATABASE_FORBIDDEN_PHRASES: tuple[str, ...] = tuple(
     dict.fromkeys(
         (
             *FORBIDDEN_BACKGROUND_PERSON_PHRASES,
             *FORBIDDEN_MUSIC_PHRASES,
-            *BANNED_EMOTION_LABELS,
             *FORBIDDEN_INTERNAL_PHRASES,
             *FORBIDDEN_BACKGROUND_PROTOCOL_PHRASES,
+            *(
+                f"{prefix}{label}"
+                for prefix in _EXPLICIT_EMOTION_PREFIXES
+                for label in BANNED_EMOTION_LABELS
+            ),
+            *(
+                f"{label}{suffix}"
+                for label in BANNED_EMOTION_LABELS
+                for suffix in _EXPLICIT_EMOTION_SUFFIXES
+            ),
         )
     )
 )
@@ -450,7 +490,9 @@ def validate_background_policy_text(value: str, field_name: str = "background") 
     violations: list[str] = []
     _append_phrase_violation(violations, value, FORBIDDEN_BACKGROUND_PERSON_PHRASES, "another person")
     _append_phrase_violation(violations, value, FORBIDDEN_MUSIC_PHRASES, "music or score terms")
-    _append_phrase_violation(violations, value, BANNED_EMOTION_LABELS, "emotion labels")
+    emotion_labels = _find_explicit_emotion_label_uses(value, BANNED_EMOTION_LABELS)
+    if emotion_labels:
+        violations.append(f"positivePrompt must not contain emotion labels: {', '.join(emotion_labels)}")
     _append_phrase_violation(violations, value, FORBIDDEN_INTERNAL_PHRASES, "internal category or protocol names")
     _append_phrase_violation(violations, value, FORBIDDEN_BACKGROUND_PROTOCOL_PHRASES, "protocol conflicts")
     if violations:
@@ -504,6 +546,31 @@ def _find_phrases(text: str, phrases: Sequence[str]) -> list[str]:
         pattern = rf"(?<![A-Za-z0-9_]){re.escape(clean)}(?![A-Za-z0-9_])"
         if re.search(pattern, text.casefold()):
             found.append(clean)
+    return list(dict.fromkeys(found))
+
+
+def _find_explicit_emotion_label_uses(text: str, labels: Sequence[str]) -> list[str]:
+    normalized = text.casefold()
+    context_noun = r"(?:emotion|mood|feeling|affect|emotional state|atmosphere|tone|expression)"
+    field_name = rf"(?:(?:true|apparent|surface|target|expressed|displayed)\s+)?{context_noun}"
+    attribution = r"(?:feels?|seems?|appears?|looks?|sounds?|conveys?|expresses?|evokes?|shows?|indicates?|signals?)"
+    found: list[str] = []
+
+    for label in labels:
+        clean = label.strip().casefold()
+        if not clean:
+            continue
+        token = rf"(?<![A-Za-z0-9_]){re.escape(clean)}(?![A-Za-z0-9_])"
+        patterns = (
+            rf"^\s*{token}\s*$",
+            rf"\b{field_name}\b\s*(?::|=|\bis\b)?\s*(?:an?\s+)?{token}",
+            rf"{token}\s*(?:\bis\b\s*)?(?:the\s+)?\b{field_name}\b",
+            rf"\b{attribution}\b\s+(?:clearly\s+|visibly\s+|strongly\s+)?{token}",
+            rf"{token}\s+(?:emotional\s+)?\b{context_noun}\b",
+        )
+        if any(re.search(pattern, normalized) for pattern in patterns):
+            found.append(clean)
+
     return list(dict.fromkeys(found))
 
 

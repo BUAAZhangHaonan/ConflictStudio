@@ -180,6 +180,16 @@ def background_request(**overrides: object) -> dict[str, object]:
     return values
 
 
+def test_background_create_accepts_natural_scene_use_of_emotion_word(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        response = client.post(
+            "/api/video-background-presets",
+            json=background_request(scene="Alone in a small kitchen, preparing a surprise breakfast."),
+        )
+
+    assert response.status_code == 201
+
+
 @pytest.mark.parametrize(
     ("field", "expected_field", "value", "message"),
     [

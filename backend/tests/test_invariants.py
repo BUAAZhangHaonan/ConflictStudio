@@ -100,12 +100,30 @@ def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> 
                 ),
             )
 
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                f"INSERT INTO video_background_presets ({columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "Invalid emotion background",
+                    "invalid emotion background",
+                    "A private office with one chair.",
+                    "Room tone",
+                    "",
+                    "Emotion: surprise",
+                    "Medium shot",
+                    "Active",
+                    1,
+                    "2026-08-12T00:00:00Z",
+                    "2026-08-12T00:00:00Z",
+                ),
+            )
+
         connection.execute(
             f"INSERT INTO video_background_presets ({columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 "Valid background",
                 "valid background",
-                "A private office with one chair.",
+                "Alone in a small kitchen, preparing a surprise breakfast.",
                 "Room tone",
                 "",
                 "Soft daylight",
