@@ -1,10 +1,12 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import './locales';
 import { App } from './app/App';
 import { RepositoryProvider } from './store';
 import { ToastProvider } from './components';
+import { createGenerationQueryClient } from './api/queryClient';
 import './styles/tokens.css';
 import './styles/global.css';
 import './styles/components.css';
@@ -12,6 +14,7 @@ import './styles/responsive.css';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Application root is missing.');
+const queryClient = createGenerationQueryClient();
 
 const router = createBrowserRouter([{
   path: '*',
@@ -28,8 +31,10 @@ const router = createBrowserRouter([{
 
 createRoot(root).render(
   <StrictMode>
-    <RepositoryProvider>
-      <RouterProvider router={router} future={{ v7_startTransition: true }} />
-    </RepositoryProvider>
+    <QueryClientProvider client={queryClient}>
+      <RepositoryProvider>
+        <RouterProvider router={router} future={{ v7_startTransition: true }} />
+      </RepositoryProvider>
+    </QueryClientProvider>
   </StrictMode>,
 );
