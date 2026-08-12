@@ -1,26 +1,21 @@
-You create one complete input for a short, audio-bearing, single-person video.
+You create the variable components for one short, audio-bearing, single-person video. The application, not you, assembles the final render prompt.
 
-The positivePrompt has strict rules:
-1. Write 80 to 150 English words, excluding the required short Mandarin quotation.
-2. Return one plain-text paragraph with no line breaks, lists, bullets, headings or code fences.
-3. Use present tense. Describe only observable physical details. Do not name emotions or make certainty claims.
-4. Show exactly one adult person. Introduce that person's appearance in the opening sentence. Do not add another on-screen or off-camera person.
-5. Follow this exact order: appearance; body action and facial behavior; audible speech and concrete environmental sound; setting; camera movement or framing; lighting.
-6. Include a short natural Mandarin spoken phrase exactly once inside straight English double quotes. Describe its audible delivery and a separate, generatable environmental sound.
-7. Do not include music, a score, subtitles, captions or rendered text.
-8. Do not include category codes, protocol names, modality names, directions, internal fields, analysis or explanations in positivePrompt.
-9. VA stores the quoted phrase in dialogue and sets vtText to null.
-10. VT stores the quoted phrase independently in vtText and sets dialogue to null. VT still renders an audio-bearing source video; a later step removes its audio for the silent primary derivative.
+Follow these rules:
+1. Show one adult alone in a small enclosed space. Do not imply an on-screen or off-camera listener.
+2. The person faces the camera. Keep facial and upper-body behavior overt, sustained while speaking and held after the final word.
+3. Use actions that a close-up camera can render. Do not rely on micro-expressions, pupil changes, skin pallor, sweat or hands outside the portrait frame.
+4. spokenText is natural Mandarin self-talk with clear emotional meaning. It contains no quote marks or written laughter and occupies most of a five-second clip.
+5. visualBehavior is observable English description only. Do not name emotions, channels, categories, protocols or internal fields.
+6. vocalDelivery is an English phrase that can follow The subject says. It contains no terminal punctuation.
+7. environmentalSound is one concrete English sentence. Do not add music, a score, background speech, voiceover or narration.
+8. setting is one concrete English sentence with no other person, visible recording equipment or lighting equipment.
+9. cameraSupplement and lightingSupplement are optional English sentences. Use an empty string when the selected records need no addition. Never request camera movement, a wide shot, dim lighting or heavy facial shadows.
+10. trueEmotionDescription is two to four concise Chinese sentences. State the true emotion, the event and the visible, vocal or textual evidence that lets a reviewer judge the sample.
 11. Follow this protocol rule: {{ policy.protocol_rule }}
 12. Follow this relation rule: {{ policy.relation_rule }}
 13. Follow this direction rule: {{ direction_rule }}
 
 Return exactly one JSON object with these keys and no additional keys:
-positivePrompt, dialogue, vtText, trueEmotionDescription
+spokenText, visualBehavior, vocalDelivery, environmentalSound, setting, cameraSupplement, lightingSupplement, trueEmotionDescription
 
-positivePrompt is the unchanged final render prompt.
-dialogue is a short Mandarin string for VA and null for VT.
-vtText is a short Mandarin string for VT and null for VA.
-trueEmotionDescription is a non-empty concise Chinese string for the reviewer.
-The quoted phrase in positivePrompt must exactly equal dialogue for VA or vtText for VT.
-Return strict JSON only. Do not wrap it in a code fence or add prose.
+Return strict JSON only. Do not return positivePrompt. Do not wrap the object in a code fence or add prose.

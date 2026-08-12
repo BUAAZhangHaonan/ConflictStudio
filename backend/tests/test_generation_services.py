@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from backend.adapters.database import Database
-from backend.adapters.llm import OpenAICompatiblePromptModel
+from backend.adapters.llm import OpenAICompatiblePromptModel, UnconfiguredPromptModel
 from backend.domain.enums import (
     BatchDraftStatus,
     Category,
@@ -231,6 +231,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     calls: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://llm.example/v1/chat/completions"
         calls.append(json.loads(request.content))
         return httpx.Response(
             200,
@@ -240,19 +241,20 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "positivePrompt": (
-                                        "An East Asian woman in a charcoal jacket keeps her dark hair neatly tucked "
-                                        "behind one ear. She sits upright, folds both hands on her lap, presses her "
-                                        "lips together, and raises her chin while her gaze stays level. She says "
-                                        "\"结果出来了，没什么需要担心的。\" in a low steady voice as the ventilation "
-                                        "hums softly and a wall clock ticks at an even pace. The private office has "
-                                        "pale walls, a bare wooden table, and one closed window behind her stool. The "
-                                        "camera holds a static eye-level medium shot with a slow, almost imperceptible "
-                                        "push inward. Soft daylight falls from the left, leaving a narrow shadow along "
-                                        "her jaw and gentle highlights across the jacket fabric."
+                                    "spokenText": "结果出来了，没什么需要担心的。",
+                                    "visualBehavior": (
+                                        "She sits upright, folds both hands on her lap, presses her lips together, "
+                                        "and keeps her gaze level through the end of the clip."
                                     ),
-                                    "dialogue": "结果出来了，没什么需要担心的。",
-                                    "vtText": None,
+                                    "vocalDelivery": "in a low, steady voice with a measured pace",
+                                    "environmentalSound": (
+                                        "The ventilation hums softly while a wall clock ticks at an even pace."
+                                    ),
+                                    "setting": (
+                                        "The private office has pale walls, a bare wooden table and one closed window."
+                                    ),
+                                    "cameraSupplement": "",
+                                    "lightingSupplement": "Soft daylight adds gentle highlights across the jacket fabric.",
                                     "trueEmotionDescription": "声音中的放松表达真实情感，视觉表现仍显得担忧。",
                                 },
                                 ensure_ascii=False,
@@ -264,7 +266,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
         )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    model = OpenAICompatiblePromptModel("https://llm.example/v1", "test-key", client)
+    model = OpenAICompatiblePromptModel("https://llm.example/v1/chat/completions", "test-key", client)
     service = PromptService(model)
     with database.read_session() as session:
         from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
@@ -289,6 +291,28 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     assert calls[0]["response_format"] == {"type": "json_object"}
     assert "Good writing example" in prepared.user_input
     assert "Bad writing example" not in result.final_positive_prompt
+    assert result.final_positive_prompt.startswith("A 45-year-old East Asian female")
+    assert '"结果出来了，没什么需要担心的。"' in result.final_positive_prompt
+    assert "front-facing close-up head-and-shoulders" in result.final_positive_prompt
+
+
+def test_prompt_model_requires_one_exact_endpoint_and_ignores_removed_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CONFLICTSTUDIO_LLM_ENDPOINT", raising=False)
+    monkeypatch.delenv("CONFLICTSTUDIO_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("CONFLICTSTUDIO_LLM_BASE_URL", "https://removed.example/v1")
+
+    assert isinstance(OpenAICompatiblePromptModel.from_environment(), UnconfiguredPromptModel)
+
+    endpoint = "https://llm.example/v1/chat/completions"
+    monkeypatch.setenv("CONFLICTSTUDIO_LLM_ENDPOINT", endpoint)
+    monkeypatch.setenv("CONFLICTSTUDIO_LLM_API_KEY", "test-key")
+    model = OpenAICompatiblePromptModel.from_environment()
+
+    assert isinstance(model, OpenAICompatiblePromptModel)
+    assert model.endpoint == endpoint
+    asyncio.run(model.close())
 
 
 def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Path) -> None:

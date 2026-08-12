@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .enums import Category, ConflictDirection
 
 
-POLICY_VERSION = "2026-08-12.2"
+POLICY_VERSION = "2026-08-12.3"
 
 
 @dataclass(frozen=True)
@@ -21,44 +21,46 @@ class CategoryPolicy:
 POLICIES = {
     Category.A_VA: CategoryPolicy(
         category=Category.A_VA,
-        protocol_rule="The visible behavior and the Mandarin speech, including vocal delivery, convey the same underlying state.",
-        relation_rule="Keep visual and audio evidence aligned without naming an emotion label in the video description.",
+        protocol_rule=(
+            "The visible behavior, Mandarin words and vocal delivery all convey the true state."
+        ),
+        relation_rule="Keep the visible and audible evidence aligned.",
         output_rule=(
-            "Return a short Mandarin dialogue value and no VT text. The positive prompt must include that exact "
-            'dialogue once inside straight English double quotes.'
+            "Write the short Mandarin dialogue in spokenText. The application stores it as VA dialogue and "
+            "inserts it once in the render prompt."
         ),
     ),
     Category.A_VT: CategoryPolicy(
         category=Category.A_VT,
         protocol_rule=(
-            "The visible behavior and the independently stored Mandarin VT text convey the same underlying state. "
-            "The source video carries audible speech before its audio is removed for the silent primary derivative."
+            "The visible behavior and independently stored Mandarin text both convey the true state. "
+            "The source vocal delivery follows the visible behavior before the audio is removed."
         ),
-        relation_rule="Do not render text or subtitles in the video and do not name an emotion label.",
+        relation_rule="Keep the visible evidence and stored text aligned without rendering the text on screen.",
         output_rule=(
-            "Return a short Mandarin VT text value and no dialogue value. The positive prompt must include that exact "
-            "VT text once as audible speech inside straight English double quotes."
+            "Write the short Mandarin text in spokenText. The application stores it as independent VT text and "
+            "uses the same words as source-video speech before removing the audio."
         ),
     ),
     Category.C_VA: CategoryPolicy(
         category=Category.C_VA,
-        protocol_rule="The visible behavior and Mandarin speech intentionally disagree.",
-        relation_rule="One modality carries the underlying state and the other carries the surface state.",
+        protocol_rule="The visible behavior intentionally disagrees with the Mandarin words and vocal delivery.",
+        relation_rule="Follow the selected direction exactly and keep the disagreement readable throughout the clip.",
         output_rule=(
-            "Return a short Mandarin dialogue value and no VT text. The positive prompt must include that exact "
-            'dialogue once inside straight English double quotes.'
+            "Write the short Mandarin dialogue in spokenText. The application stores it as VA dialogue and "
+            "inserts it once in the render prompt."
         ),
     ),
     Category.C_VT: CategoryPolicy(
         category=Category.C_VT,
         protocol_rule=(
-            "The visible behavior and the independently stored Mandarin VT text intentionally disagree. "
-            "The source video carries audible speech before its audio is removed for the silent primary derivative."
+            "The visible behavior intentionally disagrees with the independently stored Mandarin text. "
+            "The source vocal delivery follows the visible behavior before the audio is removed."
         ),
-        relation_rule="Do not render the text in the video and keep the conflict in the requested direction.",
+        relation_rule="Follow the selected direction exactly and never render the stored text on screen.",
         output_rule=(
-            "Return a short Mandarin VT text value and no dialogue value. The positive prompt must include that exact "
-            "VT text once as audible speech inside straight English double quotes."
+            "Write the short Mandarin text in spokenText. The application stores it as independent VT text and "
+            "uses the same words as source-video speech before removing the audio."
         ),
     ),
 }
@@ -304,15 +306,18 @@ class PromptPolicyViolation(ValueError):
 
 def direction_rule(category: Category, direction: ConflictDirection | None) -> str:
     if category in {Category.A_VA, Category.A_VT}:
-        return "There is no conflict direction because both modalities are aligned."
-    labels = {
-        ConflictDirection.VISION: "Visible behavior carries the underlying state; the other modality carries the surface state.",
-        ConflictDirection.AUDIO: "Vocal delivery and speech carry the underlying state; visible behavior carries the surface state.",
-        ConflictDirection.TEXT: "The separate text carries the underlying state; visible behavior carries the surface state.",
-    }
+        return "All retained channels carry the true state."
     if direction is None:
         raise ValueError("Conflict content requires a direction")
-    return labels[direction]
+    if category is Category.C_VA and direction is ConflictDirection.VISION:
+        return "Visible behavior carries the true state; the Mandarin words and vocal delivery carry the apparent state."
+    if category is Category.C_VA and direction is ConflictDirection.AUDIO:
+        return "The Mandarin words and vocal delivery carry the true state; visible behavior carries the apparent state."
+    if category is Category.C_VT and direction is ConflictDirection.VISION:
+        return "Visible behavior and source vocal delivery carry the true state; the stored Mandarin text carries the apparent state."
+    if category is Category.C_VT and direction is ConflictDirection.TEXT:
+        return "The stored Mandarin text carries the true state; visible behavior and source vocal delivery carry the apparent state."
+    raise ValueError("Conflict direction does not match the category")
 
 
 def validate_final_positive_prompt(
@@ -323,6 +328,7 @@ def validate_final_positive_prompt(
     apparent_emotion: str = "",
     expected_ethnicity: str | None = None,
     expected_gender: str | None = None,
+    expected_age: int | None = None,
 ) -> None:
     """Validate a final video prompt without changing any supplied text."""
 
@@ -382,6 +388,8 @@ def validate_final_positive_prompt(
     if re.search(r"\b(?:man|woman|adult|person)\b[^.!?]{0,80}\band\b[^.!?]{0,80}\b(?:man|woman|adult|person)\b", narrative, re.IGNORECASE):
         violations.append("positivePrompt must contain exactly one on-screen person")
     _validate_expected_demographic(narrative, expected_ethnicity, expected_gender, violations)
+    if expected_age is not None and not re.search(rf"\b{expected_age}-year-old\b", narrative, re.IGNORECASE):
+        violations.append("positivePrompt appearance must match the selected age")
 
     action_position = _first_pattern_position(structural_text, _ACTION_PATTERNS)
     speech_position = _first_pattern_position(prompt, _SPEECH_PATTERNS)

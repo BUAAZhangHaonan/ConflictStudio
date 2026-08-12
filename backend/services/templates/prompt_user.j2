@@ -1,6 +1,6 @@
-Create the video input from the following selected records.
+Create one set of video components from these selected records.
 
-Content instruction:
+Content requirements:
 {{ content_instruction }}
 
 Scene:
@@ -15,7 +15,7 @@ Psychological background:
 True state for reasoning only:
 {{ true_emotion }}
 
-Surface state for reasoning only:
+Apparent state for reasoning only:
 {{ apparent_emotion }}
 
 Content scene supplement:
@@ -39,18 +39,16 @@ Age: {{ age }}
 Gender: {{ gender }}
 Population: {{ ethnicity }}
 
-Positive examples for the prompt-writing task only:
+Positive examples for component writing only:
 {% for example in positive_examples %}{{ loop.index }}. {{ example }}
 {% else %}None
 {% endfor %}
 
-Negative examples for the prompt-writing task only:
+Negative examples for component writing only:
 {% for example in negative_examples %}{{ loop.index }}. {{ example }}
 {% else %}None
 {% endfor %}
 
 {{ policy.output_rule }}
 
-Use the selected ambient audio as concrete environmental sound in positivePrompt. Keep all required
-substance in this order: appearance, body action and facial behavior, speech plus environmental sound,
-setting, camera, lighting. The final positivePrompt is validated exactly as returned and is never repaired.
+Write the reviewer description first in your reasoning, then derive spokenText, visualBehavior, vocalDelivery and setting from the same event. Keep the selected background, framing, lighting and style recognizable. The application inserts the subject demographics, exact spokenText, fixed close-up camera rule and fixed bright-lighting rule without repairing your fields.

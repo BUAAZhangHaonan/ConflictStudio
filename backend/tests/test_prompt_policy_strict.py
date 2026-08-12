@@ -6,15 +6,24 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from backend.domain.enums import Category, ContentMode, ContentStatus, Ethnicity, Gender, ResourceStatus
+from backend.domain.enums import (
+    Category,
+    ConflictDirection,
+    ContentMode,
+    ContentStatus,
+    Ethnicity,
+    Gender,
+    ResourceStatus,
+)
 from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
 from backend.domain.prompt_policy import (
     PromptPolicyViolation,
+    direction_rule,
     validate_background_policy_text,
     validate_final_positive_prompt,
 )
 from backend.services.errors import ServiceError
-from backend.services.prompts import GeneratedPrompt, PromptContext, PromptService
+from backend.services.prompts import GeneratedPromptComponents, PromptContext, PromptService
 
 
 VA_DIALOGUE = "我没事，只是需要一点时间。"
@@ -56,17 +65,23 @@ class StaticPromptModel:
         return None
 
 
-def prompt_json(
-    positive_prompt: str,
+def component_json(
     *,
-    dialogue: str | None = VA_DIALOGUE,
-    vt_text: str | None = None,
+    spoken_text: str = VA_DIALOGUE,
+    visual_behavior: str = (
+        "The subject sits upright, folds both hands on the lap, presses the lips together, raises the chin, "
+        "and keeps a steady gaze through the end of the clip."
+    ),
 ) -> str:
     return json.dumps(
         {
-            "positivePrompt": positive_prompt,
-            "dialogue": dialogue,
-            "vtText": vt_text,
+            "spokenText": spoken_text,
+            "visualBehavior": visual_behavior,
+            "vocalDelivery": "in a low, steady voice with a measured pace",
+            "environmentalSound": "The ventilation hums softly while a wall clock ticks at an even pace.",
+            "setting": "The private office has pale walls, a bare wooden table and one closed window.",
+            "cameraSupplement": "",
+            "lightingSupplement": "Soft daylight adds gentle highlights across the plain fabric.",
             "trueEmotionDescription": "说话内容和可见动作共同表达受控状态。",
         },
         ensure_ascii=False,
@@ -148,6 +163,28 @@ def test_strict_policy_accepts_complete_va_prompt() -> None:
 
 
 @pytest.mark.parametrize(
+    "category,direction,required_text",
+    [
+        (Category.C_VA, ConflictDirection.VISION, "words and vocal delivery carry the apparent state"),
+        (Category.C_VA, ConflictDirection.AUDIO, "words and vocal delivery carry the true state"),
+        (Category.C_VT, ConflictDirection.VISION, "stored Mandarin text carries the apparent state"),
+        (Category.C_VT, ConflictDirection.TEXT, "stored Mandarin text carries the true state"),
+    ],
+)
+def test_conflict_direction_rules_assign_every_retained_channel(
+    category: Category,
+    direction: ConflictDirection,
+    required_text: str,
+) -> None:
+    assert required_text in direction_rule(category, direction)
+
+
+def test_conflict_direction_rule_rejects_protocol_mismatch() -> None:
+    with pytest.raises(ValueError, match="does not match"):
+        direction_rule(Category.C_VA, ConflictDirection.TEXT)
+
+
+@pytest.mark.parametrize(
     "invalid_prompt, expected",
     [
         (VALID_VA_PROMPT.replace("her gaze stays level", "her sad gaze stays level"), "emotion labels"),
@@ -165,14 +202,35 @@ def test_strict_policy_rejects_semantically_invalid_prompt(invalid_prompt: str, 
 
 def test_generated_prompt_rejects_whitespace_only_fields() -> None:
     with pytest.raises(ValidationError):
-        GeneratedPrompt.model_validate(
+        GeneratedPromptComponents.model_validate(
             {
-                "positivePrompt": "   ",
-                "dialogue": VA_DIALOGUE,
-                "vtText": None,
+                "spokenText": "   ",
+                "visualBehavior": "The subject keeps a steady gaze.",
+                "vocalDelivery": "in a steady voice",
+                "environmentalSound": "The ventilation hums softly.",
+                "setting": "The private office remains quiet.",
+                "cameraSupplement": "",
+                "lightingSupplement": "",
                 "trueEmotionDescription": "有效说明",
             }
         )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("visualBehavior", "The subject turns into a side profile and keeps both hands still."),
+        ("environmentalSound", "An off-screen voice answers while the ventilation hums."),
+        ("setting", "The office contains a visible light fixture beside the desk."),
+        ("cameraSupplement", "The camera pushes inward with a slow zoom."),
+        ("lightingSupplement", "Dim lighting leaves a heavy shadow across the face."),
+    ],
+)
+def test_generated_components_reject_prompt_make_rendering_failures(field: str, value: str) -> None:
+    payload = json.loads(component_json())
+    payload[field] = value
+    with pytest.raises(ValidationError):
+        GeneratedPromptComponents.model_validate(payload)
 
 
 def test_fixed_and_generative_prompts_use_the_same_final_policy() -> None:
@@ -188,7 +246,14 @@ def test_fixed_and_generative_prompts_use_the_same_final_policy() -> None:
         asyncio.run(fixed_service.complete(fixed, Category.A_VA))
 
     generated_service = PromptService(
-        StaticPromptModel(prompt_json(VALID_VA_PROMPT.replace("gaze stays level", "sad gaze stays level")))
+        StaticPromptModel(
+            component_json(
+                visual_behavior=(
+                    "The subject sits upright, folds both hands on the lap, and keeps a sad gaze level "
+                    "through the end of the clip."
+                )
+            )
+        )
     )
     generated = generated_service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
     with pytest.raises(ServiceError) as generated_error:
@@ -211,18 +276,23 @@ def test_valid_fixed_prompt_is_checked_after_ordered_composition() -> None:
     assert result.final_positive_prompt == prepared.fixed_output.positive_prompt
 
 
-def test_generative_prompt_is_preserved_exactly_without_whitespace_repair() -> None:
-    prompt = VALID_VA_PROMPT.replace("folds both hands", "folds  both hands")
-    service = PromptService(StaticPromptModel(prompt_json(prompt)))
+def test_generative_components_are_assembled_in_fixed_render_order_without_repair() -> None:
+    visual = (
+        "The subject sits upright, folds  both hands on the lap, presses the lips together, raises the chin, "
+        "and keeps a steady gaze through the end of the clip."
+    )
+    service = PromptService(StaticPromptModel(component_json(visual_behavior=visual)))
     prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
     result = asyncio.run(service.complete(prepared, Category.A_VA))
 
-    assert "folds  both hands" in result.final_positive_prompt
-    assert result.final_positive_prompt == prompt
+    assert visual in result.final_positive_prompt
+    assert result.final_positive_prompt.index(visual) < result.final_positive_prompt.index('The subject says "')
+    assert "front-facing close-up head-and-shoulders" in result.final_positive_prompt
+    assert "positivePrompt" not in result.raw_structured_response
 
 
 def test_vt_source_prompt_contains_exact_independently_stored_spoken_text() -> None:
-    model = StaticPromptModel(prompt_json(VALID_VT_PROMPT, dialogue=None, vt_text=VT_TEXT))
+    model = StaticPromptModel(component_json(spoken_text=VT_TEXT))
     service = PromptService(model)
     prepared = service.prepare(
         prompt_context(
@@ -237,11 +307,12 @@ def test_vt_source_prompt_contains_exact_independently_stored_spoken_text() -> N
     assert result.dialogue is None
     assert result.vt_text == VT_TEXT
     assert f'"{VT_TEXT}"' in result.final_positive_prompt
-    assert "audio-bearing source video" in prepared.system_input
+    assert "audio-bearing" in prepared.system_input
+    assert "source vocal delivery follows the visible behavior" in prepared.system_input
 
 
 def test_strict_json_rejects_code_fenced_response() -> None:
-    raw = f"```json\n{prompt_json(VALID_VA_PROMPT)}\n```"
+    raw = f"```json\n{component_json()}\n```"
     service = PromptService(StaticPromptModel(raw))
     prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
 
@@ -253,10 +324,17 @@ def test_strict_json_rejects_code_fenced_response() -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        prompt_json(VALID_VA_PROMPT).replace(
-            '"positivePrompt":', '"positivePrompt": "duplicate", "positivePrompt":', 1
+        component_json().replace('"spokenText":', '"spokenText": "duplicate", "spokenText":', 1),
+        component_json().replace('"spokenText":', '"spoken_text":', 1),
+        json.dumps(
+            {
+                "positivePrompt": VALID_VA_PROMPT,
+                "dialogue": VA_DIALOGUE,
+                "vtText": None,
+                "trueEmotionDescription": "有效说明",
+            },
+            ensure_ascii=False,
         ),
-        prompt_json(VALID_VA_PROMPT).replace('"positivePrompt":', '"positive_prompt":', 1),
     ],
 )
 def test_strict_json_rejects_duplicate_and_non_camel_keys(raw: str) -> None:
@@ -299,6 +377,11 @@ def test_policy_accepts_matching_demographic_and_rejects_mismatch() -> None:
             expected_ethnicity="White",
             expected_gender="Female",
         )
+
+    age_prompt = VALID_VA_PROMPT.replace("An East Asian woman", "A 25-year-old East Asian woman")
+    validate_final_positive_prompt(age_prompt, spoken_text=VA_DIALOGUE, expected_age=25)
+    with pytest.raises(PromptPolicyViolation, match="selected age"):
+        validate_final_positive_prompt(age_prompt, spoken_text=VA_DIALOGUE, expected_age=35)
 
 
 @pytest.mark.parametrize("spoken_text", ["Hello你there", "你A"])

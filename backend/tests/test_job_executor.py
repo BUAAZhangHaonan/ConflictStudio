@@ -50,17 +50,6 @@ from backend.services.prompts import PromptService
 
 
 DIALOGUE = "我没事，只是需要一点时间。"
-VALID_PROMPT = (
-    "An East Asian woman in a charcoal jacket keeps her dark hair neatly tucked behind one ear. "
-    "She sits upright, folds both hands on her lap, presses her lips together, and raises her chin "
-    "while her gaze stays level. She says \"我没事，只是需要一点时间。\" in a low steady voice as the "
-    "ventilation hums softly and a wall clock ticks at an even pace. The private office has pale "
-    "walls, a bare wooden table, and one closed window behind her stool. The camera holds a static "
-    "eye-level medium shot with a slow, almost imperceptible push inward. Soft daylight falls from "
-    "the left, leaving a narrow shadow along her jaw and gentle highlights across the jacket fabric."
-)
-
-
 class RecordingPromptModel:
     configured = True
 
@@ -69,23 +58,20 @@ class RecordingPromptModel:
 
     async def generate(self, system_input: str, user_input: str) -> str:
         self.calls += 1
-        population = next(
-            (line.removeprefix("Population: ") for line in user_input.splitlines() if line.startswith("Population: ")),
-            "East Asian",
-        )
-        gender = next(
-            (line.removeprefix("Gender: ") for line in user_input.splitlines() if line.startswith("Gender: ")),
-            "Female",
-        )
-        population_text = {"EastAsian": "East Asian", "SouthAsian": "South Asian"}.get(population, population)
-        prompt = VALID_PROMPT.replace("East Asian", population_text, 1)
-        if gender == "Male":
-            prompt = prompt.replace("woman", "man", 1).replace("She ", "He ").replace(" her ", " his ")
         return json.dumps(
             {
-                "positivePrompt": prompt,
-                "dialogue": DIALOGUE,
-                "vtText": None,
+                "spokenText": DIALOGUE,
+                "visualBehavior": (
+                    "The subject sits upright, folds both hands on the lap, presses the lips together, raises the "
+                    "chin and keeps a steady gaze through the end of the clip."
+                ),
+                "vocalDelivery": "in a low, steady voice with a measured pace",
+                "environmentalSound": (
+                    "The ventilation hums softly while a wall clock ticks at an even pace."
+                ),
+                "setting": "The private office has pale walls, a bare wooden table and one closed window.",
+                "cameraSupplement": "",
+                "lightingSupplement": "Soft daylight adds gentle highlights across the plain fabric.",
                 "trueEmotionDescription": "说话内容和可见动作共同表达受控状态。",
             },
             ensure_ascii=False,
