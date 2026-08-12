@@ -20,6 +20,10 @@
     "class_type": "LTXVEmptyLatentAudio",
     "inputs": {"audio_vae": ["loader_audio_vae", 0], "batch_size": 1, "frame_rate": 1, "frames_number": 1}
   },
+  "concat_av": {
+    "class_type": "LTXVConcatAVLatent",
+    "inputs": {"audio_latent": ["empty_audio", 0], "video_latent": ["empty_video", 0]}
+  },
   "noise": {
     "class_type": "RandomNoise",
     "inputs": {"noise_seed": 0}
@@ -27,6 +31,22 @@
   "loader_model": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {"ckpt_name": "model.safetensors"}
+  },
+  "sampler": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {"latent_image": ["concat_av", 0]}
+  },
+  "separate_av": {
+    "class_type": "LTXVSeparateAVLatent",
+    "inputs": {"av_latent": ["sampler", 1]}
+  },
+  "vae_video": {
+    "class_type": "LTXVSpatioTemporalTiledVAEDecode",
+    "inputs": {"latents": ["separate_av", 0]}
+  },
+  "vae_audio": {
+    "class_type": "LTXVAudioVAEDecode",
+    "inputs": {"audio_vae": ["loader_audio_vae", 0], "samples": ["separate_av", 1]}
   },
   "create_video": {
     "class_type": "CreateVideo",

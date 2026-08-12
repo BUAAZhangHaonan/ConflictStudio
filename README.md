@@ -30,7 +30,7 @@ python -m compileall -q backend
 Temporary runs require:
 
 - a writable data root at `/home/team/zhanghaonan/TAFFC/ConflictStudio-data`
-- `ffmpeg` and `ffprobe`
+- `ffprobe`, used only to validate generated media
 - an existing Python environment
 - the fixed LTX-2.3 workflow file
 - the fixed H3 workflow file

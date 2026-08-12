@@ -33,7 +33,7 @@ createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <RepositoryProvider>
-        <RouterProvider router={router} future={{ v7_startTransition: true }} />
+        <RouterProvider router={router} />
       </RepositoryProvider>
     </QueryClientProvider>
   </StrictMode>,

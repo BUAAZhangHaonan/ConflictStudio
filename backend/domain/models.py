@@ -76,7 +76,7 @@ CONTENT_EMOTION_CHECK = """
 )
 """
 
-RENDERER_PROFILE_VERSION = "2026-08-12.1"
+RENDERER_PROFILE_VERSION = "2026-08-12.2"
 VIDEO_WIDTH = 1344
 VIDEO_HEIGHT = 768
 VIDEO_FPS = 24
@@ -315,10 +315,9 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
             name="ck_batch_snapshots_model_frames",
         ),
         CheckConstraint(
-            "derive_silent_primary = (category IN ('A-VT', 'C-VT'))",
-            name="ck_batch_snapshots_silent_primary",
+            "expected_has_audio = (category IN ('A-VA', 'C-VA'))",
+            name="ck_batch_snapshots_expected_audio",
         ),
-        CheckConstraint("source_has_audio = 1", name="ck_batch_snapshots_source_audio"),
         CheckConstraint(
             f"renderer_profile_version = '{RENDERER_PROFILE_VERSION}'",
             name="ck_batch_snapshots_renderer_profile",
@@ -358,8 +357,7 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     frame_count: int
     renderer_profile_version: str = Field(sa_column=Column(String(40), nullable=False))
     prompt_model: str = Field(sa_column=Column(String(80), nullable=False))
-    source_has_audio: bool
-    derive_silent_primary: bool
+    expected_has_audio: bool
     system_input: str = Field(sa_column=Column(Text, nullable=False))
     user_input: str = Field(sa_column=Column(Text, nullable=False))
     final_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))

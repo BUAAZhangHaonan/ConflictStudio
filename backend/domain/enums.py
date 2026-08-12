@@ -123,3 +123,7 @@ def validate_direction(category: Category, direction: ConflictDirection | None) 
 
 def protocol_for(category: Category) -> str:
     return "VA" if category in {Category.A_VA, Category.C_VA} else "VT"
+
+
+def expected_audio_for(category: Category) -> bool:
+    return category in {Category.A_VA, Category.C_VA}

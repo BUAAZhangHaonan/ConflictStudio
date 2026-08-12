@@ -255,8 +255,7 @@ export interface Snapshot {
   frameCount: number;
   rendererProfileVersion: string;
   promptModel: string;
-  sourceHasAudio: boolean;
-  deriveSilentPrimary: boolean;
+  expectedHasAudio: boolean;
   systemInput: string;
   userInput: string;
   finalNegativePrompt: string;

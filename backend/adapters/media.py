@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from dataclasses import dataclass
 from fractions import Fraction
@@ -38,20 +37,16 @@ class ProbeEvidence:
 class PreparedMedia:
     source_path: Path
     source_evidence: ProbeEvidence
-    primary_path: Path
-    primary_evidence: ProbeEvidence
-    derived_primary: bool
 
 
 class MediaStore:
     """Owns generation media below one explicitly configured data root."""
 
-    def __init__(self, data_root: Path, *, ffprobe_binary: str = "ffprobe", ffmpeg_binary: str = "ffmpeg") -> None:
+    def __init__(self, data_root: Path, *, ffprobe_binary: str = "ffprobe") -> None:
         if not data_root.is_dir():
             raise MediaError("A configured existing data root is required")
         self.data_root = data_root.resolve()
         self.ffprobe_binary = ffprobe_binary
-        self.ffmpeg_binary = ffmpeg_binary
 
     def relative_path(self, path: Path) -> str:
         resolved = path.resolve()
@@ -74,13 +69,9 @@ class MediaStore:
             raise MediaError("Media path escapes the configured data root") from error
         return resolved
 
-    def attempt_paths(self, job_id: int, item_sequence: int, attempt_number: int) -> tuple[Path, Path, Path]:
-        if job_id <= 0 or item_sequence <= 0 or attempt_number <= 0:
-            raise MediaError("Job id, item sequence, and attempt number must be positive")
-        directory = self.resolve(f"media/jobs/{job_id}/items/{item_sequence}/attempts/{attempt_number}")
-        return directory / "source.mp4", directory / "primary.mp4", directory / ".primary.tmp.mp4"
-
-    def probe(self, path: Path, *, require_audio: bool, model: ModelName) -> ProbeEvidence:
+    def probe(self, path: Path, *, expected_has_audio: bool, model: ModelName) -> ProbeEvidence:
+        if type(expected_has_audio) is not bool:
+            raise TypeError("expected_has_audio must be a boolean")
         relative_path = self.relative_path(path)
         checked_path = self.resolve(relative_path)
         if not checked_path.is_file() or checked_path.stat().st_size <= 0:
@@ -157,8 +148,13 @@ class MediaStore:
         expected_duration = expected_frames / VIDEO_FPS
         if abs(duration_seconds - expected_duration) > 1 / VIDEO_FPS:
             raise MediaError("Media duration does not match the model frame count")
-        if require_audio and not audio_streams:
-            raise MediaError("Source media must contain audio")
+        has_audio = bool(audio_streams)
+        if has_audio is not expected_has_audio:
+            raise MediaError(
+                "VA media must contain audio"
+                if expected_has_audio
+                else "VT media must not contain audio"
+            )
         return ProbeEvidence(
             byte_size=checked_path.stat().st_size,
             width=VIDEO_WIDTH,
@@ -166,7 +162,7 @@ class MediaStore:
             fps=VIDEO_FPS,
             frame_count=frame_count,
             duration_seconds=duration_seconds,
-            has_audio=bool(audio_streams),
+            has_audio=has_audio,
         )
 
     @staticmethod
@@ -175,79 +171,22 @@ class MediaStore:
             raise MediaError(f"Video {name} is missing or invalid")
         return int(value)
 
-    def make_vt_primary(
-        self,
-        source_path: Path,
-        primary_path: Path,
-        temporary_path: Path,
-        *,
-        model: ModelName,
-    ) -> Path:
-        self.relative_path(source_path)
-        self.relative_path(primary_path)
-        self.relative_path(temporary_path)
-        self.probe(source_path, require_audio=True, model=model)
-        primary_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            result = subprocess.run(
-                [self.ffmpeg_binary, "-y", "-i", str(source_path), "-map", "0:v:0", "-c:v", "copy", "-an", str(temporary_path)],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                raise MediaError("ffmpeg failed while making a silent primary")
-            evidence = self.probe(temporary_path, require_audio=False, model=model)
-            if evidence.has_audio:
-                raise MediaError("Silent primary unexpectedly contains audio")
-            os.replace(temporary_path, primary_path)
-        except Exception:
-            temporary_path.unlink(missing_ok=True)
-            primary_path.unlink(missing_ok=True)
-            raise
-        return primary_path
-
     def prepare_attempt(
         self,
         *,
         source_relative_path: str,
-        job_id: int,
-        item_sequence: int,
-        attempt_number: int,
         model: ModelName,
-        derive_silent_primary: bool,
+        expected_has_audio: bool,
     ) -> PreparedMedia:
         source_path = self.resolve(source_relative_path)
-        source_evidence = self.probe(source_path, require_audio=True, model=model)
-        if not derive_silent_primary:
-            return PreparedMedia(
-                source_path=source_path,
-                source_evidence=source_evidence,
-                primary_path=source_path,
-                primary_evidence=source_evidence,
-                derived_primary=False,
-            )
-
-        _, primary_path, temporary_path = self.attempt_paths(job_id, item_sequence, attempt_number)
-        self.make_vt_primary(
+        source_evidence = self.probe(
             source_path,
-            primary_path,
-            temporary_path,
+            expected_has_audio=expected_has_audio,
             model=model,
         )
-        try:
-            primary_evidence = self.probe(primary_path, require_audio=False, model=model)
-            if primary_evidence.has_audio:
-                raise MediaError("Silent primary unexpectedly contains audio")
-        except Exception:
-            primary_path.unlink(missing_ok=True)
-            raise
         return PreparedMedia(
             source_path=source_path,
             source_evidence=source_evidence,
-            primary_path=primary_path,
-            primary_evidence=primary_evidence,
-            derived_primary=True,
         )
 
     def persist_completed_attempt(
@@ -263,22 +202,11 @@ class MediaStore:
         source_asset = self._asset(prepared.source_path, prepared.source_evidence)
         session.add(source_asset)
         session.flush()
-        if prepared.derived_primary:
-            primary_asset = self._asset(prepared.primary_path, prepared.primary_evidence)
-            session.add(primary_asset)
-            session.flush()
-        else:
-            primary_asset = source_asset
         attempt.source_asset_id = source_asset.id
-        attempt.primary_asset_id = primary_asset.id
+        attempt.primary_asset_id = source_asset.id
         attempt.status = GenerationAttemptStatus.COMPLETED
         attempt.finished_at = finished_at
-        return source_asset, primary_asset
-
-    @staticmethod
-    def discard_prepared(prepared: PreparedMedia) -> None:
-        if prepared.derived_primary:
-            prepared.primary_path.unlink(missing_ok=True)
+        return source_asset, source_asset
 
     def _asset(self, path: Path, evidence: ProbeEvidence) -> Asset:
         return Asset(

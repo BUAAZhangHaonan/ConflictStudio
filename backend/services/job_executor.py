@@ -307,8 +307,7 @@ class JobExecutor:
                 negative_prompt=result.final_negative_prompt,
                 dialogue=result.dialogue,
                 vt_text=result.vt_text,
-                source_has_audio=snapshot.source_has_audio,
-                derive_silent_primary=snapshot.derive_silent_primary,
+                expected_has_audio=snapshot.expected_has_audio,
             )
             prompt_id = await self.renderer.submit(request)
             if not getattr(self.renderer, "persists_render_state", False):

@@ -35,8 +35,17 @@ from backend.domain.enums import (
     JobItemStage,
     JobStatus,
     ModelName,
+    expected_audio_for,
 )
-from backend.domain.models import GenerationAttempt, GpuSlot, Job, JobEvent, JobItem, utc_now
+from backend.domain.models import (
+    BatchVideoInputSnapshot,
+    GenerationAttempt,
+    GpuSlot,
+    Job,
+    JobEvent,
+    JobItem,
+    utc_now,
+)
 
 
 @dataclass
@@ -158,6 +167,7 @@ class ProductionRendererGateway:
             workflow = self.workflow_builders[request.model].build(
                 final_positive_prompt=request.positive_prompt,
                 final_negative_prompt=request.negative_prompt,
+                expected_has_audio=request.expected_has_audio,
                 seed=request.seed,
                 job_id=request.job_id,
                 sequence=request.item_sequence,
@@ -263,6 +273,11 @@ class ProductionRendererGateway:
             job = session.get(Job, request.job_id)
             item = session.get(JobItem, request.job_item_id)
             slot = session.get(GpuSlot, request.gpu_slot)
+            snapshot = (
+                session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
+                if item is not None
+                else None
+            )
             if (
                 job is None
                 or item is None
@@ -272,6 +287,15 @@ class ProductionRendererGateway:
                 or job.model is not request.model
                 or job.category is not request.category
                 or job.confirm_model_switch is not request.confirm_model_switch
+                or snapshot is None
+                or snapshot.model is not request.model
+                or snapshot.category is not request.category
+                or snapshot.seed != request.seed
+                or snapshot.width != request.width
+                or snapshot.height != request.height
+                or snapshot.fps != request.fps
+                or snapshot.frame_count != request.frame_count
+                or snapshot.expected_has_audio is not request.expected_has_audio
                 or job.status is not JobStatus.RUNNING
                 or item.status is not JobStatus.RUNNING
                 or item.stage is not JobItemStage.PROMPT_READY
@@ -283,16 +307,10 @@ class ProductionRendererGateway:
                     "renderer_state_invalid",
                     "The job item is not ready for rendering",
                 )
-        if not request.source_has_audio:
+        if request.expected_has_audio is not expected_audio_for(request.category):
             raise RendererGatewayError(
                 "renderer_input_invalid",
-                "Renderer source video must contain audio",
-            )
-        expected_silent = request.category.value.endswith("VT")
-        if request.derive_silent_primary is not expected_silent:
-            raise RendererGatewayError(
-                "renderer_input_invalid",
-                "Renderer media mode does not match the item category",
+                "Renderer audio expectation does not match the item category",
             )
 
     def _record_live_model(self, request: RenderRequest, inspection: SlotInspection) -> None:
@@ -414,23 +432,14 @@ class ProductionRendererGateway:
                 await asyncio.gather(websocket_task, return_exceptions=True)
 
     def _persist_output(self, context: _RenderContext, source_relative_path: str) -> RenderResult:
-        prepared: PreparedMedia | None = None
-        try:
-            self._record_media_processing(context)
-            prepared = self.media_store.prepare_attempt(
-                source_relative_path=source_relative_path,
-                job_id=context.request.job_id,
-                item_sequence=context.request.item_sequence,
-                attempt_number=context.attempt_number,
-                model=context.request.model,
-                derive_silent_primary=context.request.derive_silent_primary,
-            )
-            source_asset_path, primary_asset_path = self._complete_attempt(context, prepared)
-            return RenderResult((source_asset_path, primary_asset_path))
-        except Exception:
-            if prepared is not None:
-                self.media_store.discard_prepared(prepared)
-            raise
+        self._record_media_processing(context)
+        prepared = self.media_store.prepare_attempt(
+            source_relative_path=source_relative_path,
+            model=context.request.model,
+            expected_has_audio=context.request.expected_has_audio,
+        )
+        source_asset_path, primary_asset_path = self._complete_attempt(context, prepared)
+        return RenderResult((source_asset_path, primary_asset_path))
 
     def _handle_websocket_message(self, context: _RenderContext, payload: dict[str, object]) -> None:
         event_type = payload.get("type")

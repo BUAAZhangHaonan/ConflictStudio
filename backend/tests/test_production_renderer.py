@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from subprocess import CompletedProcess
 from typing import Any
@@ -152,6 +153,7 @@ async def create_running_request(
     data_root: Path,
     *,
     category: Category,
+    model: ModelName = ModelName.LTX,
     confirm_model_switch: bool = False,
 ) -> tuple[Database, RenderRequest]:
     data_root.mkdir()
@@ -199,7 +201,7 @@ async def create_running_request(
         BatchDraftCreate(
             datasetId=dataset.id,
             category=category,
-            model=ModelName.LTX,
+            model=model,
             quantity=1,
             seed=1208,
             contentPlans=[SourceSelection(id=content.id, expectedRevision=content.revision)],
@@ -252,8 +254,7 @@ async def create_running_request(
             negative_prompt="subtitles, captions, distortion",
             dialogue="I am ready." if category is Category.A_VA else None,
             vt_text="I am ready." if category is Category.A_VT else None,
-            source_has_audio=True,
-            derive_silent_primary=category is Category.A_VT,
+            expected_has_audio=category is Category.A_VA,
         )
     return database, request
 
@@ -283,11 +284,12 @@ def make_gateway(
 
 
 def success_history(request: RenderRequest, prompt_id: str, *, subfolder: str | None = None) -> dict[str, Any]:
+    save_node_id = "save_video" if request.model is ModelName.LTX else "14"
     return {
         prompt_id: {
             "status": {"completed": True, "status_str": "success", "messages": []},
             "outputs": {
-                "save_video": {
+                save_node_id: {
                     "videos": [
                         {
                             "filename": f"{request.item_sequence}_00001_.mp4",
@@ -314,52 +316,54 @@ def source_path(database: Database, request: RenderRequest) -> Path:
 def install_media_tools(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    fail_final_primary_probe: bool = False,
+    fail_frame_probe: bool = False,
+    frame_count: str = "121",
+    duration: str = "5.0416667",
 ) -> None:
     def fake_run(args: list[str], **_: object) -> CompletedProcess[str]:
         target = Path(args[-1])
-        if args[0] == "ffmpeg":
-            target.write_bytes(b"silent-primary")
-            return CompletedProcess(args, 0, "", "")
-        if fail_final_primary_probe and target.name == "primary.mp4":
-            frame_count = "120"
-        else:
-            frame_count = "121"
-        has_audio = target.name not in {"primary.mp4", ".primary.tmp.mp4"}
+        probed_frame_count = "120" if fail_frame_probe else frame_count
+        has_audio = target.read_bytes().startswith(b"audio")
         streams: list[dict[str, object]] = [
             {
                 "codec_type": "video",
                 "width": 1344,
                 "height": 768,
                 "r_frame_rate": "24/1",
-                "nb_frames": frame_count,
+                "nb_frames": probed_frame_count,
             }
         ]
         if has_audio:
             streams.append({"codec_type": "audio"})
-        payload = json.dumps({"streams": streams, "format": {"duration": "5.0416667"}})
+        payload = json.dumps({"streams": streams, "format": {"duration": duration}})
         return CompletedProcess(args, 0, payload, "")
 
     monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
 
 
 @pytest.mark.parametrize(
-    ("category", "expected_asset_count"),
-    [(Category.A_VA, 1), (Category.A_VT, 2)],
+    "category",
+    [Category.A_VA, Category.A_VT],
 )
 def test_gateway_persists_va_and_vt_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     category: Category,
-    expected_asset_count: int,
 ) -> None:
     async def scenario() -> None:
         database, request = await create_running_request(tmp_path / category.value, category=category)
         gateway, gpu0, _, _ = make_gateway(database)
         source = source_path(database, request)
         source.parent.mkdir(parents=True)
-        source.write_bytes(b"audio-source")
+        source.write_bytes(b"audio-source" if request.expected_has_audio else b"silent-source")
         prompt_id = await gateway.submit(request)
+        workflow = gpu0.submit_calls[0][0]
+        assert "empty_audio" in workflow
+        if request.expected_has_audio:
+            assert workflow["create_video"]["inputs"]["audio"] == ["vae_audio", 0]
+        else:
+            assert "vae_audio" not in workflow
+            assert "audio" not in workflow["create_video"]["inputs"]
         gpu0.history = success_history(request, prompt_id)
 
         result = await gateway.wait(GpuSlotName.GPU0, prompt_id)
@@ -367,18 +371,67 @@ def test_gateway_persists_va_and_vt_success(
         with database.read_session() as session:
             assets = session.exec(select(Asset).order_by(Asset.id)).all()
             attempt = session.exec(select(GenerationAttempt)).one()
-        assert len(assets) == expected_asset_count
+        assert len(assets) == 1
         assert attempt.status is GenerationAttemptStatus.COMPLETED
         assert all(asset.storage_root == str(database.data_root) for asset in assets)
         assert all(not Path(asset.relative_path).is_absolute() for asset in assets)
         assert result.output_references[0].startswith("gpu0/output/")
-        if category is Category.A_VT:
-            assert result.output_references[1].startswith("media/jobs/")
-            assert assets[0].has_audio is True and assets[1].has_audio is False
-        else:
-            assert result.output_references[0] == result.output_references[1]
+        assert assets[0].has_audio is request.expected_has_audio
+        assert result.output_references[0] == result.output_references[1]
 
     install_media_tools(monkeypatch)
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    "category",
+    [Category.A_VA, Category.A_VT],
+)
+def test_h3_gateway_persists_native_va_and_vt_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    category: Category,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / category.value,
+            category=category,
+            model=ModelName.H3,
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+        source = source_path(database, request)
+        source.parent.mkdir(parents=True)
+        media_bytes = b"audio-source" if request.expected_has_audio else b"native-silent-source"
+        source.write_bytes(media_bytes)
+
+        prompt_id = await gateway.submit(request)
+        workflow = gpu0.submit_calls[0][0]
+        assert workflow["5"]["inputs"]["width"] == 1344
+        assert workflow["5"]["inputs"]["height"] == 768
+        assert workflow["5"]["inputs"]["length"] == 124
+        assert workflow["13"]["inputs"]["fps"] == 24.0
+        if request.expected_has_audio:
+            assert workflow["12"]["class_type"] == "VAEDecodeAudio"
+            assert workflow["13"]["inputs"]["audio"] == ["12", 0]
+        else:
+            assert "12" not in workflow
+            assert "audio" not in workflow["13"]["inputs"]
+        gpu0.history = success_history(request, prompt_id)
+
+        result = await gateway.wait(GpuSlotName.GPU0, prompt_id)
+
+        with database.read_session() as session:
+            assets = session.exec(select(Asset)).all()
+            attempt = session.exec(select(GenerationAttempt)).one()
+        assert len(assets) == 1
+        assert assets[0].has_audio is request.expected_has_audio
+        assert attempt.status is GenerationAttemptStatus.COMPLETED
+        assert attempt.source_asset_id == attempt.primary_asset_id == assets[0].id
+        assert result.output_references == (assets[0].relative_path, assets[0].relative_path)
+        assert source.read_bytes() == media_bytes
+        assert list(database.data_root.rglob("*.mp4")) == [source]
+
+    install_media_tools(monkeypatch, frame_count="124", duration="5.1666667")
     run(scenario())
 
 
@@ -425,6 +478,35 @@ def test_gateway_blocks_unknown_gpu_occupancy_without_submission(tmp_path: Path)
 
         assert error.value.code == "gpu_slot_unavailable"
         assert gpu0.submit_calls == [] and gpu1.submit_calls == []
+
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"expected_has_audio": False},
+        {"width": 768},
+        {"height": 432},
+        {"fps": 25},
+        {"frame_count": 124},
+        {"seed": 9},
+    ],
+)
+def test_gateway_rejects_request_that_differs_from_immutable_snapshot(
+    tmp_path: Path,
+    change: dict[str, object],
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(tmp_path / next(iter(change)), category=Category.A_VA)
+        gateway, gpu0, _, controller = make_gateway(database)
+
+        with pytest.raises(RendererGatewayError) as error:
+            await gateway.submit(replace(request, **change))
+
+        assert error.value.code == "renderer_state_invalid"
+        assert gpu0.submit_calls == []
+        assert controller.calls == []
 
     run(scenario())
 
@@ -479,7 +561,7 @@ def test_gateway_rejects_out_of_root_output_reference(tmp_path: Path) -> None:
     run(scenario())
 
 
-def test_gateway_media_failure_leaves_source_evidence_without_orphan_primary(
+def test_gateway_rejects_vt_output_with_invalid_native_media(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -488,25 +570,53 @@ def test_gateway_media_failure_leaves_source_evidence_without_orphan_primary(
         gateway, gpu0, _, _ = make_gateway(database)
         source = source_path(database, request)
         source.parent.mkdir(parents=True)
-        source.write_bytes(b"audio-source")
+        source.write_bytes(b"silent-source")
         prompt_id = await gateway.submit(request)
         gpu0.history = success_history(request, prompt_id)
 
         with pytest.raises(RendererGatewayError) as error:
             await gateway.wait(GpuSlotName.GPU0, prompt_id)
 
-        _, primary, temporary = gateway.media_store.attempt_paths(
-            request.job_id,
-            request.item_sequence,
-            1,
-        )
         assert error.value.code == "media_validation_failed"
-        assert source.read_bytes() == b"audio-source"
-        assert not primary.exists() and not temporary.exists()
+        assert source.read_bytes() == b"silent-source"
+        assert list(database.data_root.rglob("*.mp4")) == [source]
         with database.read_session() as session:
             assert session.exec(select(Asset)).all() == []
 
-    install_media_tools(monkeypatch, fail_final_primary_probe=True)
+    install_media_tools(monkeypatch, fail_frame_probe=True)
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("category", "media_bytes"),
+    [
+        (Category.A_VA, b"silent-source"),
+        (Category.A_VT, b"audio-source"),
+    ],
+)
+def test_gateway_enforces_category_audio_on_rendered_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    category: Category,
+    media_bytes: bytes,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(tmp_path / category.value, category=category)
+        gateway, gpu0, _, _ = make_gateway(database)
+        source = source_path(database, request)
+        source.parent.mkdir(parents=True)
+        source.write_bytes(media_bytes)
+        prompt_id = await gateway.submit(request)
+        gpu0.history = success_history(request, prompt_id)
+
+        with pytest.raises(RendererGatewayError) as error:
+            await gateway.wait(GpuSlotName.GPU0, prompt_id)
+
+        assert error.value.code == "media_validation_failed"
+        with database.read_session() as session:
+            assert session.exec(select(Asset)).all() == []
+
+    install_media_tools(monkeypatch)
     run(scenario())
 
 

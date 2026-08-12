@@ -288,7 +288,7 @@ def get_asset_content(asset_id: int, request: Request) -> Response:
             start, end = _parse_byte_range(range_header, evidence.st_size)
         except _MalformedRangeError:
             return Response(
-                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                status_code=416,
                 headers=_media_headers(
                     media_type,
                     0,
@@ -297,7 +297,7 @@ def get_asset_content(asset_id: int, request: Request) -> Response:
             )
         except _UnsatisfiableRangeError:
             return Response(
-                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                status_code=416,
                 headers=_media_headers(
                     media_type,
                     0,

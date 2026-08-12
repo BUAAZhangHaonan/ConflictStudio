@@ -51,8 +51,7 @@ class RenderRequest:
     negative_prompt: str
     dialogue: str | None
     vt_text: str | None
-    source_has_audio: bool
-    derive_silent_primary: bool
+    expected_has_audio: bool
 
 
 @dataclass(frozen=True)

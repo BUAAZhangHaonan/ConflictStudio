@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -50,7 +49,7 @@ def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path
     media = tmp_path / "media.mp4"
     media.touch()
     with pytest.raises(MediaError, match="nonzero"):
-        store.probe(media, require_audio=True, model=ModelName.LTX)
+        store.probe(media, expected_has_audio=True, model=ModelName.LTX)
     media.write_bytes(b"x")
 
     def install(payload: str) -> None:
@@ -69,59 +68,52 @@ def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path
     for payload in failures:
         install(payload)
         with pytest.raises(MediaError):
-            store.probe(media, require_audio=True, model=ModelName.LTX)
+            store.probe(media, expected_has_audio=True, model=ModelName.LTX)
     install(compact_probe(frames="124"))
     with pytest.raises(MediaError):
-        store.probe(media, require_audio=True, model=ModelName.LTX)
+        store.probe(media, expected_has_audio=True, model=ModelName.LTX)
     install(compact_probe(frames="121"))
-    assert store.probe(media, require_audio=True, model=ModelName.LTX).has_audio
+    assert store.probe(media, expected_has_audio=True, model=ModelName.LTX).has_audio
     install(compact_probe(frames="121", read_frames="121", wrapper=True))
-    assert store.probe(media, require_audio=True, model=ModelName.LTX).frame_count == 121
+    assert store.probe(media, expected_has_audio=True, model=ModelName.LTX).frame_count == 121
     install(compact_probe(frames="121", read_frames=None).replace('"nb_frames": "121"', '"nb_read_frames": "121"'))
-    assert store.probe(media, require_audio=True, model=ModelName.LTX).frame_count == 121
+    assert store.probe(media, expected_has_audio=True, model=ModelName.LTX).frame_count == 121
     install(compact_probe(frames="121", duration="4.9"))
     with pytest.raises(MediaError, match="duration"):
-        store.probe(media, require_audio=True, model=ModelName.LTX)
+        store.probe(media, expected_has_audio=True, model=ModelName.LTX)
     install(compact_probe(frames=None))
     with pytest.raises(MediaError, match="frame count"):
-        store.probe(media, require_audio=True, model=ModelName.LTX)
+        store.probe(media, expected_has_audio=True, model=ModelName.LTX)
+
+    install(compact_probe(audio=False))
+    assert not store.probe(media, expected_has_audio=False, model=ModelName.LTX).has_audio
+    install(compact_probe(audio=True))
+    with pytest.raises(MediaError, match="VT media must not contain audio"):
+        store.probe(media, expected_has_audio=False, model=ModelName.LTX)
 
 
-@pytest.mark.parametrize("failure", ("ffmpeg", "silent_probe", "replace", "final_probe"))
-def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+def test_vt_persists_native_silent_output_without_ffmpeg_derivative(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = MediaStore(tmp_path)
-    source, primary, temporary = store.attempt_paths(1, 1, 1)
+    source = store.resolve("gpu0/output/1/1_00001_.mp4")
     source.parent.mkdir(parents=True)
-    source.write_bytes(b"source")
+    source.write_bytes(b"native-silent")
+    calls: list[list[str]] = []
 
     def fake_run(args: list[str], **kwargs: object) -> CompletedProcess[str]:
-        if args[0] == "ffmpeg":
-            if failure == "ffmpeg":
-                return CompletedProcess(args, 1, "", "")
-            temporary.write_bytes(b"silent")
-            return CompletedProcess(args, 0, "", "")
-        if failure == "silent_probe" and str(args[-1]) == str(temporary):
-            return CompletedProcess(args, 0, compact_probe(frames=None), "")
-        if failure == "final_probe" and str(args[-1]) == str(primary):
-            return CompletedProcess(args, 0, compact_probe(frames=None), "")
-        has_audio = str(args[-1]) == str(source)
-        return CompletedProcess(args, 0, compact_probe(audio=has_audio), "")
+        calls.append(args)
+        return CompletedProcess(args, 0, compact_probe(audio=False), "")
 
     monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
-    if failure == "replace":
-        monkeypatch.setattr("backend.adapters.media.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace failed")))
-    with pytest.raises((MediaError, OSError)):
-        store.prepare_attempt(
-            source_relative_path=store.relative_path(source),
-            job_id=1,
-            item_sequence=1,
-            attempt_number=1,
-            model=ModelName.LTX,
-            derive_silent_primary=True,
-        )
-    assert not primary.exists()
-    assert not temporary.exists()
-    assert source.read_bytes() == b"source"
+    prepared = store.prepare_attempt(
+        source_relative_path=store.relative_path(source),
+        model=ModelName.LTX,
+        expected_has_audio=False,
+    )
+    assert prepared.source_path == source
+    assert prepared.source_evidence.has_audio is False
+    assert [call[0] for call in calls] == ["ffprobe"]
+    assert list(tmp_path.rglob("*.mp4")) == [source]
+    assert source.read_bytes() == b"native-silent"
 
 
 def test_va_and_vt_assets_preserve_rerender_attempt_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,27 +131,23 @@ def test_va_and_vt_assets_preserve_rerender_attempt_history(tmp_path: Path, monk
         def flush(self) -> None:
             return None
 
+    expected_audio_by_path: dict[Path, bool] = {}
+
     def fake_run(args: list[str], **kwargs: object) -> CompletedProcess[str]:
         output = Path(str(args[-1]))
-        if args[0] == "ffmpeg":
-            output.write_bytes(b"silent")
-            return CompletedProcess(args, 0, "", "")
-        source = "gpu0/output" in output.as_posix()
-        return CompletedProcess(args, 0, compact_probe(audio=source), "")
+        return CompletedProcess(args, 0, compact_probe(audio=expected_audio_by_path[output]), "")
 
     monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
     session = SessionStub()
-    for attempt_number, derive_silent in ((1, False), (2, True)):
+    for attempt_number, expected_has_audio in ((1, True), (2, False)):
         source = store.resolve(f"gpu0/output/7/{attempt_number}_00001_.mp4")
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_bytes(b"source")
+        expected_audio_by_path[source] = expected_has_audio
         prepared = store.prepare_attempt(
             source_relative_path=store.relative_path(source),
-            job_id=7,
-            item_sequence=3,
-            attempt_number=attempt_number,
             model=ModelName.LTX,
-            derive_silent_primary=derive_silent,
+            expected_has_audio=expected_has_audio,
         )
         attempt = GenerationAttempt(
             job_item_id=99,
@@ -178,10 +166,7 @@ def test_va_and_vt_assets_preserve_rerender_attempt_history(tmp_path: Path, monk
             finished_at="2026-08-12T00:01:00Z",
         )
         session.rows.append(attempt)
-        if not derive_silent:
-            assert attempt.source_asset_id == attempt.primary_asset_id
-        else:
-            assert attempt.source_asset_id != attempt.primary_asset_id
+        assert attempt.source_asset_id == attempt.primary_asset_id
     attempts = [row for row in session.rows if hasattr(row, "attempt_number")]
     assert [row.attempt_number for row in attempts] == [1, 2]  # type: ignore[attr-defined]
 

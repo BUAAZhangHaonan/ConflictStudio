@@ -410,8 +410,7 @@ class SnapshotRead(ApiModel):
     frame_count: int
     renderer_profile_version: str
     prompt_model: str
-    source_has_audio: bool
-    derive_silent_primary: bool
+    expected_has_audio: bool
     system_input: str
     user_input: str
     final_negative_prompt: str

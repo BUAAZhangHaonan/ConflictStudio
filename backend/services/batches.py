@@ -24,6 +24,7 @@ from backend.domain.enums import (
     JobSource,
     JobStatus,
     ModelName,
+    expected_audio_for,
     ResourceStatus,
 )
 from backend.domain.models import (
@@ -337,8 +338,7 @@ class BatchService:
                     frame_count=121 if current.draft.model is ModelName.LTX else 124,
                     renderer_profile_version=RENDERER_PROFILE_VERSION,
                     prompt_model=PROMPT_MODEL,
-                    source_has_audio=True,
-                    derive_silent_primary=current.draft.category in {Category.A_VT, Category.C_VT},
+                    expected_has_audio=expected_audio_for(current.draft.category),
                     system_input=allocation.prepared.system_input,
                     user_input=allocation.prepared.user_input,
                     final_negative_prompt=allocation.prepared.final_negative_prompt,

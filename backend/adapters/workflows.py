@@ -20,7 +20,12 @@ LTX23_NODE_TYPES = {
     "conditioning": "LTXVConditioning",
     "empty_video": "EmptyLTXVLatentVideo",
     "empty_audio": "LTXVEmptyLatentAudio",
+    "concat_av": "LTXVConcatAVLatent",
     "noise": "RandomNoise",
+    "sampler": "SamplerCustomAdvanced",
+    "separate_av": "LTXVSeparateAVLatent",
+    "vae_video": "LTXVSpatioTemporalTiledVAEDecode",
+    "vae_audio": "LTXVAudioVAEDecode",
     "create_video": "CreateVideo",
     "save_video": "SaveVideo",
 }
@@ -28,6 +33,9 @@ LTX23_NODE_TYPES = {
 H3_NODE_TYPES = {
     "5": "MiniMaxH3ImageToVideo",
     "6": "RandomNoise",
+    "10": "SamplerCustomAdvanced",
+    "11": "VAEDecode",
+    "12": "VAEDecodeAudio",
     "13": "CreateVideo",
     "14": "SaveVideo",
 }
@@ -56,12 +64,14 @@ class Ltx23WorkflowBuilder:
         *,
         final_positive_prompt: str,
         final_negative_prompt: str,
+        expected_has_audio: bool,
         seed: int,
         job_id: int,
         sequence: int,
     ) -> dict[str, dict[str, Any]]:
         _require_prompt(final_positive_prompt, "final_positive_prompt")
         _require_prompt(final_negative_prompt, "final_negative_prompt")
+        _require_boolean(expected_has_audio, "expected_has_audio")
         _require_integer(seed, "seed", minimum=0, maximum=MAX_SEED)
         prefix = _output_prefix(job_id, sequence)
 
@@ -73,6 +83,9 @@ class Ltx23WorkflowBuilder:
         workflow["empty_audio"]["inputs"].update(frames_number=121, frame_rate=24)
         workflow["conditioning"]["inputs"]["frame_rate"] = 24.0
         workflow["create_video"]["inputs"]["fps"] = 24.0
+        if not expected_has_audio:
+            workflow.pop("vae_audio")
+            workflow["create_video"]["inputs"].pop("audio")
         workflow["save_video"]["inputs"]["filename_prefix"] = prefix
         return workflow
 
@@ -87,12 +100,14 @@ class H3WorkflowBuilder:
         *,
         final_positive_prompt: str,
         final_negative_prompt: str,
+        expected_has_audio: bool,
         seed: int,
         job_id: int,
         sequence: int,
     ) -> dict[str, dict[str, Any]]:
         _require_prompt(final_positive_prompt, "final_positive_prompt")
         _require_prompt(final_negative_prompt, "final_negative_prompt")
+        _require_boolean(expected_has_audio, "expected_has_audio")
         _require_integer(seed, "seed", minimum=0, maximum=MAX_SEED)
         prefix = _output_prefix(job_id, sequence)
 
@@ -112,6 +127,9 @@ class H3WorkflowBuilder:
         )
         workflow["6"]["inputs"]["noise_seed"] = seed
         workflow["13"]["inputs"]["fps"] = 24.0
+        if not expected_has_audio:
+            workflow.pop("12")
+            workflow["13"]["inputs"].pop("audio")
         workflow["14"]["inputs"]["filename_prefix"] = prefix
         return workflow
 
@@ -130,6 +148,7 @@ def _load_ltx23_template(path: Path) -> dict[str, dict[str, Any]]:
     }
     _validate_nodes(workflow, LTX23_NODE_TYPES, "LTX")
     _validate_workflow(workflow, "LTX")
+    _validate_ltx_audio_graph(workflow)
     return workflow
 
 
@@ -148,6 +167,7 @@ def _load_h3_template(path: Path) -> dict[str, dict[str, Any]]:
         )
     _validate_nodes(workflow, H3_NODE_TYPES, "H3")
     _validate_workflow(workflow, "H3")
+    _validate_h3_audio_graph(workflow)
     if not H3_REQUIRED_CLASS_TYPES <= _class_types(workflow):
         raise WorkflowTemplateError(
             "workflow_template_invalid",
@@ -208,9 +228,50 @@ def _class_types(workflow: dict[str, dict[str, Any]]) -> frozenset[str]:
     return frozenset(node["class_type"] for node in workflow.values())
 
 
+def _validate_ltx_audio_graph(workflow: dict[str, dict[str, Any]]) -> None:
+    expected_references = {
+        ("concat_av", "audio_latent"): ["empty_audio", 0],
+        ("sampler", "latent_image"): ["concat_av", 0],
+        ("separate_av", "av_latent"): ["sampler", 1],
+        ("vae_video", "latents"): ["separate_av", 0],
+        ("vae_audio", "samples"): ["separate_av", 1],
+        ("create_video", "images"): ["vae_video", 0],
+        ("create_video", "audio"): ["vae_audio", 0],
+    }
+    _validate_references(workflow, expected_references, "LTX")
+
+
+def _validate_h3_audio_graph(workflow: dict[str, dict[str, Any]]) -> None:
+    expected_references = {
+        ("10", "latent_image"): ["5", 1],
+        ("11", "samples"): ["10", 0],
+        ("12", "samples"): ["10", 0],
+        ("13", "images"): ["11", 0],
+        ("13", "audio"): ["12", 0],
+    }
+    _validate_references(workflow, expected_references, "H3")
+
+
+def _validate_references(
+    workflow: dict[str, dict[str, Any]],
+    expected: dict[tuple[str, str], list[str | int]],
+    workflow_name: str,
+) -> None:
+    if any(workflow[node_id]["inputs"].get(name) != reference for (node_id, name), reference in expected.items()):
+        raise WorkflowTemplateError(
+            "workflow_template_invalid",
+            f"The configured {workflow_name} workflow template is not valid",
+        )
+
+
 def _require_prompt(value: str, name: str) -> None:
     if type(value) is not str:
         raise TypeError(f"{name} must be a string")
+
+
+def _require_boolean(value: bool, name: str) -> None:
+    if type(value) is not bool:
+        raise TypeError(f"{name} must be a boolean")
 
 
 def _require_integer(value: int, name: str, *, minimum: int, maximum: int) -> None:

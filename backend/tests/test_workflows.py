@@ -31,6 +31,7 @@ def test_ltx23_builder_maps_every_static_input_and_returns_only_nodes() -> None:
     workflow = builder.build(
         final_positive_prompt="final positive",
         final_negative_prompt="final negative",
+        expected_has_audio=True,
         seed=MAX_SEED,
         job_id=42,
         sequence=7,
@@ -63,11 +64,17 @@ def test_ltx23_builder_maps_every_static_input_and_returns_only_nodes() -> None:
     second = builder.build(
         final_positive_prompt="second",
         final_negative_prompt="",
+        expected_has_audio=False,
         seed=0,
         job_id=1,
         sequence=1,
     )
     assert second["enc_pos"]["inputs"]["text"] == "second"
+    assert "empty_audio" in second
+    assert second["concat_av"]["inputs"]["audio_latent"] == ["empty_audio", 0]
+    assert second["separate_av"]["inputs"]["av_latent"] == ["sampler", 1]
+    assert "vae_audio" not in second
+    assert "audio" not in second["create_video"]["inputs"]
     assert workflow["enc_pos"]["inputs"]["text"] == "final positive"
 
 
@@ -76,6 +83,7 @@ def test_h3_builder_maps_static_inputs_and_merges_one_negative_sentence() -> Non
     workflow = builder.build(
         final_positive_prompt="A locked-off portrait.",
         final_negative_prompt="subtitles, camera shake",
+        expected_has_audio=True,
         seed=91,
         job_id=8,
         sequence=3,
@@ -95,6 +103,7 @@ def test_h3_builder_maps_static_inputs_and_merges_one_negative_sentence() -> Non
     assert workflow["13"]["inputs"]["fps"] == 24.0
     assert workflow["14"]["inputs"]["filename_prefix"] == "8/3"
     assert workflow["12"]["class_type"] == "VAEDecodeAudio"
+    assert workflow["13"]["inputs"]["audio"] == ["12", 0]
     assert builder.required_class_types == {
         node["class_type"] for node in workflow.values()
     }
@@ -104,11 +113,14 @@ def test_h3_builder_leaves_positive_prompt_alone_when_negative_is_empty() -> Non
     workflow = h3_builder().build(
         final_positive_prompt="One subject.",
         final_negative_prompt="",
+        expected_has_audio=False,
         seed=0,
         job_id=1,
         sequence=1,
     )
     assert workflow["5"]["inputs"]["prompt"] == "One subject."
+    assert "12" not in workflow
+    assert "audio" not in workflow["13"]["inputs"]
 
 
 @pytest.mark.parametrize("invalid_seed", [True, "1", -1, MAX_SEED + 1])
@@ -117,6 +129,7 @@ def test_builders_reject_invalid_31_bit_seeds(invalid_seed: object) -> None:
         ltx_builder().build(
             final_positive_prompt="positive",
             final_negative_prompt="negative",
+            expected_has_audio=True,
             seed=invalid_seed,  # type: ignore[arg-type]
             job_id=1,
             sequence=1,
@@ -155,6 +168,7 @@ def test_output_prefix_accepts_only_bounded_integer_job_and_sequence(
         h3_builder().build(
             final_positive_prompt="positive",
             final_negative_prompt="negative",
+            expected_has_audio=True,
             seed=1,
             job_id=values["job_id"],  # type: ignore[arg-type]
             sequence=values["sequence"],  # type: ignore[arg-type]

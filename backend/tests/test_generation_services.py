@@ -486,8 +486,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
     assert (first_input.width, first_input.height, first_input.fps, first_input.frame_count) == (1344, 768, 24, 121)
     assert first_input.renderer_profile_version == RENDERER_PROFILE_VERSION
     assert first_input.prompt_model == "deepseek-v4-flash"
-    assert first_input.source_has_audio is True
-    assert first_input.derive_silent_primary is False
+    assert first_input.expected_has_audio is True
     assert first_input.final_negative_prompt == first_preview.final_negative_prompt
     assert first_input.seed == first_preview.seed
     assert first_input.model is ModelName.LTX
@@ -684,7 +683,7 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
     assert [item.gpu_slot for item in job.items] == [item.gpu_slot for item in preview.allocations]
 
 
-def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: Path) -> None:
+def test_h3_vt_snapshot_keeps_negative_constraints_and_native_audio_expectation(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, _, _, background = fixed_resources(database)
@@ -755,8 +754,7 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: 
     assert (snapshot.width, snapshot.height, snapshot.fps, snapshot.frame_count) == (1344, 768, 24, 124)
     assert snapshot.renderer_profile_version == RENDERER_PROFILE_VERSION
     assert snapshot.prompt_model == "deepseek-v4-flash"
-    assert snapshot.source_has_audio is True
-    assert snapshot.derive_silent_primary is True
+    assert snapshot.expected_has_audio is False
     assert snapshot.final_negative_prompt == preset.final_negative_prompt
     assert snapshot.final_negative_prompt == preview.allocations[0].final_negative_prompt
     assert snapshot.seed == preview.allocations[0].seed
