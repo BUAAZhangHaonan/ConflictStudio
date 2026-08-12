@@ -18,20 +18,27 @@ from backend.domain.enums import (
     GpuSlotName,
 )
 from backend.domain.models import BatchDraft, ContentPlan, Dataset, GpuSlot
-from backend.domain.schemas import ContentPlanCreate
+from backend.domain.schemas import ContentPlanCreate, VideoBackgroundPresetCreate
 
 
 def content_plan_payload(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
-        "name": "Plan",
+        "nameZh": "方案",
+        "nameEn": "Plan",
         "category": Category.A_VA,
         "mode": ContentMode.GENERATIVE,
         "trueEmotion": "calm",
         "apparentEmotion": "calm",
-        "scene": "A private office.",
-        "triggerEvent": "A timer sounds.",
-        "psychologicalBackground": "The subject prepares to answer.",
-        "contentRequirements": "Describe one adult responding in the room.",
+        "sceneZh": "一间私人办公室。",
+        "sceneEn": "A private office.",
+        "triggerEventZh": "计时器响起。",
+        "triggerEventEn": "A timer sounds.",
+        "psychologicalBackgroundZh": "被摄者准备回答。",
+        "psychologicalBackgroundEn": "The subject prepares to answer.",
+        "contentRequirementsZh": "描述一名成年人在房间里作出回应。",
+        "contentRequirementsEn": "Describe one adult responding in the room.",
+        "sceneSupplementZh": "保持办公室环境清楚可见。",
+        "sceneSupplementEn": "Keep the office setting clearly visible.",
     }
     values.update(overrides)
     return values
@@ -111,6 +118,139 @@ def test_content_plan_normalizes_emotions_before_relation_validation() -> None:
 
 
 @pytest.mark.parametrize(
+    "field",
+    [
+        "nameZh",
+        "nameEn",
+        "sceneZh",
+        "sceneEn",
+        "triggerEventZh",
+        "triggerEventEn",
+        "psychologicalBackgroundZh",
+        "psychologicalBackgroundEn",
+    ],
+)
+def test_content_plan_requires_core_bilingual_values(field: str) -> None:
+    with pytest.raises(ValidationError):
+        ContentPlanCreate.model_validate(content_plan_payload(**{field: "   "}))
+
+
+def test_content_plan_allows_empty_optional_bilingual_values_for_fixed_content() -> None:
+    result = ContentPlanCreate.model_validate(
+        content_plan_payload(
+            mode=ContentMode.FIXED,
+            dialogue="我会处理。",
+            trueEmotionDescription="说话者保持平静并准备处理当前事件。",
+            baseVideoPrompt="The subject answers while seated at a desk.",
+            contentRequirementsZh="   ",
+            contentRequirementsEn="   ",
+            sceneSupplementZh="   ",
+            sceneSupplementEn="   ",
+        )
+    )
+
+    assert result.content_requirements_zh == ""
+    assert result.content_requirements_en == ""
+    assert result.scene_supplement_zh == ""
+    assert result.scene_supplement_en == ""
+
+
+@pytest.mark.parametrize("field", ["contentRequirementsZh", "contentRequirementsEn"])
+def test_generative_content_requires_bilingual_content_requirements(field: str) -> None:
+    with pytest.raises(ValidationError, match="Chinese and English content requirements"):
+        ContentPlanCreate.model_validate(content_plan_payload(**{field: "   "}))
+
+
+def test_background_allows_empty_supplements_but_requires_bilingual_names_and_scenes() -> None:
+    payload = {
+        "nameZh": "办公室",
+        "nameEn": "Office",
+        "sceneZh": "一间私人办公室。",
+        "sceneEn": "A private office.",
+        "ambientSoundZh": "",
+        "ambientSoundEn": "",
+        "participantRelationshipZh": "",
+        "participantRelationshipEn": "",
+        "lightingZh": "",
+        "lightingEn": "",
+        "framingZh": "",
+        "framingEn": "",
+    }
+    result = VideoBackgroundPresetCreate.model_validate(payload)
+    assert result.ambient_sound_zh == result.ambient_sound_en == ""
+
+    for field in ("nameZh", "nameEn", "sceneZh", "sceneEn"):
+        with pytest.raises(ValidationError):
+            VideoBackgroundPresetCreate.model_validate({**payload, field: "   "})
+
+
+def test_content_plan_rejects_removed_single_language_fields() -> None:
+    with pytest.raises(ValidationError):
+        ContentPlanCreate.model_validate({**content_plan_payload(), "scene": "Removed field"})
+
+
+def test_sqlite_uses_only_new_bilingual_catalog_columns(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+
+    with database.engine.connect() as connection:
+        content_columns = {
+            row[1] for row in connection.exec_driver_sql("PRAGMA table_info(content_plans)")
+        }
+        background_columns = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info(video_background_presets)")
+        }
+
+    assert {
+        "name_zh",
+        "name_en",
+        "scene_zh",
+        "scene_en",
+        "trigger_event_zh",
+        "trigger_event_en",
+        "psychological_background_zh",
+        "psychological_background_en",
+        "content_requirements_zh",
+        "content_requirements_en",
+        "scene_supplement_zh",
+        "scene_supplement_en",
+    } <= content_columns
+    assert {
+        "name_zh",
+        "name_en",
+        "scene_zh",
+        "scene_en",
+        "ambient_sound_zh",
+        "ambient_sound_en",
+        "participant_relationship_zh",
+        "participant_relationship_en",
+        "lighting_zh",
+        "lighting_en",
+        "framing_zh",
+        "framing_en",
+    } <= background_columns
+    assert not {
+        "name",
+        "name_key",
+        "scene",
+        "trigger_event",
+        "psychological_background",
+        "content_instruction",
+        "scene_supplement",
+    } & content_columns
+    assert not {
+        "name",
+        "name_key",
+        "scene",
+        "ambient_audio",
+        "relationship",
+        "lighting",
+        "framing_supplement",
+    } & background_columns
+
+
+@pytest.mark.parametrize(
     "overrides",
     [
         {"category": Category.A_VA, "trueEmotion": "calm", "apparentEmotion": "tense"},
@@ -161,18 +301,26 @@ def test_database_rejects_invalid_content_emotion_relation(
     with database.immediate_session() as session:
         session.add(
             ContentPlan(
-                name="Invalid plan",
-                name_key="invalid plan",
+                name_zh="无效方案",
+                name_zh_key="无效方案",
+                name_en="Invalid plan",
+                name_en_key="invalid plan",
                 category=category,
                 conflict_direction=direction,
                 mode=ContentMode.GENERATIVE,
                 true_emotion=true_emotion,
                 apparent_emotion=apparent_emotion,
-                scene="A private office.",
-                trigger_event="A timer sounds.",
-                psychological_background="The subject prepares to answer.",
+                scene_zh="一间私人办公室。",
+                scene_en="A private office.",
+                trigger_event_zh="计时器响起。",
+                trigger_event_en="A timer sounds.",
+                psychological_background_zh="被摄者准备回答。",
+                psychological_background_en="The subject prepares to answer.",
                 true_emotion_description="",
-                content_instruction="Describe one adult responding in the room.",
+                content_requirements_zh="描述一名成年人在房间里作出回应。",
+                content_requirements_en="Describe one adult responding in the room.",
+                scene_supplement_zh="保持办公室环境清楚可见。",
+                scene_supplement_en="Keep the office setting clearly visible.",
             )
         )
         with pytest.raises(IntegrityError):
@@ -184,17 +332,25 @@ def test_database_rejects_content_emotion_relation_update(tmp_path: Path) -> Non
     database.initialize()
     with database.immediate_session() as session:
         row = ContentPlan(
-            name="Valid plan",
-            name_key="valid plan",
+            name_zh="有效方案",
+            name_zh_key="有效方案",
+            name_en="Valid plan",
+            name_en_key="valid plan",
             category=Category.A_VA,
             mode=ContentMode.GENERATIVE,
             true_emotion="calm",
             apparent_emotion="calm",
-            scene="A private office.",
-            trigger_event="A timer sounds.",
-            psychological_background="The subject prepares to answer.",
+            scene_zh="一间私人办公室。",
+            scene_en="A private office.",
+            trigger_event_zh="计时器响起。",
+            trigger_event_en="A timer sounds.",
+            psychological_background_zh="被摄者准备回答。",
+            psychological_background_en="The subject prepares to answer.",
             true_emotion_description="",
-            content_instruction="Describe one adult responding in the room.",
+            content_requirements_zh="描述一名成年人在房间里作出回应。",
+            content_requirements_en="Describe one adult responding in the room.",
+            scene_supplement_zh="保持办公室环境清楚可见。",
+            scene_supplement_en="Keep the office setting clearly visible.",
         )
         session.add(row)
         session.flush()

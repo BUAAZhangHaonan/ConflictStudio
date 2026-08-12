@@ -77,18 +77,26 @@ def fixed_resources(database: Database) -> tuple[CatalogService, object, object,
     )
     content = catalog.create_content_plan(
         ContentPlanCreate(
-            name="克制回应",
+            nameZh="克制回应",
+            nameEn="Restrained response",
             category=Category.A_VA,
             mode=ContentMode.FIXED,
             status=ContentStatus.ACTIVE,
             trueEmotion="sadness",
             apparentEmotion="sadness",
-            scene="A quiet office after a difficult meeting.",
-            triggerEvent="The subject is asked whether everything is fine.",
-            psychologicalBackground="The subject does not want to worry a colleague.",
+            sceneZh="一次艰难会议后的一间安静办公室。",
+            sceneEn="A quiet office after a difficult meeting.",
+            triggerEventZh="有人问被摄者是否一切都好。",
+            triggerEventEn="The subject is asked whether everything is fine.",
+            psychologicalBackgroundZh="被摄者不想让别人担心。",
+            psychologicalBackgroundEn="The subject does not want to worry anyone.",
             dialogue="我没事，只是需要一点时间。",
             trueEmotionDescription="说话者在克制悲伤，语言和可见表现保持一致。",
             baseVideoPrompt="A restrained adult sits at a desk and answers a colleague with a steady but tired expression.",
+            contentRequirementsZh="",
+            contentRequirementsEn="",
+            sceneSupplementZh="",
+            sceneSupplementEn="",
         )
     )
     preset = catalog.create_prompt_preset(
@@ -104,12 +112,18 @@ def fixed_resources(database: Database) -> tuple[CatalogService, object, object,
     )
     background = catalog.create_background_preset(
         VideoBackgroundPresetCreate(
-            name="安静办公室",
-            scene="A small private office with a desk and neutral walls.",
-            ambientSound="Low room tone and distant ventilation.",
-            relationship="The subject remains the only occupant in view.",
-            lighting="Soft daylight from one side.",
-            framing="Static eye-level medium shot.",
+            nameZh="安静办公室",
+            nameEn="Quiet office",
+            sceneZh="一间有书桌和中性墙面的小型私人办公室。",
+            sceneEn="A small private office with a desk and neutral walls.",
+            ambientSoundZh="低沉的室内底噪和远处的通风声。",
+            ambientSoundEn="Low room tone and distant ventilation.",
+            participantRelationshipZh="画面中只有被摄者。",
+            participantRelationshipEn="The subject remains the only occupant in view.",
+            lightingZh="柔和的日光从一侧照入。",
+            lightingEn="Soft daylight from one side.",
+            framingZh="静止的平视中景。",
+            framingEn="Static eye-level medium shot.",
         )
     )
     return catalog, dataset, content, preset, background
@@ -206,17 +220,24 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     catalog, _, _, _, background_read = fixed_resources(database)
     content_read = catalog.create_content_plan(
         ContentPlanCreate(
-            name="生成式冲突",
+            nameZh="生成式冲突",
+            nameEn="Generative conflict",
             category=Category.C_VA,
             conflictDirection="Audio",
             mode=ContentMode.GENERATIVE,
             status=ContentStatus.ACTIVE,
             trueEmotion="relief",
             apparentEmotion="worry",
-            scene="A clinic waiting area.",
-            triggerEvent="A call has just ended.",
-            psychologicalBackground="The subject hides good news.",
-            contentRequirements="Create subtle conflicting visual and vocal evidence.",
+            sceneZh="一处诊所候诊区。",
+            sceneEn="A clinic waiting area.",
+            triggerEventZh="一通电话刚刚结束。",
+            triggerEventEn="A call has just ended.",
+            psychologicalBackgroundZh="被摄者隐瞒一个好消息。",
+            psychologicalBackgroundEn="The subject hides good news.",
+            contentRequirementsZh="生成细微冲突的视觉和声音证据。",
+            contentRequirementsEn="Create subtle conflicting visual and vocal evidence.",
+            sceneSupplementZh="",
+            sceneSupplementEn="",
         )
     )
     preset_read = catalog.create_prompt_preset(
@@ -319,7 +340,20 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Pat
     database.initialize()
     catalog, dataset, content, preset, background = fixed_resources(database)
     second = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(name="候车室", scene="A quiet station waiting room.")
+        VideoBackgroundPresetCreate(
+            nameZh="候车室",
+            nameEn="Station waiting room",
+            sceneZh="一间安静的车站候车室。",
+            sceneEn="A quiet station waiting room.",
+            ambientSoundZh="",
+            ambientSoundEn="",
+            participantRelationshipZh="",
+            participantRelationshipEn="",
+            lightingZh="",
+            lightingEn="",
+            framingZh="",
+            framingEn="",
+        )
     )
     prompt_service = PromptService(OpenAICompatiblePromptModel("test"))
     batches = BatchService(database, prompt_service, _ConfiguredRendererGateway())
@@ -578,20 +612,28 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
     catalog, dataset, content_one, preset_one, background_one = fixed_resources(database)
     content_two = catalog.create_content_plan(
         ContentPlanCreate(
-            name="一致回应二",
+            nameZh="一致回应二",
+            nameEn="Aligned response two",
             category=Category.A_VA,
             mode=ContentMode.FIXED,
             status=ContentStatus.ACTIVE,
             trueEmotion="sadness",
             apparentEmotion="sadness",
-            scene="A quiet office after a difficult meeting.",
-            triggerEvent="The subject is asked whether everything is fine.",
-            psychologicalBackground="The subject wants to keep the answer brief.",
+            sceneZh="一次艰难会议后的一间安静办公室。",
+            sceneEn="A quiet office after a difficult meeting.",
+            triggerEventZh="有人问被摄者是否一切都好。",
+            triggerEventEn="The subject is asked whether everything is fine.",
+            psychologicalBackgroundZh="被摄者想让回答保持简短。",
+            psychologicalBackgroundEn="The subject wants to keep the answer brief.",
             dialogue="我没事，只是需要一点时间。",
             trueEmotionDescription="说话者在克制悲伤，语言和可见表现保持一致。",
             baseVideoPrompt=(
                 "A restrained adult sits at a desk and answers a direct question with a steady but tired expression."
             ),
+            contentRequirementsZh="",
+            contentRequirementsEn="",
+            sceneSupplementZh="",
+            sceneSupplementEn="",
         )
     )
     preset_two = catalog.create_prompt_preset(
@@ -605,12 +647,18 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
     )
     background_two = catalog.create_background_preset(
         VideoBackgroundPresetCreate(
-            name="安静办公室二",
-            scene="A compact private office with a desk and neutral walls.",
-            ambientSound="Low room tone and distant ventilation.",
-            relationship="The subject remains the only occupant in view.",
-            lighting="Soft daylight from one side.",
-            framing="Static eye-level medium shot.",
+            nameZh="安静办公室二",
+            nameEn="Quiet office two",
+            sceneZh="一间有书桌和中性墙面的紧凑私人办公室。",
+            sceneEn="A compact private office with a desk and neutral walls.",
+            ambientSoundZh="低沉的室内底噪和远处的通风声。",
+            ambientSoundEn="Low room tone and distant ventilation.",
+            participantRelationshipZh="画面中只有被摄者。",
+            participantRelationshipEn="The subject remains the only occupant in view.",
+            lightingZh="柔和的日光从一侧照入。",
+            lightingEn="Soft daylight from one side.",
+            framingZh="静止的平视中景。",
+            framingEn="Static eye-level medium shot.",
         )
     )
     batches = BatchService(
@@ -713,21 +761,29 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: 
     catalog, dataset, _, _, background = fixed_resources(database)
     content = catalog.create_content_plan(
         ContentPlanCreate(
-            name="文字一致回应",
+            nameZh="文字一致回应",
+            nameEn="Aligned text response",
             category=Category.A_VT,
             mode=ContentMode.FIXED,
             status=ContentStatus.ACTIVE,
             trueEmotion="calm",
             apparentEmotion="calm",
-            scene="A quiet office after a meeting.",
-            triggerEvent="A timer sounds.",
-            psychologicalBackground="The subject prepares a brief answer.",
+            sceneZh="会议后的一间安静办公室。",
+            sceneEn="A quiet office after a meeting.",
+            triggerEventZh="计时器响起。",
+            triggerEventEn="A timer sounds.",
+            psychologicalBackgroundZh="被摄者准备作出简短回答。",
+            psychologicalBackgroundEn="The subject prepares a brief answer.",
             displayText="我需要再想一想。",
             trueEmotionDescription="说话者的内容和可见表现保持一致。",
             baseVideoPrompt=(
                 "A restrained adult sits at a desk and answers with a steady, attentive expression while both hands "
                 "remain resting on the desk."
             ),
+            contentRequirementsZh="",
+            contentRequirementsEn="",
+            sceneSupplementZh="",
+            sceneSupplementEn="",
         )
     )
     preset = catalog.create_prompt_preset(

@@ -57,6 +57,7 @@ from backend.domain.schemas import (
     BatchDraftUpdate,
     BatchPreviewRead,
     BatchSubmitRequest,
+    BilingualSelectionRead,
     DemographicInput,
     GpuSlotRead,
     JobDetailRead,
@@ -246,11 +247,17 @@ class BatchService:
             )
             fixed = prepared.fixed_output
             return PromptPreviewRead(
-                content_plan=SelectionRead(id=content.id, name=content.name, revision=content.revision),
+                content_plan=BilingualSelectionRead(
+                    id=content.id,
+                    name_zh=content.name_zh,
+                    name_en=content.name_en,
+                    revision=content.revision,
+                ),
                 prompt_preset=SelectionRead(id=preset.id, name=preset.name, revision=preset.revision),
-                background_preset=SelectionRead(
+                background_preset=BilingualSelectionRead(
                     id=background.id,
-                    name=background.name,
+                    name_zh=background.name_zh,
+                    name_en=background.name_en,
                     revision=background.revision,
                 ),
                 category=content.category,
@@ -686,9 +693,10 @@ class BatchService:
         fixed = allocation.prepared.fixed_output
         return BatchAllocationRead(
             sequence=allocation.sequence,
-            content_plan=SelectionRead(
+            content_plan=BilingualSelectionRead(
                 id=allocation.content.id,
-                name=allocation.content.name,
+                name_zh=allocation.content.name_zh,
+                name_en=allocation.content.name_en,
                 revision=allocation.content.revision,
             ),
             prompt_preset=SelectionRead(
@@ -696,9 +704,10 @@ class BatchService:
                 name=allocation.preset.name,
                 revision=allocation.preset.revision,
             ),
-            background_preset=SelectionRead(
+            background_preset=BilingualSelectionRead(
                 id=allocation.background.id,
-                name=allocation.background.name,
+                name_zh=allocation.background.name_zh,
+                name_en=allocation.background.name_en,
                 revision=allocation.background.revision,
             ),
             demographic=DemographicInput(
@@ -779,7 +788,12 @@ class BatchService:
             seed=aggregate.draft.seed_base,
             status=aggregate.draft.status,
             content_plans=[
-                SelectionRead(id=row.id, name=row.name, revision=aggregate.content_revisions[row.id])
+                BilingualSelectionRead(
+                    id=row.id,
+                    name_zh=row.name_zh,
+                    name_en=row.name_en,
+                    revision=aggregate.content_revisions[row.id],
+                )
                 for row in aggregate.contents
             ],
             prompt_presets=[
@@ -787,7 +801,12 @@ class BatchService:
                 for row in aggregate.presets
             ],
             background_presets=[
-                SelectionRead(id=row.id, name=row.name, revision=aggregate.background_revisions[row.id])
+                BilingualSelectionRead(
+                    id=row.id,
+                    name_zh=row.name_zh,
+                    name_en=row.name_en,
+                    revision=aggregate.background_revisions[row.id],
+                )
                 for row in aggregate.backgrounds
             ],
             demographics=[

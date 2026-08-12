@@ -151,16 +151,23 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
     )
     content = catalog.create_content_plan(
         ContentPlanCreate(
-            name=f"Content {suffix}",
+            nameZh=f"内容 {suffix}",
+            nameEn=f"Content {suffix}",
             category=Category.A_VA,
             mode=ContentMode.GENERATIVE,
             status=ContentStatus.ACTIVE,
             trueEmotion="contained",
             apparentEmotion="contained",
-            scene="A private office after a short meeting.",
-            triggerEvent="A timer sounds.",
-            psychologicalBackground="The subject prepares a measured response.",
-            contentRequirements="Describe one adult answering a short question in the room.",
+            sceneZh="短会后的一间私人办公室。",
+            sceneEn="A private office after a short meeting.",
+            triggerEventZh="计时器响起。",
+            triggerEventEn="A timer sounds.",
+            psychologicalBackgroundZh="被摄者准备作出克制的回应。",
+            psychologicalBackgroundEn="The subject prepares a measured response.",
+            contentRequirementsZh="描述一名成年人在房间里回答一个简短问题。",
+            contentRequirementsEn="Describe one adult answering a short question in the room.",
+            sceneSupplementZh="",
+            sceneSupplementEn="",
         )
     )
     preset = catalog.create_prompt_preset(
@@ -173,12 +180,18 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
     )
     background = catalog.create_background_preset(
         VideoBackgroundPresetCreate(
-            name=f"Background {suffix}",
-            scene="A private office containing one chair and one desk.",
-            ambientSound="A steady ventilation hum remains audible.",
-            participantRelationship="The subject remains the only occupant in view.",
-            lighting="Soft daylight enters through one window.",
-            framing="Use a static eye-level medium shot.",
+            nameZh=f"背景 {suffix}",
+            nameEn=f"Background {suffix}",
+            sceneZh="一间有一把椅子和一张书桌的私人办公室。",
+            sceneEn="A private office containing one chair and one desk.",
+            ambientSoundZh="能听到稳定的通风声。",
+            ambientSoundEn="A steady ventilation hum remains audible.",
+            participantRelationshipZh="画面中只有被摄者。",
+            participantRelationshipEn="The subject remains the only occupant in view.",
+            lightingZh="柔和的日光从一扇窗户照进来。",
+            lightingEn="Soft daylight enters through one window.",
+            framingZh="使用静止的平视中景。",
+            framingEn="Use a static eye-level medium shot.",
         )
     )
     return dataset, content, preset, background

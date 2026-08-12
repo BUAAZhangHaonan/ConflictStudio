@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, field_validator, model_validator
@@ -42,6 +43,14 @@ class ApiModel(BaseModel):
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
 TextValue = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+OptionalTextValue = Annotated[str, StringConstraints(strip_whitespace=True)]
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+
+
+def validate_english_video_prompt(value: str, field_name: str) -> str:
+    if _CJK_RE.search(value):
+        raise ValueError(f"{field_name} must use English")
+    return value
 
 
 def normalize_emotion(value: object) -> object:
@@ -103,22 +112,33 @@ class DatasetRead(ApiModel):
 
 
 class ContentPlanFields(ApiModel):
-    name: Name
+    name_zh: Name
+    name_en: Name
     category: Category
     conflict_direction: ConflictDirection | None = None
     mode: ContentMode
     status: ContentStatus = ContentStatus.DRAFT
     true_emotion: EmotionValue
     apparent_emotion: EmotionValue
-    scene: TextValue
-    trigger_event: TextValue
-    psychological_background: TextValue
+    scene_zh: TextValue
+    scene_en: TextValue
+    trigger_event_zh: TextValue
+    trigger_event_en: TextValue
+    psychological_background_zh: TextValue
+    psychological_background_en: TextValue
     dialogue: str | None = None
     display_text: str | None = None
     true_emotion_description: str = ""
     base_video_prompt: str = ""
-    content_instruction: str = Field(default="", alias="contentRequirements")
-    scene_supplement: str = ""
+    content_requirements_zh: OptionalTextValue
+    content_requirements_en: OptionalTextValue
+    scene_supplement_zh: OptionalTextValue
+    scene_supplement_en: OptionalTextValue
+
+    @field_validator("base_video_prompt")
+    @classmethod
+    def validate_base_video_prompt(cls, value: str) -> str:
+        return validate_english_video_prompt(value, "baseVideoPrompt")
 
     @model_validator(mode="after")
     def validate_content(self) -> Self:
@@ -130,8 +150,10 @@ class ContentPlanFields(ApiModel):
             raise ValueError("Conflict content requires true emotion to differ from apparent emotion")
         if self.mode is ContentMode.FIXED and not self.base_video_prompt.strip():
             raise ValueError("Fixed content requires a base video prompt")
-        if self.mode is ContentMode.GENERATIVE and not self.content_instruction.strip():
-            raise ValueError("Generative content requires content requirements")
+        if self.mode is ContentMode.GENERATIVE and (
+            not self.content_requirements_zh or not self.content_requirements_en
+        ):
+            raise ValueError("Generative content requires Chinese and English content requirements")
         if self.category in {Category.A_VA, Category.C_VA} and self.mode is ContentMode.FIXED:
             if not (self.dialogue or "").strip():
                 raise ValueError("Fixed VA content requires dialogue")
@@ -148,21 +170,34 @@ class ContentPlanCreate(ContentPlanFields):
 
 
 class ContentPlanUpdate(UpdateWithChanges):
-    name: Name | None = None
+    name_zh: Name | None = None
+    name_en: Name | None = None
     conflict_direction: ConflictDirection | None = None
     mode: ContentMode | None = None
     status: ContentStatus | None = None
     true_emotion: EmotionValue | None = None
     apparent_emotion: EmotionValue | None = None
-    scene: TextValue | None = None
-    trigger_event: TextValue | None = None
-    psychological_background: TextValue | None = None
+    scene_zh: TextValue | None = None
+    scene_en: TextValue | None = None
+    trigger_event_zh: TextValue | None = None
+    trigger_event_en: TextValue | None = None
+    psychological_background_zh: TextValue | None = None
+    psychological_background_en: TextValue | None = None
     dialogue: str | None = None
     display_text: str | None = None
     true_emotion_description: str | None = None
     base_video_prompt: str | None = None
-    content_instruction: str | None = Field(default=None, alias="contentRequirements")
-    scene_supplement: str | None = None
+    content_requirements_zh: OptionalTextValue | None = None
+    content_requirements_en: OptionalTextValue | None = None
+    scene_supplement_zh: OptionalTextValue | None = None
+    scene_supplement_en: OptionalTextValue | None = None
+
+    @field_validator("base_video_prompt")
+    @classmethod
+    def validate_base_video_prompt(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_english_video_prompt(value, "baseVideoPrompt")
 
 
 class ContentPlanRead(ContentPlanFields):
@@ -182,6 +217,11 @@ class PromptPresetFields(ApiModel):
     final_negative_prompt: TextValue = Field(alias="finalRenderNegativeConstraints")
     status: ResourceStatus = ResourceStatus.ACTIVE
 
+    @field_validator("final_negative_prompt")
+    @classmethod
+    def validate_final_negative_prompt(cls, value: str) -> str:
+        return validate_english_video_prompt(value, "finalRenderNegativeConstraints")
+
 
 class PromptPresetCreate(PromptPresetFields):
     pass
@@ -196,6 +236,13 @@ class PromptPresetUpdate(UpdateWithChanges):
     final_negative_prompt: TextValue | None = Field(default=None, alias="finalRenderNegativeConstraints")
     status: ResourceStatus | None = None
 
+    @field_validator("final_negative_prompt")
+    @classmethod
+    def validate_final_negative_prompt(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_english_video_prompt(value, "finalRenderNegativeConstraints")
+
 
 class PromptPresetRead(PromptPresetFields):
     id: int
@@ -205,15 +252,21 @@ class PromptPresetRead(PromptPresetFields):
 
 
 class VideoBackgroundPresetFields(ApiModel):
-    name: Name
-    scene: TextValue
-    ambient_audio: str = Field(default="", alias="ambientSound")
-    relationship: str = Field(default="", alias="participantRelationship")
-    lighting: str = ""
-    framing_supplement: str = Field(default="", alias="framing")
+    name_zh: Name
+    name_en: Name
+    scene_zh: TextValue
+    scene_en: TextValue
+    ambient_sound_zh: OptionalTextValue
+    ambient_sound_en: OptionalTextValue
+    participant_relationship_zh: OptionalTextValue
+    participant_relationship_en: OptionalTextValue
+    lighting_zh: OptionalTextValue
+    lighting_en: OptionalTextValue
+    framing_zh: OptionalTextValue
+    framing_en: OptionalTextValue
     status: ResourceStatus = ResourceStatus.ACTIVE
 
-    @field_validator("scene", "ambient_audio", "relationship", "lighting", "framing_supplement")
+    @field_validator("scene_en", "ambient_sound_en", "participant_relationship_en", "lighting_en", "framing_en")
     @classmethod
     def validate_background_text(cls, value: str, info: ValidationInfo) -> str:
         return validate_background_policy_text(value, info.field_name)
@@ -224,15 +277,21 @@ class VideoBackgroundPresetCreate(VideoBackgroundPresetFields):
 
 
 class VideoBackgroundPresetUpdate(UpdateWithChanges):
-    name: Name | None = None
-    scene: TextValue | None = None
-    ambient_audio: str | None = Field(default=None, alias="ambientSound")
-    relationship: str | None = Field(default=None, alias="participantRelationship")
-    lighting: str | None = None
-    framing_supplement: str | None = Field(default=None, alias="framing")
+    name_zh: Name | None = None
+    name_en: Name | None = None
+    scene_zh: TextValue | None = None
+    scene_en: TextValue | None = None
+    ambient_sound_zh: OptionalTextValue | None = None
+    ambient_sound_en: OptionalTextValue | None = None
+    participant_relationship_zh: OptionalTextValue | None = None
+    participant_relationship_en: OptionalTextValue | None = None
+    lighting_zh: OptionalTextValue | None = None
+    lighting_en: OptionalTextValue | None = None
+    framing_zh: OptionalTextValue | None = None
+    framing_en: OptionalTextValue | None = None
     status: ResourceStatus | None = None
 
-    @field_validator("scene", "ambient_audio", "relationship", "lighting", "framing_supplement")
+    @field_validator("scene_en", "ambient_sound_en", "participant_relationship_en", "lighting_en", "framing_en")
     @classmethod
     def validate_background_text(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
@@ -308,6 +367,13 @@ class SelectionRead(ApiModel):
     revision: int
 
 
+class BilingualSelectionRead(ApiModel):
+    id: int
+    name_zh: str
+    name_en: str
+    revision: int
+
+
 class BatchDraftRead(ApiModel):
     id: int
     dataset_id: int
@@ -318,9 +384,9 @@ class BatchDraftRead(ApiModel):
     quantity: int
     seed: int
     status: BatchDraftStatus
-    content_plans: list[SelectionRead]
+    content_plans: list[BilingualSelectionRead]
     prompt_presets: list[SelectionRead]
-    background_presets: list[SelectionRead]
+    background_presets: list[BilingualSelectionRead]
     demographics: list[DemographicInput]
     gpu_slots: list[GpuSlotName]
     revision: int
@@ -343,9 +409,9 @@ class JobCancelRequest(ExpectedRevision):
 
 class BatchAllocationRead(ApiModel):
     sequence: int
-    content_plan: SelectionRead
+    content_plan: BilingualSelectionRead
     prompt_preset: SelectionRead
-    background_preset: SelectionRead
+    background_preset: BilingualSelectionRead
     demographic: DemographicInput
     gpu_slot: GpuSlotName
     model: ModelName
@@ -372,9 +438,9 @@ class PromptPreviewRequest(ApiModel):
 
 
 class PromptPreviewRead(ApiModel):
-    content_plan: SelectionRead
+    content_plan: BilingualSelectionRead
     prompt_preset: SelectionRead
-    background_preset: SelectionRead
+    background_preset: BilingualSelectionRead
     category: Category
     conflict_direction: ConflictDirection | None
     demographic: DemographicInput

@@ -103,35 +103,52 @@ class Dataset(SQLModel, table=True):
 class ContentPlan(SQLModel, table=True):
     __tablename__ = "content_plans"
     __table_args__ = (
-        UniqueConstraint("category", "name_key", name="uq_content_plans_category_name"),
+        UniqueConstraint("category", "name_zh_key", name="uq_content_plans_category_name_zh"),
+        UniqueConstraint("category", "name_en_key", name="uq_content_plans_category_name_en"),
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_content_plans_direction"),
         CheckConstraint(CONTENT_EMOTION_CHECK, name="ck_content_plans_emotion_relation"),
         CheckConstraint(
             "(mode = 'Fixed' AND length(trim(base_video_prompt)) > 0) OR "
-            "(mode = 'Generative' AND length(trim(content_instruction)) > 0)",
+            "(mode = 'Generative' AND length(trim(content_requirements_zh)) > 0 "
+            "AND length(trim(content_requirements_en)) > 0)",
             name="ck_content_plans_mode_input",
+        ),
+        CheckConstraint(
+            "length(trim(name_zh)) > 0 AND length(trim(name_en)) > 0 "
+            "AND length(trim(scene_zh)) > 0 AND length(trim(scene_en)) > 0 "
+            "AND length(trim(trigger_event_zh)) > 0 AND length(trim(trigger_event_en)) > 0 "
+            "AND length(trim(psychological_background_zh)) > 0 "
+            "AND length(trim(psychological_background_en)) > 0",
+            name="ck_content_plans_bilingual_text",
         ),
         CheckConstraint("revision >= 1", name="ck_content_plans_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    name: str = Field(sa_column=Column(String(160), nullable=False))
-    name_key: str = Field(sa_column=Column(String(160), nullable=False))
+    name_zh: str = Field(sa_column=Column(String(160), nullable=False))
+    name_zh_key: str = Field(sa_column=Column(String(160), nullable=False))
+    name_en: str = Field(sa_column=Column(String(160), nullable=False))
+    name_en_key: str = Field(sa_column=Column(String(160), nullable=False))
     category: Category = Field(sa_column=enum_column(Category))
     conflict_direction: ConflictDirection | None = Field(default=None, sa_column=enum_column(ConflictDirection, nullable=True))
     mode: ContentMode = Field(sa_column=enum_column(ContentMode))
     status: ContentStatus = Field(default=ContentStatus.DRAFT, sa_column=enum_column(ContentStatus))
     true_emotion: str = Field(sa_column=Column(String(120), nullable=False))
     apparent_emotion: str = Field(sa_column=Column(String(120), nullable=False))
-    scene: str = Field(sa_column=Column(Text, nullable=False))
-    trigger_event: str = Field(sa_column=Column(Text, nullable=False))
-    psychological_background: str = Field(sa_column=Column(Text, nullable=False))
+    scene_zh: str = Field(sa_column=Column(Text, nullable=False))
+    scene_en: str = Field(sa_column=Column(Text, nullable=False))
+    trigger_event_zh: str = Field(sa_column=Column(Text, nullable=False))
+    trigger_event_en: str = Field(sa_column=Column(Text, nullable=False))
+    psychological_background_zh: str = Field(sa_column=Column(Text, nullable=False))
+    psychological_background_en: str = Field(sa_column=Column(Text, nullable=False))
     dialogue: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     display_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     true_emotion_description: str = Field(sa_column=Column(Text, nullable=False))
     base_video_prompt: str = Field(default="", sa_column=Column(Text, nullable=False))
-    content_instruction: str = Field(default="", sa_column=Column(Text, nullable=False))
-    scene_supplement: str = Field(default="", sa_column=Column(Text, nullable=False))
+    content_requirements_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    content_requirements_en: str = Field(default="", sa_column=Column(Text, nullable=False))
+    scene_supplement_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    scene_supplement_en: str = Field(default="", sa_column=Column(Text, nullable=False))
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
@@ -174,18 +191,31 @@ class PromptExample(SQLModel, table=True):
 class VideoBackgroundPreset(SQLModel, table=True):
     __tablename__ = "video_background_presets"
     __table_args__ = (
-        UniqueConstraint("name_key", name="uq_video_background_presets_name"),
+        UniqueConstraint("name_zh_key", name="uq_video_background_presets_name_zh"),
+        UniqueConstraint("name_en_key", name="uq_video_background_presets_name_en"),
+        CheckConstraint(
+            "length(trim(name_zh)) > 0 AND length(trim(name_en)) > 0 "
+            "AND length(trim(scene_zh)) > 0 AND length(trim(scene_en)) > 0",
+            name="ck_background_presets_bilingual_text",
+        ),
         CheckConstraint("revision >= 1", name="ck_background_presets_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    name: str = Field(sa_column=Column(String(160), nullable=False))
-    name_key: str = Field(sa_column=Column(String(160), nullable=False))
-    scene: str = Field(sa_column=Column(Text, nullable=False))
-    ambient_audio: str = Field(default="", sa_column=Column(Text, nullable=False))
-    relationship: str = Field(default="", sa_column=Column(Text, nullable=False))
-    lighting: str = Field(default="", sa_column=Column(Text, nullable=False))
-    framing_supplement: str = Field(default="", sa_column=Column(Text, nullable=False))
+    name_zh: str = Field(sa_column=Column(String(160), nullable=False))
+    name_zh_key: str = Field(sa_column=Column(String(160), nullable=False))
+    name_en: str = Field(sa_column=Column(String(160), nullable=False))
+    name_en_key: str = Field(sa_column=Column(String(160), nullable=False))
+    scene_zh: str = Field(sa_column=Column(Text, nullable=False))
+    scene_en: str = Field(sa_column=Column(Text, nullable=False))
+    ambient_sound_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    ambient_sound_en: str = Field(default="", sa_column=Column(Text, nullable=False))
+    participant_relationship_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    participant_relationship_en: str = Field(default="", sa_column=Column(Text, nullable=False))
+    lighting_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    lighting_en: str = Field(default="", sa_column=Column(Text, nullable=False))
+    framing_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    framing_en: str = Field(default="", sa_column=Column(Text, nullable=False))
     status: ResourceStatus = Field(default=ResourceStatus.ACTIVE, sa_column=enum_column(ResourceStatus))
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))

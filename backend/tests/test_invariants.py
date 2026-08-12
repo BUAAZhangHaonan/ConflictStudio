@@ -28,16 +28,23 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
         "content": client.post(
             "/api/content-plans",
             json={
-                "name": "Calm response",
+                "nameZh": "平静回应",
+                "nameEn": "Calm response",
                 "category": "A-VA",
                 "mode": "Generative",
                 "status": "Active",
                 "trueEmotion": "calm",
                 "apparentEmotion": "calm",
-                "scene": "A private study with one chair.",
-                "triggerEvent": "A timer sounds.",
-                "psychologicalBackground": "The subject prepares a brief response.",
-                "contentRequirements": "Describe one adult responding in the room.",
+                "sceneZh": "一间只有一把椅子的私人书房。",
+                "sceneEn": "A private study with one chair.",
+                "triggerEventZh": "计时器响起。",
+                "triggerEventEn": "A timer sounds.",
+                "psychologicalBackgroundZh": "被摄者准备作出简短回应。",
+                "psychologicalBackgroundEn": "The subject prepares a brief response.",
+                "contentRequirementsZh": "描述一名成年人在房间内回应。",
+                "contentRequirementsEn": "Describe one adult responding in the room.",
+                "sceneSupplementZh": "",
+                "sceneSupplementEn": "",
             },
         ),
         "prompt": client.post(
@@ -52,11 +59,18 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
         "background": client.post(
             "/api/video-background-presets",
             json={
-                "name": "Private study",
-                "scene": "A private study containing one chair and one desk.",
-                "ambientSound": "A quiet ventilation hum is audible.",
-                "lighting": "Soft daylight enters through one window.",
-                "framing": "Use a static eye-level medium shot.",
+                "nameZh": "私人书房",
+                "nameEn": "Private study",
+                "sceneZh": "一间有一把椅子和一张书桌的私人书房。",
+                "sceneEn": "A private study containing one chair and one desk.",
+                "ambientSoundZh": "能听到安静的通风声。",
+                "ambientSoundEn": "A quiet ventilation hum is audible.",
+                "participantRelationshipZh": "",
+                "participantRelationshipEn": "",
+                "lightingZh": "柔和的日光从一扇窗户照进来。",
+                "lightingEn": "Soft daylight enters through one window.",
+                "framingZh": "使用静止的平视中景。",
+                "framingEn": "Use a static eye-level medium shot.",
             },
         ),
     }
@@ -78,20 +92,29 @@ def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> 
     database.initialize()
     connection = sqlite3.connect(database.database_path)
     columns = (
-        "name, name_key, scene, ambient_audio, relationship, lighting, framing_supplement, "
+        "name_zh, name_zh_key, name_en, name_en_key, scene_zh, scene_en, "
+        "ambient_sound_zh, ambient_sound_en, participant_relationship_zh, "
+        "participant_relationship_en, lighting_zh, lighting_en, framing_zh, framing_en, "
         "status, revision, created_at, updated_at"
     )
     try:
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                f"INSERT INTO video_background_presets ({columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO video_background_presets ({columns}) VALUES ({', '.join('?' for _ in range(18))})",
                 (
+                    "无效背景",
+                    "无效背景",
                     "Invalid background",
                     "invalid background",
+                    "被摄者旁边等待着一位朋友。",
                     "A friend waits beside the subject.",
+                    "",
                     "Room tone",
                     "",
+                    "",
+                    "",
                     "Soft daylight",
+                    "",
                     "Medium shot",
                     "Active",
                     1,
@@ -102,14 +125,21 @@ def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> 
 
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                f"INSERT INTO video_background_presets ({columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO video_background_presets ({columns}) VALUES ({', '.join('?' for _ in range(18))})",
                 (
+                    "无效情绪背景",
+                    "无效情绪背景",
                     "Invalid emotion background",
                     "invalid emotion background",
+                    "一间只有一把椅子的私人办公室。",
                     "A private office with one chair.",
+                    "",
                     "Room tone",
                     "",
+                    "",
+                    "",
                     "Emotion: surprise",
+                    "",
                     "Medium shot",
                     "Active",
                     1,
@@ -119,14 +149,21 @@ def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> 
             )
 
         connection.execute(
-            f"INSERT INTO video_background_presets ({columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT INTO video_background_presets ({columns}) VALUES ({', '.join('?' for _ in range(18))})",
             (
+                "有效背景",
+                "有效背景",
                 "Valid background",
                 "valid background",
+                "独自在小厨房里准备一份惊喜早餐。",
                 "Alone in a small kitchen, preparing a surprise breakfast.",
+                "",
                 "Room tone",
                 "",
+                "",
+                "",
                 "Soft daylight",
+                "",
                 "Medium shot",
                 "Active",
                 1,
@@ -136,7 +173,7 @@ def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> 
         )
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                "UPDATE video_background_presets SET ambient_audio = ? WHERE name_key = ?",
+                "UPDATE video_background_presets SET ambient_sound_en = ? WHERE name_en_key = ?",
                 ("An orchestra plays nearby.", "valid background"),
             )
     finally:
@@ -298,7 +335,7 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
             (f"/api/datasets/{records['dataset']['id']}", {"expectedRevision": 1, "note": "Changed"}),
             (
                 f"/api/content-plans/{records['content']['id']}",
-                {"expectedRevision": 1, "scene": "A changed private study."},
+                {"expectedRevision": 1, "sceneEn": "A changed private study."},
             ),
             (
                 f"/api/prompt-presets/{records['prompt']['id']}",
@@ -306,7 +343,7 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
             ),
             (
                 f"/api/video-background-presets/{records['background']['id']}",
-                {"expectedRevision": 1, "name": "Changed background"},
+                {"expectedRevision": 1, "nameEn": "Changed background"},
             ),
         )
         update_responses = [(path, client.patch(path, json=payload)) for path, payload in updates]

@@ -72,7 +72,14 @@ class CatalogService:
 
     def list_content_plans(self) -> list[ContentPlanRead]:
         with self.database.read_session() as session:
-            rows = session.exec(select(ContentPlan).order_by(ContentPlan.category, ContentPlan.name, ContentPlan.id)).all()
+            rows = session.exec(
+                select(ContentPlan).order_by(
+                    ContentPlan.category,
+                    ContentPlan.name_zh,
+                    ContentPlan.name_en,
+                    ContentPlan.id,
+                )
+            ).all()
             return [ContentPlanRead.model_validate(row) for row in rows]
 
     def get_content_plan(self, content_id: int) -> ContentPlanRead:
@@ -81,10 +88,16 @@ class CatalogService:
 
     def create_content_plan(self, payload: ContentPlanCreate) -> ContentPlanRead:
         with self.database.immediate_session() as session:
-            self._ensure_content_name_available(session, payload.category, payload.name)
+            self._ensure_content_names_available(
+                session,
+                payload.category,
+                payload.name_zh,
+                payload.name_en,
+            )
             row = ContentPlan(
                 **payload.model_dump(),
-                name_key=name_key(payload.name),
+                name_zh_key=name_key(payload.name_zh),
+                name_en_key=name_key(payload.name_en),
             )
             session.add(row)
             session.flush()
@@ -95,17 +108,22 @@ class CatalogService:
             row = self._get(session, ContentPlan, content_id, "contentPlan")
             self._check_revision(row, payload.expected_revision, "contentPlan")
             values = payload.model_dump(exclude_unset=True, exclude={"expected_revision"})
-            if "name" in values:
-                self._ensure_content_name_available(session, row.category, values["name"], content_id)
-                values["name_key"] = name_key(values["name"])
             try:
                 candidate = ContentPlanCreate.model_validate(
                     {**ContentPlanCreate.model_validate(row).model_dump(), **values}
                 )
             except ValidationError as error:
                 raise ServiceError(422, "validation_error", "The content plan is not valid") from error
+            self._ensure_content_names_available(
+                session,
+                row.category,
+                candidate.name_zh,
+                candidate.name_en,
+                content_id,
+            )
             values = candidate.model_dump()
-            values["name_key"] = name_key(candidate.name)
+            values["name_zh_key"] = name_key(candidate.name_zh)
+            values["name_en_key"] = name_key(candidate.name_en)
             self._apply_update(row, values)
             return ContentPlanRead.model_validate(row)
 
@@ -179,7 +197,11 @@ class CatalogService:
     def list_background_presets(self) -> list[VideoBackgroundPresetRead]:
         with self.database.read_session() as session:
             rows = session.exec(
-                select(VideoBackgroundPreset).order_by(VideoBackgroundPreset.name, VideoBackgroundPreset.id)
+                select(VideoBackgroundPreset).order_by(
+                    VideoBackgroundPreset.name_zh,
+                    VideoBackgroundPreset.name_en,
+                    VideoBackgroundPreset.id,
+                )
             ).all()
             return [VideoBackgroundPresetRead.model_validate(row) for row in rows]
 
@@ -191,8 +213,12 @@ class CatalogService:
 
     def create_background_preset(self, payload: VideoBackgroundPresetCreate) -> VideoBackgroundPresetRead:
         with self.database.immediate_session() as session:
-            self._ensure_background_name_available(session, payload.name)
-            row = VideoBackgroundPreset(**payload.model_dump(), name_key=name_key(payload.name))
+            self._ensure_background_names_available(session, payload.name_zh, payload.name_en)
+            row = VideoBackgroundPreset(
+                **payload.model_dump(),
+                name_zh_key=name_key(payload.name_zh),
+                name_en_key=name_key(payload.name_en),
+            )
             session.add(row)
             session.flush()
             return VideoBackgroundPresetRead.model_validate(row)
@@ -206,9 +232,18 @@ class CatalogService:
             row = self._get(session, VideoBackgroundPreset, preset_id, "videoBackgroundPreset")
             self._check_revision(row, payload.expected_revision, "videoBackgroundPreset")
             values = payload.model_dump(exclude_unset=True, exclude={"expected_revision"})
-            if "name" in values:
-                self._ensure_background_name_available(session, values["name"], preset_id)
-                values["name_key"] = name_key(values["name"])
+            candidate = VideoBackgroundPresetCreate.model_validate(
+                {**VideoBackgroundPresetCreate.model_validate(row).model_dump(), **values}
+            )
+            self._ensure_background_names_available(
+                session,
+                candidate.name_zh,
+                candidate.name_en,
+                preset_id,
+            )
+            values = candidate.model_dump()
+            values["name_zh_key"] = name_key(candidate.name_zh)
+            values["name_en_key"] = name_key(candidate.name_en)
             self._apply_update(row, values)
             return VideoBackgroundPresetRead.model_validate(row)
 
@@ -256,18 +291,23 @@ class CatalogService:
         if session.exec(statement).first():
             self._raise_name_conflict("dataset")
 
-    def _ensure_content_name_available(
+    def _ensure_content_names_available(
         self,
         session: Session,
         category: Any,
-        name: str,
+        name_zh: str,
+        name_en: str,
         exclude_id: int | None = None,
     ) -> None:
-        statement = select(ContentPlan).where(ContentPlan.category == category, ContentPlan.name_key == name_key(name))
-        if exclude_id is not None:
-            statement = statement.where(ContentPlan.id != exclude_id)
-        if session.exec(statement).first():
-            self._raise_name_conflict("contentPlan")
+        for column, value in (
+            (ContentPlan.name_zh_key, name_zh),
+            (ContentPlan.name_en_key, name_en),
+        ):
+            statement = select(ContentPlan).where(ContentPlan.category == category, column == name_key(value))
+            if exclude_id is not None:
+                statement = statement.where(ContentPlan.id != exclude_id)
+            if session.exec(statement).first():
+                self._raise_name_conflict("contentPlan")
 
     def _ensure_preset_name_available(
         self,
@@ -282,17 +322,22 @@ class CatalogService:
         if session.exec(statement).first():
             self._raise_name_conflict("promptPreset")
 
-    def _ensure_background_name_available(
+    def _ensure_background_names_available(
         self,
         session: Session,
-        name: str,
+        name_zh: str,
+        name_en: str,
         exclude_id: int | None = None,
     ) -> None:
-        statement = select(VideoBackgroundPreset).where(VideoBackgroundPreset.name_key == name_key(name))
-        if exclude_id is not None:
-            statement = statement.where(VideoBackgroundPreset.id != exclude_id)
-        if session.exec(statement).first():
-            self._raise_name_conflict("videoBackgroundPreset")
+        for column, value in (
+            (VideoBackgroundPreset.name_zh_key, name_zh),
+            (VideoBackgroundPreset.name_en_key, name_en),
+        ):
+            statement = select(VideoBackgroundPreset).where(column == name_key(value))
+            if exclude_id is not None:
+                statement = statement.where(VideoBackgroundPreset.id != exclude_id)
+            if session.exec(statement).first():
+                self._raise_name_conflict("videoBackgroundPreset")
 
     @staticmethod
     def _replace_examples(

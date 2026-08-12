@@ -111,19 +111,27 @@ def test_invalid_direction_returns_stable_422(tmp_path: Path) -> None:
         response = client.post(
             "/api/content-plans",
             json={
-                "name": "无效方向",
+                "nameZh": "无效方向",
+                "nameEn": "Invalid direction",
                 "category": "A-VA",
                 "conflictDirection": "Audio",
                 "mode": "Fixed",
                 "status": "Active",
                 "trueEmotion": "calm",
                 "apparentEmotion": "calm",
-                "scene": "A quiet room.",
-                "triggerEvent": "A short question.",
-                "psychologicalBackground": "The subject is at ease.",
+                "sceneZh": "一间安静的房间。",
+                "sceneEn": "A quiet room.",
+                "triggerEventZh": "有人提出一个简短问题。",
+                "triggerEventEn": "A short question is asked.",
+                "psychologicalBackgroundZh": "被摄者感到自在。",
+                "psychologicalBackgroundEn": "The subject is at ease.",
                 "dialogue": "我很好。",
                 "trueEmotionDescription": "说话者情绪平静。",
                 "baseVideoPrompt": "An adult answers calmly in a quiet room.",
+                "contentRequirementsZh": "",
+                "contentRequirementsEn": "",
+                "sceneSupplementZh": "",
+                "sceneSupplementEn": "",
             },
         )
 
@@ -133,16 +141,23 @@ def test_invalid_direction_returns_stable_422(tmp_path: Path) -> None:
 
 def content_plan_request(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
-        "name": "Aligned response",
+        "nameZh": "一致回应",
+        "nameEn": "Aligned response",
         "category": "A-VA",
         "mode": "Generative",
         "status": "Active",
         "trueEmotion": "calm",
         "apparentEmotion": "calm",
-        "scene": "A private office.",
-        "triggerEvent": "A timer sounds.",
-        "psychologicalBackground": "The subject prepares a brief response.",
-        "contentRequirements": "Describe one adult responding in the room.",
+        "sceneZh": "一间私人办公室。",
+        "sceneEn": "A private office.",
+        "triggerEventZh": "计时器响起。",
+        "triggerEventEn": "A timer sounds.",
+        "psychologicalBackgroundZh": "被摄者准备作出简短回应。",
+        "psychologicalBackgroundEn": "The subject prepares a brief response.",
+        "contentRequirementsZh": "描述一名成年人在房间内回应。",
+        "contentRequirementsEn": "Describe one adult responding in the room.",
+        "sceneSupplementZh": "",
+        "sceneSupplementEn": "",
     }
     values.update(overrides)
     return values
@@ -169,12 +184,18 @@ def test_content_plan_create_and_update_enforce_emotion_relation(tmp_path: Path)
 
 def background_request(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
-        "name": "Private office",
-        "scene": "A private office containing one chair and one desk.",
-        "ambientSound": "A steady ventilation hum remains audible.",
-        "participantRelationship": "The subject is the only occupant in view.",
-        "lighting": "Soft daylight enters through one window.",
-        "framing": "Use a static eye-level medium shot.",
+        "nameZh": "私人办公室",
+        "nameEn": "Private office",
+        "sceneZh": "一间有一把椅子和一张书桌的私人办公室。",
+        "sceneEn": "A private office containing one chair and one desk.",
+        "ambientSoundZh": "能听到稳定的通风声。",
+        "ambientSoundEn": "A steady ventilation hum remains audible.",
+        "participantRelationshipZh": "画面中只有被摄者。",
+        "participantRelationshipEn": "The subject is the only occupant in view.",
+        "lightingZh": "柔和的日光从一扇窗户照进来。",
+        "lightingEn": "Soft daylight enters through one window.",
+        "framingZh": "使用静止的平视中景。",
+        "framingEn": "Use a static eye-level medium shot.",
     }
     values.update(overrides)
     return values
@@ -184,7 +205,7 @@ def test_background_create_accepts_natural_scene_use_of_emotion_word(tmp_path: P
     with client_for(tmp_path) as client:
         response = client.post(
             "/api/video-background-presets",
-            json=background_request(scene="Alone in a small kitchen, preparing a surprise breakfast."),
+            json=background_request(sceneEn="Alone in a small kitchen, preparing a surprise breakfast."),
         )
 
     assert response.status_code == 201
@@ -193,10 +214,10 @@ def test_background_create_accepts_natural_scene_use_of_emotion_word(tmp_path: P
 @pytest.mark.parametrize(
     ("field", "expected_field", "value", "message"),
     [
-        ("participantRelationship", "participantRelationship", "A second person stands off camera.", "another person"),
-        ("ambientSound", "ambientSound", "A soft soundtrack plays nearby.", "music or score terms"),
-        ("lighting", "lighting", "The lighting creates a sad atmosphere.", "emotion labels"),
-        ("scene", "scene", "The A-VT protocol applies in this office.", "internal category or protocol names"),
+        ("participantRelationshipEn", "participantRelationshipEn", "A second person stands off camera.", "another person"),
+        ("ambientSoundEn", "ambientSoundEn", "A soft soundtrack plays nearby.", "music or score terms"),
+        ("lightingEn", "lightingEn", "The lighting creates a sad atmosphere.", "emotion labels"),
+        ("sceneEn", "sceneEn", "The A-VT protocol applies in this office.", "internal category or protocol names"),
     ],
 )
 def test_background_create_returns_field_specific_policy_error(
@@ -222,10 +243,10 @@ def test_background_create_returns_field_specific_policy_error(
 @pytest.mark.parametrize(
     ("field", "expected_field", "value", "message"),
     [
-        ("participantRelationship", "participantRelationship", "A second person stands off camera.", "another person"),
-        ("ambientSound", "ambientSound", "A soft soundtrack plays nearby.", "music or score terms"),
-        ("lighting", "lighting", "The lighting creates a sad atmosphere.", "emotion labels"),
-        ("scene", "scene", "The A-VT protocol applies in this office.", "internal category or protocol names"),
+        ("participantRelationshipEn", "participantRelationshipEn", "A second person stands off camera.", "another person"),
+        ("ambientSoundEn", "ambientSoundEn", "A soft soundtrack plays nearby.", "music or score terms"),
+        ("lightingEn", "lightingEn", "The lighting creates a sad atmosphere.", "emotion labels"),
+        ("sceneEn", "sceneEn", "The A-VT protocol applies in this office.", "internal category or protocol names"),
     ],
 )
 def test_background_update_returns_field_specific_policy_error(
@@ -292,18 +313,7 @@ def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) ->
     with client_for(tmp_path) as client:
         content = client.post(
             "/api/content-plans",
-            json={
-                "name": "Aligned response",
-                "category": "A-VA",
-                "mode": "Generative",
-                "status": "Active",
-                "trueEmotion": "calm",
-                "apparentEmotion": "calm",
-                "scene": "A private office.",
-                "triggerEvent": "A timer sounds.",
-                "psychologicalBackground": "The subject prepares a brief response.",
-                "contentRequirements": "Describe one adult responding in the room.",
-            },
+            json=content_plan_request(),
         )
         prompt = client.post(
             "/api/prompt-presets",
@@ -316,14 +326,7 @@ def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) ->
         )
         background = client.post(
             "/api/video-background-presets",
-            json={
-                "name": "Private office",
-                "scene": "A private office containing one chair and one desk.",
-                "ambientSound": "A steady ventilation hum is audible.",
-                "participantRelationship": "The subject is the only occupant in view.",
-                "lighting": "Soft daylight enters through one window.",
-                "framing": "Use a static eye-level medium shot.",
-            },
+            json=background_request(),
         )
         response = client.post(
             "/api/prompt-preview",
@@ -350,18 +353,7 @@ def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
         )
         content = client.post(
             "/api/content-plans",
-            json={
-                "name": "Aligned response",
-                "category": "A-VA",
-                "mode": "Generative",
-                "status": "Active",
-                "trueEmotion": "calm",
-                "apparentEmotion": "calm",
-                "scene": "A private office.",
-                "triggerEvent": "A timer sounds.",
-                "psychologicalBackground": "The subject prepares a brief response.",
-                "contentRequirements": "Describe one adult responding in the room.",
-            },
+            json=content_plan_request(),
         )
         prompt = client.post(
             "/api/prompt-presets",
@@ -374,13 +366,7 @@ def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
         )
         background = client.post(
             "/api/video-background-presets",
-            json={
-                "name": "Private study",
-                "scene": "A private study containing one chair and one desk.",
-                "ambientSound": "A steady ventilation hum is audible.",
-                "lighting": "Soft daylight from one window.",
-                "framing": "Use a static eye-level medium shot.",
-            },
+            json=background_request(nameZh="私人书房", nameEn="Private study"),
         )
         draft = client.post(
             "/api/batch-drafts",

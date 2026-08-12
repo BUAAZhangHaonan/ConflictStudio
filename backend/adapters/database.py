@@ -123,7 +123,13 @@ class Database:
                 END
                 """
             )
-            background_columns = ("scene", "ambient_audio", "relationship", "lighting", "framing_supplement")
+            background_columns = (
+                "scene_en",
+                "ambient_sound_en",
+                "participant_relationship_en",
+                "lighting_en",
+                "framing_en",
+            )
             background_text = "lower(" + " || ' ' || ".join(
                 f"coalesce(NEW.{column}, '')" for column in background_columns
             ) + ")"

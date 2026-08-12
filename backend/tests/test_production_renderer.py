@@ -164,16 +164,23 @@ async def create_running_request(
     )
     content = catalog.create_content_plan(
         ContentPlanCreate(
-            name="One subject",
+            nameZh="单人",
+            nameEn="One subject",
             category=category,
             mode=ContentMode.GENERATIVE,
             status=ContentStatus.ACTIVE,
             trueEmotion="calm",
             apparentEmotion="calm",
-            scene="A private office after a short meeting.",
-            triggerEvent="A timer sounds.",
-            psychologicalBackground="The subject prepares a brief response.",
-            contentRequirements="Describe one adult responding alone in the room.",
+            sceneZh="短会后的一间私人办公室。",
+            sceneEn="A private office after a short meeting.",
+            triggerEventZh="计时器响起。",
+            triggerEventEn="A timer sounds.",
+            psychologicalBackgroundZh="被摄者准备作出简短回应。",
+            psychologicalBackgroundEn="The subject prepares a brief response.",
+            contentRequirementsZh="描述一名成年人独自在房间内回应。",
+            contentRequirementsEn="Describe one adult responding alone in the room.",
+            sceneSupplementZh="",
+            sceneSupplementEn="",
         )
     )
     preset = catalog.create_prompt_preset(
@@ -186,12 +193,18 @@ async def create_running_request(
     )
     background = catalog.create_background_preset(
         VideoBackgroundPresetCreate(
-            name="Private office",
-            scene="A private office containing one chair and one desk.",
-            ambientSound="A steady ventilation hum remains audible.",
-            participantRelationship="The subject remains the only occupant in view.",
-            lighting="Soft daylight enters through one window.",
-            framing="Use a static eye-level medium shot.",
+            nameZh="私人办公室",
+            nameEn="Private office",
+            sceneZh="一间有一把椅子和一张书桌的私人办公室。",
+            sceneEn="A private office containing one chair and one desk.",
+            ambientSoundZh="能听到稳定的通风声。",
+            ambientSoundEn="A steady ventilation hum remains audible.",
+            participantRelationshipZh="画面中只有被摄者。",
+            participantRelationshipEn="The subject remains the only occupant in view.",
+            lightingZh="柔和的日光从一扇窗户照进来。",
+            lightingEn="Soft daylight enters through one window.",
+            framingZh="使用静止的平视中景。",
+            framingEn="Use a static eye-level medium shot.",
         )
     )
     prompts = PromptService(UnconfiguredPromptModel())

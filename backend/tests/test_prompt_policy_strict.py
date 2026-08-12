@@ -97,28 +97,36 @@ def prompt_context(
     conflict_direction: ConflictDirection | None = None,
     base_video_prompt: str = "",
     true_emotion_description: str = "说话内容和可见动作共同表达受控状态。",
-    ambient_audio: str = "A low room tone carries a steady ventilation hum while a wall clock ticks at an even pace.",
+    ambient_sound_en: str = "A low room tone carries a steady ventilation hum while a wall clock ticks at an even pace.",
     gender: Gender = Gender.FEMALE,
     ethnicity: Ethnicity = Ethnicity.EAST_ASIAN,
 ) -> PromptContext:
     is_va = category in {Category.A_VA, Category.C_VA}
     content = ContentPlan(
-        name="Strict prompt",
-        name_key="strict prompt",
+        name_zh="严格提示词",
+        name_zh_key="严格提示词",
+        name_en="Strict prompt",
+        name_en_key="strict prompt",
         category=category,
         conflict_direction=conflict_direction,
         mode=mode,
         status=ContentStatus.ACTIVE,
         true_emotion="contained",
         apparent_emotion="contained",
-        scene="A private office.",
-        trigger_event="The subject considers a short question.",
-        psychological_background="The subject chooses a measured response.",
+        scene_zh="一间私人办公室。",
+        scene_en="A private office.",
+        trigger_event_zh="被摄者思考一个简短的问题。",
+        trigger_event_en="The subject considers a short question.",
+        psychological_background_zh="被摄者选择作出克制的回应。",
+        psychological_background_en="The subject chooses a measured response.",
         dialogue=VA_DIALOGUE if is_va else None,
         display_text=None if is_va else VT_TEXT,
         true_emotion_description=true_emotion_description,
         base_video_prompt=base_video_prompt,
-        content_instruction="Create the requested observable scene." if mode is ContentMode.GENERATIVE else "",
+        content_requirements_zh="生成所要求的可观察场景。" if mode is ContentMode.GENERATIVE else "",
+        content_requirements_en="Create the requested observable scene." if mode is ContentMode.GENERATIVE else "",
+        scene_supplement_zh="",
+        scene_supplement_en="",
     )
     preset = PromptPreset(
         name="Natural camera",
@@ -132,16 +140,23 @@ def prompt_context(
         status=ResourceStatus.ACTIVE,
     )
     background = VideoBackgroundPreset(
-        name="Private office",
-        name_key="private office",
-        scene="The private office has pale walls, a bare wooden table, and one closed window behind the stool.",
-        ambient_audio=ambient_audio,
-        relationship="The subject remains alone.",
-        lighting=(
+        name_zh="私人办公室",
+        name_zh_key="私人办公室",
+        name_en="Private office",
+        name_en_key="private office",
+        scene_zh="私人办公室有浅色墙壁、一张空木桌，凳子后面有一扇关闭的窗户。",
+        scene_en="The private office has pale walls, a bare wooden table, and one closed window behind the stool.",
+        ambient_sound_zh="",
+        ambient_sound_en=ambient_sound_en,
+        participant_relationship_zh="被摄者独自一人。",
+        participant_relationship_en="The subject remains alone.",
+        lighting_zh="",
+        lighting_en=(
             "Soft daylight falls from the left, leaving a narrow shadow along the jaw and gentle highlights "
             "across the fabric."
         ),
-        framing_supplement="",
+        framing_zh="",
+        framing_en="",
         status=ResourceStatus.ACTIVE,
     )
     return PromptContext(
@@ -405,7 +420,7 @@ def test_fixed_prompt_uses_explicit_silence_when_background_audio_is_empty() -> 
         prompt_context(
             mode=ContentMode.FIXED,
             base_video_prompt=action,
-            ambient_audio="",
+            ambient_sound_en="",
         )
     )
     result = asyncio.run(service.complete(prepared, Category.A_VA))
