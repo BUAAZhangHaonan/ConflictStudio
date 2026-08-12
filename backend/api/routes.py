@@ -29,6 +29,8 @@ from backend.domain.schemas import (
     PromptPresetCreate,
     PromptPresetRead,
     PromptPresetUpdate,
+    PromptPreviewRead,
+    PromptPreviewRequest,
     VideoBackgroundPresetCreate,
     VideoBackgroundPresetRead,
     VideoBackgroundPresetUpdate,
@@ -192,6 +194,11 @@ def delete_background_preset(
 ) -> Response:
     catalog(request).delete_background_preset(preset_id, expected_revision)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/prompt-preview", response_model=PromptPreviewRead)
+def preview_prompt(payload: PromptPreviewRequest, request: Request) -> PromptPreviewRead:
+    return batches(request).preview_prompt(payload)
 
 
 @router.get("/batch-drafts", response_model=list[BatchDraftRead])

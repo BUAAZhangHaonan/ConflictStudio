@@ -117,7 +117,7 @@ class ContentPlanFields(ApiModel):
     display_text: str | None = None
     true_emotion_description: str = ""
     base_video_prompt: str = ""
-    content_instruction: str = ""
+    content_instruction: str = Field(default="", alias="contentRequirements")
     scene_supplement: str = ""
 
     @model_validator(mode="after")
@@ -131,7 +131,7 @@ class ContentPlanFields(ApiModel):
         if self.mode is ContentMode.FIXED and not self.base_video_prompt.strip():
             raise ValueError("Fixed content requires a base video prompt")
         if self.mode is ContentMode.GENERATIVE and not self.content_instruction.strip():
-            raise ValueError("Generative content requires a content instruction")
+            raise ValueError("Generative content requires content requirements")
         if self.category in {Category.A_VA, Category.C_VA} and self.mode is ContentMode.FIXED:
             if not (self.dialogue or "").strip():
                 raise ValueError("Fixed VA content requires dialogue")
@@ -161,7 +161,7 @@ class ContentPlanUpdate(UpdateWithChanges):
     display_text: str | None = None
     true_emotion_description: str | None = None
     base_video_prompt: str | None = None
-    content_instruction: str | None = None
+    content_instruction: str | None = Field(default=None, alias="contentRequirements")
     scene_supplement: str | None = None
 
 
@@ -175,11 +175,11 @@ class ContentPlanRead(ContentPlanFields):
 class PromptPresetFields(ApiModel):
     name: Name
     category: Category
-    style_instruction: str = ""
+    style_instruction: str = Field(default="", alias="styleGuidance")
     scene_supplement: str = ""
     positive_examples: list[TextValue] = Field(default_factory=list)
     negative_examples: list[TextValue] = Field(default_factory=list)
-    final_negative_prompt: TextValue
+    final_negative_prompt: TextValue = Field(alias="finalRenderNegativeConstraints")
     status: ResourceStatus = ResourceStatus.ACTIVE
 
 
@@ -189,11 +189,11 @@ class PromptPresetCreate(PromptPresetFields):
 
 class PromptPresetUpdate(UpdateWithChanges):
     name: Name | None = None
-    style_instruction: str | None = None
+    style_instruction: str | None = Field(default=None, alias="styleGuidance")
     scene_supplement: str | None = None
     positive_examples: list[TextValue] | None = None
     negative_examples: list[TextValue] | None = None
-    final_negative_prompt: TextValue | None = None
+    final_negative_prompt: TextValue | None = Field(default=None, alias="finalRenderNegativeConstraints")
     status: ResourceStatus | None = None
 
 
@@ -207,10 +207,10 @@ class PromptPresetRead(PromptPresetFields):
 class VideoBackgroundPresetFields(ApiModel):
     name: Name
     scene: TextValue
-    ambient_audio: str = ""
-    relationship: str = ""
+    ambient_audio: str = Field(default="", alias="ambientSound")
+    relationship: str = Field(default="", alias="participantRelationship")
     lighting: str = ""
-    framing_supplement: str = ""
+    framing_supplement: str = Field(default="", alias="framing")
     status: ResourceStatus = ResourceStatus.ACTIVE
 
     @field_validator("scene", "ambient_audio", "relationship", "lighting", "framing_supplement")
@@ -226,10 +226,10 @@ class VideoBackgroundPresetCreate(VideoBackgroundPresetFields):
 class VideoBackgroundPresetUpdate(UpdateWithChanges):
     name: Name | None = None
     scene: TextValue | None = None
-    ambient_audio: str | None = None
-    relationship: str | None = None
+    ambient_audio: str | None = Field(default=None, alias="ambientSound")
+    relationship: str | None = Field(default=None, alias="participantRelationship")
     lighting: str | None = None
-    framing_supplement: str | None = None
+    framing_supplement: str | None = Field(default=None, alias="framing")
     status: ResourceStatus | None = None
 
     @field_validator("scene", "ambient_audio", "relationship", "lighting", "framing_supplement")
@@ -362,6 +362,27 @@ class BatchPreviewRead(ApiModel):
     expected_revision: int
     gpu_revisions: dict[GpuSlotName, int]
     allocations: list[BatchAllocationRead]
+
+
+class PromptPreviewRequest(ApiModel):
+    content_plan: SourceSelection
+    prompt_preset: SourceSelection
+    background_preset: SourceSelection
+    demographic: DemographicInput
+
+
+class PromptPreviewRead(ApiModel):
+    content_plan: SelectionRead
+    prompt_preset: SelectionRead
+    background_preset: SelectionRead
+    category: Category
+    conflict_direction: ConflictDirection | None
+    demographic: DemographicInput
+    requires_prompt_generation: bool
+    system_input: str
+    user_input: str
+    final_positive_prompt: str | None
+    final_negative_prompt: str
 
 
 class SnapshotRead(ApiModel):

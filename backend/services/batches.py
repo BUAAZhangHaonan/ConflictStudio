@@ -65,6 +65,8 @@ from backend.domain.schemas import (
     JobItemRead,
     JobItemPromptResultRead,
     JobSummaryRead,
+    PromptPreviewRead,
+    PromptPreviewRequest,
     SelectionRead,
     SnapshotRead,
 )
@@ -193,6 +195,71 @@ class BatchService:
                 expected_revision=aggregate.draft.revision,
                 gpu_revisions={row.slot: row.revision for row in gpu_rows},
                 allocations=[self._allocation_read(value) for value in allocations],
+            )
+
+    def preview_prompt(self, payload: PromptPreviewRequest) -> PromptPreviewRead:
+        with self.database.read_session() as session:
+            content = self._required(session, ContentPlan, payload.content_plan.id, "contentPlan")
+            preset = self._required(session, PromptPreset, payload.prompt_preset.id, "promptPreset")
+            background = self._required(
+                session,
+                VideoBackgroundPreset,
+                payload.background_preset.id,
+                "videoBackgroundPreset",
+            )
+            self._check_source(content, payload.content_plan.expected_revision, "contentPlan")
+            self._check_source(preset, payload.prompt_preset.expected_revision, "promptPreset")
+            self._check_source(
+                background,
+                payload.background_preset.expected_revision,
+                "videoBackgroundPreset",
+            )
+            if content.status is not ContentStatus.ACTIVE:
+                raise state_conflict("contentPlan", content.id, "The selected content plan is not active")
+            if preset.status is not ResourceStatus.ACTIVE:
+                raise state_conflict("promptPreset", preset.id, "The selected prompt preset is disabled")
+            if background.status is not ResourceStatus.ACTIVE:
+                raise state_conflict(
+                    "videoBackgroundPreset",
+                    background.id,
+                    "The selected background preset is disabled",
+                )
+            if preset.category is not content.category:
+                raise ServiceError(422, "validation_error", "The prompt preset category does not match the content")
+            examples = session.exec(
+                select(PromptExample)
+                .where(PromptExample.preset_id == preset.id)
+                .order_by(PromptExample.kind, PromptExample.position)
+            ).all()
+            prepared = self.prompts.prepare(
+                PromptContext(
+                    content=content,
+                    preset=preset,
+                    positive_examples=[row.text for row in examples if row.kind is ExampleKind.POSITIVE],
+                    negative_examples=[row.text for row in examples if row.kind is ExampleKind.NEGATIVE],
+                    background=background,
+                    age=payload.demographic.age,
+                    gender=payload.demographic.gender,
+                    ethnicity=payload.demographic.ethnicity,
+                )
+            )
+            fixed = prepared.fixed_output
+            return PromptPreviewRead(
+                content_plan=SelectionRead(id=content.id, name=content.name, revision=content.revision),
+                prompt_preset=SelectionRead(id=preset.id, name=preset.name, revision=preset.revision),
+                background_preset=SelectionRead(
+                    id=background.id,
+                    name=background.name,
+                    revision=background.revision,
+                ),
+                category=content.category,
+                conflict_direction=content.conflict_direction,
+                demographic=payload.demographic,
+                requires_prompt_generation=fixed is None,
+                system_input=prepared.system_input,
+                user_input=prepared.user_input,
+                final_positive_prompt=fixed.positive_prompt if fixed else None,
+                final_negative_prompt=prepared.final_negative_prompt,
             )
 
     async def submit_batch(self, draft_id: int, payload: BatchSubmitRequest) -> JobDetailRead:
@@ -680,7 +747,7 @@ class BatchService:
             ):
                 raise ServiceError(
                     409,
-                    "model_switch_required",
+                    "model_switch_confirmation_required",
                     "The GPU is loaded with a different model",
                     {
                         "slot": row.slot.value,

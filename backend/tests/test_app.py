@@ -237,6 +237,60 @@ def test_unknown_api_route_does_not_return_frontend(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "not_found"
 
 
+def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        content = client.post(
+            "/api/content-plans",
+            json={
+                "name": "Aligned response",
+                "category": "A-VA",
+                "mode": "Generative",
+                "status": "Active",
+                "trueEmotion": "calm",
+                "apparentEmotion": "calm",
+                "scene": "A private office.",
+                "triggerEvent": "A timer sounds.",
+                "psychologicalBackground": "The subject prepares a brief response.",
+                "contentRequirements": "Describe one adult responding in the room.",
+            },
+        )
+        prompt = client.post(
+            "/api/prompt-presets",
+            json={
+                "name": "Natural shot",
+                "category": "A-VA",
+                "styleGuidance": "Use a static medium shot.",
+                "finalRenderNegativeConstraints": "subtitles, captions, distortion",
+            },
+        )
+        background = client.post(
+            "/api/video-background-presets",
+            json={
+                "name": "Private office",
+                "scene": "A private office containing one chair and one desk.",
+                "ambientSound": "A steady ventilation hum is audible.",
+                "participantRelationship": "The subject is the only occupant in view.",
+                "lighting": "Soft daylight enters through one window.",
+                "framing": "Use a static eye-level medium shot.",
+            },
+        )
+        response = client.post(
+            "/api/prompt-preview",
+            json={
+                "contentPlan": {"id": content.json()["id"], "expectedRevision": content.json()["revision"]},
+                "promptPreset": {"id": prompt.json()["id"], "expectedRevision": prompt.json()["revision"]},
+                "backgroundPreset": {"id": background.json()["id"], "expectedRevision": background.json()["revision"]},
+                "demographic": {"age": 25, "gender": "Female", "ethnicity": "EastAsian"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["requiresPromptGeneration"] is True
+    assert response.json()["finalPositivePrompt"] is None
+    assert response.json()["finalNegativePrompt"] == "subtitles, captions, distortion"
+    assert response.json()["contentPlan"]["id"] == content.json()["id"]
+
+
 def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
     with client_for(tmp_path, _ConfiguredRendererGateway()) as client:
         dataset = client.post(
