@@ -27,7 +27,9 @@ class Database:
         self.data_root = data_root.resolve()
         if not self.data_root.is_dir():
             raise RuntimeError(f"ConflictStudio data root does not exist: {self.data_root}")
-        self.database_path = self.data_root / "conflictstudio.sqlite3"
+        self.database_directory = self.data_root / "database"
+        self.database_directory.mkdir(exist_ok=True)
+        self.database_path = self.database_directory / "conflictstudio.sqlite3"
         self.engine = create_engine(
             f"sqlite:///{self.database_path.as_posix()}",
             connect_args={

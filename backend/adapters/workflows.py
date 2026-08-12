@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +31,12 @@ H3_NODE_TYPES = {
     "13": "CreateVideo",
     "14": "SaveVideo",
 }
+H3_REQUIRED_CLASS_TYPES = {
+    "MiniMaxH3ImageToVideo",
+    "VAEDecodeAudio",
+    "CreateVideo",
+    "SaveVideo",
+}
 
 
 class WorkflowTemplateError(Exception):
@@ -41,32 +46,10 @@ class WorkflowTemplateError(Exception):
         self.message = message
 
 
-@dataclass(frozen=True)
-class WorkflowServiceConfig:
-    allowed_root: Path
-    ltx23_template: Path
-    h3_template: Path
-
-    def __post_init__(self) -> None:
-        root = self.allowed_root.resolve()
-        ltx23 = self._resolve_template(root, self.ltx23_template)
-        h3 = self._resolve_template(root, self.h3_template)
-        object.__setattr__(self, "allowed_root", root)
-        object.__setattr__(self, "ltx23_template", ltx23)
-        object.__setattr__(self, "h3_template", h3)
-
-    @staticmethod
-    def _resolve_template(root: Path, configured_path: Path) -> Path:
-        candidate = configured_path if configured_path.is_absolute() else root / configured_path
-        resolved = candidate.resolve()
-        if not resolved.is_relative_to(root):
-            raise ValueError("A workflow template must stay within the configured workflow root")
-        return resolved
-
-
 class Ltx23WorkflowBuilder:
-    def __init__(self, config: WorkflowServiceConfig) -> None:
-        self._template = _load_ltx23_template(config.ltx23_template)
+    def __init__(self, template_path: Path) -> None:
+        self._template = _load_ltx23_template(template_path)
+        self.required_class_types = _class_types(self._template)
 
     def build(
         self,
@@ -95,8 +78,9 @@ class Ltx23WorkflowBuilder:
 
 
 class H3WorkflowBuilder:
-    def __init__(self, config: WorkflowServiceConfig) -> None:
-        self._template = _load_h3_template(config.h3_template)
+    def __init__(self, template_path: Path) -> None:
+        self._template = _load_h3_template(template_path)
+        self.required_class_types = _class_types(self._template)
 
     def build(
         self,
@@ -145,6 +129,7 @@ def _load_ltx23_template(path: Path) -> dict[str, dict[str, Any]]:
         if isinstance(node, dict) and "class_type" in node
     }
     _validate_nodes(workflow, LTX23_NODE_TYPES, "LTX")
+    _validate_workflow(workflow, "LTX")
     return workflow
 
 
@@ -162,7 +147,13 @@ def _load_h3_template(path: Path) -> dict[str, dict[str, Any]]:
             "The configured H3 workflow template is not valid",
         )
     _validate_nodes(workflow, H3_NODE_TYPES, "H3")
-    return {node_id: workflow[node_id] for node_id in H3_NODE_TYPES}
+    _validate_workflow(workflow, "H3")
+    if not H3_REQUIRED_CLASS_TYPES <= _class_types(workflow):
+        raise WorkflowTemplateError(
+            "workflow_template_invalid",
+            "The configured H3 workflow template is not valid",
+        )
+    return workflow
 
 
 def _read_json(path: Path) -> Any:
@@ -191,6 +182,30 @@ def _validate_nodes(
                 "workflow_template_invalid",
                 f"The configured {workflow_name} workflow template is not valid",
             )
+
+
+def _validate_workflow(workflow: dict[str, Any], workflow_name: str) -> None:
+    if not workflow:
+        raise WorkflowTemplateError(
+            "workflow_template_invalid",
+            f"The configured {workflow_name} workflow template is not valid",
+        )
+    for node_id, node in workflow.items():
+        if (
+            type(node_id) is not str
+            or not isinstance(node, dict)
+            or type(node.get("class_type")) is not str
+            or not node["class_type"]
+            or not isinstance(node.get("inputs"), dict)
+        ):
+            raise WorkflowTemplateError(
+                "workflow_template_invalid",
+                f"The configured {workflow_name} workflow template is not valid",
+            )
+
+
+def _class_types(workflow: dict[str, dict[str, Any]]) -> frozenset[str]:
+    return frozenset(node["class_type"] for node in workflow.values())
 
 
 def _require_prompt(value: str, name: str) -> None:

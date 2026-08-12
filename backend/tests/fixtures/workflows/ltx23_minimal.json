@@ -24,6 +24,10 @@
     "class_type": "RandomNoise",
     "inputs": {"noise_seed": 0}
   },
+  "loader_model": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {"ckpt_name": "model.safetensors"}
+  },
   "create_video": {
     "class_type": "CreateVideo",
     "inputs": {"audio": ["vae_audio", 0], "bit_depth": 8, "fps": 1.0, "images": ["vae_video", 0]}

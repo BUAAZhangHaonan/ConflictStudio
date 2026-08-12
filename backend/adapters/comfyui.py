@@ -4,6 +4,8 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
@@ -21,6 +23,13 @@ class AdapterError(Exception):
 
 class _DuplicateJsonKey(ValueError):
     pass
+
+
+@dataclass
+class _PromptState:
+    event: asyncio.Event
+    subscribers: int = 0
+    terminal: str | None = None
 
 
 class ComfyUIClient:
@@ -45,8 +54,27 @@ class ComfyUIClient:
         self._request_timeout = request_timeout_seconds
         self._cancel_timeout = cancel_timeout_seconds
         self._cancel_poll = cancel_poll_seconds
-        self._terminal_prompt_ids: set[str] = set()
-        self._prompt_events: dict[str, asyncio.Event] = {}
+        self._prompt_states: dict[str, _PromptState] = {}
+        self._prompt_state_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def observe_prompt(self, prompt_id: str) -> AsyncIterator[None]:
+        _require_identifier(prompt_id, "prompt_id")
+        async with self._prompt_state_lock:
+            state = self._prompt_states.get(prompt_id)
+            if state is None:
+                state = _PromptState(asyncio.Event())
+                self._prompt_states[prompt_id] = state
+            state.subscribers += 1
+        try:
+            yield
+        finally:
+            async with self._prompt_state_lock:
+                current = self._prompt_states.get(prompt_id)
+                if current is state:
+                    current.subscribers -= 1
+                    if current.subscribers == 0:
+                        self._prompt_states.pop(prompt_id, None)
 
     async def get_object_info(self) -> dict[str, Any]:
         response = await self._request("GET", "/object_info")
@@ -94,7 +122,7 @@ class ComfyUIClient:
                     payload = _decode_json_bytes(message.encode("utf-8"))
                     if not isinstance(payload, dict):
                         raise _invalid_response()
-                    self._record_websocket_state(payload)
+                    await self._record_websocket_state(payload)
                     yield payload
         except AdapterError:
             raise
@@ -133,33 +161,37 @@ class ComfyUIClient:
 
     async def cancel(self, prompt_id: str) -> None:
         _require_identifier(prompt_id, "prompt_id")
-        queue = await self.get_queue()
-        running, pending = _queue_prompt_ids(queue)
-        if prompt_id in running and prompt_id in pending:
-            raise _invalid_response()
+        async with self.observe_prompt(prompt_id):
+            queue = await self.get_queue()
+            running, pending = _queue_prompt_ids(queue)
+            if prompt_id in running and prompt_id in pending:
+                raise _invalid_response()
 
-        if prompt_id in pending:
-            await self._request(
-                "POST",
-                "/queue",
-                json_body={"delete": [prompt_id]},
-            )
-        elif prompt_id in running:
-            await self._request(
-                "POST",
-                "/interrupt",
-                json_body={"prompt_id": prompt_id},
-            )
-        else:
-            history = await self.get_history(prompt_id)
-            if self._is_terminal(prompt_id, history):
-                return
-            raise AdapterError(
-                "comfyui_prompt_not_active",
-                "The ComfyUI prompt is not active",
-            )
+            if prompt_id in pending:
+                await self._request(
+                    "POST",
+                    "/queue",
+                    json_body={"delete": [prompt_id]},
+                )
+            elif prompt_id in running:
+                await self._request(
+                    "POST",
+                    "/interrupt",
+                    json_body={"prompt_id": prompt_id},
+                )
+            else:
+                history = await self.get_history(prompt_id)
+                outcome = _history_outcome(prompt_id, history)
+                if outcome is None:
+                    async with self._prompt_state_lock:
+                        outcome = self._prompt_states[prompt_id].terminal
+                if outcome == "completed":
+                    raise _already_completed()
+                if outcome == "cancelled":
+                    return
+                raise _prompt_not_active()
 
-        await self._confirm_cancelled(prompt_id)
+            await self._confirm_cancelled(prompt_id)
 
     async def close(self) -> None:
         if self._owns_http:
@@ -208,7 +240,8 @@ class ComfyUIClient:
 
     async def _confirm_cancelled(self, prompt_id: str) -> None:
         deadline = time.monotonic() + self._cancel_timeout
-        event = self._prompt_events.setdefault(prompt_id, asyncio.Event())
+        async with self._prompt_state_lock:
+            state = self._prompt_states[prompt_id]
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -223,9 +256,7 @@ class ComfyUIClient:
                     "comfyui_cancel_unconfirmed",
                     "ComfyUI did not confirm cancellation before the deadline",
                 ) from error
-            running, pending = _queue_prompt_ids(queue)
-            if prompt_id not in running and prompt_id not in pending:
-                return
+            _queue_prompt_ids(queue)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise AdapterError(
@@ -242,8 +273,22 @@ class ComfyUIClient:
                     "comfyui_cancel_unconfirmed",
                     "ComfyUI did not confirm cancellation before the deadline",
                 ) from error
-            if self._is_terminal(prompt_id, history):
+            outcome = _history_outcome(prompt_id, history)
+            if outcome == "cancelled":
                 return
+            if outcome == "completed":
+                raise _already_completed()
+            if outcome == "failed":
+                raise _prompt_not_active()
+
+            async with self._prompt_state_lock:
+                terminal = state.terminal
+            if terminal == "cancelled":
+                return
+            if terminal == "completed":
+                raise _already_completed()
+            if terminal == "failed":
+                raise _prompt_not_active()
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -253,15 +298,13 @@ class ComfyUIClient:
                 )
             try:
                 await asyncio.wait_for(
-                    event.wait(),
+                    state.event.wait(),
                     timeout=min(self._cancel_poll, remaining),
                 )
             except TimeoutError:
                 pass
-            if prompt_id in self._terminal_prompt_ids:
-                return
 
-    def _record_websocket_state(self, payload: dict[str, Any]) -> None:
+    async def _record_websocket_state(self, payload: dict[str, Any]) -> None:
         event_type = payload.get("type")
         data = payload.get("data")
         if not isinstance(data, dict):
@@ -269,37 +312,70 @@ class ComfyUIClient:
         prompt_id = data.get("prompt_id")
         if type(prompt_id) is not str:
             return
-        terminal = event_type in {
-            "execution_success",
-            "execution_error",
-            "execution_interrupted",
-        } or (event_type == "executing" and data.get("node") is None)
-        if terminal:
-            self._terminal_prompt_ids.add(prompt_id)
-            self._prompt_events.setdefault(prompt_id, asyncio.Event()).set()
+        terminal = None
+        if event_type == "execution_interrupted":
+            terminal = "cancelled"
+        elif event_type == "execution_error":
+            terminal = "failed"
+        elif event_type == "execution_success" or (
+            event_type == "executing" and data.get("node") is None
+        ):
+            terminal = "completed"
+        if terminal is None:
+            return
+        async with self._prompt_state_lock:
+            state = self._prompt_states.get(prompt_id)
+            if state is not None:
+                state.terminal = terminal
+                state.event.set()
 
-    def _is_terminal(self, prompt_id: str, history: dict[str, Any]) -> bool:
-        if prompt_id in self._terminal_prompt_ids:
-            return True
-        record = history.get(prompt_id)
-        if not isinstance(record, dict):
-            return False
-        status = record.get("status")
-        if not isinstance(status, dict):
-            return False
-        if status.get("completed") is True:
-            return True
-        if status.get("status_str") in {"success", "error", "interrupted"}:
-            return True
-        messages = status.get("messages")
-        if not isinstance(messages, list):
-            return False
-        return any(
-            isinstance(message, list)
-            and bool(message)
-            and message[0] == "execution_interrupted"
-            for message in messages
-        )
+
+def _history_outcome(prompt_id: str, history: dict[str, Any]) -> str | None:
+    record = history.get(prompt_id)
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        raise _invalid_response()
+    status = record.get("status")
+    if not isinstance(status, dict):
+        raise _invalid_response()
+    messages = status.get("messages", [])
+    if not isinstance(messages, list):
+        raise _invalid_response()
+    message_types = {
+        message[0]
+        for message in messages
+        if isinstance(message, list) and message and type(message[0]) is str
+    }
+    status_text = status.get("status_str")
+    if status_text is not None and type(status_text) is not str:
+        raise _invalid_response()
+    normalized_status = status_text.casefold() if isinstance(status_text, str) else None
+    if "execution_interrupted" in message_types or normalized_status in {
+        "interrupted",
+        "cancelled",
+        "canceled",
+    }:
+        return "cancelled"
+    if "execution_error" in message_types or normalized_status == "error":
+        return "failed"
+    if status.get("completed") is True or normalized_status == "success":
+        return "completed"
+    return None
+
+
+def _already_completed() -> AdapterError:
+    return AdapterError(
+        "already_completed",
+        "The ComfyUI prompt already completed normally",
+    )
+
+
+def _prompt_not_active() -> AdapterError:
+    return AdapterError(
+        "comfyui_prompt_not_active",
+        "The ComfyUI prompt is not active",
+    )
 
 
 def _service_urls(base_url: str) -> tuple[str, str]:

@@ -36,6 +36,7 @@ from backend.domain.schemas import (
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.job_executor import JobExecutor
+from backend.adapters.renderer import RendererInstallationStatus
 
 
 router = APIRouter(prefix="/api")
@@ -63,12 +64,17 @@ async def notify_executor(job_executor: JobExecutor) -> None:
 
 
 @router.get("/health", response_model=HealthRead)
-def health(request: Request) -> HealthRead:
+async def health(request: Request) -> HealthRead:
     database = request.app.state.database
+    renderer_installation = await request.app.state.renderer.installation_status()
     return HealthRead(
-        ok=database.foreign_keys_enabled(),
+        ok=(
+            database.foreign_keys_enabled()
+            and renderer_installation is RendererInstallationStatus.INSTALLED
+        ),
         database="ready",
         prompt_service_configured=request.app.state.prompt_model.configured,
+        renderer_installation=renderer_installation.value,
     )
 
 

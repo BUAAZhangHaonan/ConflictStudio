@@ -16,15 +16,16 @@ from backend.adapters.gpu import PORTS, UNIT_DEFINITIONS, SlotInspection, SlotIn
 from backend.adapters.media import MediaError, MediaStore, PreparedMedia
 from backend.adapters.model_service import ModelServiceController
 from backend.adapters.renderer import (
+    CancelOutcome,
     RenderRequest,
     RenderResult,
     RendererGatewayError,
+    RendererInstallationStatus,
     RendererSlotState,
 )
 from backend.adapters.workflows import (
     H3WorkflowBuilder,
     Ltx23WorkflowBuilder,
-    WorkflowServiceConfig,
     WorkflowTemplateError,
 )
 from backend.domain.enums import (
@@ -99,22 +100,25 @@ class ProductionRendererGateway:
             if urls[slot] != f"http://127.0.0.1:{port}":
                 raise ValueError("Renderer URLs must match the fixed local service ports")
 
-        workflow_config = WorkflowServiceConfig(
-            allowed_root=settings.workflow_root,
-            ltx23_template=settings.ltx23_template,
-            h3_template=settings.h3_template,
-        )
+        workflow_builders = {
+            ModelName.LTX: Ltx23WorkflowBuilder(settings.ltx23_template),
+            ModelName.H3: H3WorkflowBuilder(settings.h3_template),
+        }
         inspector = SlotInspector()
-        controller = ModelServiceController(inspector, slot_urls=urls)
+        controller = ModelServiceController(
+            inspector,
+            required_node_types={
+                model: builder.required_class_types
+                for model, builder in workflow_builders.items()
+            },
+            slot_urls=urls,
+        )
         return cls(
             database,
             inspector,
             controller,
             {slot: ComfyUIClient(url) for slot, url in urls.items()},
-            {
-                ModelName.LTX: Ltx23WorkflowBuilder(workflow_config),
-                ModelName.H3: H3WorkflowBuilder(workflow_config),
-            },
+            workflow_builders,
             MediaStore(database.data_root),
         )
 
@@ -123,6 +127,15 @@ class ProductionRendererGateway:
 
     async def probe(self, slot: GpuSlotName) -> RendererSlotState:
         return await self.inspector.inspect(slot)
+
+    async def installation_status(self) -> RendererInstallationStatus:
+        states = [await self.inspector.inspect(slot) for slot in GpuSlotName]
+        statuses = {state.installation_status for state in states}
+        if RendererInstallationStatus.NOT_INSTALLED in statuses:
+            return RendererInstallationStatus.NOT_INSTALLED
+        if statuses == {RendererInstallationStatus.INSTALLED}:
+            return RendererInstallationStatus.INSTALLED
+        return RendererInstallationStatus.UNKNOWN
 
     async def submit(self, request: RenderRequest) -> str:
         self._validate_request(request)
@@ -186,42 +199,58 @@ class ProductionRendererGateway:
                 "renderer_prompt_unknown",
                 "The renderer prompt is not owned by this process",
             )
-        prepared: PreparedMedia | None = None
         try:
             source_relative_path = await self._wait_for_output(context)
-            self._record_media_processing(context)
-            prepared = self.media_store.prepare_attempt(
-                source_relative_path=source_relative_path,
-                job_id=context.request.job_id,
-                item_sequence=context.request.item_sequence,
-                attempt_number=context.attempt_number,
-                model=context.request.model,
-                derive_silent_primary=context.request.derive_silent_primary,
-            )
-            source_asset_path, primary_asset_path = self._complete_attempt(context, prepared)
+            result = self._persist_output(context, source_relative_path)
             self._contexts.pop((slot, prompt_id), None)
-            return RenderResult((source_asset_path, primary_asset_path))
+            return result
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            if prepared is not None:
-                self.media_store.discard_prepared(prepared)
             safe = self._safe_error(error)
             self._mark_attempt_failed(context, safe.message)
             self._contexts.pop((slot, prompt_id), None)
             raise safe from error
 
-    async def cancel(self, slot: GpuSlotName, prompt_id: str) -> None:
+    async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome:
         context = self._contexts.get((slot, prompt_id))
         try:
             await self.clients[slot].cancel(prompt_id)
         except asyncio.CancelledError:
             raise
+        except AdapterError as error:
+            if error.code == CancelOutcome.ALREADY_COMPLETED.value and context is not None:
+                try:
+                    history = await self.clients[slot].get_history(prompt_id)
+                    source_relative_path = self._history_output(context, history)
+                    if source_relative_path is None:
+                        raise RendererGatewayError(
+                            "renderer_output_invalid",
+                            "ComfyUI completed without the expected video output",
+                        )
+                    self._persist_output(context, source_relative_path)
+                except Exception as completion_error:
+                    safe = self._safe_error(completion_error)
+                    self._mark_attempt_failed(context, safe.message)
+                    self._contexts.pop((slot, prompt_id), None)
+                    raise safe from completion_error
+                self._contexts.pop((slot, prompt_id), None)
+                return CancelOutcome.ALREADY_COMPLETED
+            safe = self._safe_error(error)
+            if context is not None:
+                self._mark_attempt_failed(context, safe.message)
+                self._contexts.pop((slot, prompt_id), None)
+            raise safe from error
         except Exception as error:
-            raise self._safe_error(error) from error
+            safe = self._safe_error(error)
+            if context is not None:
+                self._mark_attempt_failed(context, safe.message)
+                self._contexts.pop((slot, prompt_id), None)
+            raise safe from error
         if context is not None:
             self._mark_attempt_failed(context, "The render was cancelled")
             self._contexts.pop((slot, prompt_id), None)
+        return CancelOutcome.CANCELLED
 
     async def close(self) -> None:
         await asyncio.gather(
@@ -327,12 +356,11 @@ class ProductionRendererGateway:
 
     async def _wait_for_output(self, context: _RenderContext) -> str:
         messages: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
+        client = self.clients[context.request.gpu_slot]
 
         async def consume_websocket() -> None:
             try:
-                async for message in self.clients[context.request.gpu_slot].websocket_messages(
-                    context.client_id
-                ):
+                async for message in client.websocket_messages(context.client_id):
                     await messages.put(("message", message))
             except asyncio.CancelledError:
                 raise
@@ -341,49 +369,68 @@ class ProductionRendererGateway:
             finally:
                 await messages.put(("closed", None))
 
-        websocket_task = asyncio.create_task(consume_websocket())
-        deadline = time.monotonic() + self.render_timeout_seconds
-        try:
-            while True:
-                while not messages.empty():
-                    kind, value = messages.get_nowait()
+        async with client.observe_prompt(context.prompt_id):
+            websocket_task = asyncio.create_task(consume_websocket())
+            deadline = time.monotonic() + self.render_timeout_seconds
+            try:
+                while True:
+                    while not messages.empty():
+                        kind, value = messages.get_nowait()
+                        if kind == "error":
+                            if isinstance(value, BaseException):
+                                raise value
+                            raise RuntimeError("Invalid websocket error")
+                        if kind == "message" and isinstance(value, dict):
+                            self._handle_websocket_message(context, value)
+
+                    queue = await client.get_queue()
+                    self._validate_queue_prompt(queue, context.prompt_id)
+                    history = await client.get_history(context.prompt_id)
+                    output = self._history_output(context, history)
+                    if output is not None:
+                        return output
+
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise RendererGatewayError(
+                            "renderer_timeout",
+                            "Rendering did not finish before the deadline",
+                        )
+                    try:
+                        kind, value = await asyncio.wait_for(
+                            messages.get(),
+                            timeout=min(self.status_poll_seconds, remaining),
+                        )
+                    except TimeoutError:
+                        continue
                     if kind == "error":
                         if isinstance(value, BaseException):
                             raise value
                         raise RuntimeError("Invalid websocket error")
                     if kind == "message" and isinstance(value, dict):
                         self._handle_websocket_message(context, value)
+            finally:
+                websocket_task.cancel()
+                await asyncio.gather(websocket_task, return_exceptions=True)
 
-                client = self.clients[context.request.gpu_slot]
-                queue = await client.get_queue()
-                self._validate_queue_prompt(queue, context.prompt_id)
-                history = await client.get_history(context.prompt_id)
-                output = self._history_output(context, history)
-                if output is not None:
-                    return output
-
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise RendererGatewayError(
-                        "renderer_timeout",
-                        "Rendering did not finish before the deadline",
-                    )
-                try:
-                    kind, value = await asyncio.wait_for(
-                        messages.get(),
-                        timeout=min(self.status_poll_seconds, remaining),
-                    )
-                except TimeoutError:
-                    continue
-                if kind == "error":
-                    if isinstance(value, BaseException):
-                        raise value
-                    raise RuntimeError("Invalid websocket error")
-                if kind == "message" and isinstance(value, dict):
-                    self._handle_websocket_message(context, value)
-        finally:
-            websocket_task.cancel()
-            await asyncio.gather(websocket_task, return_exceptions=True)
+    def _persist_output(self, context: _RenderContext, source_relative_path: str) -> RenderResult:
+        prepared: PreparedMedia | None = None
+        try:
+            self._record_media_processing(context)
+            prepared = self.media_store.prepare_attempt(
+                source_relative_path=source_relative_path,
+                job_id=context.request.job_id,
+                item_sequence=context.request.item_sequence,
+                attempt_number=context.attempt_number,
+                model=context.request.model,
+                derive_silent_primary=context.request.derive_silent_primary,
+            )
+            source_asset_path, primary_asset_path = self._complete_attempt(context, prepared)
+            return RenderResult((source_asset_path, primary_asset_path))
+        except Exception:
+            if prepared is not None:
+                self.media_store.discard_prepared(prepared)
+            raise
 
     def _handle_websocket_message(self, context: _RenderContext, payload: dict[str, object]) -> None:
         event_type = payload.get("type")

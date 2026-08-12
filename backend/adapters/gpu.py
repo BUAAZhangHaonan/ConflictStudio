@@ -6,7 +6,7 @@ import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from backend.adapters.renderer import RendererSlotState
+from backend.adapters.renderer import RendererInstallationStatus, RendererSlotState
 from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName
 
 
@@ -116,6 +116,11 @@ class UnitState:
 class SlotInspection(RendererSlotState):
     owned_unit: str | None = None
     reason: str | None = None
+    installation_status: RendererInstallationStatus = RendererInstallationStatus.INSTALLED
+
+
+class _UnitNotInstalled(RuntimeError):
+    pass
 
 
 async def run_command(command: tuple[str, ...]) -> CommandResult:
@@ -140,7 +145,16 @@ class SlotInspector:
         definitions = tuple(unit for unit in UNIT_DEFINITIONS if unit.slot is slot)
         unit_states: list[UnitState] = []
         for definition in definitions:
-            state = await self._unit_state(definition)
+            try:
+                state = await self._unit_state(definition)
+            except _UnitNotInstalled:
+                return SlotInspection(
+                    slot=slot,
+                    availability=GpuAvailability.UNKNOWN,
+                    loaded_model=None,
+                    reason=f"{definition.name} is not installed",
+                    installation_status=RendererInstallationStatus.NOT_INSTALLED,
+                )
             if state is None:
                 return self._unknown(slot, f"Could not inspect {definition.name}")
             unit_states.append(state)
@@ -212,12 +226,17 @@ class SlotInspector:
         )
         result = await self._run(command)
         if result.returncode != 0:
+            message = f"{result.stdout}\n{result.stderr}".casefold()
+            if "not-found" in message or "not found" in message or "could not be found" in message:
+                raise _UnitNotInstalled(definition.name)
             return None
         values: dict[str, str] = {}
         for line in result.stdout.splitlines():
             key, separator, value = line.partition("=")
             if separator:
                 values[key] = value
+        if values.get("LoadState") == "not-found":
+            raise _UnitNotInstalled(definition.name)
         try:
             main_pid = int(values["MainPID"])
         except (KeyError, ValueError):

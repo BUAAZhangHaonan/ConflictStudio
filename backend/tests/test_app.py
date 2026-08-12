@@ -8,6 +8,7 @@ from sqlmodel import select
 
 from backend.adapters.config import Settings
 from backend.adapters.llm import UnconfiguredPromptModel
+from backend.adapters.renderer import CancelOutcome, RendererInstallationStatus
 from backend.app import create_app
 from backend.domain.enums import GpuAvailability
 from backend.domain.models import GpuSlot
@@ -25,6 +26,9 @@ class _ConfiguredRendererGateway:
     async def probe(self, slot):  # type: ignore[no-untyped-def]
         return slot
 
+    async def installation_status(self) -> RendererInstallationStatus:
+        return RendererInstallationStatus.INSTALLED
+
     async def submit(self, request):  # type: ignore[no-untyped-def]
         return "probe"
 
@@ -32,7 +36,7 @@ class _ConfiguredRendererGateway:
         return ()
 
     async def cancel(self, slot, prompt_id):  # type: ignore[no-untyped-def]
-        return None
+        return CancelOutcome.CANCELLED
 
     async def close(self) -> None:
         return None
@@ -44,8 +48,26 @@ def test_health_and_initial_gpu_state(tmp_path: Path) -> None:
         gpu_response = client.get("/api/gpu-slots")
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "database": "ready", "promptServiceConfigured": False}
+    assert response.json() == {
+        "ok": False,
+        "database": "ready",
+        "promptServiceConfigured": False,
+        "rendererInstallation": "notConfigured",
+    }
     assert [row["availability"] for row in gpu_response.json()] == ["Unknown", "Unknown"]
+
+
+def test_health_reports_not_installed_renderer_units(tmp_path: Path) -> None:
+    class NotInstalledRenderer(_ConfiguredRendererGateway):
+        async def installation_status(self) -> RendererInstallationStatus:
+            return RendererInstallationStatus.NOT_INSTALLED
+
+    with client_for(tmp_path, NotInstalledRenderer()) as client:
+        response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert response.json()["rendererInstallation"] == "notInstalled"
 
 
 def test_dataset_crud_uses_camel_case_and_stable_conflict(tmp_path: Path) -> None:

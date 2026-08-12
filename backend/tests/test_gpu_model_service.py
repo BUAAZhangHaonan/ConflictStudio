@@ -16,7 +16,19 @@ from backend.adapters.gpu import (
 )
 from backend.adapters.model_service import ModelServiceController
 from backend.adapters.renderer import RendererGatewayError
+from backend.adapters.renderer import RendererInstallationStatus
 from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName
+
+
+REQUIRED_NODE_TYPES = {
+    ModelName.LTX: frozenset({"LtxRequiredNode", "SaveVideo"}),
+    ModelName.H3: frozenset({"H3RequiredNode", "SaveVideo"}),
+}
+OBJECT_INFO = {
+    node_type: {}
+    for node_types in REQUIRED_NODE_TYPES.values()
+    for node_type in node_types
+}
 
 
 def _unit_show(
@@ -197,6 +209,18 @@ def test_slot_inspector_rejects_mismatched_unit_metadata() -> None:
     assert result.owned_unit is None
 
 
+def test_slot_inspector_reports_missing_unit_as_not_installed() -> None:
+    async def missing(command: tuple[str, ...]) -> CommandResult:
+        assert command[:3] == ("systemctl", "--user", "show")
+        return CommandResult(4, "LoadState=not-found\n", "Unit could not be found")
+
+    result = asyncio.run(SlotInspector(missing).inspect(GpuSlotName.GPU0))
+
+    assert result.availability is GpuAvailability.UNKNOWN
+    assert result.installation_status is RendererInstallationStatus.NOT_INSTALLED
+    assert result.reason == "conflictstudio-ltx-gpu0.service is not installed"
+
+
 class SequenceInspector:
     def __init__(self, values: list[SlotInspection]) -> None:
         self.values = values
@@ -239,11 +263,16 @@ def test_model_reuse_does_not_start_or_stop_a_unit() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json={"nodes": {}})
+        return httpx.Response(200, json=OBJECT_INFO)
 
     async def scenario() -> None:
         client = _client(handler)
-        controller = ModelServiceController(inspector, commands, client)
+        controller = ModelServiceController(
+            inspector,
+            commands,
+            client,
+            required_node_types=REQUIRED_NODE_TYPES,
+        )
         try:
             result = await controller.ensure_model(GpuSlotName.GPU0, ModelName.LTX, confirm_switch=False)
         finally:
@@ -255,13 +284,57 @@ def test_model_reuse_does_not_start_or_stop_a_unit() -> None:
     assert [request.url.path for request in requests] == ["/object_info"]
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"LtxRequiredNode": {}},
+        {"LtxRequiredNode": {}, "SaveVideo": []},
+    ],
+)
+def test_model_readiness_rejects_empty_missing_or_invalid_required_nodes(
+    payload: object,
+) -> None:
+    inspector = SequenceInspector([_owned(ModelName.LTX)])
+    commands = ServiceCommands()
+
+    async def scenario() -> None:
+        client = _client(lambda _: httpx.Response(200, json=payload))
+        controller = ModelServiceController(
+            inspector,
+            commands,
+            client,
+            required_node_types=REQUIRED_NODE_TYPES,
+            readiness_timeout_seconds=0.003,
+            readiness_poll_seconds=0.001,
+        )
+        try:
+            with pytest.raises(RendererGatewayError) as error:
+                await controller.ensure_model(
+                    GpuSlotName.GPU0,
+                    ModelName.LTX,
+                    confirm_switch=False,
+                )
+            assert error.value.code == "model_service_readiness_timeout"
+        finally:
+            await client.aclose()
+
+    asyncio.run(scenario())
+    assert commands.calls == []
+
+
 def test_unconfirmed_model_switch_is_rejected_without_commands() -> None:
     inspector = SequenceInspector([_owned(ModelName.H3)])
     commands = ServiceCommands()
     client = _client(lambda _: pytest.fail("HTTP must not be called"))
 
     async def scenario() -> None:
-        controller = ModelServiceController(inspector, commands, client)
+        controller = ModelServiceController(
+            inspector,
+            commands,
+            client,
+            required_node_types=REQUIRED_NODE_TYPES,
+        )
         try:
             with pytest.raises(RendererGatewayError) as error:
                 await controller.ensure_model(GpuSlotName.GPU0, ModelName.LTX, confirm_switch=False)
@@ -276,10 +349,15 @@ def test_unconfirmed_model_switch_is_rejected_without_commands() -> None:
 def test_confirmed_switch_reinspects_then_stops_and_starts_exact_units() -> None:
     inspector = SequenceInspector([_owned(ModelName.H3), _owned(ModelName.H3), _owned(ModelName.LTX)])
     commands = ServiceCommands()
-    client = _client(lambda _: httpx.Response(200, json={}))
+    client = _client(lambda _: httpx.Response(200, json=OBJECT_INFO))
 
     async def scenario() -> None:
-        controller = ModelServiceController(inspector, commands, client)
+        controller = ModelServiceController(
+            inspector,
+            commands,
+            client,
+            required_node_types=REQUIRED_NODE_TYPES,
+        )
         try:
             result = await controller.ensure_model(GpuSlotName.GPU0, ModelName.LTX, confirm_switch=True)
         finally:
@@ -311,6 +389,7 @@ def test_readiness_timeout_never_falls_back_to_another_slot_or_model() -> None:
             inspector,
             commands,
             client,
+            required_node_types=REQUIRED_NODE_TYPES,
             readiness_timeout_seconds=0.003,
             readiness_poll_seconds=0.001,
         )
@@ -342,7 +421,12 @@ def test_model_controller_never_stops_a_changed_or_unknown_unit() -> None:
     client = _client(lambda _: pytest.fail("HTTP must not be called"))
 
     async def scenario() -> None:
-        controller = ModelServiceController(inspector, commands, client)
+        controller = ModelServiceController(
+            inspector,
+            commands,
+            client,
+            required_node_types=REQUIRED_NODE_TYPES,
+        )
         try:
             with pytest.raises(RendererGatewayError) as error:
                 await controller.ensure_model(GpuSlotName.GPU0, ModelName.LTX, confirm_switch=True)

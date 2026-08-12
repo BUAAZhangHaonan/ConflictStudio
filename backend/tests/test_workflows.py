@@ -11,23 +11,23 @@ from backend.adapters.workflows import (
     MAX_SEQUENCE,
     H3WorkflowBuilder,
     Ltx23WorkflowBuilder,
-    WorkflowServiceConfig,
+    WorkflowTemplateError,
 )
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workflows"
 
 
-def config() -> WorkflowServiceConfig:
-    return WorkflowServiceConfig(
-        allowed_root=FIXTURES,
-        ltx23_template=Path("ltx23_minimal.json"),
-        h3_template=Path("h3_minimal.json"),
-    )
+def ltx_builder() -> Ltx23WorkflowBuilder:
+    return Ltx23WorkflowBuilder(FIXTURES / "ltx23_minimal.json")
+
+
+def h3_builder() -> H3WorkflowBuilder:
+    return H3WorkflowBuilder(FIXTURES / "h3_minimal.json")
 
 
 def test_ltx23_builder_maps_every_static_input_and_returns_only_nodes() -> None:
-    builder = Ltx23WorkflowBuilder(config())
+    builder = ltx_builder()
     workflow = builder.build(
         final_positive_prompt="final positive",
         final_negative_prompt="final negative",
@@ -55,6 +55,10 @@ def test_ltx23_builder_maps_every_static_input_and_returns_only_nodes() -> None:
     assert workflow["conditioning"]["inputs"]["frame_rate"] == 24.0
     assert workflow["create_video"]["inputs"]["fps"] == 24.0
     assert workflow["save_video"]["inputs"]["filename_prefix"] == "42/7"
+    assert workflow["loader_model"]["class_type"] == "CheckpointLoaderSimple"
+    assert builder.required_class_types == {
+        node["class_type"] for node in workflow.values()
+    }
 
     second = builder.build(
         final_positive_prompt="second",
@@ -68,7 +72,8 @@ def test_ltx23_builder_maps_every_static_input_and_returns_only_nodes() -> None:
 
 
 def test_h3_builder_maps_static_inputs_and_merges_one_negative_sentence() -> None:
-    workflow = H3WorkflowBuilder(config()).build(
+    builder = h3_builder()
+    workflow = builder.build(
         final_positive_prompt="A locked-off portrait.",
         final_negative_prompt="subtitles, camera shake",
         seed=91,
@@ -89,10 +94,14 @@ def test_h3_builder_maps_static_inputs_and_merges_one_negative_sentence() -> Non
     assert workflow["6"]["inputs"]["noise_seed"] == 91
     assert workflow["13"]["inputs"]["fps"] == 24.0
     assert workflow["14"]["inputs"]["filename_prefix"] == "8/3"
+    assert workflow["12"]["class_type"] == "VAEDecodeAudio"
+    assert builder.required_class_types == {
+        node["class_type"] for node in workflow.values()
+    }
 
 
 def test_h3_builder_leaves_positive_prompt_alone_when_negative_is_empty() -> None:
-    workflow = H3WorkflowBuilder(config()).build(
+    workflow = h3_builder().build(
         final_positive_prompt="One subject.",
         final_negative_prompt="",
         seed=0,
@@ -105,7 +114,7 @@ def test_h3_builder_leaves_positive_prompt_alone_when_negative_is_empty() -> Non
 @pytest.mark.parametrize("invalid_seed", [True, "1", -1, MAX_SEED + 1])
 def test_builders_reject_invalid_31_bit_seeds(invalid_seed: object) -> None:
     with pytest.raises((TypeError, ValueError)):
-        Ltx23WorkflowBuilder(config()).build(
+        ltx_builder().build(
             final_positive_prompt="positive",
             final_negative_prompt="negative",
             seed=invalid_seed,  # type: ignore[arg-type]
@@ -143,7 +152,7 @@ def test_output_prefix_accepts_only_bounded_integer_job_and_sequence(
     values: dict[str, object] = {"job_id": 1, "sequence": 1}
     values[field] = invalid
     with pytest.raises((TypeError, ValueError)):
-        H3WorkflowBuilder(config()).build(
+        h3_builder().build(
             final_positive_prompt="positive",
             final_negative_prompt="negative",
             seed=1,
@@ -152,24 +161,13 @@ def test_output_prefix_accepts_only_bounded_integer_job_and_sequence(
         )
 
 
-@pytest.mark.parametrize(
-    "configured_path",
-    [Path("../outside.json"), Path("nested/../../outside.json")],
-)
-def test_workflow_config_rejects_traversal(configured_path: Path) -> None:
-    with pytest.raises(ValueError, match="configured workflow root"):
-        WorkflowServiceConfig(
-            allowed_root=FIXTURES,
-            ltx23_template=configured_path,
-            h3_template=Path("h3_minimal.json"),
-        )
+def test_h3_builder_rejects_payload_without_required_audio_decoder(tmp_path: Path) -> None:
+    payload = (FIXTURES / "h3_minimal.json").read_text(encoding="utf-8")
+    (tmp_path / "payload.json").write_text(
+        payload.replace('"VAEDecodeAudio"', '"WrongAudioDecoder"'),
+        encoding="utf-8",
+    )
 
-
-def test_workflow_config_rejects_absolute_path_outside_allowed_root() -> None:
-    outside = (FIXTURES.parent / "outside.json").resolve()
-    with pytest.raises(ValueError, match="configured workflow root"):
-        WorkflowServiceConfig(
-            allowed_root=FIXTURES,
-            ltx23_template=outside,
-            h3_template=Path("h3_minimal.json"),
-        )
+    with pytest.raises(WorkflowTemplateError) as error:
+        H3WorkflowBuilder(tmp_path / "payload.json")
+    assert error.value.code == "workflow_template_invalid"

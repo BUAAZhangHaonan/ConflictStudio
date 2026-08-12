@@ -26,6 +26,7 @@ class ModelServiceController:
         command_runner: CommandRunner = run_command,
         http_client: httpx.AsyncClient | None = None,
         *,
+        required_node_types: Mapping[ModelName, frozenset[str]],
         slot_urls: Mapping[GpuSlotName, str] | None = None,
         readiness_timeout_seconds: float = 60.0,
         readiness_poll_seconds: float = 0.5,
@@ -39,6 +40,16 @@ class ModelServiceController:
         self._slot_urls = dict(slot_urls) if slot_urls is not None else {
             slot: f"http://127.0.0.1:{port}" for slot, port in PORTS.items()
         }
+        self._required_node_types = {
+            model: frozenset(node_types)
+            for model, node_types in required_node_types.items()
+        }
+        if set(self._required_node_types) != set(ModelName) or any(
+            not node_types
+            or any(type(node_type) is not str or not node_type for node_type in node_types)
+            for node_types in self._required_node_types.values()
+        ):
+            raise ValueError("Every renderer model requires a non-empty node class set")
         if set(self._slot_urls) != set(GpuSlotName) or any(
             not isinstance(url, str) or not url for url in self._slot_urls.values()
         ):
@@ -60,7 +71,7 @@ class ModelServiceController:
         if inspection.loaded_model is model:
             if inspection.owned_unit != target.name:
                 raise RendererGatewayError("model_service_untrusted", "The loaded model unit is not owned")
-            await self._wait_ready(slot)
+            await self._wait_ready(slot, model)
             return inspection
 
         if inspection.loaded_model is not None:
@@ -77,7 +88,7 @@ class ModelServiceController:
                 "model_service_start_failed",
                 f"Could not start {target.name}: {result.stderr.strip() or 'systemctl failed'}",
             )
-        await self._wait_ready(slot)
+        await self._wait_ready(slot, model)
         ready = await self._inspector.inspect(slot)
         self._require_available(ready)
         if ready.loaded_model is not model or ready.owned_unit != target.name:
@@ -118,16 +129,29 @@ class ModelServiceController:
                 inspection.reason or "The requested GPU slot is not safely available",
             )
 
-    async def _wait_ready(self, slot: GpuSlotName) -> None:
+    async def _wait_ready(self, slot: GpuSlotName, model: ModelName) -> None:
         deadline = time.monotonic() + self._readiness_timeout
         url = f"{self._slot_urls[slot].rstrip('/')}/object_info"
         last_error = "no successful response"
+        required = self._required_node_types[model]
         while True:
             try:
                 response = await self._client.get(url)
                 if response.is_success:
-                    return
-                last_error = f"HTTP {response.status_code}"
+                    try:
+                        payload = response.json()
+                    except ValueError:
+                        last_error = "invalid JSON"
+                    else:
+                        if (
+                            isinstance(payload, dict)
+                            and required <= set(payload)
+                            and all(isinstance(payload[node_type], dict) for node_type in required)
+                        ):
+                            return
+                        last_error = "required workflow nodes are missing"
+                else:
+                    last_error = f"HTTP {response.status_code}"
             except httpx.HTTPError as error:
                 last_error = str(error)
             if time.monotonic() >= deadline:

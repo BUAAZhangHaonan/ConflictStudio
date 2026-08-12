@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DATA_ROOT=/home/team/zhanghaonan/TAFFC/ConflictStudio-data
 required=(
   CONFLICTSTUDIO_DATA_ROOT
   CONFLICTSTUDIO_HOST
@@ -19,10 +20,18 @@ if [[ ! -x "$CONFLICTSTUDIO_PYTHON" ]]; then
   echo "CONFLICTSTUDIO_PYTHON is not executable" >&2
   exit 1
 fi
+if [[ "$CONFLICTSTUDIO_DATA_ROOT" != "$DATA_ROOT" ]]; then
+  echo "CONFLICTSTUDIO_DATA_ROOT must equal $DATA_ROOT" >&2
+  exit 1
+fi
 if [[ ! -d "$CONFLICTSTUDIO_DATA_ROOT" || ! -w "$CONFLICTSTUDIO_DATA_ROOT" ]]; then
   echo "CONFLICTSTUDIO_DATA_ROOT must be an existing writable directory" >&2
   exit 1
 fi
+mkdir -p \
+  "$CONFLICTSTUDIO_DATA_ROOT/database" \
+  "$CONFLICTSTUDIO_DATA_ROOT/media" \
+  "$CONFLICTSTUDIO_DATA_ROOT/logs"
 if [[ ! "$CONFLICTSTUDIO_PORT" =~ ^[0-9]+$ ]] || (( CONFLICTSTUDIO_PORT < 1 || CONFLICTSTUDIO_PORT > 65535 )); then
   echo "CONFLICTSTUDIO_PORT must be between 1 and 65535" >&2
   exit 1

@@ -521,3 +521,4 @@ class HealthRead(ApiModel):
     ok: bool
     database: str
     prompt_service_configured: bool
+    renderer_installation: Literal["installed", "notInstalled", "unknown", "notConfigured"]

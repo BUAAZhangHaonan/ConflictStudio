@@ -9,8 +9,10 @@ Environment=CUDA_VISIBLE_DEVICES=0
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=XDG_CACHE_HOME=/home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/cache
 ReadOnlyPaths=/home/team/zhanghaonan/H3-ComfyUI
-ExecStartPre=/usr/bin/mkdir -p /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/input /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/output /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/temp /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/user /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/cache
+ExecStartPre=/usr/bin/mkdir -p /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/input /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/output /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/temp /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/user /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/cache /home/team/zhanghaonan/TAFFC/ConflictStudio-data/logs
 ExecStart=/home/team/zhanghaonan/H3-ComfyUI/.venv/bin/python /home/team/zhanghaonan/H3-ComfyUI/main.py --listen 127.0.0.1 --port 8188 --disable-auto-launch --input-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/input --output-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/output --temp-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/temp --user-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/gpu0/user
+StandardOutput=append:/home/team/zhanghaonan/TAFFC/ConflictStudio-data/logs/conflictstudio-h3-gpu0.log
+StandardError=append:/home/team/zhanghaonan/TAFFC/ConflictStudio-data/logs/conflictstudio-h3-gpu0.log
 Restart=no
 
 [Install]

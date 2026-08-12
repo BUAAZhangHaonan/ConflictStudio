@@ -11,10 +11,8 @@ from fastapi.responses import JSONResponse, Response
 from backend.adapters.config import Settings
 from backend.adapters.database import Database, DatabaseBusyError
 from backend.adapters.llm import OpenAICompatiblePromptModel, PromptModel
-from backend.adapters.media import MediaError
 from backend.adapters.production_renderer import ProductionRendererGateway
 from backend.adapters.renderer import RendererGateway, UnconfiguredRendererGateway
-from backend.adapters.workflows import WorkflowTemplateError
 from backend.api.routes import router
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
@@ -36,13 +34,10 @@ def create_app(
     if renderer is not None:
         renderer_gateway = renderer
     elif resolved_settings.renderer is not None:
-        try:
-            renderer_gateway = ProductionRendererGateway.from_settings(
-                database,
-                resolved_settings.renderer,
-            )
-        except (MediaError, ValueError, WorkflowTemplateError):
-            renderer_gateway = UnconfiguredRendererGateway()
+        renderer_gateway = ProductionRendererGateway.from_settings(
+            database,
+            resolved_settings.renderer,
+        )
     else:
         renderer_gateway = UnconfiguredRendererGateway()
     prompt_service = PromptService(model)

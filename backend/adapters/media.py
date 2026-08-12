@@ -235,10 +235,13 @@ class MediaStore:
             temporary_path,
             model=model,
         )
-        primary_evidence = self.probe(primary_path, require_audio=False, model=model)
-        if primary_evidence.has_audio:
+        try:
+            primary_evidence = self.probe(primary_path, require_audio=False, model=model)
+            if primary_evidence.has_audio:
+                raise MediaError("Silent primary unexpectedly contains audio")
+        except Exception:
             primary_path.unlink(missing_ok=True)
-            raise MediaError("Silent primary unexpectedly contains audio")
+            raise
         return PreparedMedia(
             source_path=source_path,
             source_evidence=source_evidence,

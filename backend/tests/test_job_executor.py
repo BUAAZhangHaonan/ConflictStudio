@@ -10,9 +10,11 @@ from sqlmodel import select
 
 from backend.adapters.config import Settings
 from backend.adapters.renderer import (
+    CancelOutcome,
     RenderRequest,
     RenderResult,
     RendererGatewayError,
+    RendererInstallationStatus,
     RendererSlotState,
 )
 from backend.app import create_app
@@ -108,9 +110,13 @@ class FakeRenderer:
         self.max_active_total = 0
         self.active_by_slot: defaultdict[GpuSlotName, int] = defaultdict(int)
         self.max_active_by_slot: defaultdict[GpuSlotName, int] = defaultdict(int)
+        self.cancel_outcome = CancelOutcome.CANCELLED
 
     async def probe(self, slot: GpuSlotName) -> RendererSlotState:
         return RendererSlotState(slot, GpuAvailability.AVAILABLE, None)
+
+    async def installation_status(self) -> RendererInstallationStatus:
+        return RendererInstallationStatus.INSTALLED
 
     async def submit(self, request: RenderRequest) -> str:
         self.submit_counts[request.job_item_id] += 1
@@ -137,12 +143,13 @@ class FakeRenderer:
             self.active_total -= 1
             self.active_by_slot[slot] -= 1
 
-    async def cancel(self, slot: GpuSlotName, prompt_id: str) -> None:
+    async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome:
         self.cancel_calls.append((slot, prompt_id))
         request = self.requests[prompt_id]
         gate = self.wait_gates.get(request.job_item_id)
         if gate is not None:
             gate.set()
+        return self.cancel_outcome
 
     async def close(self) -> None:
         return None
@@ -542,6 +549,45 @@ def test_queued_and_running_cancellation_only_release_owned_slots(tmp_path: Path
             assert gpu1 is not None
             assert gpu1.availability is GpuAvailability.AVAILABLE
             assert gpu1.active_job_id is None
+
+    asyncio.run(scenario())
+
+
+def test_cancel_race_keeps_an_already_completed_item(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        renderer = FakeRenderer(hold=True)
+        renderer.cancel_outcome = CancelOutcome.ALREADY_COMPLETED
+        prompts = PromptService(RecordingPromptModel())
+        batches = BatchService(database, prompts, renderer)
+        draft = create_draft(
+            batches,
+            create_resources(database, "cancel completion race"),
+            [GpuSlotName.GPU0],
+        )
+        make_available(database, [GpuSlotName.GPU0])
+        job = await enqueue(batches, draft)
+        executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
+        await executor.start()
+        try:
+            item_id = job.items[0].id
+            await wait_until(lambda: item_id in renderer.wait_started)
+            running = batches.get_job(job.id)
+            await executor.cancel_job(
+                job.id,
+                JobCancelRequest(expectedRevision=running.revision),
+            )
+            cancelled = await wait_for_status(batches, job.id, {JobStatus.CANCELLED})
+        finally:
+            await executor.stop()
+
+        assert cancelled.completed_count == 1
+        assert cancelled.items[0].status is JobStatus.COMPLETED
+        assert cancelled.items[0].stage is JobItemStage.COMPLETED
+        assert "ItemCompleted" in [event.event_type for event in cancelled.events]
 
     asyncio.run(scenario())
 

@@ -15,6 +15,9 @@ deploy_check() {
   for name in CONFLICTSTUDIO_DATA_ROOT CONFLICTSTUDIO_HOST CONFLICTSTUDIO_PORT CONFLICTSTUDIO_PYTHON; do
     grep -q "^Environment=$name=" "$service"
   done
+  grep -qx 'Environment=CONFLICTSTUDIO_DATA_ROOT=/home/team/zhanghaonan/TAFFC/ConflictStudio-data' "$service"
+  grep -qx 'Environment=CONFLICTSTUDIO_LTX23_WORKFLOW_PATH=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json' "$service"
+  grep -qx 'Environment=CONFLICTSTUDIO_H3_WORKFLOW_PATH=/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json' "$service"
   grep -q 'listen 8888' "$ROOT/deploy/nginx/conflictstudio.conf"
   grep -q 'proxy_set_header Upgrade' "$ROOT/deploy/nginx/conflictstudio.conf"
   grep -q 'proxy_pass' "$ROOT/deploy/nginx/conflictstudio.conf"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Protocol
 
 from backend.domain.enums import Category, GpuAvailability, GpuSlotName, ModelName
@@ -11,6 +12,18 @@ class RendererGatewayError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class CancelOutcome(str, Enum):
+    CANCELLED = "cancelled"
+    ALREADY_COMPLETED = "already_completed"
+
+
+class RendererInstallationStatus(str, Enum):
+    INSTALLED = "installed"
+    NOT_INSTALLED = "notInstalled"
+    UNKNOWN = "unknown"
+    NOT_CONFIGURED = "notConfigured"
 
 
 @dataclass(frozen=True)
@@ -53,11 +66,13 @@ class RendererGateway(Protocol):
 
     async def probe(self, slot: GpuSlotName) -> RendererSlotState: ...
 
+    async def installation_status(self) -> RendererInstallationStatus: ...
+
     async def submit(self, request: RenderRequest) -> str: ...
 
     async def wait(self, slot: GpuSlotName, prompt_id: str) -> RenderResult: ...
 
-    async def cancel(self, slot: GpuSlotName, prompt_id: str) -> None: ...
+    async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome: ...
 
     async def close(self) -> None: ...
 
@@ -73,6 +88,9 @@ class UnconfiguredRendererGateway:
             loaded_model=None,
         )
 
+    async def installation_status(self) -> RendererInstallationStatus:
+        return RendererInstallationStatus.NOT_CONFIGURED
+
     async def submit(self, request: RenderRequest) -> str:
         raise RendererGatewayError(
             "renderer_not_configured",
@@ -85,7 +103,7 @@ class UnconfiguredRendererGateway:
             "Rendering requires a configured renderer gateway",
         )
 
-    async def cancel(self, slot: GpuSlotName, prompt_id: str) -> None:
+    async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome:
         raise RendererGatewayError(
             "renderer_not_configured",
             "Rendering requires a configured renderer gateway",

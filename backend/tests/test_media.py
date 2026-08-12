@@ -87,7 +87,7 @@ def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path
         store.probe(media, require_audio=True, model=ModelName.LTX)
 
 
-@pytest.mark.parametrize("failure", ("ffmpeg", "silent_probe", "replace"))
+@pytest.mark.parametrize("failure", ("ffmpeg", "silent_probe", "replace", "final_probe"))
 def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
     store = MediaStore(tmp_path)
     source, primary, temporary = store.attempt_paths(1, 1, 1)
@@ -101,6 +101,8 @@ def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monke
             temporary.write_bytes(b"silent")
             return CompletedProcess(args, 0, "", "")
         if failure == "silent_probe" and str(args[-1]) == str(temporary):
+            return CompletedProcess(args, 0, compact_probe(frames=None), "")
+        if failure == "final_probe" and str(args[-1]) == str(primary):
             return CompletedProcess(args, 0, compact_probe(frames=None), "")
         has_audio = str(args[-1]) == str(source)
         return CompletedProcess(args, 0, compact_probe(audio=has_audio), "")
@@ -119,6 +121,7 @@ def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monke
         )
     assert not primary.exists()
     assert not temporary.exists()
+    assert source.read_bytes() == b"source"
 
 
 def test_va_and_vt_assets_preserve_rerender_attempt_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

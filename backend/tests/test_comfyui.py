@@ -173,6 +173,19 @@ def test_queued_cancel_deletes_only_exact_prompt_and_confirms_queue_exit() -> No
             return httpx.Response(200, json={"queue_running": [], "queue_pending": pending})
         if request.method == "POST" and request.url.path == "/queue":
             return httpx.Response(200, json={})
+        if request.method == "GET" and request.url.path == "/history/queued-1":
+            return httpx.Response(
+                200,
+                json={
+                    "queued-1": {
+                        "status": {
+                            "completed": False,
+                            "status_str": "cancelled",
+                            "messages": [],
+                        }
+                    }
+                },
+            )
         raise AssertionError(f"Unexpected request: {request.method} {request.url.path}")
 
     async def scenario() -> None:
@@ -187,6 +200,7 @@ def test_queued_cancel_deletes_only_exact_prompt_and_confirms_queue_exit() -> No
         ("GET", "/queue", None),
         ("POST", "/queue", {"delete": ["queued-1"]}),
         ("GET", "/queue", None),
+        ("GET", "/history/queued-1", None),
     ]
 
 
@@ -255,8 +269,65 @@ def test_cancel_confirmation_uses_websocket_terminal_state() -> None:
     async def scenario() -> None:
         client, http = make_client(handler, websocket_connect=connect)
         try:
-            assert [message async for message in client.websocket_messages("client")] != []
-            await client.cancel("running-2")
+            async with client.observe_prompt("running-2"):
+                assert [message async for message in client.websocket_messages("client")] != []
+                await client.cancel("running-2")
+            assert client._prompt_states == {}
+        finally:
+            await http.aclose()
+
+    run(scenario())
+
+
+def test_queue_exit_with_normal_history_returns_stable_already_completed() -> None:
+    queue_reads = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal queue_reads
+        if request.url.path == "/queue" and request.method == "GET":
+            queue_reads += 1
+            running = [[1, "race", {}, {}, []]] if queue_reads == 1 else []
+            return httpx.Response(200, json={"queue_running": running, "queue_pending": []})
+        if request.url.path == "/interrupt":
+            return httpx.Response(200, json={})
+        if request.url.path == "/history/race":
+            return httpx.Response(
+                200,
+                json={
+                    "race": {
+                        "status": {
+                            "completed": True,
+                            "status_str": "success",
+                            "messages": [],
+                        }
+                    }
+                },
+            )
+        raise AssertionError(request.url.path)
+
+    async def scenario() -> None:
+        client, http = make_client(handler)
+        try:
+            with pytest.raises(AdapterError) as error:
+                await client.cancel("race")
+            assert error.value.code == "already_completed"
+            assert client._prompt_states == {}
+        finally:
+            await http.aclose()
+
+    run(scenario())
+
+
+def test_prompt_state_cleanup_keeps_other_subscribers_until_their_finally() -> None:
+    async def scenario() -> None:
+        client, http = make_client(lambda _: httpx.Response(500))
+        try:
+            async with client.observe_prompt("shared"):
+                assert client._prompt_states["shared"].subscribers == 1
+                async with client.observe_prompt("shared"):
+                    assert client._prompt_states["shared"].subscribers == 2
+                assert client._prompt_states["shared"].subscribers == 1
+            assert client._prompt_states == {}
         finally:
             await http.aclose()
 
@@ -290,6 +361,7 @@ def test_http_200_without_cancel_confirmation_fails_at_bounded_deadline() -> Non
                 await client.cancel("stuck")
             assert error.value.code == "comfyui_cancel_unconfirmed"
             assert error.value.message == "ComfyUI did not confirm cancellation before the deadline"
+            assert client._prompt_states == {}
         finally:
             await http.aclose()
 

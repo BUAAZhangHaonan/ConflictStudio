@@ -10,7 +10,12 @@ from typing import Iterator
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
-from backend.adapters.renderer import RenderRequest, RendererGateway, RendererGatewayError
+from backend.adapters.renderer import (
+    CancelOutcome,
+    RenderRequest,
+    RendererGateway,
+    RendererGatewayError,
+)
 from backend.domain.enums import (
     GenerationAttemptStatus,
     GpuAvailability,
@@ -311,14 +316,17 @@ class JobExecutor:
             await self.renderer.wait(item.gpu_slot, prompt_id)
             self._complete_item(job_id, item_id)
         except asyncio.CancelledError:
+            cancel_outcome: CancelOutcome | None = None
             if gpu_slot is not None and prompt_id is not None:
                 try:
-                    await self.renderer.cancel(gpu_slot, prompt_id)
+                    cancel_outcome = await self.renderer.cancel(gpu_slot, prompt_id)
                 except Exception as error:
                     code, reason = self._failure_details(error)
                     self._fail_item(job_id, item_id, code, reason)
                     raise
-            if not self._stopping:
+            if cancel_outcome is CancelOutcome.ALREADY_COMPLETED:
+                self._complete_item(job_id, item_id)
+            elif not self._stopping:
                 self._cancel_item(job_id, item_id)
             raise
         except Exception as error:

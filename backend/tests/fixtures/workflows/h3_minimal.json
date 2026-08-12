@@ -8,6 +8,10 @@
       "class_type": "RandomNoise",
       "inputs": {"noise_seed": 0}
     },
+    "12": {
+      "class_type": "VAEDecodeAudio",
+      "inputs": {"samples": ["5", 1], "vae": ["5", 2]}
+    },
     "13": {
       "class_type": "CreateVideo",
       "inputs": {"audio": ["12", 0], "bit_depth": 8, "fps": 1.0, "images": ["11", 0]}

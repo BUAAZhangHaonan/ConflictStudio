@@ -8,13 +8,36 @@ from backend.adapters.gpu import UNIT_DEFINITIONS, UnitDefinition
 from backend.domain.enums import GpuSlotName
 
 
+DATA_ROOT_VALUE = "/home/team/zhanghaonan/TAFFC/ConflictStudio-data"
+LTX23_WORKFLOW_PATH_VALUE = (
+    "/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json"
+)
+H3_WORKFLOW_PATH_VALUE = (
+    "/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/"
+    "h3/va_aligned/payload.json"
+)
+GPU_URL_VALUES = {
+    GpuSlotName.GPU0: "http://127.0.0.1:8188",
+    GpuSlotName.GPU1: "http://127.0.0.1:8189",
+}
+
+
 @dataclass(frozen=True)
 class RendererSettings:
-    workflow_root: Path
     ltx23_template: Path
     h3_template: Path
     slot_urls: tuple[tuple[GpuSlotName, str], ...]
     unit_definitions: tuple[UnitDefinition, ...]
+
+    def __post_init__(self) -> None:
+        if self.ltx23_template.as_posix() != LTX23_WORKFLOW_PATH_VALUE:
+            raise ValueError("The LTX workflow path must match the fixed read-only template")
+        if self.h3_template.as_posix() != H3_WORKFLOW_PATH_VALUE:
+            raise ValueError("The H3 workflow path must match the fixed read-only payload")
+        if self.urls_by_slot() != GPU_URL_VALUES:
+            raise ValueError("Renderer URLs must match the fixed local service ports")
+        if self.unit_definitions != UNIT_DEFINITIONS:
+            raise ValueError("Renderer unit definitions must match the fixed allowlist")
 
     def urls_by_slot(self) -> dict[GpuSlotName, str]:
         return dict(self.slot_urls)
@@ -28,21 +51,33 @@ class Settings:
 
     @classmethod
     def from_environment(cls) -> "Settings":
-        value = os.environ.get("CONFLICTSTUDIO_DATA_ROOT", "").strip()
+        value = os.environ.get("CONFLICTSTUDIO_DATA_ROOT", "")
         if not value:
             raise RuntimeError("CONFLICTSTUDIO_DATA_ROOT is required")
+        if value != DATA_ROOT_VALUE:
+            raise RuntimeError(f"CONFLICTSTUDIO_DATA_ROOT must equal {DATA_ROOT_VALUE}")
         project_root = Path(__file__).resolve().parents[2]
         data_root = Path(value)
         renderer_values = {
-            "ltx23": os.environ.get("CONFLICTSTUDIO_LTX23_WORKFLOW_PATH", "").strip(),
-            "h3": os.environ.get("CONFLICTSTUDIO_H3_WORKFLOW_PATH", "").strip(),
-            "gpu0": os.environ.get("CONFLICTSTUDIO_GPU0_URL", "").strip(),
-            "gpu1": os.environ.get("CONFLICTSTUDIO_GPU1_URL", "").strip(),
+            "ltx23": os.environ.get("CONFLICTSTUDIO_LTX23_WORKFLOW_PATH", ""),
+            "h3": os.environ.get("CONFLICTSTUDIO_H3_WORKFLOW_PATH", ""),
+            "gpu0": os.environ.get("CONFLICTSTUDIO_GPU0_URL", ""),
+            "gpu1": os.environ.get("CONFLICTSTUDIO_GPU1_URL", ""),
         }
         renderer = None
-        if all(renderer_values.values()):
+        configured_values = tuple(bool(item) for item in renderer_values.values())
+        if any(configured_values) and not all(configured_values):
+            raise RuntimeError("Every renderer environment value is required together")
+        if all(configured_values):
+            if renderer_values["ltx23"] != LTX23_WORKFLOW_PATH_VALUE:
+                raise RuntimeError(
+                    "CONFLICTSTUDIO_LTX23_WORKFLOW_PATH must equal the fixed read-only template"
+                )
+            if renderer_values["h3"] != H3_WORKFLOW_PATH_VALUE:
+                raise RuntimeError(
+                    "CONFLICTSTUDIO_H3_WORKFLOW_PATH must equal the fixed read-only payload"
+                )
             renderer = RendererSettings(
-                workflow_root=data_root / "workflows",
                 ltx23_template=Path(renderer_values["ltx23"]),
                 h3_template=Path(renderer_values["h3"]),
                 slot_urls=(
