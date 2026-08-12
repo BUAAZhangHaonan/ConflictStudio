@@ -87,6 +87,17 @@ class UpdateWithChanges(ExpectedRevision):
             raise ValueError("At least one field must be provided")
         return self
 
+    def reject_explicit_nulls(self, nullable_fields: frozenset[str] = frozenset()) -> Self:
+        null_fields = {
+            field_name
+            for field_name in self.model_fields_set.difference(nullable_fields)
+            if field_name != "expected_revision" and getattr(self, field_name) is None
+        }
+        if null_fields:
+            fields = ", ".join(sorted(to_camel(field_name) for field_name in null_fields))
+            raise ValueError(f"Fields cannot be null: {fields}")
+        return self
+
 
 class DatasetCreate(ApiModel):
     name: Name
@@ -99,6 +110,11 @@ class DatasetUpdate(UpdateWithChanges):
     purpose: DatasetPurpose | None = None
     note: str | None = None
     status: ResourceStatus | None = None
+
+    @model_validator(mode="after")
+    def reject_null_fields(self) -> Self:
+        return self.reject_explicit_nulls()
+
 
 class DatasetRead(ApiModel):
     id: int
@@ -192,6 +208,10 @@ class ContentPlanUpdate(UpdateWithChanges):
     scene_supplement_zh: OptionalTextValue | None = None
     scene_supplement_en: OptionalTextValue | None = None
 
+    @model_validator(mode="after")
+    def reject_null_fields(self) -> Self:
+        return self.reject_explicit_nulls(frozenset({"conflict_direction", "dialogue", "display_text"}))
+
     @field_validator("base_video_prompt")
     @classmethod
     def validate_base_video_prompt(cls, value: str | None) -> str | None:
@@ -235,6 +255,10 @@ class PromptPresetUpdate(UpdateWithChanges):
     negative_examples: list[TextValue] | None = None
     final_negative_prompt: TextValue | None = Field(default=None, alias="finalRenderNegativeConstraints")
     status: ResourceStatus | None = None
+
+    @model_validator(mode="after")
+    def reject_null_fields(self) -> Self:
+        return self.reject_explicit_nulls()
 
     @field_validator("final_negative_prompt")
     @classmethod
@@ -290,6 +314,10 @@ class VideoBackgroundPresetUpdate(UpdateWithChanges):
     framing_zh: OptionalTextValue | None = None
     framing_en: OptionalTextValue | None = None
     status: ResourceStatus | None = None
+
+    @model_validator(mode="after")
+    def reject_null_fields(self) -> Self:
+        return self.reject_explicit_nulls()
 
     @field_validator("scene_en", "ambient_sound_en", "participant_relationship_en", "lighting_en", "framing_en")
     @classmethod

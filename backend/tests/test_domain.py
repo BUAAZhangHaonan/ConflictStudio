@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
@@ -18,7 +18,14 @@ from backend.domain.enums import (
     GpuSlotName,
 )
 from backend.domain.models import BatchDraft, ContentPlan, Dataset, GpuSlot
-from backend.domain.schemas import ContentPlanCreate, VideoBackgroundPresetCreate
+from backend.domain.schemas import (
+    ContentPlanCreate,
+    ContentPlanUpdate,
+    DatasetUpdate,
+    PromptPresetUpdate,
+    VideoBackgroundPresetCreate,
+    VideoBackgroundPresetUpdate,
+)
 
 
 def content_plan_payload(**overrides: object) -> dict[str, object]:
@@ -187,6 +194,29 @@ def test_background_allows_empty_supplements_but_requires_bilingual_names_and_sc
 def test_content_plan_rejects_removed_single_language_fields() -> None:
     with pytest.raises(ValidationError):
         ContentPlanCreate.model_validate({**content_plan_payload(), "scene": "Removed field"})
+
+
+@pytest.mark.parametrize(
+    ("schema", "field"),
+    [
+        (DatasetUpdate, "name"),
+        (ContentPlanUpdate, "nameZh"),
+        (PromptPresetUpdate, "positiveExamples"),
+        (VideoBackgroundPresetUpdate, "ambientSoundEn"),
+    ],
+)
+def test_catalog_updates_reject_explicit_null_for_non_nullable_fields(
+    schema: type[BaseModel], field: str
+) -> None:
+    with pytest.raises(ValidationError, match="cannot be null"):
+        schema.model_validate({"expectedRevision": 1, field: None})
+
+
+def test_content_plan_update_allows_clearing_nullable_fields() -> None:
+    update = ContentPlanUpdate.model_validate(
+        {"expectedRevision": 1, "conflictDirection": None, "dialogue": None, "displayText": None}
+    )
+    assert update.conflict_direction is None
 
 
 def test_sqlite_uses_only_new_bilingual_catalog_columns(tmp_path: Path) -> None:

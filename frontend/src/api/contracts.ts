@@ -313,7 +313,9 @@ export interface JobItem {
   failureReason: string | null;
   rendererPromptId: string | null;
   sourceAssetId: number | null;
+  sourceAssetUrl: string | null;
   primaryAssetId: number | null;
+  primaryAssetUrl: string | null;
   renderProgress?: {
     value: number;
     maximum: number;
