@@ -177,7 +177,7 @@ def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) ->
         content = session.get(ContentPlan, content_read.id)
         preset = session.get(PromptPreset, preset_read.id)
         background = session.get(VideoBackgroundPreset, background_read.id)
-        service = PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test"))
+        service = PromptService(OpenAICompatiblePromptModel("test"))
         prepared = service.prepare(
             PromptContext(
                 content=content,
@@ -231,7 +231,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     calls: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "https://llm.example/v1/chat/completions"
+        assert str(request.url) == "https://api.deepseek.com/v1/chat/completions"
         calls.append(json.loads(request.content))
         return httpx.Response(
             200,
@@ -266,7 +266,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
         )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    model = OpenAICompatiblePromptModel("https://llm.example/v1/chat/completions", "test-key", client)
+    model = OpenAICompatiblePromptModel("test-key", client)
     service = PromptService(model)
     with database.read_session() as session:
         from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
@@ -288,6 +288,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
 
     assert len(calls) == 1
     assert calls[0]["model"] == "deepseek-v4-flash"
+    assert calls[0]["thinking"] == {"type": "disabled"}
     assert calls[0]["response_format"] == {"type": "json_object"}
     assert "Good writing example" in prepared.user_input
     assert "Bad writing example" not in result.final_positive_prompt
@@ -296,22 +297,20 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     assert "front-facing close-up head-and-shoulders" in result.final_positive_prompt
 
 
-def test_prompt_model_requires_one_exact_endpoint_and_ignores_removed_base_url(
+def test_prompt_model_requires_only_api_key_and_ignores_removed_endpoint_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("CONFLICTSTUDIO_LLM_ENDPOINT", raising=False)
     monkeypatch.delenv("CONFLICTSTUDIO_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("CONFLICTSTUDIO_LLM_ENDPOINT", "https://removed.example/v1/chat/completions")
     monkeypatch.setenv("CONFLICTSTUDIO_LLM_BASE_URL", "https://removed.example/v1")
 
     assert isinstance(OpenAICompatiblePromptModel.from_environment(), UnconfiguredPromptModel)
 
-    endpoint = "https://llm.example/v1/chat/completions"
-    monkeypatch.setenv("CONFLICTSTUDIO_LLM_ENDPOINT", endpoint)
     monkeypatch.setenv("CONFLICTSTUDIO_LLM_API_KEY", "test-key")
     model = OpenAICompatiblePromptModel.from_environment()
 
     assert isinstance(model, OpenAICompatiblePromptModel)
-    assert model.endpoint == endpoint
+    assert model.api_key == "test-key"
     asyncio.run(model.close())
 
 
@@ -322,7 +321,7 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Pat
     second = catalog.create_background_preset(
         VideoBackgroundPresetCreate(name="候车室", scene="A quiet station waiting room.")
     )
-    prompt_service = PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test"))
+    prompt_service = PromptService(OpenAICompatiblePromptModel("test"))
     batches = BatchService(database, prompt_service, _ConfiguredRendererGateway())
     draft = batches.create_batch_draft(
         BatchDraftCreate(
@@ -364,7 +363,7 @@ def test_submit_blocks_when_renderer_is_not_configured(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, content, preset, background = fixed_resources(database)
-    batches = BatchService(database, PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")))
+    batches = BatchService(database, PromptService(OpenAICompatiblePromptModel("test")))
     draft = make_batch(
         batches,
         dataset,
@@ -402,7 +401,7 @@ def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_conf
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, content, preset, background = fixed_resources(database)
-    prompt_service = PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test"))
+    prompt_service = PromptService(OpenAICompatiblePromptModel("test"))
     batches = BatchService(database, prompt_service, _ConfiguredRendererGateway())
     draft = make_batch(
         batches,
@@ -460,7 +459,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
     _, dataset, content, preset, background = fixed_resources(database)
     batches = BatchService(
         database,
-        PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")),
+        PromptService(OpenAICompatiblePromptModel("test")),
         _ConfiguredRendererGateway(),
     )
     draft = make_batch(
@@ -566,7 +565,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
     reopened.initialize()
     restored = BatchService(
         reopened,
-        PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")),
+        PromptService(OpenAICompatiblePromptModel("test")),
         _ConfiguredRendererGateway(),
     ).get_job(job.id)
     assert len(restored.items) == 4
@@ -616,7 +615,7 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
     )
     batches = BatchService(
         database,
-        PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")),
+        PromptService(OpenAICompatiblePromptModel("test")),
         _ConfiguredRendererGateway(),
     )
     demographics = [
@@ -742,7 +741,7 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: 
     )
     batches = BatchService(
         database,
-        PromptService(OpenAICompatiblePromptModel("https://example.invalid/v1", "test")),
+        PromptService(OpenAICompatiblePromptModel("test")),
         _ConfiguredRendererGateway(),
     )
     draft = batches.create_batch_draft(

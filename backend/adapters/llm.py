@@ -6,6 +6,7 @@ from typing import Protocol
 import httpx
 
 
+PROMPT_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
 PROMPT_MODEL = "deepseek-v4-flash"
 
 
@@ -30,7 +31,7 @@ class UnconfiguredPromptModel:
     async def generate(self, system_input: str, user_input: str) -> str:
         raise PromptAdapterError(
             "external_configuration_missing",
-            "Prompt generation requires CONFLICTSTUDIO_LLM_ENDPOINT and CONFLICTSTUDIO_LLM_API_KEY",
+            "Prompt generation requires CONFLICTSTUDIO_LLM_API_KEY",
         )
 
     async def close(self) -> None:
@@ -40,26 +41,24 @@ class UnconfiguredPromptModel:
 class OpenAICompatiblePromptModel:
     configured = True
 
-    def __init__(self, endpoint: str, api_key: str, client: httpx.AsyncClient | None = None) -> None:
-        if not endpoint.strip() or not api_key.strip():
-            raise ValueError("Prompt service endpoint and API key are required")
-        self.endpoint = endpoint
+    def __init__(self, api_key: str, client: httpx.AsyncClient | None = None) -> None:
+        if not api_key.strip():
+            raise ValueError("Prompt service API key is required")
         self.api_key = api_key
         self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(120.0))
         self._owns_client = client is None
 
     @classmethod
     def from_environment(cls) -> PromptModel:
-        endpoint = os.environ.get("CONFLICTSTUDIO_LLM_ENDPOINT", "").strip()
         api_key = os.environ.get("CONFLICTSTUDIO_LLM_API_KEY", "").strip()
-        if not endpoint or not api_key:
+        if not api_key:
             return UnconfiguredPromptModel()
-        return cls(endpoint, api_key)
+        return cls(api_key)
 
     async def generate(self, system_input: str, user_input: str) -> str:
         try:
             response = await self.client.post(
-                self.endpoint,
+                PROMPT_ENDPOINT,
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 json={
                     "model": PROMPT_MODEL,
@@ -67,6 +66,7 @@ class OpenAICompatiblePromptModel:
                         {"role": "system", "content": system_input},
                         {"role": "user", "content": user_input},
                     ],
+                    "thinking": {"type": "disabled"},
                     "response_format": {"type": "json_object"},
                     "temperature": 0.2,
                 },
