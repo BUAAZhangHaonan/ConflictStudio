@@ -64,6 +64,31 @@ FORBIDDEN_COMPONENT_LIGHTING_PHRASES = (
     "visible light fixture",
     "lighting equipment",
 )
+FORBIDDEN_TRUE_EMOTION_DESCRIPTION_TOKENS = (
+    "a-va",
+    "a-vt",
+    "c-va",
+    "c-vt",
+    "positiveprompt",
+    "dialogue",
+    "vttext",
+    "spokentext",
+    "visualbehavior",
+    "vocaldelivery",
+    "environmentalsound",
+    "setting",
+    "camerasupplement",
+    "lightingsupplement",
+    "trueemotiondescription",
+    "true_emotion_description",
+    "spoken_text",
+    "visual_behavior",
+    "vocal_delivery",
+    "environmental_sound",
+    "camera_supplement",
+    "lighting_supplement",
+)
+SILENT_ENVIRONMENT_SOUND = "No ambient sound is audible."
 
 
 class GeneratedPrompt(BaseModel):
@@ -95,7 +120,7 @@ class GeneratedPromptComponents(BaseModel):
     spoken_text: str = Field(alias="spokenText", min_length=1)
     visual_behavior: str = Field(alias="visualBehavior", min_length=1)
     vocal_delivery: str = Field(alias="vocalDelivery", min_length=1)
-    environmental_sound: str = Field(alias="environmentalSound", min_length=1)
+    environmental_sound: str | None = Field(alias="environmentalSound")
     setting: str = Field(min_length=1)
     camera_supplement: str = Field(alias="cameraSupplement")
     lighting_supplement: str = Field(alias="lightingSupplement")
@@ -112,10 +137,28 @@ class GeneratedPromptComponents(BaseModel):
         "true_emotion_description",
     )
     @classmethod
-    def reject_changed_whitespace(cls, value: str) -> str:
+    def reject_changed_whitespace(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         if value != value.strip() or "\n" in value or "\r" in value:
             raise ValueError("Component text must not contain surrounding whitespace or line breaks")
         return value
+
+    @field_validator("environmental_sound")
+    @classmethod
+    def validate_environmental_sound(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("Environmental sound must be null or a non-blank sentence")
+        if value != value.strip() or "\n" in value or "\r" in value:
+            raise ValueError("Component text must not contain surrounding whitespace or line breaks")
+        return value
+
+    @field_validator("true_emotion_description")
+    @classmethod
+    def validate_true_emotion_description(cls, value: str) -> str:
+        return _validate_true_emotion_description(value)
 
     @field_validator(
         "visual_behavior",
@@ -126,14 +169,16 @@ class GeneratedPromptComponents(BaseModel):
         "lighting_supplement",
     )
     @classmethod
-    def require_english_component_text(cls, value: str) -> str:
+    def require_english_component_text(cls, value: str | None) -> str | None:
         if value and (re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", value) or '"' in value):
             raise ValueError("Render prompt components must use English and contain no double quotes")
         return value
 
     @field_validator("visual_behavior", "environmental_sound", "setting")
     @classmethod
-    def require_complete_sentence(cls, value: str) -> str:
+    def require_complete_sentence(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         if value[-1] not in ".!?":
             raise ValueError("The component must be a complete sentence")
         return value
@@ -154,7 +199,9 @@ class GeneratedPromptComponents(BaseModel):
 
     @field_validator("visual_behavior", "environmental_sound", "setting")
     @classmethod
-    def reject_other_people(cls, value: str) -> str:
+    def reject_other_people(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         cls._reject_phrases(value, FORBIDDEN_COMPONENT_PERSON_PHRASES, "another person")
         return value
 
@@ -355,13 +402,14 @@ class PromptService:
             "with the full face filling much of the frame."
         )
         lighting = "Bright, soft, even lighting keeps the face fully readable without heavy shadows."
+        environmental_sound = cls._environmental_sound_text(components.environmental_sound)
         positive = " ".join(
             value
             for value in (
                 subject,
                 components.visual_behavior,
                 speech,
-                components.environmental_sound,
+                environmental_sound,
                 components.setting,
                 camera,
                 components.camera_supplement,
@@ -391,7 +439,7 @@ class PromptService:
                 demographic,
                 content.base_video_prompt,
                 self._dialogue_instruction(content),
-                background.ambient_audio,
+                self._environmental_sound_text(background.ambient_audio or None),
                 background.scene,
                 background.relationship,
                 content.scene_supplement,
@@ -434,6 +482,18 @@ class PromptService:
                 "invalid_prompt_response",
                 "Dialogue, VT text and the true emotion description must use Chinese where required",
             )
+        try:
+            _validate_true_emotion_description(output.true_emotion_description)
+        except ValueError as error:
+            raise ServiceError(
+                502,
+                "invalid_prompt_response",
+                str(error),
+            ) from error
+
+    @staticmethod
+    def _environmental_sound_text(value: str | None) -> str:
+        return value if value else SILENT_ENVIRONMENT_SOUND
 
     @staticmethod
     def _ethnicity_text(value: Ethnicity) -> str:
@@ -458,4 +518,15 @@ def _load_unique_json_object(raw: str) -> dict[str, object]:
     value = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
     if not isinstance(value, dict):
         raise ValueError("The prompt response must be a JSON object")
+    return value
+
+
+def _validate_true_emotion_description(value: str) -> str:
+    if value != value.strip() or "\n" in value or "\r" in value:
+        raise ValueError("True emotion description must not contain surrounding whitespace or line breaks")
+    if not re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", value):
+        raise ValueError("True emotion description must use natural Chinese for a reviewer")
+    normalized = re.sub(r"[\s_-]+", "", value).casefold()
+    if any(re.sub(r"[\s_-]+", "", token).casefold() in normalized for token in FORBIDDEN_TRUE_EMOTION_DESCRIPTION_TOKENS):
+        raise ValueError("True emotion description must use natural Chinese for a reviewer")
     return value

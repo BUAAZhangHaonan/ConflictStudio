@@ -72,17 +72,19 @@ def component_json(
         "The subject sits upright, folds both hands on the lap, presses the lips together, raises the chin, "
         "and keeps a steady gaze through the end of the clip."
     ),
+    environmental_sound: str | None = "The ventilation hums softly while a wall clock ticks at an even pace.",
+    true_emotion_description: str = "说话内容和可见动作共同表达受控状态。",
 ) -> str:
     return json.dumps(
         {
             "spokenText": spoken_text,
             "visualBehavior": visual_behavior,
             "vocalDelivery": "in a low, steady voice with a measured pace",
-            "environmentalSound": "The ventilation hums softly while a wall clock ticks at an even pace.",
+            "environmentalSound": environmental_sound,
             "setting": "The private office has pale walls, a bare wooden table and one closed window.",
             "cameraSupplement": "",
             "lightingSupplement": "Soft daylight adds gentle highlights across the plain fabric.",
-            "trueEmotionDescription": "说话内容和可见动作共同表达受控状态。",
+            "trueEmotionDescription": true_emotion_description,
         },
         ensure_ascii=False,
     )
@@ -92,7 +94,10 @@ def prompt_context(
     *,
     mode: ContentMode,
     category: Category = Category.A_VA,
+    conflict_direction: ConflictDirection | None = None,
     base_video_prompt: str = "",
+    true_emotion_description: str = "说话内容和可见动作共同表达受控状态。",
+    ambient_audio: str = "A low room tone carries a steady ventilation hum while a wall clock ticks at an even pace.",
     gender: Gender = Gender.FEMALE,
     ethnicity: Ethnicity = Ethnicity.EAST_ASIAN,
 ) -> PromptContext:
@@ -101,7 +106,7 @@ def prompt_context(
         name="Strict prompt",
         name_key="strict prompt",
         category=category,
-        conflict_direction=None,
+        conflict_direction=conflict_direction,
         mode=mode,
         status=ContentStatus.ACTIVE,
         true_emotion="contained",
@@ -111,7 +116,7 @@ def prompt_context(
         psychological_background="The subject chooses a measured response.",
         dialogue=VA_DIALOGUE if is_va else None,
         display_text=None if is_va else VT_TEXT,
-        true_emotion_description="说话内容和可见动作共同表达受控状态。",
+        true_emotion_description=true_emotion_description,
         base_video_prompt=base_video_prompt,
         content_instruction="Create the requested observable scene." if mode is ContentMode.GENERATIVE else "",
     )
@@ -130,9 +135,7 @@ def prompt_context(
         name="Private office",
         name_key="private office",
         scene="The private office has pale walls, a bare wooden table, and one closed window behind the stool.",
-        ambient_audio=(
-            "A low room tone carries a steady ventilation hum while a wall clock ticks at an even pace."
-        ),
+        ambient_audio=ambient_audio,
         relationship="The subject remains alone.",
         lighting=(
             "Soft daylight falls from the left, leaving a narrow shadow along the jaw and gentle highlights "
@@ -216,10 +219,18 @@ def test_generated_prompt_rejects_whitespace_only_fields() -> None:
         )
 
 
+def test_generated_components_allow_null_environmental_sound() -> None:
+    payload = json.loads(component_json(environmental_sound=None))
+    components = GeneratedPromptComponents.model_validate(payload)
+
+    assert components.environmental_sound is None
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
         ("visualBehavior", "The subject turns into a side profile and keeps both hands still."),
+        ("environmentalSound", ""),
         ("environmentalSound", "An off-screen voice answers while the ventilation hums."),
         ("setting", "The office contains a visible light fixture beside the desk."),
         ("cameraSupplement", "The camera pushes inward with a slow zoom."),
@@ -291,6 +302,79 @@ def test_generative_components_are_assembled_in_fixed_render_order_without_repai
     assert "positivePrompt" not in result.raw_structured_response
 
 
+@pytest.mark.parametrize(
+    "category,direction,spoken_text,true_emotion_description,environmental_sound",
+    [
+        (
+            Category.A_VA,
+            None,
+            VA_DIALOGUE,
+            "她在压住心里的紧绷，话和动作都没有偏开。",
+            "The ventilation hums softly while a wall clock ticks at an even pace.",
+        ),
+        (
+            Category.A_VT,
+            None,
+            VT_TEXT,
+            "她还没有拿定主意，画面和文字都在往同一个方向收紧。",
+            "The ventilation hums softly while a wall clock ticks at an even pace.",
+        ),
+        (
+            Category.C_VA,
+            ConflictDirection.AUDIO,
+            VA_DIALOGUE,
+            "她其实已经放松下来，但还是把肩背和目光绷得很稳。真正的想法从说出口的话里露出来，画面还在维持担心。",
+            "The ventilation hums softly while a wall clock ticks at an even pace.",
+        ),
+        (
+            Category.C_VT,
+            ConflictDirection.TEXT,
+            VT_TEXT,
+            "她其实已经拿定了主意，只是还维持着犹豫的样子。审核时看文字内容能判断真实想法，画面和声音仍然在装作迟疑。",
+            None,
+        ),
+    ],
+)
+def test_end_to_end_generation_covers_all_prompt_semantics(
+    category: Category,
+    direction: ConflictDirection | None,
+    spoken_text: str,
+    true_emotion_description: str,
+    environmental_sound: str | None,
+) -> None:
+    service = PromptService(
+        StaticPromptModel(
+            component_json(
+                spoken_text=spoken_text,
+                environmental_sound=environmental_sound,
+                true_emotion_description=true_emotion_description,
+            )
+        )
+    )
+    prepared = service.prepare(
+        prompt_context(
+            mode=ContentMode.GENERATIVE,
+            category=category,
+            conflict_direction=direction,
+        )
+    )
+    result = asyncio.run(service.complete(prepared, category))
+
+    if category in {Category.A_VA, Category.C_VA}:
+        assert result.dialogue == spoken_text
+        assert result.vt_text is None
+    else:
+        assert result.dialogue is None
+        assert result.vt_text == spoken_text
+    assert result.true_emotion_description == true_emotion_description
+    assert f'"{spoken_text}"' in result.final_positive_prompt
+    assert direction_rule(category, direction) in prepared.system_input
+    if environmental_sound is None:
+        assert "No ambient sound is audible." in result.final_positive_prompt
+    else:
+        assert environmental_sound in result.final_positive_prompt
+
+
 def test_vt_source_prompt_contains_exact_independently_stored_spoken_text() -> None:
     model = StaticPromptModel(component_json(spoken_text=VT_TEXT))
     service = PromptService(model)
@@ -309,6 +393,59 @@ def test_vt_source_prompt_contains_exact_independently_stored_spoken_text() -> N
     assert f'"{VT_TEXT}"' in result.final_positive_prompt
     assert "audio-bearing" in prepared.system_input
     assert "source vocal delivery follows the visible behavior" in prepared.system_input
+
+
+def test_fixed_prompt_uses_explicit_silence_when_background_audio_is_empty() -> None:
+    action = (
+        "She sits upright on a simple stool, folds both hands across her lap, presses her lips together, "
+        "and lifts her chin while her gaze remains level and her shoulders stay still."
+    )
+    service = PromptService(StaticPromptModel("unused"))
+    prepared = service.prepare(
+        prompt_context(
+            mode=ContentMode.FIXED,
+            base_video_prompt=action,
+            ambient_audio="",
+        )
+    )
+    result = asyncio.run(service.complete(prepared, Category.A_VA))
+
+    assert "No ambient sound is audible." in result.final_positive_prompt
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "trueEmotionDescription：她在强撑平静。",
+        "spokenText 写的是安抚的话，她的真实想法更松下来。",
+        "A-VA：她表面上很稳，其实心里发紧。",
+        "C-VT 里文字更接近她真实的打算。",
+    ],
+)
+def test_true_emotion_description_rejects_internal_labels_in_both_paths(value: str) -> None:
+    generated_service = PromptService(
+        StaticPromptModel(component_json(true_emotion_description=value))
+    )
+    generated_prepared = generated_service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
+    with pytest.raises(ServiceError) as generated_error:
+        asyncio.run(generated_service.complete(generated_prepared, Category.A_VA))
+
+    fixed_service = PromptService(StaticPromptModel("unused"))
+    fixed_prepared = fixed_service.prepare(
+        prompt_context(
+            mode=ContentMode.FIXED,
+            base_video_prompt=(
+                "She sits upright on a simple stool, folds both hands across her lap, presses her lips together, "
+                "and lifts her chin while her gaze remains level and her shoulders stay still."
+            ),
+            true_emotion_description=value,
+        )
+    )
+    with pytest.raises(ServiceError, match="natural Chinese for a reviewer") as fixed_error:
+        asyncio.run(fixed_service.complete(fixed_prepared, Category.A_VA))
+
+    assert generated_error.value.code == "invalid_prompt_response"
+    assert fixed_error.value.code == "invalid_prompt_response"
 
 
 def test_strict_json_rejects_code_fenced_response() -> None:
