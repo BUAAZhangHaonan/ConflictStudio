@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from pathlib import Path
 
 from fastapi import APIRouter, Query, Request, Response, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
+from backend.adapters.renderer import RendererInstallationStatus
 from backend.domain.schemas import (
     BatchDraftCreate,
     BatchDraftRead,
@@ -35,10 +38,10 @@ from backend.domain.schemas import (
     VideoBackgroundPresetRead,
     VideoBackgroundPresetUpdate,
 )
+from backend.services.assets import AssetService
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.job_executor import JobExecutor
-from backend.adapters.renderer import RendererInstallationStatus
 
 
 router = APIRouter(prefix="/api")
@@ -46,6 +49,7 @@ router = APIRouter(prefix="/api")
 EVENT_REPLAY_LIMIT = 200
 EVENT_POLL_SECONDS = 0.25
 TERMINAL_EVENT_TYPES = {"JobCompleted", "JobFailed", "JobCancelled"}
+MEDIA_CHUNK_SIZE = 1024 * 1024
 
 
 def catalog(request: Request) -> CatalogService:
@@ -54,6 +58,10 @@ def catalog(request: Request) -> CatalogService:
 
 def batches(request: Request) -> BatchService:
     return request.app.state.batch_service
+
+
+def assets(request: Request) -> AssetService:
+    return request.app.state.asset_service
 
 
 def executor(request: Request) -> JobExecutor:
@@ -265,6 +273,121 @@ def list_job_items(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[JobItemRead]:
     return batches(request).list_job_items(job_id, offset, limit)
+
+
+@router.api_route("/media/{asset_id}", methods=["GET", "HEAD"], response_class=Response)
+def get_asset_content(asset_id: int, request: Request) -> Response:
+    path, media_type, evidence = assets(request).content(asset_id)
+    range_header = request.headers.get("range")
+    if range_header is None:
+        start = 0
+        end = evidence.st_size - 1
+        response_status = status.HTTP_200_OK
+    else:
+        try:
+            start, end = _parse_byte_range(range_header, evidence.st_size)
+        except _MalformedRangeError:
+            return Response(
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                headers=_media_headers(
+                    media_type,
+                    0,
+                    content_range=f"bytes */{evidence.st_size}",
+                ),
+            )
+        except _UnsatisfiableRangeError:
+            return Response(
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                headers=_media_headers(
+                    media_type,
+                    0,
+                    content_range=f"bytes */{evidence.st_size}",
+                ),
+            )
+        response_status = status.HTTP_206_PARTIAL_CONTENT
+
+    content_length = end - start + 1
+    content_range = (
+        f"bytes {start}-{end}/{evidence.st_size}"
+        if response_status == status.HTTP_206_PARTIAL_CONTENT
+        else None
+    )
+    headers = _media_headers(media_type, content_length, content_range=content_range)
+    if request.method == "HEAD":
+        return Response(status_code=response_status, headers=headers)
+    return StreamingResponse(
+        _stream_file(path, start, content_length),
+        status_code=response_status,
+        headers=headers,
+    )
+
+
+def _parse_byte_range(value: str, size: int) -> tuple[int, int]:
+    unit, separator, specification = value.partition("=")
+    if separator != "=" or unit != "bytes" or not specification or "," in specification:
+        raise _MalformedRangeError
+    start_text, dash, end_text = specification.partition("-")
+    if dash != "-" or "-" in end_text or (not start_text and not end_text):
+        raise _MalformedRangeError
+
+    if start_text:
+        if not _is_ascii_digits(start_text) or (end_text and not _is_ascii_digits(end_text)):
+            raise _MalformedRangeError
+        start = int(start_text)
+        if start >= size:
+            raise _UnsatisfiableRangeError
+        end = min(int(end_text), size - 1) if end_text else size - 1
+        if end < start:
+            raise _UnsatisfiableRangeError
+        return start, end
+
+    if not _is_ascii_digits(end_text):
+        raise _MalformedRangeError
+    suffix_length = int(end_text)
+    if suffix_length == 0 or size == 0:
+        raise _UnsatisfiableRangeError
+    return max(size - suffix_length, 0), size - 1
+
+
+def _is_ascii_digits(value: str) -> bool:
+    return value.isascii() and value.isdigit()
+
+
+def _media_headers(
+    media_type: str,
+    content_length: int,
+    *,
+    content_range: str | None = None,
+) -> dict[str, str]:
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=3600",
+        "Content-Length": str(content_length),
+        "Content-Type": media_type,
+    }
+    if content_range is not None:
+        headers["Content-Range"] = content_range
+    return headers
+
+
+def _stream_file(path: Path, start: int, content_length: int) -> Iterator[bytes]:
+    with path.open("rb") as handle:
+        handle.seek(start)
+        remaining = content_length
+        while remaining:
+            chunk = handle.read(min(MEDIA_CHUNK_SIZE, remaining))
+            if not chunk:
+                return
+            remaining -= len(chunk)
+            yield chunk
+
+
+class _MalformedRangeError(ValueError):
+    pass
+
+
+class _UnsatisfiableRangeError(ValueError):
+    pass
 
 
 @router.get("/jobs/{job_id}/events", response_model=list[JobEventRead])

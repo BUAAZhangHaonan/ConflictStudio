@@ -449,7 +449,9 @@ class JobItemRead(ApiModel):
     failure_reason: str | None
     renderer_prompt_id: str | None
     source_asset_id: int | None
+    source_asset_url: str | None
     primary_asset_id: int | None
+    primary_asset_url: str | None
     revision: int
     created_at: str
     updated_at: str

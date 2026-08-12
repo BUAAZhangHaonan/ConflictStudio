@@ -72,6 +72,7 @@ from backend.domain.schemas import (
 )
 
 from .errors import ServiceError, not_found, revision_conflict, state_conflict
+from .assets import asset_content_url
 from .prompts import PreparedPrompt, PromptContext, PromptService
 
 
@@ -859,7 +860,9 @@ class BatchService:
                     failure_code=item.failure_code,
                     renderer_prompt_id=item.renderer_prompt_id,
                     source_asset_id=item.source_asset_id,
+                    source_asset_url=asset_content_url(item.source_asset_id),
                     primary_asset_id=item.primary_asset_id,
+                    primary_asset_url=asset_content_url(item.primary_asset_id),
                     revision=item.revision,
                     created_at=item.created_at,
                     updated_at=item.updated_at,
