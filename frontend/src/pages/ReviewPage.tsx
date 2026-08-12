@@ -690,29 +690,29 @@ export function ReviewPage() {
 
             <section className="panel review-context" aria-label={t('review.aria.details', { id: selected.displayId })}>
               <h3>{t('review.context')}</h3>
-              <dl className="review-context__facts">
-                <div><dt>{t('review.sampleId')}</dt><dd>{selected.displayId}</dd></div>
-                <div><dt>{t('fields.dataset')}</dt><dd>{datasetsById.get(selected.datasetId)?.name ?? selected.datasetId}</dd></div>
-                <div><dt>{t('fields.category')}</dt><dd>{t(`category.${selected.category}`)}</dd></div>
-                <div><dt>{t('review.protocolFilter')}</dt><dd>{t(protocolForCategory(selected.category) === 'VA' ? 'review.protocolVA' : 'review.protocolVT')}</dd></div>
+              <dl className="review-context__facts review-context__facts--emotion">
+                <div><dt>{t('review.trueEmotion')}</dt><dd>{t(`emotion.${selected.trueEmotion}`, { defaultValue: selected.trueEmotion })}</dd></div>
+                <div><dt>{t('review.apparentEmotion')}</dt><dd>{t(`emotion.${selected.apparentEmotion}`, { defaultValue: selected.apparentEmotion })}</dd></div>
+                <div><dt>{t('direction.label')}</dt><dd>{selected.conflictDirection ? t(`direction.${selected.conflictDirection}`) : t('review.directionNotRequired')}</dd></div>
               </dl>
-              <div className="review-context__copy">
+              <div className="review-context__copy review-context__copy--primary">
+                <div className="review-context__copy--description" aria-readonly="true"><h3>{t('review.trueEmotionDescription')}</h3><p>{selected.trueEmotionDescription}</p></div>
+              </div>
+              <div className="review-context__copy review-context__copy--protocol-row">
                 {protocolForCategory(selected.category) === 'VA' && selected.dialogue ? (
                   <div className="review-context__copy--protocol"><h3>{t('review.dialogue')}</h3><p>{selected.dialogue}</p></div>
                 ) : null}
                 {protocolForCategory(selected.category) === 'VT' && selected.displayText ? (
                   <div className="review-context__copy--protocol"><h3>{t('review.displayText')}</h3><p>{selected.displayText}</p></div>
                 ) : null}
-                <div className="review-context__copy--description" aria-readonly="true"><h3>{t('review.trueEmotionDescription')}</h3><p>{selected.trueEmotionDescription}</p></div>
               </div>
-              <dl className="review-context__facts review-context__facts--emotion">
-                <div><dt>{t('review.trueEmotion')}</dt><dd>{t(`emotion.${selected.trueEmotion}`, { defaultValue: selected.trueEmotion })}</dd></div>
-                <div><dt>{t('review.apparentEmotion')}</dt><dd>{t(`emotion.${selected.apparentEmotion}`, { defaultValue: selected.apparentEmotion })}</dd></div>
-                <div><dt>{t('direction.label')}</dt><dd>{selected.conflictDirection ? t(`direction.${selected.conflictDirection}`) : t('review.directionNotRequired')}</dd></div>
-              </dl>
               <details className="review-context__details">
                 <summary>{t('review.moreDetails')}</summary>
                 <dl>
+                  <div><dt>{t('review.sampleId')}</dt><dd>{selected.displayId}</dd></div>
+                  <div><dt>{t('fields.dataset')}</dt><dd>{datasetsById.get(selected.datasetId)?.name ?? selected.datasetId}</dd></div>
+                  <div><dt>{t('fields.category')}</dt><dd>{t(`category.${selected.category}`)}</dd></div>
+                  <div><dt>{t('review.protocolFilter')}</dt><dd>{t(protocolForCategory(selected.category) === 'VA' ? 'review.protocolVA' : 'review.protocolVT')}</dd></div>
                   <div><dt>{t('review.contentPlan')}</dt><dd>{selected.contentPlanName}</dd></div>
                   <div><dt>{t('review.scenario')}</dt><dd>{selected.scenario}</dd></div>
                   <div><dt>{t('review.triggerEvent')}</dt><dd>{selected.triggerEvent}</dd></div>
