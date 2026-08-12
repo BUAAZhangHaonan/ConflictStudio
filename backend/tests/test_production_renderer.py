@@ -152,6 +152,7 @@ async def create_running_request(
     data_root: Path,
     *,
     category: Category,
+    model: ModelName = ModelName.LTX,
     confirm_model_switch: bool = False,
 ) -> tuple[Database, RenderRequest]:
     data_root.mkdir()
@@ -199,7 +200,7 @@ async def create_running_request(
         BatchDraftCreate(
             datasetId=dataset.id,
             category=category,
-            model=ModelName.LTX,
+            model=model,
             quantity=1,
             seed=1208,
             contentPlans=[SourceSelection(id=content.id, expectedRevision=content.revision)],
@@ -283,11 +284,12 @@ def make_gateway(
 
 
 def success_history(request: RenderRequest, prompt_id: str, *, subfolder: str | None = None) -> dict[str, Any]:
+    save_node_id = "save_video" if request.model is ModelName.LTX else "14"
     return {
         prompt_id: {
             "status": {"completed": True, "status_str": "success", "messages": []},
             "outputs": {
-                "save_video": {
+                save_node_id: {
                     "videos": [
                         {
                             "filename": f"{request.item_sequence}_00001_.mp4",
@@ -314,6 +316,7 @@ def source_path(database: Database, request: RenderRequest) -> Path:
 def install_media_tools(
     monkeypatch: pytest.MonkeyPatch,
     *,
+    model: ModelName = ModelName.LTX,
     fail_final_primary_probe: bool = False,
 ) -> None:
     def fake_run(args: list[str], **_: object) -> CompletedProcess[str]:
@@ -324,7 +327,7 @@ def install_media_tools(
         if fail_final_primary_probe and target.name == "primary.mp4":
             frame_count = "120"
         else:
-            frame_count = "121"
+            frame_count = "121" if model is ModelName.LTX else "124"
         has_audio = target.name not in {"primary.mp4", ".primary.tmp.mp4"}
         streams: list[dict[str, object]] = [
             {
@@ -337,24 +340,35 @@ def install_media_tools(
         ]
         if has_audio:
             streams.append({"codec_type": "audio"})
-        payload = json.dumps({"streams": streams, "format": {"duration": "5.0416667"}})
+        duration = "5.0416667" if model is ModelName.LTX else "5.1666667"
+        payload = json.dumps({"streams": streams, "format": {"duration": duration}})
         return CompletedProcess(args, 0, payload, "")
 
     monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
 
 
 @pytest.mark.parametrize(
-    ("category", "expected_asset_count"),
-    [(Category.A_VA, 1), (Category.A_VT, 2)],
+    ("category", "model", "expected_asset_count"),
+    [
+        (Category.A_VA, ModelName.LTX, 1),
+        (Category.A_VT, ModelName.LTX, 2),
+        (Category.A_VA, ModelName.H3, 1),
+        (Category.A_VT, ModelName.H3, 2),
+    ],
 )
 def test_gateway_persists_va_and_vt_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     category: Category,
+    model: ModelName,
     expected_asset_count: int,
 ) -> None:
     async def scenario() -> None:
-        database, request = await create_running_request(tmp_path / category.value, category=category)
+        database, request = await create_running_request(
+            tmp_path / f"{category.value}-{model.value}",
+            category=category,
+            model=model,
+        )
         gateway, gpu0, _, _ = make_gateway(database)
         source = source_path(database, request)
         source.parent.mkdir(parents=True)
@@ -367,18 +381,26 @@ def test_gateway_persists_va_and_vt_success(
         with database.read_session() as session:
             assets = session.exec(select(Asset).order_by(Asset.id)).all()
             attempt = session.exec(select(GenerationAttempt)).one()
+            item = session.get(JobItem, request.job_item_id)
         assert len(assets) == expected_asset_count
         assert attempt.status is GenerationAttemptStatus.COMPLETED
+        assert item is not None
+        assert item.source_asset_id == attempt.source_asset_id
+        assert item.primary_asset_id == attempt.primary_asset_id
         assert all(asset.storage_root == str(database.data_root) for asset in assets)
         assert all(not Path(asset.relative_path).is_absolute() for asset in assets)
         assert result.output_references[0].startswith("gpu0/output/")
         if category is Category.A_VT:
             assert result.output_references[1].startswith("media/jobs/")
             assert assets[0].has_audio is True and assets[1].has_audio is False
+            assert attempt.source_asset_id != attempt.primary_asset_id
+            assert item.primary_asset_id == assets[1].id
         else:
             assert result.output_references[0] == result.output_references[1]
+            assert attempt.source_asset_id == attempt.primary_asset_id
+            assert item.primary_asset_id == assets[0].id
 
-    install_media_tools(monkeypatch)
+    install_media_tools(monkeypatch, model=model)
     run(scenario())
 
 

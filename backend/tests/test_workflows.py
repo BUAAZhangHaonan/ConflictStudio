@@ -54,6 +54,8 @@ def test_ltx23_builder_maps_every_static_input_and_returns_only_nodes() -> None:
     }
     assert workflow["conditioning"]["inputs"]["frame_rate"] == 24.0
     assert workflow["create_video"]["inputs"]["fps"] == 24.0
+    assert workflow["create_video"]["inputs"]["audio"] == ["vae_audio", 0]
+    assert workflow["vae_audio"]["class_type"] == "LTXVAudioVAEDecode"
     assert workflow["save_video"]["inputs"]["filename_prefix"] == "42/7"
     assert workflow["loader_model"]["class_type"] == "CheckpointLoaderSimple"
     assert builder.required_class_types == {
@@ -95,6 +97,7 @@ def test_h3_builder_maps_static_inputs_and_merges_one_negative_sentence() -> Non
     assert workflow["13"]["inputs"]["fps"] == 24.0
     assert workflow["14"]["inputs"]["filename_prefix"] == "8/3"
     assert workflow["12"]["class_type"] == "VAEDecodeAudio"
+    assert workflow["13"]["inputs"]["audio"] == ["12", 0]
     assert builder.required_class_types == {
         node["class_type"] for node in workflow.values()
     }
@@ -170,4 +173,28 @@ def test_h3_builder_rejects_payload_without_required_audio_decoder(tmp_path: Pat
 
     with pytest.raises(WorkflowTemplateError) as error:
         H3WorkflowBuilder(tmp_path / "payload.json")
+    assert error.value.code == "workflow_template_invalid"
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "builder_type", "audio_fragment"),
+    [
+        ("ltx23_minimal.json", Ltx23WorkflowBuilder, '"audio": ["vae_audio", 0]'),
+        ("h3_minimal.json", H3WorkflowBuilder, '"audio": ["12", 0]'),
+    ],
+)
+def test_builders_reject_workflows_without_audio_output_connection(
+    tmp_path: Path,
+    fixture_name: str,
+    builder_type: type[Ltx23WorkflowBuilder] | type[H3WorkflowBuilder],
+    audio_fragment: str,
+) -> None:
+    payload = (FIXTURES / fixture_name).read_text(encoding="utf-8")
+    (tmp_path / fixture_name).write_text(
+        payload.replace(audio_fragment, '"audio_removed": null'),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkflowTemplateError) as error:
+        builder_type(tmp_path / fixture_name)
     assert error.value.code == "workflow_template_invalid"

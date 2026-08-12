@@ -85,21 +85,26 @@ class MediaStore:
         checked_path = self.resolve(relative_path)
         if not checked_path.is_file() or checked_path.stat().st_size <= 0:
             raise MediaError("Media file must exist and be nonzero")
-        result = subprocess.run(
-            [
-                self.ffprobe_binary,
-                "-v",
-                "error",
-                "-print_format",
-                "json",
-                "-show_entries",
-                "stream=codec_type,width,height,r_frame_rate,nb_frames,nb_read_frames:format=duration",
-                str(checked_path),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    self.ffprobe_binary,
+                    "-v",
+                    "error",
+                    "-print_format",
+                    "json",
+                    "-show_entries",
+                    "stream=codec_type,width,height,r_frame_rate,nb_frames,nb_read_frames:format=duration",
+                    str(checked_path),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError as error:
+            raise MediaError("ffprobe is unavailable") from error
+        except OSError as error:
+            raise MediaError("ffprobe could not be started") from error
         if result.returncode != 0:
             raise MediaError("ffprobe failed")
         try:
@@ -186,15 +191,29 @@ class MediaStore:
         self.relative_path(source_path)
         self.relative_path(primary_path)
         self.relative_path(temporary_path)
+        resolved_paths = {
+            source_path.resolve(),
+            primary_path.resolve(),
+            temporary_path.resolve(),
+        }
+        if len(resolved_paths) != 3:
+            raise MediaError("Source, primary, and temporary media paths must be distinct")
         self.probe(source_path, require_audio=True, model=model)
         primary_path.parent.mkdir(parents=True, exist_ok=True)
+        if primary_path.exists() or temporary_path.exists():
+            raise MediaError("VT primary output path already exists")
         try:
-            result = subprocess.run(
-                [self.ffmpeg_binary, "-y", "-i", str(source_path), "-map", "0:v:0", "-c:v", "copy", "-an", str(temporary_path)],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+            try:
+                result = subprocess.run(
+                    [self.ffmpeg_binary, "-n", "-i", str(source_path), "-map", "0:v:0", "-c:v", "copy", "-an", str(temporary_path)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+            except FileNotFoundError as error:
+                raise MediaError("ffmpeg is unavailable") from error
+            except OSError as error:
+                raise MediaError("ffmpeg could not be started") from error
             if result.returncode != 0:
                 raise MediaError("ffmpeg failed while making a silent primary")
             evidence = self.probe(temporary_path, require_audio=False, model=model)

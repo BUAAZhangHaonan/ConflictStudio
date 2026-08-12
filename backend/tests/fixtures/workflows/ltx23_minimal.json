@@ -24,6 +24,10 @@
     "class_type": "RandomNoise",
     "inputs": {"noise_seed": 0}
   },
+  "vae_audio": {
+    "class_type": "LTXVAudioVAEDecode",
+    "inputs": {"audio_vae": ["loader_audio_vae", 0], "samples": ["separate_av", 1]}
+  },
   "loader_model": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {"ckpt_name": "model.safetensors"}

@@ -87,6 +87,31 @@ def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path
         store.probe(media, require_audio=True, model=ModelName.LTX)
 
 
+@pytest.mark.parametrize(
+    ("raised", "message"),
+    [
+        (FileNotFoundError("missing"), "ffprobe is unavailable"),
+        (PermissionError("denied"), "ffprobe could not be started"),
+    ],
+)
+def test_probe_reports_unavailable_ffprobe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raised: OSError,
+    message: str,
+) -> None:
+    media = tmp_path / "source.mp4"
+    media.write_bytes(b"source")
+    store = MediaStore(tmp_path)
+    monkeypatch.setattr(
+        "backend.adapters.media.subprocess.run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(raised),
+    )
+
+    with pytest.raises(MediaError, match=message):
+        store.probe(media, require_audio=True, model=ModelName.LTX)
+
+
 @pytest.mark.parametrize("failure", ("ffmpeg", "silent_probe", "replace", "final_probe"))
 def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
     store = MediaStore(tmp_path)
@@ -122,6 +147,69 @@ def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monke
     assert not primary.exists()
     assert not temporary.exists()
     assert source.read_bytes() == b"source"
+
+
+@pytest.mark.parametrize(
+    ("raised", "message"),
+    [
+        (FileNotFoundError("missing"), "ffmpeg is unavailable"),
+        (PermissionError("denied"), "ffmpeg could not be started"),
+    ],
+)
+def test_vt_derivation_reports_unavailable_ffmpeg_and_preserves_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raised: OSError,
+    message: str,
+) -> None:
+    store = MediaStore(tmp_path)
+    source, primary, temporary = store.attempt_paths(1, 1, 1)
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"audio-source")
+
+    def fake_run(args: list[str], **kwargs: object) -> CompletedProcess[str]:
+        if args[0] == "ffmpeg":
+            raise raised
+        return CompletedProcess(args, 0, compact_probe(audio=True), "")
+
+    monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
+    with pytest.raises(MediaError, match=message):
+        store.prepare_attempt(
+            source_relative_path=store.relative_path(source),
+            job_id=1,
+            item_sequence=1,
+            attempt_number=1,
+            model=ModelName.LTX,
+            derive_silent_primary=True,
+        )
+
+    assert source.read_bytes() == b"audio-source"
+    assert not primary.exists()
+    assert not temporary.exists()
+
+
+def test_vt_derivation_never_overwrites_source_or_existing_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MediaStore(tmp_path)
+    source, primary, temporary = store.attempt_paths(1, 1, 1)
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"audio-source")
+
+    monkeypatch.setattr(
+        "backend.adapters.media.subprocess.run",
+        lambda args, **kwargs: CompletedProcess(args, 0, compact_probe(audio=True), ""),
+    )
+    with pytest.raises(MediaError, match="distinct"):
+        store.make_vt_primary(source, source, temporary, model=ModelName.LTX)
+
+    primary.write_bytes(b"existing-primary")
+    with pytest.raises(MediaError, match="already exists"):
+        store.make_vt_primary(source, primary, temporary, model=ModelName.LTX)
+
+    assert source.read_bytes() == b"audio-source"
+    assert primary.read_bytes() == b"existing-primary"
 
 
 def test_va_and_vt_assets_preserve_rerender_attempt_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

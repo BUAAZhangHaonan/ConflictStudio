@@ -38,6 +38,9 @@ H3_REQUIRED_CLASS_TYPES = {
     "SaveVideo",
 }
 
+LTX_AUDIO_DECODER = "LTXVAudioVAEDecode"
+H3_AUDIO_DECODER = "VAEDecodeAudio"
+
 
 class WorkflowTemplateError(Exception):
     def __init__(self, code: str, message: str) -> None:
@@ -130,6 +133,12 @@ def _load_ltx23_template(path: Path) -> dict[str, dict[str, Any]]:
     }
     _validate_nodes(workflow, LTX23_NODE_TYPES, "LTX")
     _validate_workflow(workflow, "LTX")
+    _validate_audio_output(
+        workflow,
+        create_video_node_id="create_video",
+        decoder_class_type=LTX_AUDIO_DECODER,
+        workflow_name="LTX",
+    )
     return workflow
 
 
@@ -153,6 +162,12 @@ def _load_h3_template(path: Path) -> dict[str, dict[str, Any]]:
             "workflow_template_invalid",
             "The configured H3 workflow template is not valid",
         )
+    _validate_audio_output(
+        workflow,
+        create_video_node_id="13",
+        decoder_class_type=H3_AUDIO_DECODER,
+        workflow_name="H3",
+    )
     return workflow
 
 
@@ -206,6 +221,32 @@ def _validate_workflow(workflow: dict[str, Any], workflow_name: str) -> None:
 
 def _class_types(workflow: dict[str, dict[str, Any]]) -> frozenset[str]:
     return frozenset(node["class_type"] for node in workflow.values())
+
+
+def _validate_audio_output(
+    workflow: dict[str, dict[str, Any]],
+    *,
+    create_video_node_id: str,
+    decoder_class_type: str,
+    workflow_name: str,
+) -> None:
+    audio_input = workflow[create_video_node_id]["inputs"].get("audio")
+    if (
+        not isinstance(audio_input, list)
+        or len(audio_input) != 2
+        or type(audio_input[0]) is not str
+        or type(audio_input[1]) is not int
+    ):
+        raise WorkflowTemplateError(
+            "workflow_template_invalid",
+            f"The configured {workflow_name} workflow template is not valid",
+        )
+    decoder = workflow.get(audio_input[0])
+    if not isinstance(decoder, dict) or decoder.get("class_type") != decoder_class_type:
+        raise WorkflowTemplateError(
+            "workflow_template_invalid",
+            f"The configured {workflow_name} workflow template is not valid",
+        )
 
 
 def _require_prompt(value: str, name: str) -> None:
