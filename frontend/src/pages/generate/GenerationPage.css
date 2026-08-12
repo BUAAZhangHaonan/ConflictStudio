@@ -20,6 +20,10 @@
 .generation-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .generation-form__grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .generation-form__wide { grid-column: 1 / -1; }
+.generation-bilingual-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 14px; }
+.generation-language-panel { display: grid; min-width: 0; gap: 14px; margin: 0; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface-muted); }
+.generation-language-panel legend { padding: 0 4px; font-weight: 600; }
+.generation-language-panel textarea { min-height: 84px; }
 .generation-form__actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; border-top: 1px solid var(--color-border); }
 .button--danger:not(:disabled) { border-color: #c65353; color: #a53232; }
 .generation-form input, .generation-form select, .generation-form textarea,
@@ -194,6 +198,10 @@
   .generation-test-category { grid-column: span 2; }
 }
 
+@media (max-width: 1200px) {
+  .generation-bilingual-editor { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 768px) {
   .generation-form__grid, .generation-form__grid--three, .generation-filters, .generation-job-inputs dl, dl.generation-job-inputs, .generation-allocation-list li { grid-template-columns: 1fr; }
   .generation-layout--editor .generation-filters { grid-template-columns: 1fr; }
@@ -210,6 +218,7 @@
   .generation-test-source-grid { grid-template-columns: 1fr; }
   .generation-test-section { gap: 8px; padding-bottom: 10px; }
   .generation-test-section .generation-section-note { font-size: 12px; }
+  .generation-language-panel { padding: 12px; }
   .generation-layout--jobs { display: block; }
   .generation-layout--jobs:not(.generation-layout--job-detail) .generation-job-detail { display: none; }
   .generation-layout--jobs.generation-layout--job-detail .generation-list { display: none; }

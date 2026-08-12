@@ -9,6 +9,7 @@ import { formatDateTime } from '../../time';
 import type {
   Category,
   ConflictDirection,
+  Locale,
   ModelName,
 } from '../../types';
 import type { GpuAvailability, JobStatus } from '../../api/contracts';
@@ -27,6 +28,17 @@ export function useGenerationCopy() {
     (key: GenerationKey, values?: Record<string, string | number>) => generationText(locale, key, values),
     [locale],
   );
+}
+
+export function useGenerationLocale(): Locale {
+  return useRepositorySnapshot().preferences.locale;
+}
+
+export function localizedName(
+  locale: Locale,
+  value: { nameZh: string; nameEn: string },
+): string {
+  return locale === 'zh-CN' ? value.nameZh : value.nameEn;
 }
 
 export function readGenerationDraft<T>(key: string): T | null {

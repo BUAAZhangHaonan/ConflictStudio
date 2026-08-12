@@ -16,10 +16,12 @@ import {
   ethnicities,
   genders,
   GenerationScaffold,
+  localizedName,
   OperationFeedback,
   readGenerationDraft,
   saveGenerationDraft,
   useGenerationCopy,
+  useGenerationLocale,
 } from './shared';
 
 interface TestForm {
@@ -48,6 +50,7 @@ function emptyForm(): TestForm {
 
 export function TestPage() {
   const g = useGenerationCopy();
+  const locale = useGenerationLocale();
   const contentQuery = useContentPlansQuery();
   const presetsQuery = usePromptPresetsQuery();
   const backgroundsQuery = useBackgroundPresetsQuery();
@@ -126,9 +129,9 @@ export function TestPage() {
           <div className="generation-form__grid">
             <Field label={g('test.category')} htmlFor="test-category"><select id="test-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
             <Field label={g('test.direction')} htmlFor="test-direction"><select id="test-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentPlanId: null }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
-            <Field label={g('test.content')} htmlFor="test-content"><select id="test-content" value={form.contentPlanId ?? ''} onChange={event => setForm(current => ({ ...current, contentPlanId: Number(event.target.value) }))}>{content.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+            <Field label={g('test.content')} htmlFor="test-content"><select id="test-content" value={form.contentPlanId ?? ''} onChange={event => setForm(current => ({ ...current, contentPlanId: Number(event.target.value) }))}>{content.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
             <Field label={g('test.preset')} htmlFor="test-preset"><select id="test-preset" value={form.promptPresetId ?? ''} onChange={event => setForm(current => ({ ...current, promptPresetId: Number(event.target.value) }))}>{presets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-            <Field label={g('test.background')} htmlFor="test-background"><select id="test-background" value={form.backgroundPresetId ?? ''} onChange={event => setForm(current => ({ ...current, backgroundPresetId: Number(event.target.value) }))}>{backgrounds.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+            <Field label={g('test.background')} htmlFor="test-background"><select id="test-background" value={form.backgroundPresetId ?? ''} onChange={event => setForm(current => ({ ...current, backgroundPresetId: Number(event.target.value) }))}>{backgrounds.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
             <Field label={g('test.age')} htmlFor="test-age"><select id="test-age" value={form.age} onChange={event => setForm(current => ({ ...current, age: Number(event.target.value) as Age }))}>{ages.map(value => <option key={value} value={value}>{g(`demographic.age.${value}`)}</option>)}</select></Field>
             <Field label={g('test.gender')} htmlFor="test-gender"><select id="test-gender" value={form.gender} onChange={event => setForm(current => ({ ...current, gender: event.target.value as Gender }))}>{genders.map(value => <option key={value} value={value}>{g(`demographic.gender.${value}`)}</option>)}</select></Field>
             <Field label={g('test.ethnicity')} htmlFor="test-ethnicity"><select id="test-ethnicity" value={form.ethnicity} onChange={event => setForm(current => ({ ...current, ethnicity: event.target.value as Ethnicity }))}>{ethnicities.map(value => <option key={value} value={value}>{g(`demographic.ethnicity.${value}`)}</option>)}</select></Field>
@@ -138,7 +141,7 @@ export function TestPage() {
         </section>
         <section className="panel generation-form" aria-labelledby="test-preview-title">
           <div className="section-header"><h2 id="test-preview-title">{g('promptPreview.title')}</h2></div>
-          {!result ? <p className="generation-empty-note">{g('test.previewEmpty')}</p> : <div className="generation-prompt-preview"><p>{g('test.previewSourceSummary', { content: result.contentPlan.name, background: result.backgroundPreset.name, preset: result.promptPreset.name })}</p><div className="generation-prompt-preview__field"><strong>{g(result.requiresPromptGeneration ? 'test.promptModelInput' : 'promptPreview.positive')}</strong><pre>{result.finalPositivePrompt ?? result.userInput}</pre></div><div className="generation-prompt-preview__field"><strong>{g('promptPreview.negative')}</strong><pre>{result.finalNegativePrompt}</pre></div><details><summary>{g('test.fixedRules')}</summary><pre>{result.systemInput}</pre></details></div>}
+          {!result ? <p className="generation-empty-note">{g('test.previewEmpty')}</p> : <div className="generation-prompt-preview"><p>{g('test.previewSourceSummary', { content: localizedName(locale, result.contentPlan), background: localizedName(locale, result.backgroundPreset), preset: result.promptPreset.name })}</p><div className="generation-prompt-preview__field"><strong>{g(result.requiresPromptGeneration ? 'test.promptModelInput' : 'promptPreview.positive')}</strong><pre>{result.finalPositivePrompt ?? result.userInput}</pre></div><div className="generation-prompt-preview__field"><strong>{g('promptPreview.negative')}</strong><pre>{result.finalNegativePrompt}</pre></div><details><summary>{g('test.fixedRules')}</summary><pre>{result.systemInput}</pre></details></div>}
         </section>
       </div>
     </GenerationScaffold>

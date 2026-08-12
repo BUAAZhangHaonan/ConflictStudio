@@ -45,22 +45,28 @@ export interface DatasetUpdate {
 }
 
 export interface ContentPlanFields {
-  name: string;
+  nameZh: string;
+  nameEn: string;
   category: Category;
   conflictDirection: ConflictDirection | null;
   mode: ContentMode;
   status: ContentStatus;
   trueEmotion: string;
   apparentEmotion: string;
-  scene: string;
-  triggerEvent: string;
-  psychologicalBackground: string;
+  sceneZh: string;
+  sceneEn: string;
+  triggerEventZh: string;
+  triggerEventEn: string;
+  psychologicalBackgroundZh: string;
+  psychologicalBackgroundEn: string;
   dialogue: string | null;
   displayText: string | null;
   trueEmotionDescription: string;
   baseVideoPrompt: string;
-  contentRequirements: string;
-  sceneSupplement: string;
+  contentRequirementsZh: string;
+  contentRequirementsEn: string;
+  sceneSupplementZh: string;
+  sceneSupplementEn: string;
 }
 
 export interface ContentPlan extends RevisionedResource, ContentPlanFields {}
@@ -83,12 +89,18 @@ export type PromptPresetCreate = PromptPresetFields;
 export type PromptPresetUpdate = Partial<Omit<PromptPresetFields, 'category'>> & { expectedRevision: number };
 
 export interface BackgroundPresetFields {
-  name: string;
-  scene: string;
-  ambientSound: string;
-  participantRelationship: string;
-  lighting: string;
-  framing: string;
+  nameZh: string;
+  nameEn: string;
+  sceneZh: string;
+  sceneEn: string;
+  ambientSoundZh: string;
+  ambientSoundEn: string;
+  participantRelationshipZh: string;
+  participantRelationshipEn: string;
+  lightingZh: string;
+  lightingEn: string;
+  framingZh: string;
+  framingEn: string;
   status: ResourceStatus;
 }
 
@@ -104,6 +116,13 @@ export interface SourceSelection {
 export interface Selection {
   id: number;
   name: string;
+  revision: number;
+}
+
+export interface BilingualSelection {
+  id: number;
+  nameZh: string;
+  nameEn: string;
   revision: number;
 }
 
@@ -139,18 +158,18 @@ export interface BatchDraft extends RevisionedResource {
   quantity: number;
   seed: number;
   status: 'Draft' | 'Submitted';
-  contentPlans: Selection[];
+  contentPlans: BilingualSelection[];
   promptPresets: Selection[];
-  backgroundPresets: Selection[];
+  backgroundPresets: BilingualSelection[];
   demographics: Demographic[];
   gpuSlots: GpuSlotName[];
 }
 
 export interface BatchAllocation {
   sequence: number;
-  contentPlan: Selection;
+  contentPlan: BilingualSelection;
   promptPreset: Selection;
-  backgroundPreset: Selection;
+  backgroundPreset: BilingualSelection;
   demographic: Demographic;
   gpuSlot: GpuSlotName;
   model: ModelName;
@@ -177,9 +196,9 @@ export interface PromptPreviewRequest {
 }
 
 export interface PromptPreview {
-  contentPlan: Selection;
+  contentPlan: BilingualSelection;
   promptPreset: Selection;
-  backgroundPreset: Selection;
+  backgroundPreset: BilingualSelection;
   category: Category;
   conflictDirection: ConflictDirection | null;
   demographic: Demographic;
