@@ -95,21 +95,21 @@ def fixed_resources(database: Database) -> tuple[CatalogService, object, object,
         PromptPresetCreate(
             name="自然室内",
             category=Category.A_VA,
-            styleInstruction="Use restrained natural performance and a static medium shot.",
+            styleGuidance="Use restrained natural performance and a static medium shot.",
             sceneSupplement="Keep the room visually simple.",
             positiveExamples=["Observable behavior is specific and physically plausible."],
             negativeExamples=["Do not name the target emotion."],
-            finalNegativePrompt="subtitles, captions, exaggerated acting, camera shake",
+            finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
         )
     )
     background = catalog.create_background_preset(
         VideoBackgroundPresetCreate(
             name="安静办公室",
             scene="A small private office with a desk and neutral walls.",
-            ambientAudio="Low room tone and distant ventilation.",
+            ambientSound="Low room tone and distant ventilation.",
             relationship="The subject remains the only occupant in view.",
             lighting="Soft daylight from one side.",
-            framingSupplement="Static eye-level medium shot.",
+            framing="Static eye-level medium shot.",
         )
     )
     return catalog, dataset, content, preset, background
@@ -216,7 +216,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
             scene="A clinic waiting area.",
             triggerEvent="A call has just ended.",
             psychologicalBackground="The subject hides good news.",
-            contentInstruction="Create subtle conflicting visual and vocal evidence.",
+            contentRequirements="Create subtle conflicting visual and vocal evidence.",
         )
     )
     preset_read = catalog.create_prompt_preset(
@@ -225,7 +225,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
             category=Category.C_VA,
             positiveExamples=["Good writing example"],
             negativeExamples=["Bad writing example"],
-            finalNegativePrompt="subtitles, exaggerated movement",
+            finalRenderNegativeConstraints="subtitles, exaggerated movement",
         )
     )
     calls: list[dict] = []
@@ -406,7 +406,7 @@ def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_conf
                 ),
             )
         )
-    assert error.value.code == "model_switch_required"
+    assert error.value.code == "model_switch_confirmation_required"
     with database.read_session() as session:
         slot = session.get(GpuSlot, GpuSlotName.GPU0)
         assert slot is not None
@@ -575,19 +575,19 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
         PromptPresetCreate(
             name="自然室内二",
             category=Category.A_VA,
-            styleInstruction="Use restrained natural performance and a static medium shot.",
+            styleGuidance="Use restrained natural performance and a static medium shot.",
             sceneSupplement="Keep the room visually simple.",
-            finalNegativePrompt="subtitles, captions, exaggerated acting, camera shake",
+            finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
         )
     )
     background_two = catalog.create_background_preset(
         VideoBackgroundPresetCreate(
             name="安静办公室二",
             scene="A compact private office with a desk and neutral walls.",
-            ambientAudio="Low room tone and distant ventilation.",
+            ambientSound="Low room tone and distant ventilation.",
             relationship="The subject remains the only occupant in view.",
             lighting="Soft daylight from one side.",
-            framingSupplement="Static eye-level medium shot.",
+            framing="Static eye-level medium shot.",
         )
     )
     batches = BatchService(
@@ -711,9 +711,9 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: 
         PromptPresetCreate(
             name="文字自然室内",
             category=Category.A_VT,
-            styleInstruction="Use restrained natural performance and a static medium shot.",
+            styleGuidance="Use restrained natural performance and a static medium shot.",
             sceneSupplement="Keep the room visually simple.",
-            finalNegativePrompt="subtitles, captions, exaggerated acting, camera shake",
+            finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
         )
     )
     batches = BatchService(

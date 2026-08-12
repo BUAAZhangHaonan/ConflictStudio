@@ -37,7 +37,7 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
                 "scene": "A private study with one chair.",
                 "triggerEvent": "A timer sounds.",
                 "psychologicalBackground": "The subject prepares a brief response.",
-                "contentInstruction": "Describe one adult responding in the room.",
+                "contentRequirements": "Describe one adult responding in the room.",
             },
         ),
         "prompt": client.post(
@@ -45,8 +45,8 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
             json={
                 "name": "Natural shot",
                 "category": "A-VA",
-                "styleInstruction": "Use a static medium shot.",
-                "finalNegativePrompt": "subtitles, captions, camera shake",
+                "styleGuidance": "Use a static medium shot.",
+                "finalRenderNegativeConstraints": "subtitles, captions, camera shake",
             },
         ),
         "background": client.post(
@@ -54,9 +54,9 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
             json={
                 "name": "Private study",
                 "scene": "A private study containing one chair and one desk.",
-                "ambientAudio": "A quiet ventilation hum is audible.",
+                "ambientSound": "A quiet ventilation hum is audible.",
                 "lighting": "Soft daylight enters through one window.",
-                "framingSupplement": "Use a static eye-level medium shot.",
+                "framing": "Use a static eye-level medium shot.",
             },
         ),
     }

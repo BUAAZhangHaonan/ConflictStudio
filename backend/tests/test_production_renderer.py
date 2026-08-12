@@ -87,7 +87,7 @@ class FakeModelController:
             )
         if self.loaded_model is not None and self.loaded_model is not model and not confirm_switch:
             raise RendererGatewayError(
-                "model_switch_required",
+                "model_switch_confirmation_required",
                 "Explicit confirmation is required to switch the model on this GPU",
             )
         self.loaded_model = model
@@ -172,25 +172,25 @@ async def create_running_request(
             scene="A private office after a short meeting.",
             triggerEvent="A timer sounds.",
             psychologicalBackground="The subject prepares a brief response.",
-            contentInstruction="Describe one adult responding alone in the room.",
+            contentRequirements="Describe one adult responding alone in the room.",
         )
     )
     preset = catalog.create_prompt_preset(
         PromptPresetCreate(
             name="Static portrait",
             category=category,
-            styleInstruction="Use a static eye-level medium shot.",
-            finalNegativePrompt="subtitles, captions, distortion",
+            styleGuidance="Use a static eye-level medium shot.",
+            finalRenderNegativeConstraints="subtitles, captions, distortion",
         )
     )
     background = catalog.create_background_preset(
         VideoBackgroundPresetCreate(
             name="Private office",
             scene="A private office containing one chair and one desk.",
-            ambientAudio="A steady ventilation hum remains audible.",
-            relationship="The subject remains the only occupant in view.",
+            ambientSound="A steady ventilation hum remains audible.",
+            participantRelationship="The subject remains the only occupant in view.",
             lighting="Soft daylight enters through one window.",
-            framingSupplement="Use a static eye-level medium shot.",
+            framing="Use a static eye-level medium shot.",
         )
     )
     prompts = PromptService(UnconfiguredPromptModel())
@@ -384,7 +384,7 @@ def test_gateway_persists_va_and_vt_success(
 
 @pytest.mark.parametrize(
     ("confirm_switch", "expected_error"),
-    [(False, "model_switch_required"), (True, None)],
+    [(False, "model_switch_confirmation_required"), (True, None)],
 )
 def test_gateway_requires_explicit_model_switch_confirmation(
     tmp_path: Path,

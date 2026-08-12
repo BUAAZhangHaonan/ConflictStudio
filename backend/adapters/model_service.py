@@ -77,7 +77,7 @@ class ModelServiceController:
         if inspection.loaded_model is not None:
             if not confirm_switch:
                 raise RendererGatewayError(
-                    "model_switch_required",
+                    "model_switch_confirmation_required",
                     "Explicit confirmation is required to switch the model on this GPU",
                 )
             await self._stop_owned_model(slot, inspection)

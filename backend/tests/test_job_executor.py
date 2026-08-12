@@ -174,25 +174,25 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
             scene="A private office after a short meeting.",
             triggerEvent="A timer sounds.",
             psychologicalBackground="The subject prepares a measured response.",
-            contentInstruction="Describe one adult answering a short question in the room.",
+            contentRequirements="Describe one adult answering a short question in the room.",
         )
     )
     preset = catalog.create_prompt_preset(
         PromptPresetCreate(
             name=f"Preset {suffix}",
             category=Category.A_VA,
-            styleInstruction="Use restrained movement and a static medium shot.",
-            finalNegativePrompt="subtitles, captions, distortion, exaggerated movement",
+            styleGuidance="Use restrained movement and a static medium shot.",
+            finalRenderNegativeConstraints="subtitles, captions, distortion, exaggerated movement",
         )
     )
     background = catalog.create_background_preset(
         VideoBackgroundPresetCreate(
             name=f"Background {suffix}",
             scene="A private office containing one chair and one desk.",
-            ambientAudio="A steady ventilation hum remains audible.",
-            relationship="The subject remains the only occupant in view.",
+            ambientSound="A steady ventilation hum remains audible.",
+            participantRelationship="The subject remains the only occupant in view.",
             lighting="Soft daylight enters through one window.",
-            framingSupplement="Use a static eye-level medium shot.",
+            framing="Use a static eye-level medium shot.",
         )
     )
     return dataset, content, preset, background

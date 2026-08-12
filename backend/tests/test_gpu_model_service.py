@@ -338,7 +338,7 @@ def test_unconfirmed_model_switch_is_rejected_without_commands() -> None:
         try:
             with pytest.raises(RendererGatewayError) as error:
                 await controller.ensure_model(GpuSlotName.GPU0, ModelName.LTX, confirm_switch=False)
-            assert error.value.code == "model_switch_required"
+            assert error.value.code == "model_switch_confirmation_required"
         finally:
             await client.aclose()
 
