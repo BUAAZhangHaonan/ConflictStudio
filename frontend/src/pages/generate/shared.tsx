@@ -1,22 +1,17 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { useBlocker, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Button, ConfirmDialog, PageHeader, StatusBadge, useToast } from '../../components';
+import { useBlocker } from 'react-router-dom';
+import { Button, ConfirmDialog, PageHeader, StatusBadge } from '../../components';
+import { apiErrorMessage } from '../../api/client';
+import { useGpuSlotsQuery } from '../../api/queries';
 import { generationText, type GenerationKey } from '../../locales/features/generation';
-import { useMockRepository, useRepositorySnapshot } from '../../store';
+import { useRepositorySnapshot } from '../../store';
 import { formatDateTime } from '../../time';
-import { composeVideoGenerationInput } from '../../generation';
 import type {
   Category,
-  ContentItem,
   ConflictDirection,
-  ExamplePageState,
-  GpuAvailability,
-  JobStatus,
-  JobStepStatus,
   ModelName,
-  Preset,
-  RepositoryFailureKind,
 } from '../../types';
+import type { GpuAvailability, JobStatus } from '../../api/contracts';
 
 export const categories: Category[] = ['A-VA', 'A-VT', 'C-VA', 'C-VT'];
 export const models = ['LTX-2.3', 'MiniMax H3'] as const;
@@ -107,41 +102,6 @@ export function useCommandEnter(action: () => void, enabled = true) {
   }, [action, enabled]);
 }
 
-export function useGenerationQueryState(): ExamplePageState {
-  const [params] = useSearchParams();
-  const value = params.get('state');
-  if (value === null || value === 'normal' || value === 'ready') return 'ready';
-  if (value === 'loading' || value === 'empty' || value === 'filtered' || value === 'error' || value === 'conflict') {
-    return value;
-  }
-  return 'ready';
-}
-
-export function GenerationState({ state }: { state: Exclude<ExamplePageState, 'ready'> }) {
-  const g = useGenerationCopy();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const canAct = state === 'filtered' || state === 'error' || state === 'conflict';
-  return (
-    <section
-      className="panel generation-state"
-      role={state === 'error' || state === 'conflict' ? 'alert' : 'status'}
-      aria-label={g('state.region')}
-      aria-live={state === 'error' || state === 'conflict' ? 'assertive' : 'polite'}
-      aria-busy={state === 'loading' || undefined}
-    >
-      {state === 'loading' ? <span className="state-view__progress" aria-hidden="true" /> : null}
-      <h2>{g(`state.${state}Title` as GenerationKey)}</h2>
-      <p>{g(`state.${state}Body` as GenerationKey)}</p>
-      {canAct ? (
-        <Button variant="secondary" onClick={() => navigate(location.pathname, { replace: true })}>
-          {g(state === 'filtered' ? 'common.clearFilters' : 'common.retry')}
-        </Button>
-      ) : null}
-    </section>
-  );
-}
-
 export function GenerationScaffold({
   title,
   subtitle,
@@ -154,30 +114,29 @@ export function GenerationScaffold({
   children: ReactNode;
 }) {
   const g = useGenerationCopy();
-  const state = useGenerationQueryState();
   return (
     <div className="page-stack generation-page">
-      <PageHeader title={g(title)} actions={state === 'ready' ? action : undefined} />
+      <PageHeader title={g(title)} actions={action} />
       <p className="generation-page__subtitle">{g(subtitle)}</p>
-      {state === 'ready' ? children : <GenerationState state={state} />}
+      {children}
     </div>
   );
 }
 
 export function OperationFeedback({
-  kind,
+  error,
   onDismiss,
 }: {
-  kind: RepositoryFailureKind;
+  error: unknown;
   onDismiss: () => void;
 }) {
   const g = useGenerationCopy();
-  const conflict = kind === 'Conflict';
+  const locale = useRepositorySnapshot().preferences.locale;
   return (
     <section className="generation-feedback" role="alert">
       <div>
-        <h2>{g(conflict ? 'feedback.conflictTitle' : 'feedback.errorTitle')}</h2>
-        <p>{g(conflict ? 'feedback.conflictBody' : 'feedback.errorBody')}</p>
+        <h2>{g('feedback.errorTitle')}</h2>
+        <p>{apiErrorMessage(error, locale)}</p>
       </div>
       <Button variant="quiet" onClick={onDismiss} aria-label={g('feedback.dismiss')} title={g('feedback.dismiss')}>
         {g('common.close')}
@@ -195,33 +154,16 @@ function availabilityKind(status: GpuAvailability) {
 
 export function GpuPanel({ description }: { description?: GenerationKey } = {}) {
   const g = useGenerationCopy();
-  const repository = useMockRepository();
-  const snapshot = useRepositorySnapshot();
-  const { showToast } = useToast();
-  const [releaseSlot, setReleaseSlot] = useState<null | 'GPU0' | 'GPU1'>(null);
-  const [releaseFailed, setReleaseFailed] = useState(false);
-  const releaseGpu = snapshot.data.gpuStates.find(gpu => gpu.slot === releaseSlot) ?? null;
-
-  const confirmRelease = () => {
-    if (!releaseSlot) return;
-    const result = repository.releaseGpu(releaseSlot);
-    setReleaseSlot(null);
-    if (!result.ok) {
-      setReleaseFailed(true);
-      return;
-    }
-    setReleaseFailed(false);
-    showToast(g('gpu.released', { gpu: g(`gpu.${result.value}` as GenerationKey) }));
-  };
+  const gpuQuery = useGpuSlotsQuery();
 
   return (
-    <>
-      <section className="panel generation-gpus" aria-labelledby="generation-gpus-title">
-        <div className="section-header"><h2 id="generation-gpus-title">{g('gpu.title')}</h2></div>
-        {description ? <p className="generation-section-note">{g(description)}</p> : null}
-        {releaseFailed ? <p className="field__error" role="alert">{g('gpu.releaseUnavailable')}</p> : null}
-        <div className="generation-gpus__grid">
-          {snapshot.data.gpuStates.map(gpu => (
+    <section className="panel generation-gpus" aria-labelledby="generation-gpus-title">
+      <div className="section-header"><h2 id="generation-gpus-title">{g('gpu.title')}</h2></div>
+      {description ? <p className="generation-section-note">{g(description)}</p> : null}
+      {gpuQuery.isPending ? <p role="status">{g('state.loadingBody')}</p> : null}
+      {gpuQuery.isError ? <OperationFeedback error={gpuQuery.error} onDismiss={() => void gpuQuery.refetch()} /> : null}
+      <div className="generation-gpus__grid">
+        {(gpuQuery.data ?? []).map(gpu => (
             <article key={gpu.slot} className="generation-gpu-card">
               <div>
                 <strong>{g(`gpu.${gpu.slot}` as GenerationKey)}</strong>
@@ -229,58 +171,9 @@ export function GpuPanel({ description }: { description?: GenerationKey } = {}) 
               </div>
               <p>{gpu.loadedModel ? g('gpu.loadedModel', { model: g(`model.${gpu.loadedModel}` as GenerationKey) }) : g('gpu.noModel')}</p>
               <p>{g('gpu.checked', { time: formatDateTime(gpu.checkedAt) })}</p>
-              {gpu.availability === 'Available' && gpu.loadedModel ? (
-                <Button variant="quiet" onClick={() => {
-                  setReleaseFailed(false);
-                  setReleaseSlot(gpu.slot);
-                }}>
-                  {g('gpu.release')}
-                </Button>
-              ) : null}
             </article>
-          ))}
-        </div>
-      </section>
-      <ConfirmDialog
-        open={releaseGpu !== null}
-        title={g('gpu.releaseTitle')}
-        body={releaseGpu?.loadedModel
-          ? g('gpu.releaseBody', {
-              gpu: g(`gpu.${releaseGpu.slot}` as GenerationKey),
-              model: g(`model.${releaseGpu.loadedModel}` as GenerationKey),
-            })
-          : g('gpu.releaseUnavailable')}
-        confirmLabel={g('gpu.release')}
-        cancelLabel={g('common.cancel')}
-        closeLabel={g('common.close')}
-        onConfirm={confirmRelease}
-        onClose={() => setReleaseSlot(null)}
-      />
-    </>
-  );
-}
-
-export function VideoPromptPreview({
-  content,
-  preset,
-}: {
-  content: Pick<ContentItem, 'videoPrompt' | 'sceneSupplement'>;
-  preset: Pick<Preset, 'styleInstruction' | 'sceneSupplement' | 'renderNegativeConstraints'>;
-}) {
-  const g = useGenerationCopy();
-  const input = composeVideoGenerationInput(content, preset);
-  return (
-    <section className="generation-prompt-preview" aria-labelledby="video-prompt-preview-title">
-      <div className="section-header"><h3 id="video-prompt-preview-title">{g('promptPreview.title')}</h3></div>
-      <div className="generation-prompt-preview__field">
-        <strong>{g('promptPreview.positive')}</strong>
-        <pre>{input.positivePrompt || g('promptPreview.empty')}</pre>
+        ))}
       </div>
-      <div className="generation-prompt-preview__field">
-        <strong>{g('promptPreview.negative')}</strong>
-        <pre>{input.negativePrompt || g('promptPreview.empty')}</pre>
-      </div>
-      <p>{g('promptPreview.note')}</p>
     </section>
   );
 }
@@ -297,7 +190,7 @@ export function directionLabel(g: ReturnType<typeof useGenerationCopy>, directio
   return direction ? g(`direction.${direction}` as GenerationKey) : g('common.none');
 }
 
-export function jobStatusKind(status: JobStatus | JobStepStatus) {
+export function jobStatusKind(status: JobStatus) {
   if (status === 'Running') return 'active' as const;
   if (status === 'Completed') return 'complete' as const;
   if (status === 'Failed' || status === 'Cancelled') return 'problem' as const;

@@ -22,6 +22,7 @@ export function App() {
           <Route path="/generate/batches" element={<GeneratePage section="batches" />} />
           <Route path="/generate/test" element={<GeneratePage section="test" />} />
           <Route path="/generate/content" element={<GeneratePage section="content" />} />
+          <Route path="/generate/backgrounds" element={<GeneratePage section="backgrounds" />} />
           <Route path="/generate/presets" element={<GeneratePage section="presets" />} />
           <Route path="/generate/jobs" element={<GeneratePage section="jobs" />} />
           <Route path="/review" element={<ReviewPage />} />

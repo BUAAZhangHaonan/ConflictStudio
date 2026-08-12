@@ -1,15 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  allowedDirections,
-  type BatchDraft,
-  type BatchPreview,
-  type Category,
-  type ConflictDirection,
-  type GpuSlot,
-  type ModelName,
-} from '../../types';
-import { useMockRepository, useRepositorySnapshot } from '../../store';
 import { Button, ConfirmDialog, Dialog, Field, TableShell, useToast } from '../../components';
+import {
+  useBackgroundPresetsQuery,
+  useBatchDraftsQuery,
+  useContentPlansQuery,
+  useDatasetsQuery,
+  useGpuSlotsQuery,
+  usePreviewBatchMutation,
+  usePromptPresetsQuery,
+  useSaveBatchDraftMutation,
+  useSubmitBatchMutation,
+} from '../../api/queries';
+import { isModelSwitchConfirmationRequired } from '../../api/client';
+import type {
+  Age,
+  BatchDraft,
+  BatchDraftCreate,
+  BatchPreview,
+  Demographic,
+  Ethnicity,
+  Gender,
+  GpuSlotName,
+} from '../../api/contracts';
+import { allowedDirections, type Category, type ConflictDirection, type ModelName } from '../../types';
 import {
   ages,
   categories,
@@ -24,487 +37,275 @@ import {
   OperationFeedback,
   parseSeed,
   readGenerationDraft,
-  saveGenerationDraft,
   toggleArrayValue,
-  useCommandEnter,
   useGenerationCopy,
+  useGenerationDraft,
   useUnsavedChanges,
 } from './shared';
-import { selectInitialBatchDraft, validateBatchGpuSelection } from '../../generation';
 
-type Age = (typeof ages)[number];
-type Gender = (typeof genders)[number];
-type Ethnicity = (typeof ethnicities)[number];
-
-const batchDraftStorageKey = 'conflictstudio.generation.batchDraft.v2';
-
-function modelLabel(g: ReturnType<typeof useGenerationCopy>, model: ModelName) {
-  return g(model === 'LTX-2.3' ? 'model.LTX-2.3' : 'model.MiniMax H3');
+interface BatchForm {
+  datasetId: number | null;
+  category: Category;
+  conflictDirection: ConflictDirection | null;
+  model: ModelName;
+  quantity: number;
+  seed: string;
+  contentPlanIds: number[];
+  promptPresetIds: number[];
+  backgroundPresetIds: number[];
+  selectedAges: Age[];
+  selectedGenders: Gender[];
+  selectedEthnicities: Ethnicity[];
+  gpuSlots: GpuSlotName[];
 }
 
-function gpuLabel(g: ReturnType<typeof useGenerationCopy>, slot: GpuSlot) {
-  return g(slot === 'GPU0' ? 'gpu.GPU0' : 'gpu.GPU1');
+export function demographicCombinations(
+  selectedAges: readonly Age[],
+  selectedGenders: readonly Gender[],
+  selectedEthnicities: readonly Ethnicity[],
+): Demographic[] {
+  return selectedAges.flatMap(age => selectedGenders.flatMap(gender =>
+    selectedEthnicities.map(ethnicity => ({ age, gender, ethnicity })),
+  ));
 }
 
-function defaultBatchDraft(
-  activeDatasets: readonly { id: string }[],
-  presets: readonly { id: string; category: Category; status: 'Active' | 'Disabled' }[],
-  gpuStates: readonly { slot: GpuSlot; availability: string }[],
-): BatchDraft {
-  const category: Category = 'A-VA';
-  const directionCandidates = allowedDirections(category);
-  const conflictDirection = directionCandidates[0] ?? null;
-  const datasetId = activeDatasets[0]?.id ?? '';
-  const categoryPresets = presets.filter(item => item.status === 'Active' && item.category === category);
-  const presetId = categoryPresets[0]?.id ?? '';
-  const availableGpus = gpuStates.filter(item => item.availability === 'Available').map(item => item.slot);
+function emptyBatchForm(): BatchForm {
   return {
-    datasetId,
-    category,
-    conflictDirection,
-    contentItemIds: [],
-    presetId,
+    datasetId: null,
+    category: 'A-VA',
+    conflictDirection: null,
     model: 'LTX-2.3',
-    gpus: availableGpus.slice(0, 1),
     quantity: 8,
-    seed: null,
-    ages: [25, 35],
-    genders: ['Male', 'Female'],
-    ethnicities: ['EastAsian'],
+    seed: '',
+    contentPlanIds: [],
+    promptPresetIds: [],
+    backgroundPresetIds: [],
+    selectedAges: [25],
+    selectedGenders: ['Female'],
+    selectedEthnicities: ['EastAsian'],
+    gpuSlots: [],
   };
 }
 
-function draftsMatch(a: BatchPreview['draft'], b: BatchPreview['draft']) {
-  return JSON.stringify(a) === JSON.stringify(b);
+function formFromDraft(value: BatchDraft): BatchForm {
+  return {
+    datasetId: value.datasetId,
+    category: value.category,
+    conflictDirection: value.conflictDirection,
+    model: value.model,
+    quantity: value.quantity,
+    seed: String(value.seed),
+    contentPlanIds: value.contentPlans.map(item => item.id),
+    promptPresetIds: value.promptPresets.map(item => item.id),
+    backgroundPresetIds: value.backgroundPresets.map(item => item.id),
+    selectedAges: [...new Set(value.demographics.map(item => item.age))],
+    selectedGenders: [...new Set(value.demographics.map(item => item.gender))],
+    selectedEthnicities: [...new Set(value.demographics.map(item => item.ethnicity))],
+    gpuSlots: value.gpuSlots,
+  };
+}
+
+export function batchFormIsValid(form: BatchForm): boolean {
+  const seed = parseSeed(form.seed);
+  return Boolean(
+    form.datasetId
+    && form.quantity > 0
+    && form.quantity <= 10_000
+    && (seed === null || (Number.isInteger(seed) && seed >= 0 && seed < 2 ** 31))
+    && form.contentPlanIds.length > 0
+    && form.promptPresetIds.length > 0
+    && form.backgroundPresetIds.length > 0
+    && form.selectedAges.length > 0
+    && form.selectedGenders.length > 0
+    && form.selectedEthnicities.length > 0
+    && form.gpuSlots.length >= 1
+    && form.gpuSlots.length <= 2,
+  );
 }
 
 export function BatchesPage() {
   const g = useGenerationCopy();
-  const repository = useMockRepository();
-  const snapshot = useRepositorySnapshot();
   const { showToast } = useToast();
-  const activeDatasets = snapshot.data.datasets.filter(item => item.status === 'Active');
-  const [initialDraft] = useState(() => selectInitialBatchDraft(
-    readGenerationDraft<BatchDraft>(batchDraftStorageKey),
-    defaultBatchDraft(activeDatasets, snapshot.data.presets, snapshot.data.gpuStates),
-  ));
-  const [datasetId, setDatasetId] = useState(() => initialDraft.datasetId);
-  const [category, setCategory] = useState(() => initialDraft.category);
-  const [direction, setDirection] = useState<ConflictDirection | null>(() => initialDraft.conflictDirection);
-  const [contentIds, setContentIds] = useState<string[]>(() => initialDraft.contentItemIds);
-  const [presetId, setPresetId] = useState(() => initialDraft.presetId);
-  const [model, setModel] = useState<ModelName>(() => initialDraft.model);
-  const [selectedGpus, setSelectedGpus] = useState<GpuSlot[]>(() => initialDraft.gpus);
-  const [quantity, setQuantity] = useState(() => initialDraft.quantity);
-  const [seed, setSeed] = useState(() => {
-    const value = initialDraft.seed;
-    return value === null ? '' : String(value);
-  });
-  const [selectedAges, setSelectedAges] = useState<Array<Age>>(() => initialDraft.ages);
-  const [selectedGenders, setSelectedGenders] = useState<Array<Gender>>(() =>
-    initialDraft.genders,
-  );
-  const [selectedEthnicities, setSelectedEthnicities] = useState<Array<Ethnicity>>(() =>
-    initialDraft.ethnicities,
-  );
+  const datasetsQuery = useDatasetsQuery();
+  const contentQuery = useContentPlansQuery();
+  const presetsQuery = usePromptPresetsQuery();
+  const backgroundsQuery = useBackgroundPresetsQuery();
+  const draftsQuery = useBatchDraftsQuery();
+  const gpuQuery = useGpuSlotsQuery();
+  const saveMutation = useSaveBatchDraftMutation();
+  const previewMutation = usePreviewBatchMutation();
+  const submitMutation = useSubmitBatchMutation();
+  const stored = useState(() => readGenerationDraft<{ selectedId: number | null; form: BatchForm }>('batch-form'))[0];
+  const [selectedId, setSelectedId] = useState<number | null>(stored?.selectedId ?? null);
+  const [form, setForm] = useState<BatchForm>(stored?.form ?? emptyBatchForm());
+  const [baseline, setBaseline] = useState<BatchForm | null>(null);
   const [preview, setPreview] = useState<BatchPreview | null>(null);
-  const [failure, setFailure] = useState<null | 'Conflict' | 'NotFound' | 'InvalidInput' | 'Unavailable'>(null);
   const [validation, setValidation] = useState(false);
-  const [gpuValidation, setGpuValidation] = useState(false);
-  const [draftIssue, setDraftIssue] = useState<null | 'gpu' | 'content' | 'preset'>(null);
-  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
-  const [showReleaseConfirm, setShowReleaseConfirm] = useState(false);
-  const [savedDraft, setSavedDraft] = useState<BatchDraft>(() => initialDraft);
-  const directions = allowedDirections(category);
-  const draft = useMemo(() => ({
-    datasetId,
-    category,
-    conflictDirection: direction,
-    contentItemIds: contentIds,
-    presetId,
-    model,
-    gpus: selectedGpus,
-    quantity,
-    seed: parseSeed(seed),
-    ages: selectedAges,
-    genders: selectedGenders,
-    ethnicities: selectedEthnicities,
-  }), [datasetId, category, direction, contentIds, presetId, model, selectedGpus, quantity, seed, selectedAges, selectedGenders, selectedEthnicities]);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(savedDraft);
-  const matchingContent = useMemo(
-    () => snapshot.data.contentItems.filter(item =>
-      item.status === 'Active' && item.category === category && item.conflictDirection === direction,
-    ),
-    [category, direction, snapshot.data.contentItems],
-  );
-  const matchingPresets = useMemo(
-    () => snapshot.data.presets.filter(item => item.status === 'Active' && item.category === category),
-    [category, snapshot.data.presets],
-  );
-  const isPreviewCurrent = preview ? draftsMatch(preview.draft, draft) : false;
-  const gpuSelectionError = validateBatchGpuSelection(selectedGpus, snapshot.data.gpuStates);
-  const contentReferenceError = contentIds.some(id => {
-    const item = snapshot.data.contentItems.find(candidate => candidate.id === id);
-    return !item || item.status !== 'Active' || item.category !== category || item.conflictDirection !== direction;
-  });
-  const presetReferenceError = !snapshot.data.presets.some(item => item.id === presetId && item.status === 'Active' && item.category === category);
-  const visibleDraftIssue = contentReferenceError
-    ? 'content'
-    : presetReferenceError
-      ? 'preset'
-      : gpuSelectionError === 'Unavailable'
-        ? 'gpu'
-        : draftIssue;
-
-  const selectedGpuStates = selectedGpus.map(slot => snapshot.data.gpuStates.find(item => item.slot === slot)).filter(Boolean);
-  const isBlockedGpuState = (item: (typeof snapshot.data.gpuStates)[number]) => item.availability !== 'Available';
-  const needsModelRelease = (item: (typeof snapshot.data.gpuStates)[number] | undefined, nextModel: ModelName) => {
-    if (!item) return false;
-    if (!item.loadedModel || item.loadedModel === nextModel) return false;
-    return item.availability === 'Available';
-  };
-
-  const changeCategory = (nextCategory: Category) => {
-    setCategory(nextCategory);
-    const nextDirection = allowedDirections(nextCategory)[0] ?? null;
-    setDirection(nextDirection);
-    setContentIds([]);
-    setPresetId(snapshot.data.presets.find(item => item.category === nextCategory)?.id ?? '');
-  };
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
+  const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
+  const savedDraft = (draftsQuery.data ?? []).find(item => item.id === selectedId) ?? null;
+  const queries = [datasetsQuery, contentQuery, presetsQuery, backgroundsQuery, draftsQuery, gpuQuery];
+  const queryError = queries.find(query => query.isError)?.error ?? null;
+  const mutationError = saveMutation.error ?? previewMutation.error ?? submitMutation.error ?? null;
 
   useEffect(() => {
-    if (preview && !draftsMatch(preview.draft, draft)) setPreview(null);
-  }, [draft, preview]);
+    if (stored || queries.some(query => query.isPending)) return;
+    const defaults = emptyBatchForm();
+    defaults.datasetId = datasetsQuery.data?.find(item => item.status === 'Active')?.id ?? null;
+    defaults.gpuSlots = (gpuQuery.data ?? []).filter(item => item.availability === 'Available').slice(0, 1).map(item => item.slot);
+    setForm(defaults);
+    setBaseline(defaults);
+  }, [datasetsQuery.data, gpuQuery.data, stored]);
 
-  const unsavedChangesDialog = useUnsavedChanges(dirty);
+  const matchingContent = useMemo(() => (contentQuery.data ?? []).filter(item =>
+    item.status === 'Active' && item.category === form.category && item.conflictDirection === form.conflictDirection,
+  ), [contentQuery.data, form.category, form.conflictDirection]);
+  const matchingPresets = useMemo(() => (presetsQuery.data ?? []).filter(item =>
+    item.status === 'Active' && item.category === form.category,
+  ), [form.category, presetsQuery.data]);
+  const activeBackgrounds = (backgroundsQuery.data ?? []).filter(item => item.status === 'Active');
+  const dirty = baseline === null || JSON.stringify(form) !== JSON.stringify(baseline);
+  const isSavedCurrent = savedDraft !== null && !dirty;
 
-  const saveDraft = () => {
-    saveGenerationDraft(batchDraftStorageKey, draft);
-    setSavedDraft(draft);
-    setGpuValidation(false);
-    setFailure(null);
-    showToast(g('batches.draftSaved'));
+  const selectDraft = (value: string) => {
+    const id = value === 'new' ? null : Number(value);
+    const selected = (draftsQuery.data ?? []).find(item => item.id === id) ?? null;
+    const next = selected ? formFromDraft(selected) : emptyBatchForm();
+    if (!selected) {
+      next.datasetId = datasetsQuery.data?.find(item => item.status === 'Active')?.id ?? null;
+      next.gpuSlots = (gpuQuery.data ?? []).filter(item => item.availability === 'Available').slice(0, 1).map(item => item.slot);
+    }
+    setSelectedId(id);
+    setForm(next);
+    setBaseline(selected ? next : null);
+    setPreview(null);
+    setValidation(false);
   };
 
-  const toggleGpu = (slot: GpuSlot) => {
-    const state = snapshot.data.gpuStates.find(item => item.slot === slot);
-    if (!state || (state.availability !== 'Available' && !selectedGpus.includes(slot))) return;
-    setSelectedGpus(current => current.includes(slot)
-      ? current.filter(item => item !== slot)
-      : current.length < 2
-        ? [...current, slot]
-        : current,
-    );
+  const changeCategory = (category: Category) => {
+    setForm(current => ({
+      ...current,
+      category,
+      conflictDirection: allowedDirections(category)[0] ?? null,
+      contentPlanIds: [],
+      promptPresetIds: [],
+    }));
+    setPreview(null);
   };
 
-  const selectAllContent = () => {
-    const allIds = matchingContent.map(item => item.id);
-    const allSelected = allIds.length > 0 && allIds.every(id => contentIds.includes(id));
-    setContentIds(allSelected ? [] : allIds);
+  const payload = (): BatchDraftCreate | null => {
+    if (!batchFormIsValid(form) || form.datasetId === null) return null;
+    const contentById = new Map((contentQuery.data ?? []).map(item => [item.id, item]));
+    const presetById = new Map((presetsQuery.data ?? []).map(item => [item.id, item]));
+    const backgroundById = new Map((backgroundsQuery.data ?? []).map(item => [item.id, item]));
+    const selectedContent = form.contentPlanIds.flatMap(id => contentById.get(id) ?? []);
+    const selectedPresets = form.promptPresetIds.flatMap(id => presetById.get(id) ?? []);
+    const selectedBackgrounds = form.backgroundPresetIds.flatMap(id => backgroundById.get(id) ?? []);
+    if (selectedContent.length !== form.contentPlanIds.length || selectedPresets.length !== form.promptPresetIds.length || selectedBackgrounds.length !== form.backgroundPresetIds.length) return null;
+    return {
+      datasetId: form.datasetId,
+      category: form.category,
+      conflictDirection: form.conflictDirection,
+      model: form.model,
+      quantity: form.quantity,
+      seed: parseSeed(form.seed),
+      contentPlans: selectedContent.map(item => ({ id: item.id, expectedRevision: item.revision })),
+      promptPresets: selectedPresets.map(item => ({ id: item.id, expectedRevision: item.revision })),
+      backgroundPresets: selectedBackgrounds.map(item => ({ id: item.id, expectedRevision: item.revision })),
+      demographics: demographicCombinations(form.selectedAges, form.selectedGenders, form.selectedEthnicities),
+      gpuSlots: form.gpuSlots,
+    };
   };
 
-  const buildPreview = () => {
-    if (contentReferenceError) {
-      setDraftIssue('content');
-      setPreview(null);
-      return;
-    }
-    if (presetReferenceError) {
-      setDraftIssue('preset');
-      setPreview(null);
-      return;
-    }
-    const gpuError = gpuSelectionError;
-    if (gpuError) {
-      setDraftIssue('gpu');
-      setFailure(null);
-      setGpuValidation(gpuError !== 'Unavailable');
-      setValidation(false);
-      setPreview(null);
-      return;
-    }
-    const result = repository.previewBatch(draft);
-    if (!result.ok) {
-      setValidation(result.kind === 'InvalidInput');
-      setFailure(result.kind === 'InvalidInput' ? null : result.kind);
+  const save = async () => {
+    const value = payload();
+    if (!value) {
+      setValidation(true);
       return;
     }
     setValidation(false);
-    setGpuValidation(false);
-    setDraftIssue(null);
-    setFailure(null);
-    setPreview(result.value);
+    try {
+      const saved = await saveMutation.mutateAsync({
+        id: savedDraft?.id ?? null,
+        input: savedDraft ? { ...value, expectedRevision: savedDraft.revision } : value,
+      });
+      const next = formFromDraft(saved);
+      setSelectedId(saved.id);
+      setForm(next);
+      setBaseline(next);
+      setPreview(null);
+      showToast(g('batches.draftSaved'));
+    } catch {
+      // The shared safe error panel renders mutation errors.
+    }
   };
 
-  const submit = () => {
-    if (!preview || !isPreviewCurrent) {
+  const buildPreview = async () => {
+    if (!savedDraft || dirty) return;
+    try {
+      setPreview(await previewMutation.mutateAsync({ id: savedDraft.id, expectedRevision: savedDraft.revision }));
+    } catch {
       setPreview(null);
-      return;
     }
-    if (validateBatchGpuSelection(preview.draft.gpus, snapshot.data.gpuStates)) {
-      setDraftIssue('gpu');
-      setPreview(null);
-      return;
-    }
-    if (preview.draft.gpus.some(slot => needsModelRelease(
-      snapshot.data.gpuStates.find(item => item.slot === slot),
-      preview.draft.model,
-    ))) {
-      setShowReleaseConfirm(true);
-      return;
-    }
-    setShowSubmitConfirm(true);
   };
 
-  const confirmRelease = () => {
-    if (!preview) {
-      setShowReleaseConfirm(false);
-      return;
+  const submit = async (confirmModelSwitch: boolean) => {
+    if (!savedDraft || !preview) return;
+    setSubmitConfirmOpen(false);
+    setSwitchConfirmOpen(false);
+    try {
+      await submitMutation.mutateAsync({
+        id: savedDraft.id,
+        expectedRevision: preview.expectedRevision,
+        expectedGpuRevisions: preview.gpuRevisions,
+        confirmModelSwitch,
+      });
+      setPreview(null);
+      showToast(g('batches.success'));
+    } catch (error) {
+      if (!confirmModelSwitch && isModelSwitchConfirmationRequired(error)) setSwitchConfirmOpen(true);
     }
-    const switchTargets = preview.draft.gpus
-      .map(slot => snapshot.data.gpuStates.find(item => item.slot === slot))
-      .filter(item => item && needsModelRelease(item, preview.draft.model));
-    if (switchTargets.length === 0 || switchTargets.some(item => !item || isBlockedGpuState(item))) {
-      setShowReleaseConfirm(false);
-      return;
-    }
-    setShowReleaseConfirm(false);
-    setShowSubmitConfirm(true);
   };
 
-  const confirmSubmit = () => {
-    if (!preview || !isPreviewCurrent) {
-      setShowSubmitConfirm(false);
-      setPreview(null);
-      return;
-    }
-    const result = repository.submitBatch(preview);
-    setShowSubmitConfirm(false);
-    if (!result.ok) {
-      setPreview(null);
-      setFailure(result.kind);
-      return;
-    }
-    setPreview(null);
-    setFailure(null);
-    showToast(g('batches.success'));
-  };
+  useGenerationDraft('batch-form', { selectedId, form }, dirty);
+  const unsavedDialog = useUnsavedChanges(dirty);
 
-  const currentGpuReleaseTargets = selectedGpuStates.filter(item => item && needsModelRelease(item, model));
-  const submitConfirmBody = preview
-    ? g('batches.submitConfirmBody', { count: preview.allocations.length })
-    : g('batches.confirmBody');
-  const releaseModelSwitchBody = currentGpuReleaseTargets.length > 0
-    ? currentGpuReleaseTargets.map(item => g('batches.releaseModelBody', {
-      gpu: gpuLabel(g, item!.slot),
-      currentModel: modelLabel(g, item!.loadedModel!),
-      nextModel: modelLabel(g, model),
-    })).join(' ')
-    : g('batches.noLoadedModel');
+  if (queries.some(query => query.isPending)) return <GenerationScaffold title="batches.title" subtitle="batches.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
+  if (queryError) return <GenerationScaffold title="batches.title" subtitle="batches.subtitle"><OperationFeedback error={queryError} onDismiss={() => void Promise.all(queries.map(query => query.refetch()))} /></GenerationScaffold>;
 
-  useCommandEnter(() => {
-    if (isPreviewCurrent) submit();
-  });
-
+  const directions = allowedDirections(form.category);
   return (
-    <GenerationScaffold title={'batches.title'} subtitle={'batches.subtitle'}>
-      {failure ? <OperationFeedback kind={failure} onDismiss={() => setFailure(null)} /> : null}
+    <GenerationScaffold title="batches.title" subtitle="batches.subtitle">
+      {mutationError && !switchConfirmOpen ? <OperationFeedback error={mutationError} onDismiss={() => { saveMutation.reset(); previewMutation.reset(); submitMutation.reset(); }} /> : null}
       <div className="generation-layout">
         <section className="panel generation-form" aria-label={g('batches.formRegion')}>
           <div className="section-header"><h2>{g('batches.setup')}</h2></div>
           <div className="generation-form__grid">
-            <Field label={g('batches.dataset')} htmlFor="batch-dataset" required>
-              <select id="batch-dataset" value={datasetId} onChange={event => setDatasetId(event.target.value)}>
-                {activeDatasets.map(dataset => <option key={dataset.id} value={dataset.id}>{dataset.name}</option>)}
-              </select>
-            </Field>
-            <Field label={g('batches.category')} htmlFor="batch-category" required>
-              <select id="batch-category" value={category} onChange={event => changeCategory(event.target.value as Category)}>
-                {categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}
-              </select>
-            </Field>
-            <Field label={g('batches.direction')} htmlFor="batch-direction" required={directions.length > 0}>
-              <select
-                id="batch-direction"
-                value={direction ?? ''}
-                disabled={directions.length === 0}
-                onChange={event => setDirection((event.target.value || null) as ConflictDirection | null)}
-              >
-                {directions.length === 0 ? <option value="">{g('common.none')}</option> : null}
-                {directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}
-              </select>
-            </Field>
-            <Field label={g('batches.preset')} htmlFor="batch-preset" required>
-              <select id="batch-preset" value={presetId} onChange={event => setPresetId(event.target.value)}>
-                {presetReferenceError && presetId ? <option value={presetId} disabled>{g('batches.savedPresetUnavailable')}</option> : null}
-                {matchingPresets.length === 0 ? <option value="">{g('batches.noPreset')}</option> : null}
-                {matchingPresets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
-              </select>
-            </Field>
-            <Field label={g('batches.model')} htmlFor="batch-model" required>
-              <select id="batch-model" value={model} onChange={event => setModel(event.target.value as ModelName)}>
-                {models.map(value => <option key={value} value={value}>{modelLabel(g, value)}</option>)}
-              </select>
-            </Field>
-            <Field label={g('batches.outputProfile')} htmlFor="batch-output-profile">
-              <textarea className="generation-output-profile" id="batch-output-profile" value={modelSpecLabel(g, model)} readOnly rows={2} />
-            </Field>
-            <fieldset className="generation-fieldset" aria-describedby="batch-gpu-hint">
-              <legend>{g('batches.gpu')}</legend>
-              <p id="batch-gpu-hint" className="field__hint">{g('batches.gpuHint')}</p>
-              <div className="generation-choice-grid">
-                {snapshot.data.gpuStates.map(item => (
-                  <label key={item.slot}>
-                    <input
-                      type="checkbox"
-                      checked={selectedGpus.includes(item.slot)}
-                      disabled={isBlockedGpuState(item) && !selectedGpus.includes(item.slot)}
-                      onChange={() => toggleGpu(item.slot)}
-                    />
-                    <span>{gpuLabel(g, item.slot)} / {g(`gpu.${item.availability}`)}</span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <Field label={g('batches.quantity')} htmlFor="batch-quantity" required>
-              <input id="batch-quantity" type="number" min="1" max="200" value={quantity} onChange={event => setQuantity(Number(event.target.value))} />
-            </Field>
-            <Field label={g('batches.seed')} htmlFor="batch-seed">
-              <input id="batch-seed" inputMode="numeric" value={seed} onChange={event => setSeed(event.target.value)} placeholder={g('batches.seedPlaceholder')} />
-            </Field>
-            <fieldset className="generation-form__wide generation-fieldset" aria-describedby="batch-content-hint">
-              <legend>{g('batches.content')}</legend>
-              <div className="generation-fieldset__toolbar">
-                {matchingContent.length > 0 ? (
-                  <Button variant="quiet" onClick={selectAllContent}>
-                    {g(matchingContent.every(item => contentIds.includes(item.id)) ? 'batches.clearAll' : 'batches.selectAll')}
-                  </Button>
-                ) : null}
-              </div>
-              <p id="batch-content-hint" className="field__hint">{g('batches.contentHint')}</p>
-              {matchingContent.length === 0 ? <p className="generation-empty-note">{g('batches.noContent')}</p> : (
-                <div className="generation-choice-grid">
-                  {matchingContent.map(item => (
-                    <label key={item.id}>
-                      <input type="checkbox" checked={contentIds.includes(item.id)} onChange={() => setContentIds(toggleArrayValue(contentIds, item.id))} />
-                      <span>{item.name}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </fieldset>
+            <Field label={g('batches.savedDraft')} htmlFor="batch-saved-draft"><select id="batch-saved-draft" value={selectedId ?? 'new'} onChange={event => selectDraft(event.target.value)}><option value="new">{g('batches.newDraft')}</option>{(draftsQuery.data ?? []).filter(item => item.status === 'Draft').map(item => <option key={item.id} value={item.id}>{item.category} / #{item.id}</option>)}</select></Field>
+            <Field label={g('batches.dataset')} htmlFor="batch-dataset" required><select id="batch-dataset" value={form.datasetId ?? ''} onChange={event => setForm(current => ({ ...current, datasetId: Number(event.target.value) }))}>{(datasetsQuery.data ?? []).filter(item => item.status === 'Active').map(item => <option key={item.id} value={item.id}>{item.name} / {item.purpose}</option>)}</select></Field>
+            <Field label={g('batches.category')} htmlFor="batch-category" required><select id="batch-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
+            <Field label={g('batches.direction')} htmlFor="batch-direction" required={directions.length > 0}><select id="batch-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentPlanIds: [] }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
+            <Field label={g('batches.model')} htmlFor="batch-model" required><select id="batch-model" value={form.model} onChange={event => setForm(current => ({ ...current, model: event.target.value as ModelName }))}>{models.map(value => <option key={value} value={value}>{g(`model.${value}`)}</option>)}</select></Field>
+            <Field label={g('batches.outputProfile')} htmlFor="batch-output-profile"><textarea id="batch-output-profile" value={modelSpecLabel(g, form.model)} readOnly rows={2} /></Field>
+            <Field label={g('batches.quantity')} htmlFor="batch-quantity" required><input id="batch-quantity" type="number" min="1" max="10000" value={form.quantity} onChange={event => setForm(current => ({ ...current, quantity: Number(event.target.value) }))} /></Field>
+            <Field label={g('batches.seed')} htmlFor="batch-seed"><input id="batch-seed" inputMode="numeric" value={form.seed} onChange={event => setForm(current => ({ ...current, seed: event.target.value }))} /></Field>
+            <fieldset className="generation-form__wide generation-fieldset"><legend>{g('batches.gpu')}</legend><div className="generation-choice-grid">{(gpuQuery.data ?? []).map(item => <label key={item.slot}><input type="checkbox" checked={form.gpuSlots.includes(item.slot)} disabled={item.availability !== 'Available' && !form.gpuSlots.includes(item.slot)} onChange={() => setForm(current => ({ ...current, gpuSlots: current.gpuSlots.includes(item.slot) ? current.gpuSlots.filter(value => value !== item.slot) : current.gpuSlots.length < 2 ? [...current.gpuSlots, item.slot] : current.gpuSlots }))} /><span>{item.slot} / {g(`gpu.${item.availability}`)}</span></label>)}</div></fieldset>
+            <fieldset className="generation-form__wide generation-fieldset"><legend>{g('batches.content')}</legend><div className="generation-choice-grid">{matchingContent.map(item => <label key={item.id}><input type="checkbox" checked={form.contentPlanIds.includes(item.id)} onChange={() => setForm(current => ({ ...current, contentPlanIds: toggleArrayValue(current.contentPlanIds, item.id) }))} /><span>{item.name}</span></label>)}</div></fieldset>
+            <fieldset className="generation-form__wide generation-fieldset"><legend>{g('batches.presets')}</legend><div className="generation-choice-grid">{matchingPresets.map(item => <label key={item.id}><input type="checkbox" checked={form.promptPresetIds.includes(item.id)} onChange={() => setForm(current => ({ ...current, promptPresetIds: toggleArrayValue(current.promptPresetIds, item.id) }))} /><span>{item.name}</span></label>)}</div></fieldset>
+            <fieldset className="generation-form__wide generation-fieldset"><legend>{g('batches.backgrounds')}</legend><div className="generation-choice-grid">{activeBackgrounds.map(item => <label key={item.id}><input type="checkbox" checked={form.backgroundPresetIds.includes(item.id)} onChange={() => setForm(current => ({ ...current, backgroundPresetIds: toggleArrayValue(current.backgroundPresetIds, item.id) }))} /><span>{item.name}</span></label>)}</div></fieldset>
           </div>
-          <fieldset className="generation-form__wide">
-            <legend>{g('batches.demographics')}</legend>
-            <div className="generation-form__grid generation-form__grid--three">
-              <div>
-                <strong>{g('batches.age')}</strong>
-                <div className="generation-choice-grid generation-choice-grid--compact">
-                  {ages.map(value => <label key={value}><input type="checkbox" checked={selectedAges.includes(value)} onChange={() => setSelectedAges(toggleArrayValue(selectedAges, value))} /><span>{g(`demographic.age.${value}`)}</span></label>)}
-                </div>
-              </div>
-              <div>
-                <strong>{g('batches.gender')}</strong>
-                <div className="generation-choice-grid generation-choice-grid--compact">
-                  {genders.map(value => <label key={value}><input type="checkbox" checked={selectedGenders.includes(value)} onChange={() => setSelectedGenders(toggleArrayValue(selectedGenders, value))} /><span>{g(`demographic.gender.${value}`)}</span></label>)}
-                </div>
-              </div>
-              <div>
-                <strong>{g('batches.ethnicity')}</strong>
-                <div className="generation-choice-grid generation-choice-grid--compact">
-                  {ethnicities.map(value => <label key={value}><input type="checkbox" checked={selectedEthnicities.includes(value)} onChange={() => setSelectedEthnicities(toggleArrayValue(selectedEthnicities, value))} /><span>{g(`demographic.ethnicity.${value}`)}</span></label>)}
-                </div>
-              </div>
-            </div>
-          </fieldset>
+          <fieldset className="generation-form__wide"><legend>{g('batches.demographics')}</legend><div className="generation-form__grid generation-form__grid--three"><div><strong>{g('batches.age')}</strong><div className="generation-choice-grid generation-choice-grid--compact">{ages.map(value => <label key={value}><input type="checkbox" checked={form.selectedAges.includes(value)} onChange={() => setForm(current => ({ ...current, selectedAges: toggleArrayValue(current.selectedAges, value) }))} /><span>{g(`demographic.age.${value}`)}</span></label>)}</div></div><div><strong>{g('batches.gender')}</strong><div className="generation-choice-grid generation-choice-grid--compact">{genders.map(value => <label key={value}><input type="checkbox" checked={form.selectedGenders.includes(value)} onChange={() => setForm(current => ({ ...current, selectedGenders: toggleArrayValue(current.selectedGenders, value) }))} /><span>{g(`demographic.gender.${value}`)}</span></label>)}</div></div><div><strong>{g('batches.ethnicity')}</strong><div className="generation-choice-grid generation-choice-grid--compact">{ethnicities.map(value => <label key={value}><input type="checkbox" checked={form.selectedEthnicities.includes(value)} onChange={() => setForm(current => ({ ...current, selectedEthnicities: toggleArrayValue(current.selectedEthnicities, value) }))} /><span>{g(`demographic.ethnicity.${value}`)}</span></label>)}</div></div></div><p className="field__hint">{g('batches.demographicCount', { count: demographicCombinations(form.selectedAges, form.selectedGenders, form.selectedEthnicities).length })}</p></fieldset>
           {validation ? <p className="field__error" role="alert">{g('batches.validation')}</p> : null}
-          {gpuValidation ? <p className="field__error" role="alert">{g('batches.gpuValidation')}</p> : null}
-          {visibleDraftIssue ? (
-            <p className="field__error" role="alert" data-draft-issue={visibleDraftIssue}>
-              {g(visibleDraftIssue === 'gpu'
-                ? 'batches.savedGpuUnavailable'
-                : visibleDraftIssue === 'content'
-                  ? 'batches.savedContentUnavailable'
-                  : 'batches.savedPresetUnavailable')}
-            </p>
-          ) : null}
-          <div className="generation-form__actions">
-            <Button onClick={saveDraft} disabled={!dirty}>{g('batches.saveDraft')}</Button>
-            <Button
-              variant="primary"
-              onClick={buildPreview}
-              disabled={dirty}
-              title={dirty ? g('batches.saveBeforePreview') : undefined}
-            >
-              {g('batches.preview')}
-            </Button>
-          </div>
-          <p className="generation-shortcut-hint">{g('batches.submitShortcut')}</p>
+          <div className="generation-form__actions"><Button onClick={() => void save()} disabled={!dirty || saveMutation.isPending}>{g('batches.saveDraft')}</Button><Button variant="primary" onClick={() => void buildPreview()} disabled={!isSavedCurrent || previewMutation.isPending}>{g('batches.preview')}</Button></div>
         </section>
         <GpuPanel />
       </div>
-      {unsavedChangesDialog}
-      <Dialog
-        open={preview !== null}
-        title={g('batches.previewTitle')}
-        closeLabel={g('common.close')}
-        onClose={() => setPreview(null)}
-        size="wide"
-        footer={<><Button onClick={() => setPreview(null)}>{g('common.cancel')}</Button><Button variant="primary" onClick={submit}>{g('batches.submit')}</Button></>}
-      >
-        {preview ? (
-          <>
-            <p className="generation-preview-summary">{g('batches.previewIntro', { count: preview.allocations.length })}</p>
-            <p className="generation-preview-summary">
-              {g(preview.draft.gpus.length === 2 ? 'batches.dynamicGpuTwo' : 'batches.dynamicGpuOne', {
-                gpus: preview.draft.gpus.map(slot => gpuLabel(g, slot)).join(', '),
-                model: modelLabel(g, preview.draft.model),
-              })}
-            </p>
-            <TableShell
-              caption={g('batches.allocationCaption')}
-              columns={[
-                { key: 'row', label: g('batches.sequence') },
-                { key: 'content', label: g('batches.contentName') },
-                { key: 'category', label: g('batches.category') },
-                { key: 'allocation', label: g('batches.allocation') },
-                { key: 'model', label: g('batches.model') },
-              ]}
-            >
-              {preview.allocations.map(row => (
-                <tr key={row.sequence}>
-                  <th scope="row">{row.sequence}</th>
-                  <td>{row.contentItemName}</td>
-                  <td>{categoryLabel(g, row.category)}</td>
-                  <td>{g(`demographic.age.${row.age}`)} / {g(`demographic.gender.${row.gender}`)} / {g(`demographic.ethnicity.${row.ethnicity}`)}</td>
-                  <td>{modelLabel(g, row.model)}</td>
-                </tr>
-              ))}
-            </TableShell>
-            <p className="generation-preview-summary">{g('batches.confirmBody')}</p>
-          </>
-        ) : null}
+      {unsavedDialog}
+      <Dialog open={preview !== null} title={g('batches.previewTitle')} closeLabel={g('common.close')} onClose={() => setPreview(null)} size="wide" footer={<><Button onClick={() => setPreview(null)}>{g('common.cancel')}</Button><Button variant="primary" onClick={() => setSubmitConfirmOpen(true)}>{g('batches.submit')}</Button></>}>
+        {preview ? <><p>{g('batches.previewIntro', { count: preview.allocations.length })}</p><TableShell caption={g('batches.allocationCaption')} columns={[{ key: 'row', label: g('batches.sequence') }, { key: 'content', label: g('batches.contentName') }, { key: 'preset', label: g('batches.preset') }, { key: 'background', label: g('batches.background') }, { key: 'person', label: g('batches.allocation') }, { key: 'gpu', label: g('batches.gpu') }, { key: 'prompt', label: g('promptPreview.title') }]}>{preview.allocations.map(row => <tr key={row.sequence}><th scope="row">{row.sequence}/{preview.allocations.length}</th><td>{row.contentPlan.name}</td><td>{row.promptPreset.name}</td><td>{row.backgroundPreset.name}</td><td>{row.demographic.age} / {row.demographic.gender} / {row.demographic.ethnicity}</td><td>{row.gpuSlot}</td><td><details><summary>{g('promptPreview.title')}</summary><pre>{row.finalPositivePrompt ?? row.userInput}</pre><pre>{row.finalNegativePrompt}</pre></details></td></tr>)}</TableShell></> : null}
       </Dialog>
-      <ConfirmDialog
-        open={showReleaseConfirm}
-        title={g('batches.releaseModelTitle')}
-        body={releaseModelSwitchBody}
-        confirmLabel={g('common.yes')}
-        cancelLabel={g('common.no')}
-        closeLabel={g('common.close')}
-        onConfirm={confirmRelease}
-        onClose={() => setShowReleaseConfirm(false)}
-      />
-      <ConfirmDialog
-        open={showSubmitConfirm}
-        title={g('batches.submitConfirmTitle')}
-        body={submitConfirmBody}
-        confirmLabel={g('common.yes')}
-        cancelLabel={g('common.no')}
-        closeLabel={g('common.close')}
-        onConfirm={confirmSubmit}
-        onClose={() => setShowSubmitConfirm(false)}
-      />
+      <ConfirmDialog open={submitConfirmOpen} title={g('batches.submitConfirmTitle')} body={preview ? g('batches.submitConfirmBody', { count: preview.allocations.length }) : g('batches.confirmBody')} confirmLabel={g('common.yes')} cancelLabel={g('common.no')} closeLabel={g('common.close')} onConfirm={() => void submit(false)} onClose={() => setSubmitConfirmOpen(false)} />
+      <ConfirmDialog open={switchConfirmOpen} title={g('batches.releaseModelTitle')} body={g('batches.modelSwitchConfirmation')} confirmLabel={g('common.yes')} cancelLabel={g('common.no')} closeLabel={g('common.close')} onConfirm={() => void submit(true)} onClose={() => setSwitchConfirmOpen(false)} />
     </GenerationScaffold>
   );
 }
