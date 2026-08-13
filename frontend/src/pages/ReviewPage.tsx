@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
 import { Button, Field, MediaPanel, PageHeader, StatusBadge } from '../components';
 import { useDatasetsQuery, useSamplesQuery, useUpdateSampleReviewMutation } from '../api/queries';
+import { apiErrorMessage } from '../api/client';
 import type { ReviewDecision, Sample } from '../api/contracts';
 import { protocolForCategory, type Category } from '../types';
 import { OperationFeedback } from './generate/shared';
@@ -21,7 +22,7 @@ function localized(value: Sample, locale: string, field: 'contentPlanName' | 'sc
 export function ReviewPage() {
   const { t, i18n } = useTranslation();
   const [params, setParams] = useSearchParams();
-  const samplesQuery = useSamplesQuery();
+  const samplesQuery = useSamplesQuery('Pending');
   const datasetsQuery = useDatasetsQuery();
   const reviewMutation = useUpdateSampleReviewMutation();
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -81,13 +82,17 @@ export function ReviewPage() {
   if (samplesQuery.isPending || datasetsQuery.isPending) {
     return <section className="page-stack review-page"><PageHeader title={t('review.title')} /><p role="status">{t('review.loadingBody')}</p></section>;
   }
-  const error = samplesQuery.error ?? datasetsQuery.error ?? reviewMutation.error ?? null;
+  const locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
+  const queryError = samplesQuery.error ?? datasetsQuery.error ?? null;
+  if (queryError) {
+    return <section className="page-stack review-page"><PageHeader title={t('review.title')} /><section className="generation-feedback" role="alert"><p>{apiErrorMessage(queryError, locale)}</p></section></section>;
+  }
 
   return (
     <section className="page-stack review-page" aria-label={t('review.aria.page')}>
       <PageHeader title={t('review.title')} actions={<span className="review-page__count">{t('review.queueCount', { visible: visible.length, total: samples.length })}</span>} />
       <p className="review-page__subtitle">{t('review.subtitle')}</p>
-      {error ? <OperationFeedback error={error} onDismiss={() => { reviewMutation.reset(); void Promise.all([samplesQuery.refetch(), datasetsQuery.refetch()]); }} /> : null}
+      {reviewMutation.error ? <OperationFeedback error={reviewMutation.error} onDismiss={() => reviewMutation.reset()} /> : null}
       <section className="panel review-filters" aria-label={t('review.aria.filters')}>
         <div className="section-header"><h2>{t('review.filters')}</h2><Button variant="quiet" onClick={clearFilters}>{t('actions.clearFilters')}</Button></div>
         <div className="review-filters__grid">

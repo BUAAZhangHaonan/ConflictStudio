@@ -18,6 +18,7 @@
 .generate-section-select label { display: block; color: var(--color-text-muted); font-size: 12px; }
 .generate-section-select select { width: 100%; }
 .generation-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.generation-batch-category, .generation-batch-category select { min-width: 0; max-width: 100%; }
 .generation-form__grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .generation-comparisons { display: grid; gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-small); }
 .generation-comparisons legend { padding: 0 5px; font-weight: 600; }
@@ -198,6 +199,7 @@
 }
 
 @media (min-width: 901px) and (max-width: 1100px) {
+  .generation-batch-category { grid-column: 1 / -1; }
   .generation-test-category { grid-column: span 2; }
 }
 

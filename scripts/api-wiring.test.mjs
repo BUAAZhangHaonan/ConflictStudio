@@ -16,8 +16,20 @@ const batchesPageSource = readFileSync(new URL('../frontend/src/pages/generate/B
 const testPageSource = readFileSync(new URL('../frontend/src/pages/generate/TestPage.tsx', import.meta.url), 'utf8');
 const jobsPageSource = readFileSync(new URL('../frontend/src/pages/generate/JobsPage.tsx', import.meta.url), 'utf8');
 const reviewPageSource = readFileSync(new URL('../frontend/src/pages/ReviewPage.tsx', import.meta.url), 'utf8');
+const archivePageSource = readFileSync(new URL('../frontend/src/pages/ArchivePage.tsx', import.meta.url), 'utf8');
+const workspacePageSource = readFileSync(new URL('../frontend/src/pages/WorkspacePage.tsx', import.meta.url), 'utf8');
 const sharedGenerationSource = readFileSync(new URL('../frontend/src/pages/generate/shared.tsx', import.meta.url), 'utf8');
 const generationLocaleSource = readFileSync(new URL('../frontend/src/locales/features/generation.ts', import.meta.url), 'utf8');
+const reviewArchiveLocaleSource = readFileSync(new URL('../frontend/src/locales/features/reviewArchive.ts', import.meta.url), 'utf8');
+const workspaceLocaleSource = readFileSync(new URL('../frontend/src/locales/features/workspaceSettingsStatistics.ts', import.meta.url), 'utf8');
+const generationCssSource = readFileSync(new URL('../frontend/src/pages/generate/GenerationPage.css', import.meta.url), 'utf8');
+
+const operationalPageSources = {
+  workspace: workspacePageSource,
+  jobs: jobsPageSource,
+  review: reviewPageSource,
+  archive: archivePageSource,
+};
 
 function loadClient(fetchMock) {
   const output = ts.transpileModule(clientSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -94,11 +106,86 @@ test('completed test results can be kept as formal samples without a mock path',
 });
 
 test('the visible review queue reads pending current Sample records', () => {
-  assert.match(querySource, /\/api\/samples\?decision=Pending/u);
+  assert.match(querySource, /samples: \(decision\?: ReviewDecision\) => \['samples', decision \?\? 'All'\] as const/u);
+  assert.match(querySource, /useSamplesQuery\(decision\?: ReviewDecision\)/u);
+  assert.match(querySource, /new URLSearchParams\(\{ decision \}\)/u);
   assert.match(querySource, /\/api\/samples\/\$\{id\}\/review/u);
-  assert.match(reviewPageSource, /useSamplesQuery/u);
+  assert.match(reviewPageSource, /useSamplesQuery\('Pending'\)/u);
   assert.match(reviewPageSource, /sample\.reviewDecision === 'Pending'/u);
   assert.doesNotMatch(reviewPageSource, /useMockRepository|useRepositorySnapshot/u);
+});
+
+test('workspace, jobs, review, and archive read operational data only from API queries', () => {
+  for (const [page, source] of Object.entries(operationalPageSources)) {
+    assert.doesNotMatch(
+      source,
+      /useMockRepository|useRepositorySnapshot|useExamplePageState|from ['"]\.\.\/store['"]|from ['"]\.\.\/mock['"]/u,
+      `${page} must not read mock, local-storage, or example-state data`,
+    );
+  }
+
+  assert.match(workspacePageSource, /useDatasetsQuery\(\)/u);
+  assert.match(workspacePageSource, /useJobsQuery\(\)/u);
+  assert.match(workspacePageSource, /useSamplesQuery\(\)/u);
+  assert.match(jobsPageSource, /useJobsQuery\(\)/u);
+  assert.match(reviewPageSource, /useSamplesQuery\('Pending'\)/u);
+  assert.match(archivePageSource, /useDatasetsQuery\(\)/u);
+  assert.match(archivePageSource, /useSamplesQuery\('Accepted'\)/u);
+});
+
+test('empty API arrays drive truthful empty states on all four operational pages', () => {
+  assert.match(workspacePageSource, /const datasets = datasetsQuery\.data \?\? \[\]/u);
+  assert.match(workspacePageSource, /const samples = samplesQuery\.data \?\? \[\]/u);
+  assert.match(workspacePageSource, /filtered\.length === 0[\s\S]*workspace\.datasets\.emptyBody/u);
+
+  assert.match(jobsPageSource, /const jobs = jobsQuery\.data \?\? \[\]/u);
+  assert.match(jobsPageSource, /jobs\.length === 0 \? 'jobs\.empty' : 'jobs\.filtered'/u);
+
+  assert.match(reviewPageSource, /const samples = samplesQuery\.data \?\? \[\]/u);
+  assert.match(reviewPageSource, /samples\.length === 0[\s\S]*review\.emptyTitle[\s\S]*review\.emptyBody/u);
+
+  assert.match(archivePageSource, /const datasets = datasetsQuery\.data \?\? \[\]/u);
+  assert.match(archivePageSource, /const acceptedSamples = samplesQuery\.data \?\? \[\]/u);
+  assert.match(archivePageSource, /(?:datasets|archiveDatasets)\.length === 0[\s\S]*archive\.emptyTitle[\s\S]*archive\.emptyBody/u);
+  assert.match(archivePageSource, /(?:rows|samples)\.length === 0[\s\S]*archive\.emptyTitle[\s\S]*archive\.emptyBody/u);
+});
+
+test('archive keeps API dataset names raw and makes no mock archive or sync claim', () => {
+  assert.match(archivePageSource, /\.name\}<\/option>/u);
+  assert.doesNotMatch(archivePageSource, /localizedName\(|正式生成集|验证集|已停用示例集/u);
+  assert.doesNotMatch(
+    archivePageSource,
+    /previewArchive|syncArchive|ArchivePreview|currentSampleIds/u,
+  );
+});
+
+test('running and failed workspace groups use distinct bilingual empty copy', () => {
+  assert.match(workspacePageSource, /emptyKey: 'runningEmpty' \| 'failedEmpty'/u);
+  assert.match(workspacePageSource, /renderJobs\(runningJobs, 'runningEmpty'\)/u);
+  assert.match(workspacePageSource, /renderJobs\(failedJobs, 'failedEmpty'\)/u);
+
+  for (const [key, english, chinese] of [
+    ['runningEmpty', 'There are no running jobs.', '当前没有运行任务。'],
+    ['failedEmpty', 'There are no failed jobs.', '当前没有失败任务。'],
+  ]) {
+    assert.equal(workspaceLocaleSource.match(new RegExp(`${key}:`, 'gu'))?.length, 2);
+    assert.equal(workspaceLocaleSource.includes(`${key}: '${english}'`), true);
+    assert.equal(workspaceLocaleSource.includes(`${key}: '${chinese}'`), true);
+  }
+  assert.equal(reviewArchiveLocaleSource.match(/emptyTitle:/gu)?.length, 4);
+  assert.equal(reviewArchiveLocaleSource.match(/emptyBody:/gu)?.length, 4);
+});
+
+test('1024px production batch category keeps its full English selected value in bounds', () => {
+  assert.match(batchesPageSource, /className="generation-batch-category"[\s\S]*htmlFor="batch-category"/u);
+  assert.match(
+    generationCssSource,
+    /\.generation-batch-category, \.generation-batch-category select \{ min-width: 0; max-width: 100%; \}/u,
+  );
+  assert.match(
+    generationCssSource,
+    /@media \(min-width: 901px\) and \(max-width: 1100px\) \{[\s\S]*?\.generation-batch-category \{ grid-column: 1 \/ -1; \}/u,
+  );
 });
 
 test('generation catalogs use paired Chinese and English business fields', () => {

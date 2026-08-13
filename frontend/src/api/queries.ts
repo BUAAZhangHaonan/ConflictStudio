@@ -31,6 +31,7 @@ import type {
   PromptPresetUpdate,
   PromptPreview,
   PromptPreviewRequest,
+  ReviewDecision,
   Sample,
   SampleReviewUpdate,
   TestRunCreate,
@@ -48,7 +49,7 @@ export const queryKeys = {
   jobItems: (id: number) => ['jobs', id, 'items'] as const,
   jobEvents: (id: number) => ['jobs', id, 'events'] as const,
   gpuSlots: ['gpuSlots'] as const,
-  samples: ['samples'] as const,
+  samples: (decision?: ReviewDecision) => ['samples', decision ?? 'All'] as const,
 };
 
 export const generationQueries = {
@@ -67,7 +68,12 @@ export const generationQueries = {
     refetchInterval: 5000,
     refetchOnWindowFocus: true,
   }),
-  samples: () => queryOptions({ queryKey: queryKeys.samples, queryFn: () => apiRequest<Sample[]>('/api/samples?decision=Pending') }),
+  samples: (decision?: ReviewDecision) => queryOptions({
+    queryKey: queryKeys.samples(decision),
+    queryFn: () => apiRequest<Sample[]>(decision
+      ? `/api/samples?${new URLSearchParams({ decision }).toString()}`
+      : '/api/samples'),
+  }),
 };
 
 const pageSize = 500;
@@ -136,7 +142,7 @@ export function useBackgroundPresetsQuery() { return useQuery(generationQueries.
 export function useBatchDraftsQuery() { return useQuery(generationQueries.batchDrafts()); }
 export function useJobsQuery() { return useQuery(generationQueries.jobs()); }
 export function useGpuSlotsQuery() { return useQuery(generationQueries.gpuSlots()); }
-export function useSamplesQuery() { return useQuery(generationQueries.samples()); }
+export function useSamplesQuery(decision?: ReviewDecision) { return useQuery(generationQueries.samples(decision)); }
 
 export function useReleaseGpuMutation() {
   const client = useQueryClient();
@@ -334,7 +340,7 @@ export function useKeepTestResultMutation() {
     onSuccess: async value => {
       await Promise.all([
         invalidateCatalog(client, queryKeys.jobs),
-        invalidateCatalog(client, queryKeys.samples),
+        invalidateCatalog(client, ['samples']),
         invalidateCatalog(client, queryKeys.jobItems(value.jobItemId)),
       ]);
     },
@@ -348,7 +354,7 @@ export function useUpdateSampleReviewMutation() {
       method: 'PATCH',
       ...json(input),
     }),
-    onSuccess: () => invalidateCatalog(client, queryKeys.samples),
+    onSuccess: () => invalidateCatalog(client, ['samples']),
   });
 }
 
