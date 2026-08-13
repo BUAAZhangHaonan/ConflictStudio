@@ -24,6 +24,8 @@ from .enums import (
     JobSource,
     JobStatus,
     ModelName,
+    Precision,
+    ReviewDecision,
     ResourceStatus,
 )
 
@@ -73,6 +75,55 @@ CONTENT_EMOTION_CHECK = """
   category IN ('A-VA', 'A-VT') AND lower(trim(true_emotion)) = lower(trim(apparent_emotion))
 ) OR (
   category IN ('C-VA', 'C-VT') AND lower(trim(true_emotion)) <> lower(trim(apparent_emotion))
+)
+"""
+
+MODEL_PRECISION_CHECK = """
+(
+  model = 'LTX-2.5' AND precision IS NOT NULL AND precision IN ('BF16', 'INT8')
+) OR (
+  model IN ('LTX-2.3', 'MiniMax H3') AND precision IS NULL
+)
+"""
+
+JOB_SOURCE_CHECK = """
+(
+  source = 'Production'
+  AND dataset_id IS NOT NULL
+  AND batch_draft_id IS NOT NULL
+  AND model IS NOT NULL
+) OR (
+  source = 'Test'
+  AND dataset_id IS NULL
+  AND batch_draft_id IS NULL
+  AND model IS NULL
+)
+"""
+
+JOB_MODEL_PRECISION_CHECK = f"""
+(model IS NULL AND precision IS NULL) OR ({MODEL_PRECISION_CHECK})
+"""
+
+SNAPSHOT_SOURCE_CHECK = """
+(
+  batch_draft_id IS NOT NULL
+  AND dataset_id IS NOT NULL
+  AND dataset_revision IS NOT NULL
+) OR (
+  batch_draft_id IS NULL
+  AND dataset_id IS NULL
+  AND dataset_revision IS NULL
+)
+"""
+
+LOADED_MODEL_PRECISION_CHECK = """
+(
+  loaded_model IS NULL AND loaded_precision IS NULL
+) OR (
+  loaded_model = 'LTX-2.5' AND loaded_precision IS NOT NULL
+  AND loaded_precision IN ('BF16', 'INT8')
+) OR (
+  loaded_model IN ('LTX-2.3', 'MiniMax H3') AND loaded_precision IS NULL
 )
 """
 
@@ -226,6 +277,7 @@ class BatchDraft(SQLModel, table=True):
     __tablename__ = "batch_drafts"
     __table_args__ = (
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_batch_drafts_direction"),
+        CheckConstraint(MODEL_PRECISION_CHECK, name="ck_batch_drafts_model_precision"),
         CheckConstraint("quantity > 0", name="ck_batch_drafts_quantity"),
         CheckConstraint("seed_base >= 0 AND seed_base < 2147483648", name="ck_batch_drafts_seed"),
         CheckConstraint("dataset_revision >= 1", name="ck_batch_drafts_dataset_revision"),
@@ -237,13 +289,24 @@ class BatchDraft(SQLModel, table=True):
     dataset_revision: int = Field(ge=1)
     category: Category = Field(sa_column=enum_column(Category))
     conflict_direction: ConflictDirection | None = Field(default=None, sa_column=enum_column(ConflictDirection, nullable=True))
-    model: ModelName = Field(sa_column=enum_column(ModelName))
+    model: ModelName = Field(default=ModelName.LTX_25, sa_column=enum_column(ModelName))
+    precision: Precision | None = Field(default=Precision.INT8, sa_column=enum_column(Precision, nullable=True))
     quantity: int = Field(gt=0)
     seed_base: int = Field(ge=0, lt=2**31)
     status: BatchDraftStatus = Field(default=BatchDraftStatus.DRAFT, sa_column=enum_column(BatchDraftStatus))
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+    def __init__(self, **data: Any) -> None:
+        if "precision" not in data:
+            selected_model = data.get("model", ModelName.LTX_25)
+            data["precision"] = (
+                Precision.INT8
+                if selected_model in {ModelName.LTX_25, ModelName.LTX_25.value}
+                else None
+            )
+        super().__init__(**data)
 
 
 class BatchDraftContentPlan(SQLModel, table=True):
@@ -328,19 +391,21 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("batch_draft_id", "sequence", name="uq_batch_snapshots_sequence"),
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_batch_snapshots_direction"),
+        CheckConstraint(MODEL_PRECISION_CHECK, name="ck_batch_snapshots_model_precision"),
+        CheckConstraint(SNAPSHOT_SOURCE_CHECK, name="ck_batch_snapshots_source"),
         CheckConstraint(f"age IN {AGES}", name="ck_batch_snapshots_age"),
         CheckConstraint("seed >= 0 AND seed < 2147483648", name="ck_batch_snapshots_seed"),
         CheckConstraint("sequence > 0", name="ck_batch_snapshots_sequence"),
         CheckConstraint("content_plan_revision >= 1", name="ck_batch_snapshots_content_revision"),
         CheckConstraint("prompt_preset_revision >= 1", name="ck_batch_snapshots_preset_revision"),
         CheckConstraint("background_preset_revision >= 1", name="ck_batch_snapshots_background_revision"),
-        CheckConstraint("dataset_revision >= 1", name="ck_batch_snapshots_dataset_revision"),
+        CheckConstraint("dataset_revision IS NULL OR dataset_revision >= 1", name="ck_batch_snapshots_dataset_revision"),
         CheckConstraint(
             f"width = {VIDEO_WIDTH} AND height = {VIDEO_HEIGHT} AND fps = {VIDEO_FPS}",
             name="ck_batch_snapshots_video_format",
         ),
         CheckConstraint(
-            "(model = 'LTX-2.3' AND frame_count = 121) OR "
+            "(model IN ('LTX-2.3', 'LTX-2.5') AND frame_count = 121) OR "
             "(model = 'MiniMax H3' AND frame_count = 124)",
             name="ck_batch_snapshots_model_frames",
         ),
@@ -364,9 +429,15 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="RESTRICT"), nullable=False))
-    dataset_id: int = Field(sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False))
-    dataset_revision: int = Field(ge=1)
+    batch_draft_id: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="RESTRICT"), nullable=True),
+    )
+    dataset_id: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=True),
+    )
+    dataset_revision: int | None = Field(default=None, ge=1)
     sequence: int = Field(gt=0)
     content_plan_id: int = Field(sa_column=Column(Integer, ForeignKey("content_plans.id", ondelete="RESTRICT"), nullable=False))
     content_plan_revision: int = Field(ge=1)
@@ -381,6 +452,7 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     gender: Gender = Field(sa_column=enum_column(Gender))
     ethnicity: Ethnicity = Field(sa_column=enum_column(Ethnicity))
     model: ModelName = Field(sa_column=enum_column(ModelName))
+    precision: Precision | None = Field(default=None, sa_column=enum_column(Precision, nullable=True))
     seed: int = Field(ge=0, lt=2**31)
     width: int
     height: int
@@ -407,6 +479,8 @@ class Job(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("batch_draft_id", name="uq_jobs_batch_draft"),
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_jobs_direction"),
+        CheckConstraint(JOB_SOURCE_CHECK, name="ck_jobs_source"),
+        CheckConstraint(JOB_MODEL_PRECISION_CHECK, name="ck_jobs_model_precision"),
         CheckConstraint(
             "total_count > 0 AND prepared_count >= 0 AND completed_count >= 0 AND failed_count >= 0 "
             "AND prepared_count <= total_count "
@@ -419,11 +493,18 @@ class Job(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     display_name: str = Field(sa_column=Column(String(80), nullable=False))
     source: JobSource = Field(default=JobSource.PRODUCTION, sa_column=enum_column(JobSource))
-    dataset_id: int = Field(sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False))
-    batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="RESTRICT"), nullable=False))
+    dataset_id: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=True),
+    )
+    batch_draft_id: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="RESTRICT"), nullable=True),
+    )
     category: Category = Field(sa_column=enum_column(Category))
     conflict_direction: ConflictDirection | None = Field(default=None, sa_column=enum_column(ConflictDirection, nullable=True))
-    model: ModelName = Field(sa_column=enum_column(ModelName))
+    model: ModelName | None = Field(default=None, sa_column=enum_column(ModelName, nullable=True))
+    precision: Precision | None = Field(default=None, sa_column=enum_column(Precision, nullable=True))
     status: JobStatus = Field(default=JobStatus.QUEUED, sa_column=enum_column(JobStatus))
     total_count: int = Field(gt=0)
     prepared_count: int = Field(default=0, ge=0)
@@ -536,6 +617,7 @@ class GenerationAttempt(SQLModel, table=True):
         UniqueConstraint("job_item_id", "attempt_number", name="uq_generation_attempts_item_number"),
         CheckConstraint("attempt_number > 0", name="ck_generation_attempts_number"),
         CheckConstraint("seed >= 0 AND seed < 2147483648", name="ck_generation_attempts_seed"),
+        CheckConstraint(MODEL_PRECISION_CHECK, name="ck_generation_attempts_model_precision"),
         CheckConstraint(
             "(status = 'Running' AND source_asset_id IS NULL AND primary_asset_id IS NULL "
             "AND renderer_prompt_id IS NOT NULL AND failure_reason IS NULL "
@@ -554,6 +636,7 @@ class GenerationAttempt(SQLModel, table=True):
     job_item_id: int = Field(sa_column=Column(Integer, ForeignKey("job_items.id", ondelete="CASCADE"), nullable=False))
     attempt_number: int = Field(gt=0)
     model: ModelName = Field(sa_column=enum_column(ModelName))
+    precision: Precision | None = Field(default=None, sa_column=enum_column(Precision, nullable=True))
     gpu_slot: GpuSlotName = Field(sa_column=enum_column(GpuSlotName, foreign_key="gpu_slots.slot", ondelete="RESTRICT"))
     seed: int = Field(ge=0, lt=2**31)
     source_asset_id: int | None = Field(default=None, sa_column=Column(Integer, ForeignKey("assets.id", ondelete="RESTRICT"), nullable=True))
@@ -566,6 +649,79 @@ class GenerationAttempt(SQLModel, table=True):
     failure_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     started_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
     finished_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
+
+
+class Sample(SQLModel, table=True):
+    __tablename__ = "samples"
+    __table_args__ = (
+        UniqueConstraint("job_item_id", name="uq_samples_job_item"),
+        CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_samples_direction"),
+        CheckConstraint(MODEL_PRECISION_CHECK, name="ck_samples_model_precision"),
+        CheckConstraint(f"age IN {AGES}", name="ck_samples_age"),
+        CheckConstraint("content_plan_revision >= 1", name="ck_samples_content_revision"),
+        CheckConstraint("seed >= 0 AND seed < 2147483648", name="ck_samples_seed"),
+        CheckConstraint("review_revision >= 0", name="ck_samples_review_revision"),
+        CheckConstraint("revision >= 1", name="ck_samples_revision"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_item_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("job_items.id", ondelete="RESTRICT"), nullable=False)
+    )
+    dataset_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False)
+    )
+    category: Category = Field(sa_column=enum_column(Category))
+    conflict_direction: ConflictDirection | None = Field(
+        default=None,
+        sa_column=enum_column(ConflictDirection, nullable=True),
+    )
+    review_decision: ReviewDecision = Field(
+        default=ReviewDecision.PENDING,
+        sa_column=enum_column(ReviewDecision),
+    )
+    review_revision: int = Field(default=0, ge=0)
+    model: ModelName = Field(sa_column=enum_column(ModelName))
+    precision: Precision | None = Field(default=None, sa_column=enum_column(Precision, nullable=True))
+    gpu_slot: GpuSlotName = Field(
+        sa_column=enum_column(GpuSlotName, foreign_key="gpu_slots.slot", ondelete="RESTRICT")
+    )
+    content_plan_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("content_plans.id", ondelete="RESTRICT"), nullable=False)
+    )
+    content_plan_revision: int = Field(ge=1)
+    prompt_preset_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("prompt_presets.id", ondelete="RESTRICT"), nullable=False)
+    )
+    source_asset_id: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, ForeignKey("assets.id", ondelete="RESTRICT"), nullable=True),
+    )
+    primary_asset_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False)
+    )
+    dialogue: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    display_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    video_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    true_emotion_description: str = Field(sa_column=Column(Text, nullable=False))
+    true_emotion: str = Field(sa_column=Column(String(120), nullable=False))
+    apparent_emotion: str = Field(sa_column=Column(String(120), nullable=False))
+    content_plan_name_zh: str = Field(sa_column=Column(String(160), nullable=False))
+    content_plan_name_en: str = Field(sa_column=Column(String(160), nullable=False))
+    scene_zh: str = Field(sa_column=Column(Text, nullable=False))
+    scene_en: str = Field(sa_column=Column(Text, nullable=False))
+    trigger_event_zh: str = Field(sa_column=Column(Text, nullable=False))
+    trigger_event_en: str = Field(sa_column=Column(Text, nullable=False))
+    psychological_background_zh: str = Field(sa_column=Column(Text, nullable=False))
+    psychological_background_en: str = Field(sa_column=Column(Text, nullable=False))
+    age: int
+    gender: Gender = Field(sa_column=enum_column(Gender))
+    ethnicity: Ethnicity = Field(sa_column=enum_column(Ethnicity))
+    seed: int = Field(ge=0, lt=2**31)
+    revision: int = Field(default=1, ge=1)
+    created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+    updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
 class JobEvent(SQLModel, table=True):
@@ -587,6 +743,7 @@ class GpuSlot(SQLModel, table=True):
     __tablename__ = "gpu_slots"
     __table_args__ = (
         CheckConstraint("revision >= 1", name="ck_gpu_slots_revision"),
+        CheckConstraint(LOADED_MODEL_PRECISION_CHECK, name="ck_gpu_slots_loaded_model_precision"),
         CheckConstraint(
             "(availability IN ('Reserved', 'Busy') AND active_job_id IS NOT NULL) OR "
             "(availability IN ('Available', 'ExternalOccupied', 'Unknown') AND active_job_id IS NULL)",
@@ -597,6 +754,7 @@ class GpuSlot(SQLModel, table=True):
     slot: GpuSlotName = Field(sa_column=enum_column(GpuSlotName, primary_key=True))
     availability: GpuAvailability = Field(default=GpuAvailability.UNKNOWN, sa_column=enum_column(GpuAvailability))
     loaded_model: ModelName | None = Field(default=None, sa_column=enum_column(ModelName, nullable=True))
+    loaded_precision: Precision | None = Field(default=None, sa_column=enum_column(Precision, nullable=True))
     active_job_id: int | None = Field(
         default=None,
         sa_column=Column(Integer, ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=True),

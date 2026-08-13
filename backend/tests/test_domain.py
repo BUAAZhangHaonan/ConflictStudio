@@ -16,9 +16,12 @@ from backend.domain.enums import (
     DatasetPurpose,
     GpuAvailability,
     GpuSlotName,
+    ModelName,
+    Precision,
 )
 from backend.domain.models import BatchDraft, ContentPlan, Dataset, GpuSlot
 from backend.domain.schemas import (
+    BatchDraftCreate,
     ContentPlanCreate,
     ContentPlanUpdate,
     DatasetUpdate,
@@ -26,6 +29,21 @@ from backend.domain.schemas import (
     VideoBackgroundPresetCreate,
     VideoBackgroundPresetUpdate,
 )
+
+
+def batch_payload(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "datasetId": 1,
+        "category": "A-VA",
+        "quantity": 1,
+        "contentPlans": [{"id": 1, "expectedRevision": 1}],
+        "promptPresets": [{"id": 1, "expectedRevision": 1}],
+        "backgroundPresets": [{"id": 1, "expectedRevision": 1}],
+        "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
+        "gpuSlots": ["GPU0"],
+    }
+    values.update(overrides)
+    return values
 
 
 def content_plan_payload(**overrides: object) -> dict[str, object]:
@@ -84,6 +102,70 @@ def test_database_rejects_invalid_category_direction(tmp_path: Path) -> None:
         )
         with pytest.raises(IntegrityError):
             session.flush()
+
+
+def test_batch_model_precision_defaults_and_strict_combinations() -> None:
+    current = BatchDraftCreate.model_validate(batch_payload())
+    assert (current.model, current.precision) == (ModelName.LTX_25, Precision.INT8)
+
+    old_model = BatchDraftCreate.model_validate(batch_payload(model="LTX-2.3"))
+    assert (old_model.model, old_model.precision) == (ModelName.LTX, None)
+
+    with pytest.raises(ValidationError, match="requires BF16 or INT8"):
+        BatchDraftCreate.model_validate(batch_payload(model="LTX-2.5", precision=None))
+    with pytest.raises(ValidationError, match="older models require null"):
+        BatchDraftCreate.model_validate(batch_payload(model="MiniMax H3", precision="BF16"))
+
+
+def test_database_rejects_invalid_model_precision_pair(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    with database.immediate_session() as session:
+        dataset = Dataset(name="Production", name_key="production", purpose=DatasetPurpose.PRODUCTION)
+        session.add(dataset)
+        session.flush()
+        session.add(
+            BatchDraft(
+                dataset_id=dataset.id,
+                dataset_revision=dataset.revision,
+                category=Category.A_VA,
+                model=ModelName.LTX_25,
+                precision=None,
+                quantity=1,
+                seed_base=1,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.flush()
+
+
+def test_clean_database_initializes_precision_schema(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+
+    with database.read_session() as session:
+        slots = session.exec(select(GpuSlot).order_by(GpuSlot.slot)).all()
+    assert [slot.slot for slot in slots] == [GpuSlotName.GPU0, GpuSlotName.GPU1]
+    with database.engine.connect() as connection:
+        precision_tables = (
+            "batch_drafts",
+            "batch_video_input_snapshots",
+            "jobs",
+            "generation_attempts",
+        )
+        for table_name in precision_tables:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    f'PRAGMA table_info("{table_name}")'
+                )
+            }
+            assert "precision" in columns
+        gpu_columns = {
+            row[1]
+            for row in connection.exec_driver_sql('PRAGMA table_info("gpu_slots")')
+        }
+    assert "loaded_precision" in gpu_columns
 
 
 @pytest.mark.parametrize(

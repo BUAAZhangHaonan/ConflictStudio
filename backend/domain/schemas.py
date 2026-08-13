@@ -15,14 +15,19 @@ from .enums import (
     DatasetPurpose,
     Ethnicity,
     Gender,
+    GenerationAttemptStatus,
     GpuAvailability,
     GpuSlotName,
     JobItemStage,
     JobSource,
     JobStatus,
     ModelName,
+    Precision,
+    ReviewDecision,
     ResourceStatus,
+    TestExecutionMode,
     validate_direction,
+    validate_model_precision,
 )
 from .prompt_policy import validate_background_policy_text
 
@@ -355,7 +360,8 @@ class BatchDraftFields(ApiModel):
     dataset_id: int = Field(gt=0)
     category: Category
     conflict_direction: ConflictDirection | None = None
-    model: ModelName
+    model: ModelName = ModelName.LTX_25
+    precision: Precision | None = Precision.INT8
     quantity: int = Field(gt=0, le=10000)
     seed: int | None = Field(default=None, ge=0, lt=2**31)
     content_plans: list[SourceSelection] = Field(min_length=1)
@@ -364,10 +370,21 @@ class BatchDraftFields(ApiModel):
     demographics: list[DemographicInput] = Field(min_length=1)
     gpu_slots: list[GpuSlotName] = Field(min_length=1, max_length=2)
 
+    @model_validator(mode="before")
+    @classmethod
+    def default_precision_for_selected_model(cls, values: Any) -> Any:
+        if isinstance(values, dict) and "precision" not in values:
+            selected_model = values.get("model", ModelName.LTX_25)
+            if selected_model != ModelName.LTX_25:
+                values = {**values, "precision": None}
+        return values
+
     @model_validator(mode="after")
     def validate_batch(self) -> Self:
         if not validate_direction(self.category, self.conflict_direction):
             raise ValueError("Conflict direction does not match the category")
+        if not validate_model_precision(self.model, self.precision):
+            raise ValueError("LTX-2.5 requires BF16 or INT8 precision; older models require null precision")
         for values, label in (
             (self.content_plans, "content plan"),
             (self.prompt_presets, "prompt preset"),
@@ -409,6 +426,7 @@ class BatchDraftRead(ApiModel):
     category: Category
     conflict_direction: ConflictDirection | None
     model: ModelName
+    precision: Precision | None
     quantity: int
     seed: int
     status: BatchDraftStatus
@@ -427,7 +445,7 @@ class BatchPreviewRequest(ExpectedRevision):
 
 
 class BatchSubmitRequest(ExpectedRevision):
-    expected_gpu_revisions: dict[GpuSlotName, int]
+    expected_gpu_revisions: dict[GpuSlotName, Annotated[int, Field(ge=1)]]
     confirm_model_switch: bool = False
 
 
@@ -443,6 +461,7 @@ class BatchAllocationRead(ApiModel):
     demographic: DemographicInput
     gpu_slot: GpuSlotName
     model: ModelName
+    precision: Precision | None
     seed: int
     requires_prompt_generation: bool
     system_input: str
@@ -479,11 +498,51 @@ class PromptPreviewRead(ApiModel):
     final_negative_prompt: str
 
 
+class TestComparisonInput(ApiModel):
+    model: ModelName
+    precision: Precision | None = None
+    gpu_slot: GpuSlotName
+
+    @model_validator(mode="after")
+    def validate_profile(self) -> Self:
+        if not validate_model_precision(self.model, self.precision):
+            raise ValueError("Model and precision do not match")
+        return self
+
+
+class TestRunCreate(ApiModel):
+    content_plan: SourceSelection
+    prompt_preset: SourceSelection
+    background_preset: SourceSelection
+    demographic: DemographicInput
+    seed: int | None = Field(default=None, ge=0, lt=2**31)
+    comparisons: list[TestComparisonInput] = Field(min_length=1, max_length=2)
+    execution_mode: TestExecutionMode
+    expected_gpu_revisions: dict[GpuSlotName, Annotated[int, Field(ge=1)]]
+    confirm_model_switch: bool = False
+
+    @model_validator(mode="after")
+    def validate_comparisons(self) -> Self:
+        profiles = [(value.model, value.precision) for value in self.comparisons]
+        if len(profiles) != len(set(profiles)):
+            raise ValueError("Test comparisons must use distinct model profiles")
+        slots = [value.gpu_slot for value in self.comparisons]
+        selected_slots = set(slots)
+        if set(self.expected_gpu_revisions) != selected_slots:
+            raise ValueError("GPU revisions must match the selected GPU slots")
+        if self.execution_mode is TestExecutionMode.PARALLEL and len(slots) > 1:
+            if len(selected_slots) != len(slots):
+                raise ValueError("Parallel comparisons must use different GPU slots")
+        if self.execution_mode is TestExecutionMode.SERIAL and len(selected_slots) != 1:
+            raise ValueError("Serial comparisons must use one GPU slot")
+        return self
+
+
 class SnapshotRead(ApiModel):
     id: int
     sequence: int
-    dataset_id: int
-    dataset_revision: int
+    dataset_id: int | None
+    dataset_revision: int | None
     content_plan_id: int
     content_plan_revision: int
     prompt_preset_id: int
@@ -497,6 +556,7 @@ class SnapshotRead(ApiModel):
     gender: Gender
     ethnicity: Ethnicity
     model: ModelName
+    precision: Precision | None
     seed: int
     width: int
     height: int
@@ -533,6 +593,24 @@ class JobItemPromptResultRead(ApiModel):
     created_at: str
 
 
+class GenerationAttemptRead(ApiModel):
+    id: int
+    attempt_number: int
+    model: ModelName
+    precision: Precision | None
+    gpu_slot: GpuSlotName
+    seed: int
+    source_asset_id: int | None
+    source_asset_url: str | None
+    primary_asset_id: int | None
+    primary_asset_url: str | None
+    renderer_prompt_id: str
+    status: GenerationAttemptStatus
+    failure_reason: str | None
+    started_at: str
+    finished_at: str | None
+
+
 class JobItemRead(ApiModel):
     id: int
     sequence: int
@@ -551,6 +629,59 @@ class JobItemRead(ApiModel):
     updated_at: str
     input: SnapshotRead
     prompt_result: JobItemPromptResultRead | None
+    attempts: list[GenerationAttemptRead] = Field(default_factory=list)
+    sample_id: int | None = None
+
+
+class KeepTestResultRequest(ExpectedRevision):
+    dataset_id: int = Field(gt=0)
+
+
+class SampleReviewUpdate(ExpectedRevision):
+    decision: ReviewDecision
+
+
+class SampleRead(ApiModel):
+    id: int
+    display_id: str
+    job_item_id: int
+    dataset_id: int
+    category: Category
+    conflict_direction: ConflictDirection | None
+    review_decision: ReviewDecision
+    review_revision: int
+    model: ModelName
+    precision: Precision | None
+    gpu_slot: GpuSlotName
+    content_plan_id: int
+    content_plan_revision: int
+    prompt_preset_id: int
+    source_asset_id: int | None
+    source_asset_url: str | None
+    primary_asset_id: int
+    primary_asset_url: str
+    dialogue: str | None
+    display_text: str | None
+    video_prompt: str
+    negative_prompt: str
+    true_emotion_description: str
+    true_emotion: str
+    apparent_emotion: str
+    content_plan_name_zh: str
+    content_plan_name_en: str
+    scene_zh: str
+    scene_en: str
+    trigger_event_zh: str
+    trigger_event_en: str
+    psychological_background_zh: str
+    psychological_background_en: str
+    age: int
+    gender: Gender
+    ethnicity: Ethnicity
+    seed: int
+    revision: int
+    created_at: str
+    updated_at: str
 
 
 class JobEventPayloadRead(ApiModel):
@@ -599,11 +730,12 @@ class JobSummaryRead(ApiModel):
     id: int
     display_name: str
     source: JobSource
-    dataset_id: int
-    batch_draft_id: int
+    dataset_id: int | None
+    batch_draft_id: int | None
     category: Category
     conflict_direction: ConflictDirection | None
-    model: ModelName
+    model: ModelName | None
+    precision: Precision | None
     status: JobStatus
     total_count: int
     prepared_count: int

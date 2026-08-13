@@ -23,7 +23,13 @@ class ConflictDirection(ValueEnum):
 
 class ModelName(ValueEnum):
     LTX = "LTX-2.3"
+    LTX_25 = "LTX-2.5"
     H3 = "MiniMax H3"
+
+
+class Precision(ValueEnum):
+    BF16 = "BF16"
+    INT8 = "INT8"
 
 
 class DatasetPurpose(ValueEnum):
@@ -59,6 +65,12 @@ class BatchDraftStatus(ValueEnum):
 
 class JobSource(ValueEnum):
     PRODUCTION = "Production"
+    TEST = "Test"
+
+
+class TestExecutionMode(ValueEnum):
+    PARALLEL = "Parallel"
+    SERIAL = "Serial"
 
 
 class JobStatus(ValueEnum):
@@ -82,6 +94,12 @@ class GenerationAttemptStatus(ValueEnum):
     RUNNING = "Running"
     COMPLETED = "Completed"
     FAILED = "Failed"
+
+
+class ReviewDecision(ValueEnum):
+    PENDING = "Pending"
+    ACCEPTED = "Accepted"
+    REJECTED = "Rejected"
 
 
 class GpuSlotName(ValueEnum):
@@ -119,6 +137,12 @@ def validate_direction(category: Category, direction: ConflictDirection | None) 
     if category is Category.C_VA:
         return direction in {ConflictDirection.VISION, ConflictDirection.AUDIO}
     return direction in {ConflictDirection.VISION, ConflictDirection.TEXT}
+
+
+def validate_model_precision(model: ModelName, precision: Precision | None) -> bool:
+    if model is ModelName.LTX_25:
+        return precision in {Precision.BF16, Precision.INT8}
+    return precision is None
 
 
 def protocol_for(category: Category) -> str:

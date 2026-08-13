@@ -190,13 +190,14 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "prompt_presets": ("category", "status"),
         "prompt_examples": ("kind",),
         "video_background_presets": ("status",),
-        "batch_drafts": ("category", "conflict_direction", "model", "status"),
+        "batch_drafts": ("category", "conflict_direction", "model", "precision", "status"),
         "batch_draft_demographics": ("gender", "ethnicity"),
         "batch_draft_gpu_slots": ("gpu_slot",),
-        "batch_video_input_snapshots": ("category", "conflict_direction", "gender", "ethnicity", "model"),
-        "jobs": ("source", "category", "conflict_direction", "model", "status"),
+        "batch_video_input_snapshots": ("category", "conflict_direction", "gender", "ethnicity", "model", "precision"),
+        "jobs": ("source", "category", "conflict_direction", "model", "precision", "status"),
         "job_items": ("gpu_slot", "stage", "status"),
-        "gpu_slots": ("slot", "availability", "loaded_model"),
+        "generation_attempts": ("model", "precision", "gpu_slot", "status"),
+        "gpu_slots": ("slot", "availability", "loaded_model", "loaded_precision"),
     }
     for table_name, columns in enum_columns.items():
         ddl = normalized_table_sql(database, table_name)
@@ -209,7 +210,7 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "prompt_presets": ("ck_prompt_presets_revision",),
         "prompt_examples": ("ck_prompt_examples_position",),
         "video_background_presets": ("ck_background_presets_revision",),
-        "batch_drafts": ("ck_batch_drafts_dataset_revision", "ck_batch_drafts_revision"),
+        "batch_drafts": ("ck_batch_drafts_dataset_revision", "ck_batch_drafts_revision", "ck_batch_drafts_model_precision"),
         "batch_draft_content_plans": ("ck_batch_content_position", "ck_batch_content_revision"),
         "batch_draft_prompt_presets": ("ck_batch_preset_position", "ck_batch_preset_revision"),
         "batch_draft_background_presets": ("ck_batch_background_position", "ck_batch_background_revision"),
@@ -226,10 +227,12 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
             "ck_batch_snapshots_silent_primary",
             "ck_batch_snapshots_source_audio",
             "ck_batch_snapshots_renderer_profile",
+            "ck_batch_snapshots_model_precision",
         ),
-        "jobs": ("ck_jobs_revision",),
+        "jobs": ("ck_jobs_revision", "ck_jobs_model_precision"),
         "job_items": ("ck_job_items_sequence", "ck_job_items_revision"),
-        "gpu_slots": ("ck_gpu_slots_revision",),
+        "generation_attempts": ("ck_generation_attempts_model_precision",),
+        "gpu_slots": ("ck_gpu_slots_revision", "ck_gpu_slots_loaded_model_precision"),
     }
     for table_name, names in numeric_constraints.items():
         ddl = normalized_table_sql(database, table_name)
