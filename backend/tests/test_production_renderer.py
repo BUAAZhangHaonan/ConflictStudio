@@ -329,7 +329,32 @@ def make_gateway(
     return gateway, gpu0, gpu1, resolved_controller
 
 
-def success_history(request: RenderRequest, prompt_id: str, *, subfolder: str | None = None) -> dict[str, Any]:
+def output_reference(
+    request: RenderRequest,
+    *,
+    filename: str | None = None,
+    subfolder: str | None = None,
+) -> dict[str, object]:
+    return {
+        "filename": filename or f"{request.item_sequence}_00001_.mp4",
+        "subfolder": str(request.job_id) if subfolder is None else subfolder,
+        "type": "output",
+    }
+
+
+def native_save_video_output(request: RenderRequest) -> dict[str, Any]:
+    return {
+        "images": [output_reference(request)],
+        "animated": [True],
+    }
+
+
+def success_history(
+    request: RenderRequest,
+    prompt_id: str,
+    *,
+    node_output: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     save_node_id = {
         ModelName.LTX: "save_video",
         ModelName.LTX_25: "4852",
@@ -339,15 +364,9 @@ def success_history(request: RenderRequest, prompt_id: str, *, subfolder: str | 
         prompt_id: {
             "status": {"completed": True, "status_str": "success", "messages": []},
             "outputs": {
-                save_node_id: {
-                    "videos": [
-                        {
-                            "filename": f"{request.item_sequence}_00001_.mp4",
-                            "subfolder": str(request.job_id) if subfolder is None else subfolder,
-                            "type": "output",
-                        }
-                    ]
-                }
+                save_node_id: native_save_video_output(request)
+                if node_output is None
+                else node_output
             },
         }
     }
@@ -461,16 +480,28 @@ def test_gateway_persists_va_and_vt_success(
     run(scenario())
 
 
+@pytest.mark.parametrize(
+    ("precision", "transformer"),
+    [
+        (
+            Precision.INT8,
+            "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+        ),
+        (Precision.BF16, "ltx-2.5-22b-distilled-transformer-bf16.safetensors"),
+    ],
+)
 def test_gateway_uses_ltx25_precision_workflow_save_node_and_profile_output_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    precision: Precision,
+    transformer: str,
 ) -> None:
     async def scenario() -> None:
         database, request = await create_running_request(
-            tmp_path / "ltx25-int8",
+            tmp_path / f"ltx25-{precision.value.casefold()}",
             category=Category.A_VA,
             model=ModelName.LTX_25,
-            precision=Precision.INT8,
+            precision=precision,
         )
         gateway, gpu0, _, controller = make_gateway(database)
         source = source_path(database, request)
@@ -479,24 +510,20 @@ def test_gateway_uses_ltx25_precision_workflow_save_node_and_profile_output_root
 
         prompt_id = await gateway.submit(request)
         workflow = gpu0.submit_calls[0][0]
-        assert workflow["5004:5569"]["inputs"]["unet_name"] == (
-            "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
-        )
+        assert workflow["5004:5569"]["inputs"]["unet_name"] == transformer
         assert workflow["4852"]["inputs"]["filename_prefix"].startswith(str(request.job_id))
-        assert controller.calls == [
-            (GpuSlotName.GPU0, ModelName.LTX_25, Precision.INT8, False)
-        ]
+        assert controller.calls == [(GpuSlotName.GPU0, ModelName.LTX_25, precision, False)]
 
         gpu0.history = success_history(request, prompt_id)
         result = await gateway.wait(GpuSlotName.GPU0, prompt_id)
 
         assert result.output_references[0].startswith(
-            "comfyui/gpu0/ltx25-int8/output/"
+            f"comfyui/gpu0/ltx25-{precision.value.casefold()}/output/"
         )
         with database.read_session() as session:
             attempt = session.exec(select(GenerationAttempt)).one()
         assert attempt.model is ModelName.LTX_25
-        assert attempt.precision is Precision.INT8
+        assert attempt.precision is precision
 
     install_media_tools(monkeypatch, model=ModelName.LTX_25)
     run(scenario())
@@ -580,12 +607,59 @@ def test_gateway_cancel_completion_race_persists_completed_output(
     run(scenario())
 
 
-def test_gateway_rejects_out_of_root_output_reference(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "old-videos",
+        "missing-animated",
+        "animated-not-true",
+        "multiple-images",
+        "extra-node-field",
+        "extra-output-item-field",
+        "wrong-subdirectory",
+        "wrong-filename-prefix",
+        "non-mp4",
+        "path-escape",
+    ],
+)
+def test_gateway_rejects_invalid_native_save_video_history(
+    tmp_path: Path,
+    defect: str,
+) -> None:
     async def scenario() -> None:
-        database, request = await create_running_request(tmp_path / "escape", category=Category.A_VA)
+        database, request = await create_running_request(
+            tmp_path / defect,
+            category=Category.A_VA,
+            model=ModelName.LTX_25,
+            precision=Precision.INT8,
+        )
         gateway, gpu0, _, _ = make_gateway(database)
         prompt_id = await gateway.submit(request)
-        gpu0.history = success_history(request, prompt_id, subfolder="../outside")
+        node_output = native_save_video_output(request)
+        image = node_output["images"][0]
+        if defect == "old-videos":
+            node_output = {"videos": [image]}
+        elif defect == "missing-animated":
+            node_output.pop("animated")
+        elif defect == "animated-not-true":
+            node_output["animated"] = [False]
+        elif defect == "multiple-images":
+            node_output["images"].append(dict(image))
+        elif defect == "extra-node-field":
+            node_output["preview"] = []
+        elif defect == "extra-output-item-field":
+            image["format"] = "video/mp4"
+        elif defect == "wrong-subdirectory":
+            image["subfolder"] = "other-job"
+        elif defect == "wrong-filename-prefix":
+            image["filename"] = f"wrong_{request.item_sequence}_00001_.mp4"
+        elif defect == "non-mp4":
+            image["filename"] = f"{request.item_sequence}_00001_.webm"
+        elif defect == "path-escape":
+            image["filename"] = f"../{request.item_sequence}_00001_.mp4"
+        else:
+            raise AssertionError(f"Unknown defect: {defect}")
+        gpu0.history = success_history(request, prompt_id, node_output=node_output)
 
         with pytest.raises(RendererGatewayError) as error:
             await gateway.wait(GpuSlotName.GPU0, prompt_id)

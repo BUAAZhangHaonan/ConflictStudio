@@ -590,18 +590,26 @@ class ProductionRendererGateway:
                 "ComfyUI did not return the expected video output",
             )
         node_output = outputs.get(context.save_node_id)
-        if not isinstance(node_output, dict) or set(node_output) != {"videos"}:
+        if not isinstance(node_output, dict) or set(node_output) != {"images", "animated"}:
             raise RendererGatewayError(
                 "renderer_output_invalid",
                 "ComfyUI did not return the expected video output",
             )
-        videos = node_output.get("videos")
-        if not isinstance(videos, list) or len(videos) != 1 or not isinstance(videos[0], dict):
+        images = node_output.get("images")
+        animated = node_output.get("animated")
+        if (
+            type(images) is not list
+            or len(images) != 1
+            or type(images[0]) is not dict
+            or type(animated) is not list
+            or len(animated) != 1
+            or animated[0] is not True
+        ):
             raise RendererGatewayError(
                 "renderer_output_invalid",
                 "ComfyUI did not return exactly one video output",
             )
-        return self._resolve_output(context, videos[0])
+        return self._resolve_output(context, images[0])
 
     @staticmethod
     def _history_has_failure(messages: object) -> bool:
