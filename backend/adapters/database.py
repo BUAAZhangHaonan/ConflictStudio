@@ -15,7 +15,7 @@ from backend.domain.models import GpuSlot
 from backend.domain.prompt_policy import BANNED_EMOTION_LABELS, BACKGROUND_DATABASE_FORBIDDEN_PHRASES
 
 
-SQLITE_BUSY_TIMEOUT_MS = 100
+SQLITE_BUSY_TIMEOUT_MS = 5000
 
 
 class DatabaseBusyError(RuntimeError):
@@ -49,6 +49,10 @@ class Database:
             cursor.close()
 
     def initialize(self) -> None:
+        with self.engine.connect() as connection:
+            journal_mode = connection.exec_driver_sql("PRAGMA journal_mode=WAL").scalar_one()
+        if str(journal_mode).casefold() != "wal":
+            raise RuntimeError(f"SQLite WAL mode is required, got: {journal_mode}")
         SQLModel.metadata.create_all(self.engine)
         with self.immediate_session() as session:
             self._initialize_gpu_slots(session)

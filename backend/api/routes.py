@@ -324,8 +324,25 @@ def update_sample_review(
     return samples(request).update_review(sample_id, payload)
 
 
-@router.api_route("/media/{asset_id}", methods=["GET", "HEAD"], response_class=Response)
-def get_asset_content(asset_id: int, request: Request) -> Response:
+@router.get(
+    "/media/{asset_id}",
+    response_class=Response,
+    operation_id="get_media_asset",
+)
+def get_media_asset(asset_id: int, request: Request) -> Response:
+    return _read_media_asset(asset_id, request, include_body=True)
+
+
+@router.head(
+    "/media/{asset_id}",
+    response_class=Response,
+    operation_id="head_media_asset",
+)
+def head_media_asset(asset_id: int, request: Request) -> Response:
+    return _read_media_asset(asset_id, request, include_body=False)
+
+
+def _read_media_asset(asset_id: int, request: Request, *, include_body: bool) -> Response:
     path, media_type, evidence = assets(request).content(asset_id)
     range_header = request.headers.get("range")
     if range_header is None:
@@ -362,7 +379,7 @@ def get_asset_content(asset_id: int, request: Request) -> Response:
         else None
     )
     headers = _media_headers(media_type, content_length, content_range=content_range)
-    if request.method == "HEAD":
+    if not include_body:
         return Response(status_code=response_status, headers=headers)
     return StreamingResponse(
         _stream_file(path, start, content_length),

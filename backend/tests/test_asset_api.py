@@ -3,10 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi import Request, Response
 from fastapi.testclient import TestClient
 
 from backend.adapters.config import Settings
 from backend.adapters.llm import UnconfiguredPromptModel
+from backend.api import routes
 from backend.app import create_app
 from backend.domain.models import Asset, JobItem
 from backend.tests.test_job_event_api import create_queued_job
@@ -45,6 +47,37 @@ def add_asset(client: TestClient, relative_path: str, content: bytes) -> Asset:
     return asset
 
 
+def test_media_endpoints_delegate_to_shared_reader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, str, bool, str | None]] = []
+
+    def fake_read_media_asset(
+        asset_id: int,
+        request: Request,
+        *,
+        include_body: bool,
+    ) -> Response:
+        calls.append((asset_id, request.method, include_body, request.headers.get("range")))
+        return Response(status_code=204)
+
+    monkeypatch.setattr(routes, "_read_media_asset", fake_read_media_asset)
+    client = create_client(tmp_path)
+    try:
+        get_response = client.get("/api/media/17", headers={"Range": "bytes=4-8"})
+        head_response = client.head("/api/media/17", headers={"Range": "bytes=4-8"})
+    finally:
+        client.close()
+
+    assert get_response.status_code == 204
+    assert head_response.status_code == 204
+    assert calls == [
+        (17, "GET", True, "bytes=4-8"),
+        (17, "HEAD", False, "bytes=4-8"),
+    ]
+
+
 def test_media_get_head_and_single_range_return_exact_headers(tmp_path: Path) -> None:
     content = b"0123456789abcdef"
     client = create_client(tmp_path)
@@ -53,6 +86,7 @@ def test_media_get_head_and_single_range_return_exact_headers(tmp_path: Path) ->
         response = client.get(f"/api/media/{asset.id}")
         head = client.head(f"/api/media/{asset.id}")
         partial = client.get(f"/api/media/{asset.id}", headers={"Range": "bytes=4-8"})
+        partial_head = client.head(f"/api/media/{asset.id}", headers={"Range": "bytes=4-8"})
     finally:
         client.close()
 
@@ -75,6 +109,32 @@ def test_media_get_head_and_single_range_return_exact_headers(tmp_path: Path) ->
     assert partial.headers["accept-ranges"] == "bytes"
     assert partial.headers["content-range"] == f"bytes 4-8/{len(content)}"
     assert "etag" not in partial.headers
+    assert partial_head.status_code == 206
+    assert partial_head.content == b""
+    assert partial_head.headers["content-length"] == "5"
+    assert partial_head.headers["content-type"] == "video/mp4"
+    assert partial_head.headers["accept-ranges"] == "bytes"
+    assert partial_head.headers["content-range"] == f"bytes 4-8/{len(content)}"
+    assert "etag" not in partial_head.headers
+
+
+def test_media_openapi_operations_have_stable_unique_ids(tmp_path: Path) -> None:
+    client = create_client(tmp_path)
+    try:
+        schema = client.app.openapi()
+    finally:
+        client.close()
+
+    media_operations = schema["paths"]["/api/media/{asset_id}"]
+    assert media_operations["get"]["operationId"] == "get_media_asset"
+    assert media_operations["head"]["operationId"] == "head_media_asset"
+    operation_ids = [
+        operation["operationId"]
+        for path in schema["paths"].values()
+        for method, operation in path.items()
+        if method in {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+    ]
+    assert len(operation_ids) == len(set(operation_ids))
 
 
 @pytest.mark.parametrize(
@@ -94,15 +154,18 @@ def test_media_rejects_malformed_multiple_and_unsatisfiable_ranges(
     asset = add_asset(client, "media/jobs/1/items/1/attempts/1/source.mp4", b"01234")
     try:
         response = client.get(f"/api/media/{asset.id}", headers={"Range": range_header})
+        head = client.head(f"/api/media/{asset.id}", headers={"Range": range_header})
     finally:
         client.close()
 
-    assert response.status_code == 416
-    assert response.headers["accept-ranges"] == "bytes"
-    assert response.headers["content-length"] == "0"
-    assert response.headers["content-type"] == "video/mp4"
-    assert "etag" not in response.headers
-    assert response.headers["content-range"] == expected_content_range
+    for result in (response, head):
+        assert result.status_code == 416
+        assert result.content == b""
+        assert result.headers["accept-ranges"] == "bytes"
+        assert result.headers["content-length"] == "0"
+        assert result.headers["content-type"] == "video/mp4"
+        assert "etag" not in result.headers
+        assert result.headers["content-range"] == expected_content_range
 
 
 def test_media_rejects_root_escape_and_missing_records(tmp_path: Path) -> None:

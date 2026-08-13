@@ -307,97 +307,130 @@ class GpuSlotService:
         expected_revisions: dict[GpuSlotName, int] | None = None,
     ) -> dict[GpuSlotName, GpuSlotSnapshot]:
         timestamp = utc_now()
-        snapshots: dict[GpuSlotName, GpuSlotSnapshot] = {}
+        with self.database.read_session() as session:
+            snapshots, state_changed = self._reconcile_session(
+                session,
+                inspections,
+                timestamp,
+                expected_revisions=expected_revisions,
+                persist=False,
+            )
+        if not state_changed:
+            return snapshots
+
         with self.database.immediate_session() as session:
-            active_jobs, conflicting_slots = self._active_jobs(session, set(inspections))
-            for slot, inspection in inspections.items():
-                row = session.get(GpuSlot, slot)
-                if row is None:
-                    raise not_found("gpuSlot", slot.value)
-                if expected_revisions is not None:
-                    expected = expected_revisions[slot]
-                    if row.revision != expected:
-                        raise revision_conflict("gpuSlot", slot.value, expected, row.revision)
-
-                self._validate_inspection(inspection, slot)
-                live_availability = inspection.availability
-                loaded_model = inspection.loaded_model
-                loaded_precision = inspection.loaded_precision
-                if loaded_model is None and loaded_precision is not None:
-                    raise ServiceError(
-                        503,
-                        "invalid_gpu_inspection",
-                        "The live GPU inspection returned precision without a loaded model",
-                        {"slot": slot.value},
-                    )
-                if loaded_model is not None and not validate_model_precision(loaded_model, loaded_precision):
-                    raise ServiceError(
-                        503,
-                        "invalid_gpu_inspection",
-                        "The live GPU inspection returned an invalid model and precision pair",
-                        {"slot": slot.value},
-                    )
-
-                active_job = active_jobs.get(slot)
-                status_reason = inspection.reason
-                if slot in conflicting_slots:
-                    availability = GpuAvailability.UNKNOWN
-                    active_job_id = None
-                    status_reason = "Multiple active jobs claim this GPU slot"
-                elif active_job is not None:
-                    active_job_id, job_status = active_job
-                    availability = (
-                        GpuAvailability.RESERVED
-                        if job_status is JobStatus.QUEUED
-                        else GpuAvailability.BUSY
-                    )
-                else:
-                    active_job_id = None
-                    availability = live_availability
-
-                persisted_active_job_id = (
-                    active_job_id
-                    if availability in {GpuAvailability.RESERVED, GpuAvailability.BUSY}
-                    else None
-                )
-                current = (
-                    row.availability,
-                    row.loaded_model,
-                    row.loaded_precision,
-                    row.active_job_id,
-                )
-                reconciled = (
-                    availability,
-                    loaded_model,
-                    loaded_precision,
-                    persisted_active_job_id,
-                )
-                if current != reconciled:
-                    row.availability = availability
-                    row.loaded_model = loaded_model
-                    row.loaded_precision = loaded_precision
-                    row.active_job_id = persisted_active_job_id
-                    row.revision += 1
-                row.checked_at = timestamp
-                session.flush()
-
-                snapshots[slot] = GpuSlotSnapshot(
-                    slot=slot,
-                    availability=availability,
-                    loaded_model=loaded_model,
-                    loaded_precision=loaded_precision,
-                    service_status=inspection.service_status,
-                    gpu_name=inspection.gpu_name,
-                    memory_used_mib=inspection.memory_used_mib,
-                    memory_total_mib=inspection.memory_total_mib,
-                    active_job_id=active_job_id,
-                    revision=row.revision,
-                    checked_at=timestamp,
-                    owned_unit=inspection.owned_unit,
-                    live_availability=live_availability,
-                    status_reason=status_reason,
-                )
+            snapshots, _ = self._reconcile_session(
+                session,
+                inspections,
+                timestamp,
+                expected_revisions=expected_revisions,
+                persist=True,
+            )
         return snapshots
+
+    def _reconcile_session(
+        self,
+        session: Session,
+        inspections: dict[GpuSlotName, RendererSlotState],
+        timestamp: str,
+        *,
+        expected_revisions: dict[GpuSlotName, int] | None,
+        persist: bool,
+    ) -> tuple[dict[GpuSlotName, GpuSlotSnapshot], bool]:
+        snapshots: dict[GpuSlotName, GpuSlotSnapshot] = {}
+        state_changed = False
+        active_jobs, conflicting_slots = self._active_jobs(session, set(inspections))
+        for slot, inspection in inspections.items():
+            row = session.get(GpuSlot, slot)
+            if row is None:
+                raise not_found("gpuSlot", slot.value)
+            if expected_revisions is not None:
+                expected = expected_revisions[slot]
+                if row.revision != expected:
+                    raise revision_conflict("gpuSlot", slot.value, expected, row.revision)
+
+            self._validate_inspection(inspection, slot)
+            live_availability = inspection.availability
+            loaded_model = inspection.loaded_model
+            loaded_precision = inspection.loaded_precision
+            if loaded_model is None and loaded_precision is not None:
+                raise ServiceError(
+                    503,
+                    "invalid_gpu_inspection",
+                    "The live GPU inspection returned precision without a loaded model",
+                    {"slot": slot.value},
+                )
+            if loaded_model is not None and not validate_model_precision(loaded_model, loaded_precision):
+                raise ServiceError(
+                    503,
+                    "invalid_gpu_inspection",
+                    "The live GPU inspection returned an invalid model and precision pair",
+                    {"slot": slot.value},
+                )
+
+            active_job = active_jobs.get(slot)
+            status_reason = inspection.reason
+            if slot in conflicting_slots:
+                availability = GpuAvailability.UNKNOWN
+                active_job_id = None
+                status_reason = "Multiple active jobs claim this GPU slot"
+            elif active_job is not None:
+                active_job_id, job_status = active_job
+                availability = (
+                    GpuAvailability.RESERVED
+                    if job_status is JobStatus.QUEUED
+                    else GpuAvailability.BUSY
+                )
+            else:
+                active_job_id = None
+                availability = live_availability
+
+            persisted_active_job_id = (
+                active_job_id
+                if availability in {GpuAvailability.RESERVED, GpuAvailability.BUSY}
+                else None
+            )
+            current = (
+                row.availability,
+                row.loaded_model,
+                row.loaded_precision,
+                row.active_job_id,
+            )
+            reconciled = (
+                availability,
+                loaded_model,
+                loaded_precision,
+                persisted_active_job_id,
+            )
+            row_changed = current != reconciled
+            state_changed = state_changed or row_changed
+            if persist and row_changed:
+                row.availability = availability
+                row.loaded_model = loaded_model
+                row.loaded_precision = loaded_precision
+                row.active_job_id = persisted_active_job_id
+                row.revision += 1
+                row.checked_at = timestamp
+
+            snapshots[slot] = GpuSlotSnapshot(
+                slot=slot,
+                availability=availability,
+                loaded_model=loaded_model,
+                loaded_precision=loaded_precision,
+                service_status=inspection.service_status,
+                gpu_name=inspection.gpu_name,
+                memory_used_mib=inspection.memory_used_mib,
+                memory_total_mib=inspection.memory_total_mib,
+                active_job_id=active_job_id,
+                revision=row.revision,
+                checked_at=timestamp,
+                owned_unit=inspection.owned_unit,
+                live_availability=live_availability,
+                status_reason=status_reason,
+            )
+        if persist and state_changed:
+            session.flush()
+        return snapshots, state_changed
 
     @staticmethod
     def _active_jobs(

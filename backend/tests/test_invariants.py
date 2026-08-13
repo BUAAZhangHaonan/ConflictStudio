@@ -281,6 +281,36 @@ def test_write_lock_returns_stable_409_and_releases_connection(tmp_path: Path) -
         assert retried.status_code == 201
 
 
+def test_prompt_preset_reads_continue_during_sqlite_write(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        created = client.post(
+            "/api/prompt-presets",
+            json={
+                "name": "Natural shot",
+                "category": "A-VA",
+                "styleGuidance": "Use a static medium shot.",
+                "finalRenderNegativeConstraints": "subtitles, captions, camera shake",
+            },
+        )
+        assert created.status_code == 201
+
+        database = client.app.state.database
+        with database.engine.connect() as connection:
+            assert connection.exec_driver_sql("PRAGMA journal_mode").scalar_one() == "wal"
+
+        writer = sqlite3.connect(database.database_path, timeout=0, isolation_level=None)
+        try:
+            writer.execute("BEGIN EXCLUSIVE")
+            writer.execute("UPDATE gpu_slots SET checked_at = checked_at WHERE slot = 'GPU0'")
+            response = client.get("/api/prompt-presets")
+        finally:
+            writer.rollback()
+            writer.close()
+
+        assert response.status_code == 200
+        assert response.json() == [created.json()]
+
+
 def test_expected_revision_only_updates_return_422_without_incrementing_revision(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
         records = create_catalog_records(client)
