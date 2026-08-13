@@ -9,14 +9,14 @@ import httpx
 from backend.adapters.gpu import (
     PORTS,
     UNITS_BY_NAME,
-    UNITS_BY_SLOT_MODEL,
+    UNITS_BY_SLOT_PROFILE,
     CommandRunner,
     SlotInspection,
     SlotInspector,
     run_command,
 )
 from backend.adapters.renderer import RendererGatewayError
-from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName
+from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName, Precision
 
 
 class ModelServiceController:
@@ -44,10 +44,15 @@ class ModelServiceController:
             model: frozenset(node_types)
             for model, node_types in required_node_types.items()
         }
-        if set(self._required_node_types) != set(ModelName) or any(
-            not node_types
-            or any(type(node_type) is not str or not node_type for node_type in node_types)
-            for node_types in self._required_node_types.values()
+        controlled_models = {definition.model for definition in UNITS_BY_NAME.values()}
+        if (
+            not self._required_node_types
+            or not set(self._required_node_types) <= controlled_models
+            or any(
+                not node_types
+                or any(type(node_type) is not str or not node_type for node_type in node_types)
+                for node_types in self._required_node_types.values()
+            )
         ):
             raise ValueError("Every renderer model requires a non-empty node class set")
         if set(self._slot_urls) != set(GpuSlotName) or any(
@@ -62,17 +67,34 @@ class ModelServiceController:
         slot: GpuSlotName,
         model: ModelName,
         *,
+        precision: Precision | None = None,
         confirm_switch: bool,
     ) -> SlotInspection:
-        target = UNITS_BY_SLOT_MODEL[(slot, model)]
+        target = UNITS_BY_SLOT_PROFILE.get((slot, model, precision))
+        if target is None:
+            raise RendererGatewayError(
+                "model_profile_not_allowlisted",
+                "The requested model and precision profile is not allowlisted for this GPU",
+            )
         inspection = await self._inspector.inspect(slot)
         self._require_available(inspection)
 
-        if inspection.loaded_model is model:
+        if inspection.loaded_model is model and inspection.loaded_precision is precision:
             if inspection.owned_unit != target.name:
                 raise RendererGatewayError("model_service_untrusted", "The loaded model unit is not owned")
             await self._wait_ready(slot, model)
-            return inspection
+            ready = await self._inspector.inspect(slot)
+            self._require_available(ready)
+            if (
+                ready.loaded_model is not model
+                or ready.loaded_precision is not precision
+                or ready.owned_unit != target.name
+            ):
+                raise RendererGatewayError(
+                    "model_service_changed",
+                    "The model service changed while readiness was being checked",
+                )
+            return ready
 
         if inspection.loaded_model is not None:
             if not confirm_switch:
@@ -81,6 +103,18 @@ class ModelServiceController:
                     "Explicit confirmation is required to switch the model on this GPU",
                 )
             await self._stop_owned_model(slot, inspection)
+
+        prestart = await self._inspector.inspect(slot)
+        self._require_available(prestart)
+        if (
+            prestart.loaded_model is not None
+            or prestart.loaded_precision is not None
+            or prestart.owned_unit is not None
+        ):
+            raise RendererGatewayError(
+                "model_service_changed",
+                "The GPU model service changed before the requested profile could start",
+            )
 
         result = await self._run(("systemctl", "--user", "start", target.name))
         if result.returncode != 0:
@@ -96,7 +130,51 @@ class ModelServiceController:
                 "model_service_untrusted",
                 "The started model service does not match the requested allowlisted unit",
             )
+        if ready.loaded_precision is not precision:
+            raise RendererGatewayError(
+                "model_service_untrusted",
+                "The started model service precision does not match the requested profile",
+            )
         return ready
+
+    async def release_model(
+        self,
+        slot: GpuSlotName,
+        *,
+        expected_model: ModelName,
+        expected_precision: Precision | None,
+        expected_unit: str,
+    ) -> SlotInspection:
+        expected_definition = UNITS_BY_NAME.get(expected_unit)
+        if (
+            expected_definition is None
+            or expected_definition.slot is not slot
+            or expected_definition.model is not expected_model
+            or expected_definition.precision is not expected_precision
+        ):
+            raise RendererGatewayError(
+                "model_service_untrusted",
+                "The expected model service identity is not allowlisted for this GPU",
+            )
+        inspection = await self._inspector.inspect(slot)
+        self._require_available(inspection)
+        if inspection.loaded_model is None:
+            raise RendererGatewayError("model_not_loaded", "No controlled model is loaded on this GPU")
+        if (
+            inspection.loaded_model is not expected_model
+            or inspection.loaded_precision is not expected_precision
+            or inspection.owned_unit != expected_unit
+        ):
+            raise RendererGatewayError(
+                "model_service_changed",
+                "The model service identity changed before it could be stopped",
+            )
+        await self._stop_owned_model(slot, inspection)
+        released = await self._inspector.inspect(slot)
+        self._require_available(released)
+        if released.loaded_model is not None or released.owned_unit is not None:
+            raise RendererGatewayError("model_service_changed", "The model service is still loaded")
+        return released
 
     async def _stop_owned_model(self, slot: GpuSlotName, previous: SlotInspection) -> None:
         current = await self._inspector.inspect(slot)
@@ -106,6 +184,7 @@ class ModelServiceController:
             unit_name is None
             or unit_name != previous.owned_unit
             or current.loaded_model is not previous.loaded_model
+            or current.loaded_precision is not previous.loaded_precision
         ):
             raise RendererGatewayError(
                 "model_service_changed",

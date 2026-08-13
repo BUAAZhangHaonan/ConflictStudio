@@ -1,0 +1,19 @@
+[Unit]
+Description=ConflictStudio LTX-2.5 INT8 model service on GPU0
+After=network.target
+Conflicts=conflictstudio-ltx25-bf16-gpu0.service conflictstudio-ltx-gpu0.service conflictstudio-h3-gpu0.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/team/zhanghaonan/LTX-2.5-ComfyUI
+Environment=CUDA_VISIBLE_DEVICES=0
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/home/team/zhanghaonan/LTX-2.5-ComfyUI/.venv/lib/python3.13/site-packages
+Environment=XDG_CACHE_HOME=/home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/cache
+Environment=CONFLICTSTUDIO_LTX25_PRECISION=INT8
+ReadOnlyPaths=/home/team/zhanghaonan/LTX-2.5-ComfyUI
+ExecStartPre=/usr/bin/mkdir -p /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/input /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/output /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/temp /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/user /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/cache /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/database /home/team/zhanghaonan/TAFFC/ConflictStudio-data/logs
+ExecStart=/home/team/zhanghaonan/LTX-2.5-ComfyUI/.uv-python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13 /home/team/zhanghaonan/LTX-2.5-ComfyUI/main.py --listen 127.0.0.1 --port 8188 --disable-auto-launch --input-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/input --output-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/output --temp-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/temp --user-directory /home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/user --database-url sqlite:////home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8/database/comfyui.sqlite3
+StandardOutput=append:/home/team/zhanghaonan/TAFFC/ConflictStudio-data/logs/conflictstudio-ltx25-int8-gpu0.log
+StandardError=append:/home/team/zhanghaonan/TAFFC/ConflictStudio-data/logs/conflictstudio-ltx25-int8-gpu0.log
+Restart=no

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-from backend.domain.enums import Category, GpuAvailability, GpuSlotName, ModelName
+from backend.domain.enums import Category, GpuAvailability, GpuSlotName, ModelName, Precision
 
 
 class RendererGatewayError(Exception):
@@ -31,6 +31,14 @@ class RendererSlotState:
     slot: GpuSlotName
     availability: GpuAvailability
     loaded_model: ModelName | None
+    owned_unit: str | None = None
+    reason: str | None = None
+    installation_status: RendererInstallationStatus = RendererInstallationStatus.UNKNOWN
+    loaded_precision: Precision | None = None
+    service_status: str = "unknown"
+    gpu_name: str | None = None
+    memory_used_mib: int | None = None
+    memory_total_mib: int | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +61,7 @@ class RenderRequest:
     vt_text: str | None
     source_has_audio: bool
     derive_silent_primary: bool
+    precision: Precision | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +83,15 @@ class RendererGateway(Protocol):
 
     async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome: ...
 
+    async def release(
+        self,
+        slot: GpuSlotName,
+        *,
+        expected_model: ModelName,
+        expected_precision: Precision | None,
+        expected_unit: str,
+    ) -> RendererSlotState: ...
+
     async def close(self) -> None: ...
 
 
@@ -86,6 +104,8 @@ class UnconfiguredRendererGateway:
             slot=slot,
             availability=GpuAvailability.UNKNOWN,
             loaded_model=None,
+            installation_status=RendererInstallationStatus.NOT_CONFIGURED,
+            service_status="notConfigured",
         )
 
     async def installation_status(self) -> RendererInstallationStatus:
@@ -104,6 +124,19 @@ class UnconfiguredRendererGateway:
         )
 
     async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome:
+        raise RendererGatewayError(
+            "renderer_not_configured",
+            "Rendering requires a configured renderer gateway",
+        )
+
+    async def release(
+        self,
+        slot: GpuSlotName,
+        *,
+        expected_model: ModelName,
+        expected_precision: Precision | None,
+        expected_unit: str,
+    ) -> RendererSlotState:
         raise RendererGatewayError(
             "renderer_not_configured",
             "Rendering requires a configured renderer gateway",
