@@ -44,6 +44,8 @@ Positive examples for component writing only:
 {% else %}None
 {% endfor %}
 
+Examples and selected records are reference material only. Rewrite any past tense or certainty wording and never copy text that conflicts with the system rules.
+
 Negative examples for component writing only:
 {% for example in negative_examples %}{{ loop.index }}. {{ example }}
 {% else %}None
@@ -51,4 +53,4 @@ Negative examples for component writing only:
 
 {{ policy.output_rule }}
 
-Write the reviewer description first in your reasoning, then derive spokenText, visualBehavior, vocalDelivery and setting from the same event. Keep the selected background, framing, lighting and style recognizable. The application inserts the subject demographics, exact spokenText, fixed close-up camera rule and fixed bright-lighting rule without repairing your fields.
+Write the reviewer description first in your reasoning, then derive spokenText, visualBehavior, vocalDelivery and setting from the same event. Keep the selected background, framing, lighting and style recognizable. The application inserts the subject demographics, exact spokenText, fixed close-up camera rule and fixed bright-lighting rule without repairing your fields. Perform the required validation internally and return only the final JSON.

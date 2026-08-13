@@ -14,8 +14,14 @@ Follow these rules:
 11. Follow this protocol rule: {{ policy.protocol_rule }}
 12. Follow this relation rule: {{ policy.relation_rule }}
 13. Follow this direction rule: {{ direction_rule }}
+14. The application assembles positivePrompt in this exact order: the fixed subject appearance sentence, visualBehavior, the fixed speech sentence containing spokenText and vocalDelivery, environmentalSound or the fixed silent-audio sentence, setting, the fixed camera sentence, cameraSupplement, the fixed lighting sentence, lightingSupplement.
+15. Keep the assembled positivePrompt between 100 and 130 English words, excluding the quoted Mandarin spokenText. Keep every variable component concise enough to meet this target.
+16. Use present tense only in every English component. Do not copy past-tense wording from the selected records or examples.
+17. Never use these certainty words in any English component: {{ banned_certainty_modifiers | join(", ") }}.
+18. visualBehavior must name the person and include at least one concrete present-tense action involving a visible body part or object. Valid form: The person grips a ceramic cup with the right hand and lowers both shoulders.
+19. Before returning, internally assemble positivePrompt in the stated order and check its English word count, present tense, certainty words and concrete body action. If any check fails, rewrite the components internally. Return only the final JSON object.
 
 Return exactly one JSON object with these keys and no additional keys:
 spokenText, visualBehavior, vocalDelivery, environmentalSound, setting, cameraSupplement, lightingSupplement, trueEmotionDescription
 
-Return strict JSON only. Do not return positivePrompt. Do not wrap the object in a code fence or add prose.
+Return strict JSON only after the internal self-check. Do not return positivePrompt. Do not wrap the object in a code fence or add prose.

@@ -645,8 +645,12 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
         PromptPresetCreate(
             name="冲突预设",
             category=Category.C_VA,
-            positiveExamples=["Good writing example"],
-            negativeExamples=["Bad writing example"],
+            positiveExamples=[
+                "The person grips a ceramic cup with the right hand and lowers both shoulders."
+            ],
+            negativeExamples=[
+                "The person sits still with both hands on the table."
+            ],
             finalRenderNegativeConstraints="subtitles, exaggerated movement",
         )
     )
@@ -712,8 +716,13 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     assert calls[0]["model"] == "deepseek-v4-flash"
     assert calls[0]["thinking"] == {"type": "disabled"}
     assert calls[0]["response_format"] == {"type": "json_object"}
-    assert "Good writing example" in prepared.user_input
-    assert "Bad writing example" not in result.final_positive_prompt
+    assert "The person grips a ceramic cup with the right hand and lowers both shoulders." in prepared.user_input
+    assert "The person sits still with both hands on the table." not in result.final_positive_prompt
+    assert "between 100 and 130 English words" in prepared.system_input
+    assert "Use present tense only" in prepared.system_input
+    assert "clearly, obviously, definitely, unmistakably, undeniably, evidently" in prepared.system_input
+    assert "concrete present-tense action involving a visible body part or object" in prepared.system_input
+    assert "internally assemble positivePrompt" in prepared.system_input
     assert result.final_positive_prompt.startswith("A 45-year-old East Asian female")
     assert '"结果出来了，没什么需要担心的。"' in result.final_positive_prompt
     assert "front-facing close-up head-and-shoulders" in result.final_positive_prompt

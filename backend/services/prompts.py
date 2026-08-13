@@ -12,6 +12,7 @@ from backend.adapters.llm import PromptAdapterError, PromptModel
 from backend.domain.enums import Category, ContentMode, Ethnicity, Gender
 from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
 from backend.domain.prompt_policy import (
+    BANNED_CERTAINTY_MODIFIERS,
     POLICY_VERSION,
     POLICIES,
     PromptPolicyViolation,
@@ -288,6 +289,7 @@ class PromptService:
         system_input = self.system_template.render(
             policy=policy,
             direction_rule=direction_rule(context.content.category, context.content.conflict_direction),
+            banned_certainty_modifiers=BANNED_CERTAINTY_MODIFIERS,
         ).strip()
         user_input = self.user_template.render(
             policy=policy,
