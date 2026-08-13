@@ -147,7 +147,7 @@ class MediaStore:
         if len(set(usable_frame_values)) != 1:
             raise MediaError("Video frame counts are inconsistent")
         frame_count = usable_frame_values[0]
-        expected_frames = 121 if model is ModelName.LTX else 124
+        expected_frames = 121 if model in {ModelName.LTX, ModelName.LTX_25} else 124
         if frame_count != expected_frames:
             raise MediaError("Video frame count does not match the model")
         duration_value = format_info.get("duration")

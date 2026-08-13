@@ -295,3 +295,25 @@ def test_asset_schema_has_checks_foreign_keys_and_immutability(tmp_path: Path) -
         assert {("job_items", "job_item_id"), ("assets", "source_asset_id"), ("assets", "primary_asset_id")} <= {(row[2], row[3]) for row in foreign_keys}
     finally:
         connection.close()
+
+
+def test_probe_applies_ltx_frame_contract_to_ltx25(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MediaStore(tmp_path)
+    media = tmp_path / "ltx25.mp4"
+    media.write_bytes(b"video")
+
+    def fake_run(args: list[str], **_: object) -> CompletedProcess[str]:
+        return CompletedProcess(
+            args,
+            0,
+            compact_probe(frames="121", duration="5.0416667", audio=True),
+            "",
+        )
+
+    monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
+    evidence = store.probe(media, require_audio=True, model=ModelName.LTX_25)
+    assert evidence.frame_count == 121
+    assert evidence.has_audio is True

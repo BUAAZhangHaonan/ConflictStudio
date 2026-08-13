@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from backend.domain.enums import Precision
+
 
 MAX_SEED = (1 << 31) - 1
 MAX_JOB_ID = (1 << 63) - 1
@@ -40,6 +42,50 @@ H3_REQUIRED_CLASS_TYPES = {
 
 LTX_AUDIO_DECODER = "LTXVAudioVAEDecode"
 H3_AUDIO_DECODER = "VAEDecodeAudio"
+
+LTX25_WIDTH = 1344
+LTX25_HEIGHT = 768
+LTX25_FRAME_COUNT = 121
+LTX25_FPS = 24
+LTX25_SIGMAS = "1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0"
+LTX25_PROFILE_MODELS = {
+    Precision.BF16: (
+        "ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+        "gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+    ),
+    Precision.INT8: (
+        "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+        "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    ),
+}
+LTX25_NODE_TYPES = {
+    "4852": "SaveVideo",
+    "5004:5569": "UNETLoader",
+    "5004:5570": "VAELoader",
+    "5004:5571": "VAELoader",
+    "5004:5572": "CLIPLoader",
+    "5014:1241": "LTXVConditioning",
+    "5014:2483": "CLIPTextEncode",
+    "5014:2612": "CLIPTextEncode",
+    "5014:4988": "PrimitiveInt",
+    "5014:5017": "PrimitiveFloat",
+    "5508": "PrimitiveStringMultiline",
+    "5509": "PrimitiveStringMultiline",
+    "5511": "PrimitiveFloat",
+    "5514:3059": "EmptyLTXVLatentVideo",
+    "5514:3980": "LTXVEmptyLatentAudio",
+    "5514:4528": "LTXVConcatAVLatent",
+    "5514:5000": "LTXFloatToInt",
+    "5516:4828": "CFGGuider",
+    "5516:4829": "SamplerCustomAdvanced",
+    "5516:4831": "KSamplerSelect",
+    "5516:4832": "RandomNoise",
+    "5516:4845": "LTXVSeparateAVLatent",
+    "5516:4984": "ManualSigmas",
+    "5518:4848": "LTXVAudioVAEDecode",
+    "5518:4849": "CreateVideo",
+    "5518:5538": "VAEDecodeTiled",
+}
 
 
 class WorkflowTemplateError(Exception):
@@ -77,6 +123,54 @@ class Ltx23WorkflowBuilder:
         workflow["conditioning"]["inputs"]["frame_rate"] = 24.0
         workflow["create_video"]["inputs"]["fps"] = 24.0
         workflow["save_video"]["inputs"]["filename_prefix"] = prefix
+        return workflow
+
+
+class Ltx25WorkflowBuilder:
+    def __init__(self, bf16_template_path: Path, int8_template_path: Path) -> None:
+        self._templates = {
+            Precision.BF16: _load_ltx25_template(bf16_template_path, Precision.BF16),
+            Precision.INT8: _load_ltx25_template(int8_template_path, Precision.INT8),
+        }
+        normalized = {
+            precision: _normalize_ltx25_profile(template, precision)
+            for precision, template in self._templates.items()
+        }
+        if normalized[Precision.BF16] != normalized[Precision.INT8]:
+            raise WorkflowTemplateError(
+                "workflow_template_invalid",
+                "The configured LTX-2.5 workflow templates are not equivalent",
+            )
+        self.required_class_types = _class_types(self._templates[Precision.BF16])
+
+    def build(
+        self,
+        *,
+        precision: Precision,
+        final_positive_prompt: str,
+        final_negative_prompt: str,
+        seed: int,
+        job_id: int,
+        sequence: int,
+    ) -> dict[str, dict[str, Any]]:
+        if precision not in self._templates:
+            raise ValueError("LTX-2.5 requires BF16 or INT8 precision")
+        _require_prompt(final_positive_prompt, "final_positive_prompt")
+        _require_prompt(final_negative_prompt, "final_negative_prompt")
+        _require_integer(seed, "seed", minimum=0, maximum=MAX_SEED)
+
+        workflow = copy.deepcopy(self._templates[precision])
+        workflow["5508"]["inputs"]["value"] = final_positive_prompt
+        workflow["5509"]["inputs"]["value"] = final_negative_prompt
+        workflow["5516:4832"]["inputs"]["noise_seed"] = seed
+        workflow["5014:4988"]["inputs"]["value"] = LTX25_FRAME_COUNT
+        workflow["5511"]["inputs"]["value"] = LTX25_FPS
+        workflow["5514:3059"]["inputs"].update(
+            width=LTX25_WIDTH,
+            height=LTX25_HEIGHT,
+            length=["5014:4988", 0],
+        )
+        workflow["4852"]["inputs"]["filename_prefix"] = _output_prefix(job_id, sequence)
         return workflow
 
 
@@ -140,6 +234,71 @@ def _load_ltx23_template(path: Path) -> dict[str, dict[str, Any]]:
         workflow_name="LTX",
     )
     return workflow
+
+
+def _load_ltx25_template(path: Path, precision: Precision) -> dict[str, dict[str, Any]]:
+    document = _read_json(path)
+    if not isinstance(document, dict):
+        raise _ltx25_template_error()
+    workflow = {
+        node_id: node
+        for node_id, node in document.items()
+        if isinstance(node, dict) and "class_type" in node
+    }
+    if set(workflow) != set(LTX25_NODE_TYPES):
+        raise _ltx25_template_error()
+    _validate_nodes(workflow, LTX25_NODE_TYPES, "LTX-2.5")
+    _validate_workflow(workflow, "LTX-2.5")
+    _validate_ltx25_contract(workflow, precision)
+    return workflow
+
+
+def _validate_ltx25_contract(workflow: dict[str, dict[str, Any]], precision: Precision) -> None:
+    inputs = {node_id: node["inputs"] for node_id, node in workflow.items()}
+    contract = (
+        inputs["5004:5569"] == {"unet_name": LTX25_PROFILE_MODELS[precision][0], "weight_dtype": "default"}
+        and inputs["5004:5570"] == {"vae_name": "ltx-2.5-audio-vae-bf16.safetensors"}
+        and inputs["5004:5571"] == {"vae_name": "ltx-2.5-video-vae-bf16.safetensors"}
+        and inputs["5004:5572"] == {"clip_name": LTX25_PROFILE_MODELS[precision][1], "device": "default", "type": "ltxv"}
+        and inputs["5014:4988"] == {"value": LTX25_FRAME_COUNT}
+        and inputs["5511"] == {"value": LTX25_FPS}
+        and inputs["5514:3059"] == {"batch_size": 1, "height": LTX25_HEIGHT, "length": ["5014:4988", 0], "width": LTX25_WIDTH}
+        and inputs["5516:4828"]["cfg"] == 1
+        and inputs["5516:4831"] == {"sampler_name": "euler_ancestral"}
+        and inputs["5516:4984"] == {"sigmas": LTX25_SIGMAS}
+        and inputs["5518:4849"]["audio"] == ["5518:4848", 0]
+    )
+    if not contract:
+        raise _ltx25_template_error()
+    _validate_audio_output(
+        workflow,
+        create_video_node_id="5518:4849",
+        decoder_class_type=LTX_AUDIO_DECODER,
+        workflow_name="LTX-2.5",
+    )
+
+
+def _normalize_ltx25_profile(
+    workflow: dict[str, dict[str, Any]],
+    precision: Precision,
+) -> dict[str, dict[str, Any]]:
+    normalized = copy.deepcopy(workflow)
+    transformer, encoder = LTX25_PROFILE_MODELS[precision]
+    if (
+        normalized["5004:5569"]["inputs"].get("unet_name") != transformer
+        or normalized["5004:5572"]["inputs"].get("clip_name") != encoder
+    ):
+        raise _ltx25_template_error()
+    normalized["5004:5569"]["inputs"]["unet_name"] = "<LTX25_TRANSFORMER>"
+    normalized["5004:5572"]["inputs"]["clip_name"] = "<LTX25_TEXT_ENCODER>"
+    return normalized
+
+
+def _ltx25_template_error() -> WorkflowTemplateError:
+    return WorkflowTemplateError(
+        "workflow_template_invalid",
+        "The configured LTX-2.5 workflow template is not valid",
+    )
 
 
 def _load_h3_template(path: Path) -> dict[str, dict[str, Any]]:

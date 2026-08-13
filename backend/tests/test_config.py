@@ -9,6 +9,8 @@ from backend.adapters.config import (
     GPU_URL_VALUES,
     H3_WORKFLOW_PATH_VALUE,
     LTX23_WORKFLOW_PATH_VALUE,
+    LTX25_BF16_WORKFLOW_PATH_VALUE,
+    LTX25_INT8_WORKFLOW_PATH_VALUE,
     RendererSettings,
     Settings,
 )
@@ -39,7 +41,7 @@ def test_environment_requires_the_shared_data_root_without_app_suffix(
         Settings.from_environment()
 
 
-def test_environment_accepts_only_the_two_exact_workflow_files(
+def test_environment_accepts_exact_external_and_bundled_workflow_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     set_renderer_environment(monkeypatch)
@@ -49,6 +51,8 @@ def test_environment_accepts_only_the_two_exact_workflow_files(
     assert settings.renderer is not None
     assert settings.renderer.ltx23_template.as_posix() == LTX23_WORKFLOW_PATH_VALUE
     assert settings.renderer.h3_template.as_posix() == H3_WORKFLOW_PATH_VALUE
+    assert settings.renderer.ltx25_bf16_template == LTX25_BF16_WORKFLOW_PATH_VALUE
+    assert settings.renderer.ltx25_int8_template == LTX25_INT8_WORKFLOW_PATH_VALUE
 
     monkeypatch.setenv(
         "CONFLICTSTUDIO_LTX23_WORKFLOW_PATH",
@@ -63,6 +67,20 @@ def test_renderer_settings_reject_arbitrary_external_workflow_paths() -> None:
         RendererSettings(
             ltx23_template=Path("/tmp/ltx.json"),
             h3_template=Path(H3_WORKFLOW_PATH_VALUE),
+            ltx25_bf16_template=LTX25_BF16_WORKFLOW_PATH_VALUE,
+            ltx25_int8_template=LTX25_INT8_WORKFLOW_PATH_VALUE,
+            slot_urls=tuple(GPU_URL_VALUES.items()),
+            unit_definitions=UNIT_DEFINITIONS,
+        )
+
+
+def test_renderer_settings_reject_arbitrary_ltx25_workflow_paths() -> None:
+    with pytest.raises(ValueError, match="bundled resource"):
+        RendererSettings(
+            ltx23_template=Path(LTX23_WORKFLOW_PATH_VALUE),
+            h3_template=Path(H3_WORKFLOW_PATH_VALUE),
+            ltx25_bf16_template=Path("/tmp/ltx25-bf16.json"),
+            ltx25_int8_template=LTX25_INT8_WORKFLOW_PATH_VALUE,
             slot_urls=tuple(GPU_URL_VALUES.items()),
             unit_definitions=UNIT_DEFINITIONS,
         )
