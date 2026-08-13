@@ -58,20 +58,26 @@ class RecordingPromptModel:
 
     async def generate(self, system_input: str, user_input: str) -> str:
         self.calls += 1
+        if "Age: 35" in user_input:
+            appearance = "A 35-year-old White man in a plain navy shirt keeps his short hair neatly combed."
+            pronoun = "He"
+        else:
+            appearance = (
+                "A 25-year-old East Asian woman in a charcoal jacket keeps her dark hair tucked behind one ear."
+            )
+            pronoun = "She"
         return json.dumps(
             {
-                "spokenText": DIALOGUE,
-                "visualBehavior": (
-                    "The subject sits upright, folds both hands on the lap, presses the lips together, raises the "
-                    "chin and keeps a steady gaze through the end of the clip."
+                "positivePrompt": (
+                    f"{appearance} {pronoun} sits upright, folds both hands on the lap, presses the lips together, "
+                    f"and raises the chin while the gaze stays level. {pronoun} says \"{DIALOGUE}\" in a low steady "
+                    "voice as the ventilation hums softly and a wall clock ticks evenly. The private office has "
+                    "pale walls, a bare wooden table, and one closed window. The camera holds a static front-facing "
+                    "close-up head-and-shoulders shot. Soft daylight falls from the left and keeps the face evenly "
+                    "lit with gentle highlights across the plain fabric."
                 ),
-                "vocalDelivery": "in a low, steady voice with a measured pace",
-                "environmentalSound": (
-                    "The ventilation hums softly while a wall clock ticks at an even pace."
-                ),
-                "setting": "The private office has pale walls, a bare wooden table and one closed window.",
-                "cameraSupplement": "",
-                "lightingSupplement": "Soft daylight adds gentle highlights across the plain fabric.",
+                "dialogue": DIALOGUE,
+                "vtText": None,
                 "trueEmotionDescription": "说话内容和可见动作共同表达受控状态。",
             },
             ensure_ascii=False,

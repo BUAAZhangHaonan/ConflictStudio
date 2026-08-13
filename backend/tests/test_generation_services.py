@@ -169,7 +169,11 @@ def fixed_resources(database: Database) -> tuple[CatalogService, object, object,
             psychologicalBackgroundEn="The subject does not want to worry anyone.",
             dialogue="我没事，只是需要一点时间。",
             trueEmotionDescription="说话者在克制悲伤，语言和可见表现保持一致。",
-            baseVideoPrompt="A restrained adult sits at a desk and answers a colleague with a steady but tired expression.",
+            baseVideoPrompt=(
+                "{demographic} sits alone at a desk, keeps both hands visible, and says aloud "
+                "\"I am fine and only need a little time.\" in a steady voice. Quiet room tone remains audible. "
+                "The camera stays static in a front-facing portrait and soft daylight keeps the face readable."
+            ),
             contentRequirementsZh="",
             contentRequirementsEn="",
             sceneSupplementZh="",
@@ -607,10 +611,11 @@ def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) ->
         )
     result = asyncio.run(service.complete(prepared, Category.A_VA))
 
-    assert "Observable behavior" in result.user_input
-    assert "Do not name" in result.user_input
+    assert result.user_input == ""
     assert "Observable behavior" not in result.final_positive_prompt
     assert "Do not name" not in result.final_positive_prompt
+    assert result.final_positive_prompt.startswith("A 25-year-old East Asian woman")
+    assert "A small private office" not in result.final_positive_prompt
     assert result.dialogue == "我没事，只是需要一点时间。"
     assert result.final_negative_prompt == "subtitles, captions, exaggerated acting, camera shake"
 
@@ -667,21 +672,19 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "spokenText": "结果出来了，没什么需要担心的。",
-                                    "visualBehavior": (
-                                        "She sits upright, folds both hands on her lap, presses her lips together, "
-                                        "and keeps her gaze level through the end of the clip."
+                                    "positivePrompt": (
+                                        "A 45-year-old East Asian woman in a charcoal jacket keeps her dark hair "
+                                        "neatly tucked behind one ear. She sits upright, folds both hands on her lap, "
+                                        "presses her lips together, and raises her chin while her gaze stays level. "
+                                        "She says \"结果出来了，没什么需要担心的。\" in a low steady voice as the ventilation hums "
+                                        "softly and a wall clock ticks evenly. The private clinic office has pale walls, "
+                                        "a bare wooden table, and one closed window. The camera holds a static front-facing "
+                                        "close-up head-and-shoulders shot. Soft daylight falls from the left and keeps her "
+                                        "face evenly lit with gentle highlights across the jacket fabric."
                                     ),
-                                    "vocalDelivery": "in a low, steady voice with a measured pace",
-                                    "environmentalSound": (
-                                        "The ventilation hums softly while a wall clock ticks at an even pace."
-                                    ),
-                                    "setting": (
-                                        "The private office has pale walls, a bare wooden table and one closed window."
-                                    ),
-                                    "cameraSupplement": "",
-                                    "lightingSupplement": "Soft daylight adds gentle highlights across the jacket fabric.",
-                                    "trueEmotionDescription": "声音中的放松表达真实情感，视觉表现仍显得担忧。",
+                                    "dialogue": "结果出来了，没什么需要担心的。",
+                                    "vtText": None,
+                                    "trueEmotionDescription": "声音中的放松表达真实感受，视觉表现仍显得担忧。",
                                 },
                                 ensure_ascii=False,
                             )
@@ -718,12 +721,16 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     assert calls[0]["response_format"] == {"type": "json_object"}
     assert "The person grips a ceramic cup with the right hand and lowers both shoulders." in prepared.user_input
     assert "The person sits still with both hands on the table." not in result.final_positive_prompt
-    assert "between 100 and 130 English words" in prepared.system_input
+    assert "between 80 and 150 English words" in prepared.system_input
     assert "Use present tense only" in prepared.system_input
     assert "clearly, obviously, definitely, unmistakably, undeniably, evidently" in prepared.system_input
-    assert "concrete present-tense action involving a visible body part or object" in prepared.system_input
-    assert "internally assemble positivePrompt" in prepared.system_input
-    assert result.final_positive_prompt.startswith("A 45-year-old East Asian female")
+    assert "concrete action involving a visible body part or object" in prepared.system_input
+    assert "Return the final fields directly" in prepared.system_input
+    assert "A clinic waiting area." in prepared.user_input
+    assert "A small private office with a desk and neutral walls." in prepared.user_input
+    assert "Age: 45" in prepared.user_input
+    assert "The application does not append" in prepared.user_input
+    assert result.final_positive_prompt.startswith("A 45-year-old East Asian woman")
     assert '"结果出来了，没什么需要担心的。"' in result.final_positive_prompt
     assert "front-facing close-up head-and-shoulders" in result.final_positive_prompt
 

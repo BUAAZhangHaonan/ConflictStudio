@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .enums import Category, ConflictDirection
 
 
-POLICY_VERSION = "2026-08-12.3"
+POLICY_VERSION = "2026-08-13.1"
 
 
 @dataclass(frozen=True)
@@ -26,8 +26,8 @@ POLICIES = {
         ),
         relation_rule="Keep the visible and audible evidence aligned.",
         output_rule=(
-            "Write the short Mandarin dialogue in spokenText. The application stores it as VA dialogue and "
-            "inserts it once in the render prompt."
+            "Set dialogue to the short Mandarin dialogue and vtText to null. Include the exact dialogue once "
+            "as audible on-screen speech in positivePrompt."
         ),
     ),
     Category.A_VT: CategoryPolicy(
@@ -38,8 +38,8 @@ POLICIES = {
         ),
         relation_rule="Keep the visible evidence and stored text aligned without rendering the text on screen.",
         output_rule=(
-            "Write the short Mandarin text in spokenText. The application stores it as independent VT text and "
-            "uses the same words as source-video speech before removing the audio."
+            "Set dialogue to null and vtText to the short Mandarin text. Include the exact vtText once as "
+            "audible source-video speech in positivePrompt without rendering it on screen."
         ),
     ),
     Category.C_VA: CategoryPolicy(
@@ -47,8 +47,8 @@ POLICIES = {
         protocol_rule="The visible behavior intentionally disagrees with the Mandarin words and vocal delivery.",
         relation_rule="Follow the selected direction exactly and keep the disagreement readable throughout the clip.",
         output_rule=(
-            "Write the short Mandarin dialogue in spokenText. The application stores it as VA dialogue and "
-            "inserts it once in the render prompt."
+            "Set dialogue to the short Mandarin dialogue and vtText to null. Include the exact dialogue once "
+            "as audible on-screen speech in positivePrompt."
         ),
     ),
     Category.C_VT: CategoryPolicy(
@@ -59,8 +59,8 @@ POLICIES = {
         ),
         relation_rule="Follow the selected direction exactly and never render the stored text on screen.",
         output_rule=(
-            "Write the short Mandarin text in spokenText. The application stores it as independent VT text and "
-            "uses the same words as source-video speech before removing the audio."
+            "Set dialogue to null and vtText to the short Mandarin text. Include the exact vtText once as "
+            "audible source-video speech in positivePrompt without rendering it on screen."
         ),
     ),
 }
@@ -299,6 +299,11 @@ _ENGLISH_WORD_RE = re.compile(r"\b[A-Za-z]+(?:[-'][A-Za-z]+)*\b")
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _BULLET_RE = re.compile(r"(?:^|\s)(?:[-*\u2022]|\d+\.)\s")
 _QUOTED_TEXT_RE = re.compile(r'"([^"\r\n]+)"')
+_UNRESOLVED_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+_AUDIBLE_SPEECH_RE = re.compile(
+    r"\b(?:audible|aloud|dialogue|says|speaks|speech|talks|voice|vocal|whispers|murmurs|utters)\b",
+    re.IGNORECASE,
+)
 
 _APPEARANCE_PATTERNS: tuple[str, ...] = (
     r"\b(?:adult|man|woman|male|female|person|subject)\b",
@@ -342,6 +347,31 @@ class PromptPolicyViolation(ValueError):
     def __init__(self, violations: Sequence[str]) -> None:
         self.violations = tuple(violations)
         super().__init__("; ".join(self.violations))
+
+
+def validate_fixed_positive_prompt(prompt: str, *, category: Category) -> None:
+    """Validate a complete human-authored render prompt without rewriting it."""
+
+    violations: list[str] = []
+    if not prompt.strip():
+        violations.append("fixed positivePrompt must not be blank")
+    unresolved = sorted(set(_UNRESOLVED_PLACEHOLDER_RE.findall(prompt)))
+    if unresolved:
+        violations.append(
+            f"fixed positivePrompt contains unresolved placeholders: {', '.join(unresolved)}"
+        )
+    if not _AUDIBLE_SPEECH_RE.search(prompt):
+        protocol = "VA" if category in {Category.A_VA, Category.C_VA} else "VT source"
+        violations.append(f"fixed {protocol} positivePrompt must describe audible speech")
+    if category in {Category.A_VT, Category.C_VT}:
+        rendered_text = _find_phrases(prompt, FORBIDDEN_RENDERED_TEXT_PHRASES)
+        if rendered_text:
+            violations.append(
+                "fixed VT positivePrompt must not render the independent text on screen: "
+                f"{', '.join(rendered_text)}"
+            )
+    if violations:
+        raise PromptPolicyViolation(violations)
 
 
 def direction_rule(category: Category, direction: ConflictDirection | None) -> str:

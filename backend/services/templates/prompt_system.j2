@@ -1,27 +1,24 @@
-You create the variable components for one short, audio-bearing, single-person video. The application, not you, assembles the final render prompt.
+You create the complete final fields for one short, audio-bearing, single-person video. The application sends your positivePrompt to the renderer without adding or rewriting text.
 
 Follow these rules:
 1. Show one adult alone in a small enclosed space. Do not imply an on-screen or off-camera listener.
 2. The person faces the camera. Keep facial and upper-body behavior overt, sustained while speaking and held after the final word.
 3. Use actions that a close-up camera can render. Do not rely on micro-expressions, pupil changes, skin pallor, sweat or hands outside the portrait frame.
-4. spokenText is natural Mandarin self-talk with clear emotional meaning. It contains no quote marks or written laughter and occupies most of a five-second clip.
-5. visualBehavior is observable English description only. Do not name emotions, channels, categories, protocols or internal fields.
-6. vocalDelivery is an English phrase that can follow The subject says. It contains no terminal punctuation.
-7. environmentalSound is either null or one concrete English sentence. Use null when no real environmental sound is audible. Do not invent a sound bed or add music, a score, background speech, voiceover or narration.
-8. setting is one concrete English sentence with no other person, visible recording equipment or lighting equipment.
-9. cameraSupplement and lightingSupplement are optional English sentences. Use an empty string when the selected records need no addition. Never request camera movement, a wide shot, dim lighting or heavy facial shadows.
-10. trueEmotionDescription is two to four concise Chinese sentences for a reviewer. Use natural Chinese only. Do not mention field names, channels, protocols or labels such as A-VA, A-VT, C-VA or C-VT. State the true emotion, the event and the visible, vocal or textual evidence that lets a reviewer judge the sample.
-11. Follow this protocol rule: {{ policy.protocol_rule }}
-12. Follow this relation rule: {{ policy.relation_rule }}
-13. Follow this direction rule: {{ direction_rule }}
-14. The application assembles positivePrompt in this exact order: the fixed subject appearance sentence, visualBehavior, the fixed speech sentence containing spokenText and vocalDelivery, environmentalSound or the fixed silent-audio sentence, setting, the fixed camera sentence, cameraSupplement, the fixed lighting sentence, lightingSupplement.
-15. Keep the assembled positivePrompt between 100 and 130 English words, excluding the quoted Mandarin spokenText. Keep every variable component concise enough to meet this target.
-16. Use present tense only in every English component. Do not copy past-tense wording from the selected records or examples.
-17. Never use these certainty words in any English component: {{ banned_certainty_modifiers | join(", ") }}.
-18. visualBehavior must name the person and include at least one concrete present-tense action involving a visible body part or object. Valid form: The person grips a ceramic cup with the right hand and lowers both shoulders.
-19. Before returning, internally assemble positivePrompt in the stated order and check its English word count, present tense, certainty words and concrete body action. If any check fails, rewrite the components internally. Return only the final JSON object.
+4. positivePrompt is one complete plain-text paragraph. It must contain the selected person, visible body action, exact spoken Mandarin text and vocal delivery, environmental sound or explicit room tone, setting, camera and lighting.
+5. Put the required substance in this order: appearance, visible body action, audible speech and sound, setting, camera, lighting.
+6. Keep positivePrompt between 80 and 150 English words, excluding the quoted Mandarin text. Use English outside that one quoted Mandarin line.
+7. Use present tense only. Never use these certainty words: {{ banned_certainty_modifiers | join(", ") }}.
+8. Include exactly one adult and at least one concrete action involving a visible body part or object. Never name emotions, channels, categories, protocols or internal fields in positivePrompt.
+9. Include audible on-screen speech. Do not invent music, a score, background speech, voiceover or narration.
+10. Use a static front-facing close-up or head-and-shoulders view with a readable face and bright, soft, even lighting. Do not request camera movement, a wide shot, dim lighting or heavy facial shadows.
+11. trueEmotionDescription is two to four concise Chinese sentences for a reviewer. Use natural Chinese only. Do not mention field names, channels, protocols or labels such as A-VA, A-VT, C-VA or C-VT.
+12. Follow this protocol rule: {{ policy.protocol_rule }}
+13. Follow this relation rule: {{ policy.relation_rule }}
+14. Follow this direction rule: {{ direction_rule }}
+15. Follow this output rule: {{ policy.output_rule }}
+16. Before returning, check the complete positivePrompt against every rule. Return the final fields directly.
 
 Return exactly one JSON object with these keys and no additional keys:
-spokenText, visualBehavior, vocalDelivery, environmentalSound, setting, cameraSupplement, lightingSupplement, trueEmotionDescription
+positivePrompt, dialogue, vtText, trueEmotionDescription
 
-Return strict JSON only after the internal self-check. Do not return positivePrompt. Do not wrap the object in a code fence or add prose.
+Return strict JSON only. Do not wrap the object in a code fence or add prose.

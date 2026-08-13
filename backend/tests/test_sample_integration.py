@@ -75,16 +75,17 @@ class ApiPromptModel:
     async def generate(self, system_input: str, user_input: str) -> str:
         return json.dumps(
             {
-                "spokenText": "我没事，只是需要一点时间。",
-                "visualBehavior": (
-                    "The subject sits upright, folds both hands on the lap, presses the lips together, "
-                    "raises the chin and keeps a steady gaze through the end of the clip."
+                "positivePrompt": (
+                    "A 25-year-old East Asian woman in a charcoal jacket keeps her dark hair tucked behind one "
+                    "ear. She sits upright, folds both hands on her lap, presses her lips together, and raises her "
+                    "chin while her gaze stays level. She says \"我没事，只是需要一点时间。\" in a low steady voice as "
+                    "the ventilation hums softly and a wall clock ticks evenly. The private office has pale walls, "
+                    "a bare wooden table, and one closed window. The camera holds a static front-facing close-up "
+                    "head-and-shoulders shot. Soft daylight falls from the left and keeps her face evenly lit with "
+                    "gentle highlights across the jacket fabric."
                 ),
-                "vocalDelivery": "in a low, steady voice with a measured pace",
-                "environmentalSound": "The ventilation hums softly while a wall clock ticks evenly.",
-                "setting": "The private office has pale walls, a bare wooden table and one closed window.",
-                "cameraSupplement": "",
-                "lightingSupplement": "Soft daylight adds gentle highlights across the plain fabric.",
+                "dialogue": "我没事，只是需要一点时间。",
+                "vtText": None,
                 "trueEmotionDescription": "说话内容和可见动作共同表明她在平静地回应当前事件。",
             },
             ensure_ascii=False,
@@ -94,12 +95,25 @@ class ApiPromptModel:
         return None
 
 
-def make_app(tmp_path: Path):  # type: ignore[no-untyped-def]
+class InvalidApiPromptModel(ApiPromptModel):
+    async def generate(self, system_input: str, user_input: str) -> str:
+        return json.dumps(
+            {
+                "positivePrompt": "A woman speaks aloud.",
+                "dialogue": "我没事，只是需要一点时间。",
+                "vtText": None,
+                "trueEmotionDescription": "说话内容和可见动作共同表明她在平静地回应当前事件。",
+            },
+            ensure_ascii=False,
+        )
+
+
+def make_app(tmp_path: Path, prompt_model=None):  # type: ignore[no-untyped-def]
     frontend = tmp_path / "frontend"
     frontend.mkdir()
     return create_app(
         Settings(data_root=tmp_path, frontend_dist=frontend),
-        ApiPromptModel(),
+        prompt_model or ApiPromptModel(),
         ApiRenderer(),
     )
 
@@ -184,6 +198,36 @@ def test_post_test_runs_creates_real_test_job_and_items(tmp_path: Path) -> None:
     assert payload["model"] is None and payload["precision"] is None
     assert len(payload["items"]) == 1
     assert payload["items"][0]["input"]["seed"] == 77
+
+
+def test_invalid_generative_prompt_creates_no_job_or_generation_records(tmp_path: Path) -> None:
+    app = make_app(tmp_path, InvalidApiPromptModel())
+    with TestClient(app) as client:
+        content, prompt, background = create_api_sources(client)
+        gpu = client.get("/api/gpu-slots").json()[0]
+        response = client.post(
+            "/api/test-runs",
+            json={
+                "contentPlan": {"id": content["id"], "expectedRevision": content["revision"]},
+                "promptPreset": {"id": prompt["id"], "expectedRevision": prompt["revision"]},
+                "backgroundPreset": {"id": background["id"], "expectedRevision": background["revision"]},
+                "demographic": {"age": 25, "gender": "Female", "ethnicity": "EastAsian"},
+                "seed": 77,
+                "comparisons": [{"model": "LTX-2.3", "precision": None, "gpuSlot": "GPU0"}],
+                "executionMode": "Serial",
+                "expectedGpuRevisions": {"GPU0": gpu["revision"]},
+                "confirmModelSwitch": False,
+            },
+        )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "invalid_prompt_response"
+    with app.state.database.read_session() as session:
+        assert session.exec(select(Job)).all() == []
+        assert session.exec(select(JobItem)).all() == []
+        assert session.exec(select(GenerationAttempt)).all() == []
+        assert session.exec(select(Asset)).all() == []
+        assert session.exec(select(Sample)).all() == []
 
 
 def add_completed_result(app, source: JobSource) -> tuple[int, int, int]:  # type: ignore[no-untyped-def]

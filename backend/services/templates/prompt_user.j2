@@ -1,4 +1,4 @@
-Create one set of video components from these selected records.
+Create the complete final video prompt and reviewer fields from these selected records.
 
 Content requirements:
 {{ content_instruction }}
@@ -17,6 +17,9 @@ True state for reasoning only:
 
 Apparent state for reasoning only:
 {{ apparent_emotion }}
+
+Requested Mandarin dialogue or VT text:
+{{ requested_spoken_text or "Create a short Mandarin line from the selected content." }}
 
 Content scene supplement:
 {{ content_scene_supplement }}
@@ -51,6 +54,4 @@ Negative examples for component writing only:
 {% else %}None
 {% endfor %}
 
-{{ policy.output_rule }}
-
-Write the reviewer description first in your reasoning, then derive spokenText, visualBehavior, vocalDelivery and setting from the same event. Keep the selected background, framing, lighting and style recognizable. The application inserts the subject demographics, exact spokenText, fixed close-up camera rule and fixed bright-lighting rule without repairing your fields. Perform the required validation internally and return only the final JSON.
+Use every relevant selected value directly in the complete positivePrompt. Keep the background, framing, lighting and style recognizable. The application does not append demographics, speech, sound, setting, camera or lighting after your response. Return the exact final positivePrompt and the separate reviewer fields only.

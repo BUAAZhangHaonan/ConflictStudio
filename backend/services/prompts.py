@@ -18,53 +18,12 @@ from backend.domain.prompt_policy import (
     PromptPolicyViolation,
     direction_rule,
     validate_final_positive_prompt,
+    validate_fixed_positive_prompt,
 )
 
 from .errors import ServiceError
 
 
-FORBIDDEN_COMPONENT_PERSON_PHRASES = (
-    "another person",
-    "second person",
-    "off-camera person",
-    "off camera person",
-    "off-screen person",
-    "offscreen person",
-    "off-camera voice",
-    "off camera voice",
-    "off-screen voice",
-    "offscreen voice",
-)
-FORBIDDEN_COMPONENT_CAMERA_PHRASES = (
-    "camera movement",
-    "camera moves",
-    "camera pans",
-    "camera tracks",
-    "handheld camera",
-    "push-in",
-    "push in",
-    "pushes inward",
-    "zoom",
-    "wide shot",
-    "full-body shot",
-    "full body shot",
-)
-FORBIDDEN_COMPONENT_PORTRAIT_PHRASES = (
-    "side profile",
-    "profile view",
-    "back of the head",
-    "back of head",
-    "turned away from the camera",
-)
-FORBIDDEN_COMPONENT_LIGHTING_PHRASES = (
-    "dim lighting",
-    "dimly lit",
-    "heavy shadow",
-    "backlit silhouette",
-    "visible lamp",
-    "visible light fixture",
-    "lighting equipment",
-)
 FORBIDDEN_TRUE_EMOTION_DESCRIPTION_TOKENS = (
     "a-va",
     "a-vt",
@@ -89,7 +48,6 @@ FORBIDDEN_TRUE_EMOTION_DESCRIPTION_TOKENS = (
     "camera_supplement",
     "lighting_supplement",
 )
-SILENT_ENVIRONMENT_SOUND = "No ambient sound is audible."
 
 
 class GeneratedPrompt(BaseModel):
@@ -113,122 +71,6 @@ class GeneratedPrompt(BaseModel):
         if value is not None and not value.strip():
             raise ValueError("The field must not be blank")
         return value
-
-
-class GeneratedPromptComponents(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    spoken_text: str = Field(alias="spokenText", min_length=1)
-    visual_behavior: str = Field(alias="visualBehavior", min_length=1)
-    vocal_delivery: str = Field(alias="vocalDelivery", min_length=1)
-    environmental_sound: str | None = Field(alias="environmentalSound")
-    setting: str = Field(min_length=1)
-    camera_supplement: str = Field(alias="cameraSupplement")
-    lighting_supplement: str = Field(alias="lightingSupplement")
-    true_emotion_description: str = Field(alias="trueEmotionDescription", min_length=1)
-
-    @field_validator(
-        "spoken_text",
-        "visual_behavior",
-        "vocal_delivery",
-        "environmental_sound",
-        "setting",
-        "camera_supplement",
-        "lighting_supplement",
-        "true_emotion_description",
-    )
-    @classmethod
-    def reject_changed_whitespace(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if value != value.strip() or "\n" in value or "\r" in value:
-            raise ValueError("Component text must not contain surrounding whitespace or line breaks")
-        return value
-
-    @field_validator("environmental_sound")
-    @classmethod
-    def validate_environmental_sound(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not value.strip():
-            raise ValueError("Environmental sound must be null or a non-blank sentence")
-        if value != value.strip() or "\n" in value or "\r" in value:
-            raise ValueError("Component text must not contain surrounding whitespace or line breaks")
-        return value
-
-    @field_validator("true_emotion_description")
-    @classmethod
-    def validate_true_emotion_description(cls, value: str) -> str:
-        return _validate_true_emotion_description(value)
-
-    @field_validator(
-        "visual_behavior",
-        "vocal_delivery",
-        "environmental_sound",
-        "setting",
-        "camera_supplement",
-        "lighting_supplement",
-    )
-    @classmethod
-    def require_english_component_text(cls, value: str | None) -> str | None:
-        if value and (re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", value) or '"' in value):
-            raise ValueError("Render prompt components must use English and contain no double quotes")
-        return value
-
-    @field_validator("visual_behavior", "environmental_sound", "setting")
-    @classmethod
-    def require_complete_sentence(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if value[-1] not in ".!?":
-            raise ValueError("The component must be a complete sentence")
-        return value
-
-    @field_validator("vocal_delivery")
-    @classmethod
-    def require_delivery_phrase(cls, value: str) -> str:
-        if value[-1] in ".!?":
-            raise ValueError("Vocal delivery must be a phrase without terminal punctuation")
-        return value
-
-    @field_validator("camera_supplement", "lighting_supplement")
-    @classmethod
-    def validate_optional_sentence(cls, value: str) -> str:
-        if value and value[-1] not in ".!?":
-            raise ValueError("A non-empty supplement must be a complete sentence")
-        return value
-
-    @field_validator("visual_behavior", "environmental_sound", "setting")
-    @classmethod
-    def reject_other_people(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        cls._reject_phrases(value, FORBIDDEN_COMPONENT_PERSON_PHRASES, "another person")
-        return value
-
-    @field_validator("visual_behavior")
-    @classmethod
-    def reject_non_portrait_behavior(cls, value: str) -> str:
-        cls._reject_phrases(value, FORBIDDEN_COMPONENT_PORTRAIT_PHRASES, "non-frontal behavior")
-        return value
-
-    @field_validator("camera_supplement")
-    @classmethod
-    def reject_camera_changes(cls, value: str) -> str:
-        cls._reject_phrases(value, FORBIDDEN_COMPONENT_CAMERA_PHRASES, "camera movement or wide framing")
-        return value
-
-    @field_validator("lighting_supplement", "setting")
-    @classmethod
-    def reject_unreadable_lighting(cls, value: str) -> str:
-        cls._reject_phrases(value, FORBIDDEN_COMPONENT_LIGHTING_PHRASES, "unreadable lighting or visible equipment")
-        return value
-
-    @staticmethod
-    def _reject_phrases(value: str, phrases: tuple[str, ...], label: str) -> None:
-        normalized = value.casefold()
-        if any(phrase in normalized for phrase in phrases):
-            raise ValueError(f"Component text must not contain {label}")
 
 
 @dataclass(frozen=True)
@@ -285,37 +127,47 @@ class PromptService:
         self.model = model
 
     def prepare(self, context: PromptContext) -> PreparedPrompt:
-        policy = POLICIES[context.content.category]
-        system_input = self.system_template.render(
-            policy=policy,
-            direction_rule=direction_rule(context.content.category, context.content.conflict_direction),
-            banned_certainty_modifiers=BANNED_CERTAINTY_MODIFIERS,
-        ).strip()
-        user_input = self.user_template.render(
-            policy=policy,
-            content_instruction=context.content.content_requirements_en,
-            scene=context.content.scene_en,
-            trigger_event=context.content.trigger_event_en,
-            psychological_background=context.content.psychological_background_en,
-            true_emotion=context.content.true_emotion,
-            apparent_emotion=context.content.apparent_emotion,
-            content_scene_supplement=context.content.scene_supplement_en,
-            style_instruction=context.preset.style_instruction,
-            preset_scene_supplement=context.preset.scene_supplement,
-            positive_examples=context.positive_examples,
-            negative_examples=context.negative_examples,
-            background={
-                "scene": context.background.scene_en,
-                "ambient_audio": context.background.ambient_sound_en,
-                "relationship": context.background.participant_relationship_en,
-                "lighting": context.background.lighting_en,
-                "framing_supplement": context.background.framing_en,
-            },
-            age=context.age,
-            gender=context.gender.value,
-            ethnicity=context.ethnicity.value,
-        ).strip()
-        fixed_output = self._fixed_output(context) if context.content.mode is ContentMode.FIXED else None
+        fixed_output = None
+        system_input = ""
+        user_input = ""
+        if context.content.mode is ContentMode.FIXED:
+            fixed_output = self._fixed_output(context)
+        else:
+            policy = POLICIES[context.content.category]
+            system_input = self.system_template.render(
+                policy=policy,
+                direction_rule=direction_rule(context.content.category, context.content.conflict_direction),
+                banned_certainty_modifiers=BANNED_CERTAINTY_MODIFIERS,
+            ).strip()
+            user_input = self.user_template.render(
+                policy=policy,
+                content_instruction=context.content.content_requirements_en,
+                scene=context.content.scene_en,
+                trigger_event=context.content.trigger_event_en,
+                psychological_background=context.content.psychological_background_en,
+                true_emotion=context.content.true_emotion,
+                apparent_emotion=context.content.apparent_emotion,
+                requested_spoken_text=(
+                    context.content.dialogue
+                    if context.content.category in {Category.A_VA, Category.C_VA}
+                    else context.content.display_text
+                ),
+                content_scene_supplement=context.content.scene_supplement_en,
+                style_instruction=context.preset.style_instruction,
+                preset_scene_supplement=context.preset.scene_supplement,
+                positive_examples=context.positive_examples,
+                negative_examples=context.negative_examples,
+                background={
+                    "scene": context.background.scene_en,
+                    "ambient_audio": context.background.ambient_sound_en,
+                    "relationship": context.background.participant_relationship_en,
+                    "lighting": context.background.lighting_en,
+                    "framing_supplement": context.background.framing_en,
+                },
+                age=context.age,
+                gender=context.gender.value,
+                ethnicity=context.ethnicity.value,
+            ).strip()
         return PreparedPrompt(
             policy_version=POLICY_VERSION,
             category=context.content.category,
@@ -340,18 +192,23 @@ class PromptService:
                 status = 503 if error.code == "external_configuration_missing" else 502
                 raise ServiceError(status, error.code, error.message) from error
             try:
-                components = GeneratedPromptComponents.model_validate(_load_unique_json_object(raw))
+                output = GeneratedPrompt.model_validate(_load_unique_json_object(raw))
             except (ValidationError, ValueError, json.JSONDecodeError) as error:
                 raise ServiceError(
                     502,
                     "invalid_prompt_response",
                     "The prompt service returned data that does not match the required structure",
                 ) from error
-            output = self._generated_output(prepared, category, components)
         else:
             output = prepared.fixed_output
             raw = output.model_dump_json(by_alias=True)
-        return self._result(prepared, category, output, raw)
+        return self._result(
+            prepared,
+            category,
+            output,
+            raw,
+            generated=prepared.fixed_output is None,
+        )
 
     @classmethod
     def _result(
@@ -360,20 +217,25 @@ class PromptService:
         category: Category,
         output: GeneratedPrompt,
         raw: str,
+        *,
+        generated: bool,
     ) -> PromptResult:
         cls._validate_output(category, output)
         spoken_text = output.dialogue if category in {Category.A_VA, Category.C_VA} else output.vt_text
         assert spoken_text is not None
         try:
-            validate_final_positive_prompt(
-                output.positive_prompt,
-                spoken_text=spoken_text,
-                true_emotion=prepared.true_emotion,
-                apparent_emotion=prepared.apparent_emotion,
-                expected_ethnicity=cls._ethnicity_text(prepared.ethnicity),
-                expected_gender=prepared.gender.value,
-                expected_age=prepared.age,
-            )
+            if generated:
+                validate_final_positive_prompt(
+                    output.positive_prompt,
+                    spoken_text=spoken_text,
+                    true_emotion=prepared.true_emotion,
+                    apparent_emotion=prepared.apparent_emotion,
+                    expected_ethnicity=cls._ethnicity_text(prepared.ethnicity),
+                    expected_gender=prepared.gender.value,
+                    expected_age=prepared.age,
+                )
+            else:
+                validate_fixed_positive_prompt(output.positive_prompt, category=category)
         except PromptPolicyViolation as error:
             raise ServiceError(
                 502,
@@ -392,89 +254,16 @@ class PromptService:
             true_emotion_description=output.true_emotion_description,
         )
 
-    @classmethod
-    def _generated_output(
-        cls,
-        prepared: PreparedPrompt,
-        category: Category,
-        components: GeneratedPromptComponents,
-    ) -> GeneratedPrompt:
-        subject = (
-            f"A {prepared.age}-year-old {cls._ethnicity_text(prepared.ethnicity)} "
-            f"{prepared.gender.value.lower()} is the only person visible in photorealistic live-action footage "
-            "with natural skin texture."
-        )
-        speech = f'The subject says "{components.spoken_text}" {components.vocal_delivery}.'
-        camera = (
-            "The camera stays locked off in a front-facing close-up head-and-shoulders portrait, "
-            "with the full face filling much of the frame."
-        )
-        lighting = "Bright, soft, even lighting keeps the face fully readable without heavy shadows."
-        environmental_sound = cls._environmental_sound_text(components.environmental_sound)
-        positive = " ".join(
-            value
-            for value in (
-                subject,
-                components.visual_behavior,
-                speech,
-                environmental_sound,
-                components.setting,
-                camera,
-                components.camera_supplement,
-                lighting,
-                components.lighting_supplement,
-            )
-            if value
-        )
-        is_va = category in {Category.A_VA, Category.C_VA}
-        return GeneratedPrompt(
-            positivePrompt=positive,
-            dialogue=components.spoken_text if is_va else None,
-            vtText=None if is_va else components.spoken_text,
-            trueEmotionDescription=components.true_emotion_description,
-        )
-
     def _fixed_output(self, context: PromptContext) -> GeneratedPrompt:
         content = context.content
-        background = context.background
-        demographic = (
-            f"The subject is a {context.age}-year-old {self._ethnicity_text(context.ethnicity)} "
-            f"{context.gender.value.lower()} adult."
-        )
-        positive = " ".join(
-            value
-            for value in (
-                demographic,
-                content.base_video_prompt,
-                self._dialogue_instruction(content),
-                self._environmental_sound_text(background.ambient_sound_en),
-                background.scene_en,
-                background.participant_relationship_en,
-                content.scene_supplement_en,
-                context.preset.scene_supplement,
-                context.preset.style_instruction,
-                background.framing_en,
-                background.lighting_en,
-            )
-            if value
-        )
+        demographic = self._fixed_demographic_text(context.age, context.ethnicity, context.gender)
+        positive = content.base_video_prompt.replace("{demographic}", demographic)
         return GeneratedPrompt(
             positivePrompt=positive,
             dialogue=content.dialogue,
             vtText=content.display_text,
             trueEmotionDescription=content.true_emotion_description,
         )
-
-    @staticmethod
-    def _dialogue_instruction(content: ContentPlan) -> str:
-        spoken_text = (
-            content.dialogue
-            if content.category in {Category.A_VA, Category.C_VA}
-            else content.display_text
-        )
-        if not spoken_text:
-            return ""
-        return f'The subject says "{spoken_text}" with a natural, audible voice.'
 
     @staticmethod
     def _validate_output(category: Category, output: GeneratedPrompt) -> None:
@@ -500,10 +289,6 @@ class PromptService:
             ) from error
 
     @staticmethod
-    def _environmental_sound_text(value: str | None) -> str:
-        return value if value else SILENT_ENVIRONMENT_SOUND
-
-    @staticmethod
     def _ethnicity_text(value: Ethnicity) -> str:
         return {
             Ethnicity.EAST_ASIAN: "East Asian",
@@ -512,6 +297,11 @@ class PromptService:
             Ethnicity.SOUTH_ASIAN: "South Asian",
             Ethnicity.LATINO: "Latino",
         }[value]
+
+    @classmethod
+    def _fixed_demographic_text(cls, age: int, ethnicity: Ethnicity, gender: Gender) -> str:
+        person = "woman" if gender is Gender.FEMALE else "man"
+        return f"A {age}-year-old {cls._ethnicity_text(ethnicity)} {person}"
 
 
 def _load_unique_json_object(raw: str) -> dict[str, object]:
