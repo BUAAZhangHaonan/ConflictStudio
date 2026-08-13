@@ -95,9 +95,11 @@ class ComfyUIClient:
         payload = _decode_json(response)
         if (
             not isinstance(payload, dict)
-            or set(payload) != {"prompt_id"}
+            or set(payload) != {"prompt_id", "number", "node_errors"}
             or type(payload.get("prompt_id")) is not str
             or payload["prompt_id"] == ""
+            or type(payload.get("number")) not in {int, float}
+            or type(payload.get("node_errors")) is not dict
         ):
             raise _invalid_response()
         try:

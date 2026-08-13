@@ -54,12 +54,29 @@ def test_object_info_queue_and_history_use_exact_get_endpoints() -> None:
     ]
 
 
-def test_submit_prompt_sends_exact_payload_and_accepts_only_exact_response() -> None:
+@pytest.mark.parametrize(
+    ("number", "node_errors"),
+    [
+        (0, {}),
+        (1.25, {"node-1": {"errors": []}}),
+    ],
+)
+def test_submit_prompt_sends_exact_payload_and_accepts_deployed_response(
+    number: int | float,
+    node_errors: dict[str, object],
+) -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, content=b'{"prompt_id":"prompt-7"}')
+        return httpx.Response(
+            200,
+            json={
+                "prompt_id": "prompt-7",
+                "number": number,
+                "node_errors": node_errors,
+            },
+        )
 
     async def scenario() -> str:
         client, http = make_client(handler)
@@ -85,15 +102,22 @@ def test_submit_prompt_sends_exact_payload_and_accepts_only_exact_response() -> 
     "response_body",
     [
         b"{}",
-        b'{"prompt_id":7}',
-        b'{"prompt_id":""}',
-        b'{"prompt_id":"one","extra":true}',
-        b'{"prompt_id":"one","prompt_id":"two"}',
+        b'{"number":0,"node_errors":{}}',
+        b'{"prompt_id":"one","node_errors":{}}',
+        b'{"prompt_id":"one","number":0}',
+        b'{"prompt_id":7,"number":0,"node_errors":{}}',
+        b'{"prompt_id":"","number":0,"node_errors":{}}',
+        b'{"prompt_id":"bad/id","number":0,"node_errors":{}}',
+        b'{"prompt_id":"one","number":"0","node_errors":{}}',
+        b'{"prompt_id":"one","number":true,"node_errors":{}}',
+        b'{"prompt_id":"one","number":0,"node_errors":[]}',
+        b'{"prompt_id":"one","number":0,"node_errors":{},"extra":true}',
+        b'{"prompt_id":"one","prompt_id":"two","number":0,"node_errors":{}}',
         b"[]",
         b"not-json",
     ],
 )
-def test_submit_prompt_rejects_missing_wrong_empty_extra_duplicate_and_invalid_fields(
+def test_submit_prompt_rejects_missing_extra_wrong_duplicate_and_invalid_fields(
     response_body: bytes,
 ) -> None:
     def handler(_: httpx.Request) -> httpx.Response:
