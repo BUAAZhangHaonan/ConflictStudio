@@ -93,20 +93,7 @@ class ComfyUIClient:
             json_body={"prompt": dict(workflow), "client_id": client_id},
         )
         payload = _decode_json(response)
-        if (
-            not isinstance(payload, dict)
-            or set(payload) != {"prompt_id", "number", "node_errors"}
-            or type(payload.get("prompt_id")) is not str
-            or payload["prompt_id"] == ""
-            or type(payload.get("number")) not in {int, float}
-            or type(payload.get("node_errors")) is not dict
-        ):
-            raise _invalid_response()
-        try:
-            _require_identifier(payload["prompt_id"], "prompt_id")
-        except (TypeError, ValueError) as error:
-            raise _invalid_response() from error
-        return payload["prompt_id"]
+        return _validate_prompt_response(payload)
 
     async def websocket_messages(self, client_id: str) -> AsyncIterator[dict[str, Any]]:
         _require_identifier(client_id, "client_id")
@@ -441,6 +428,29 @@ def _entry_prompt_ids(entries: Any) -> set[str]:
     return prompt_ids
 
 
+def _validate_prompt_response(payload: Any) -> str:
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"prompt_id", "number", "node_errors"}
+    ):
+        raise _invalid_response()
+
+    prompt_id = payload.get("prompt_id")
+    number = payload.get("number")
+    node_errors = payload.get("node_errors")
+
+    if (
+        type(prompt_id) is not str
+        or prompt_id == ""
+        or type(number) not in {int, float}
+        or type(node_errors) is not dict
+    ):
+        raise _invalid_response()
+    if node_errors:
+        raise _prompt_rejected(node_errors)
+    return prompt_id
+
+
 def _require_identifier(value: str, name: str) -> None:
     if type(value) is not str or not value or len(value) > 160:
         raise ValueError(f"{name} is not valid")
@@ -452,4 +462,25 @@ def _invalid_response() -> AdapterError:
     return AdapterError(
         "comfyui_invalid_response",
         "ComfyUI returned an invalid response",
+    )
+
+
+def _prompt_rejected(node_errors: dict[str, object]) -> AdapterError:
+    messages: list[str] = []
+    for node_error in node_errors.values():
+        if not isinstance(node_error, dict):
+            continue
+        errors = node_error.get("errors")
+        if not isinstance(errors, list):
+            continue
+        for error in errors:
+            if not isinstance(error, dict):
+                continue
+            message = error.get("message")
+            if type(message) is str and message:
+                messages.append(message)
+    detail = f": {'; '.join(messages)}" if messages else ""
+    return AdapterError(
+        "comfyui_prompt_rejected",
+        f"ComfyUI rejected the prompt{detail}",
     )

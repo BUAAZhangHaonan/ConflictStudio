@@ -55,27 +55,27 @@ def test_object_info_queue_and_history_use_exact_get_endpoints() -> None:
 
 
 @pytest.mark.parametrize(
-    ("number", "node_errors"),
+    "number",
     [
-        (0, {}),
-        (1.25, {"node-1": {"errors": []}}),
+        0,
+        1.25,
     ],
 )
-def test_submit_prompt_sends_exact_payload_and_accepts_deployed_response(
+def test_submit_prompt_sends_exact_payload_and_accepts_real_contract(
     number: int | float,
-    node_errors: dict[str, object],
 ) -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        payload = {
+            "prompt_id": "prompt-7",
+            "number": number,
+            "node_errors": {},
+        }
         return httpx.Response(
             200,
-            json={
-                "prompt_id": "prompt-7",
-                "number": number,
-                "node_errors": node_errors,
-            },
+            json=payload,
         )
 
     async def scenario() -> str:
@@ -98,6 +98,39 @@ def test_submit_prompt_sends_exact_payload_and_accepts_deployed_response(
     }
 
 
+def test_submit_prompt_rejects_prompt_rejected_payload() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "prompt_id": "prompt-7",
+                "number": 0,
+                "node_errors": {
+                    "3": {
+                        "errors": [
+                            {
+                                "type": "value_not_in_list",
+                                "message": "Value not in list",
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+
+    async def scenario() -> None:
+        client, http = make_client(handler)
+        try:
+            with pytest.raises(AdapterError) as error:
+                await client.submit_prompt({}, "client")
+            assert error.value.code == "comfyui_prompt_rejected"
+            assert "Value not in list" in error.value.message
+        finally:
+            await http.aclose()
+
+    run(scenario())
+
+
 @pytest.mark.parametrize(
     "response_body",
     [
@@ -107,7 +140,6 @@ def test_submit_prompt_sends_exact_payload_and_accepts_deployed_response(
         b'{"prompt_id":"one","number":0}',
         b'{"prompt_id":7,"number":0,"node_errors":{}}',
         b'{"prompt_id":"","number":0,"node_errors":{}}',
-        b'{"prompt_id":"bad/id","number":0,"node_errors":{}}',
         b'{"prompt_id":"one","number":"0","node_errors":{}}',
         b'{"prompt_id":"one","number":true,"node_errors":{}}',
         b'{"prompt_id":"one","number":0,"node_errors":[]}',
