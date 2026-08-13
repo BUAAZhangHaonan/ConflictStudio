@@ -23,7 +23,7 @@ from backend.adapters.renderer import (
     RendererGatewayError,
     RendererSlotState,
 )
-from backend.adapters.workflows import H3WorkflowBuilder, Ltx23WorkflowBuilder
+from backend.adapters.workflows import H3WorkflowBuilder, Ltx23WorkflowBuilder, Ltx25WorkflowBuilder
 from backend.domain.enums import (
     Category,
     ContentMode,
@@ -37,6 +37,7 @@ from backend.domain.enums import (
     JobItemStage,
     JobStatus,
     ModelName,
+    Precision,
 )
 from backend.domain.models import Asset, BatchVideoInputSnapshot, GenerationAttempt, GpuSlot, Job, JobItem
 from backend.domain.schemas import (
@@ -55,10 +56,22 @@ from backend.services.prompts import PromptService
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workflows"
+LTX25_RESOURCES = Path(__file__).parents[1] / "resources" / "workflows"
 
 
 class ReservationRenderer:
     configured = True
+
+    async def probe(self, slot: GpuSlotName) -> SlotInspection:
+        return SlotInspection(
+            slot,
+            GpuAvailability.AVAILABLE,
+            None,
+            gpu_name="Test GPU",
+            memory_used_mib=0,
+            memory_total_mib=24576,
+            service_status="stopped",
+        )
 
 
 class FakeModelController:
@@ -66,37 +79,50 @@ class FakeModelController:
         self,
         *,
         loaded_model: ModelName | None = None,
+        loaded_precision: Precision | None = None,
         externally_occupied: bool = False,
     ) -> None:
         self.loaded_model = loaded_model
+        self.loaded_precision = loaded_precision
         self.externally_occupied = externally_occupied
-        self.calls: list[tuple[GpuSlotName, ModelName, bool]] = []
+        self.calls: list[tuple[GpuSlotName, ModelName, Precision | None, bool]] = []
 
     async def ensure_model(
         self,
         slot: GpuSlotName,
         model: ModelName,
         *,
+        precision: Precision | None = None,
         confirm_switch: bool,
     ) -> SlotInspection:
-        self.calls.append((slot, model, confirm_switch))
+        self.calls.append((slot, model, precision, confirm_switch))
         if self.externally_occupied:
             raise RendererGatewayError(
                 "gpu_slot_unavailable",
                 "An unknown process occupies the requested GPU",
             )
-        if self.loaded_model is not None and self.loaded_model is not model and not confirm_switch:
+        if (
+            self.loaded_model is not None
+            and (self.loaded_model, self.loaded_precision) != (model, precision)
+            and not confirm_switch
+        ):
             raise RendererGatewayError(
                 "model_switch_confirmation_required",
                 "Explicit confirmation is required to switch the model on this GPU",
             )
         self.loaded_model = model
-        slug = "ltx" if model is ModelName.LTX else "h3"
+        self.loaded_precision = precision
+        if model is ModelName.LTX_25:
+            assert precision is not None
+            slug = f"ltx25-{precision.value.casefold()}"
+        else:
+            slug = "ltx" if model is ModelName.LTX else "h3"
         return SlotInspection(
             slot,
             GpuAvailability.AVAILABLE,
             model,
             f"conflictstudio-{slug}-{slot.value.casefold()}.service",
+            loaded_precision=precision,
         )
 
     async def close(self) -> None:
@@ -153,6 +179,7 @@ async def create_running_request(
     *,
     category: Category,
     model: ModelName = ModelName.LTX,
+    precision: Precision | None = None,
     confirm_model_switch: bool = False,
 ) -> tuple[Database, RenderRequest]:
     data_root.mkdir()
@@ -214,6 +241,7 @@ async def create_running_request(
             datasetId=dataset.id,
             category=category,
             model=model,
+            precision=precision,
             quantity=1,
             seed=1208,
             contentPlans=[SourceSelection(id=content.id, expectedRevision=content.revision)],
@@ -230,7 +258,7 @@ async def create_running_request(
         assert slot is not None
         slot.availability = GpuAvailability.AVAILABLE
         slot.revision += 1
-    preview = batches.preview_batch(draft.id, draft.revision)
+    preview = await batches.preview_batch(draft.id, draft.revision)
     submitted = await batches.submit_batch(
         draft.id,
         BatchSubmitRequest(
@@ -255,6 +283,7 @@ async def create_running_request(
             item_sequence=item.sequence,
             gpu_slot=item.gpu_slot,
             model=job.model,
+            precision=job.precision,
             category=job.category,
             confirm_model_switch=job.confirm_model_switch,
             seed=snapshot.seed,
@@ -287,6 +316,10 @@ def make_gateway(
         {GpuSlotName.GPU0: gpu0, GpuSlotName.GPU1: gpu1},  # type: ignore[dict-item]
         {
             ModelName.LTX: Ltx23WorkflowBuilder(FIXTURES / "ltx23_minimal.json"),
+            ModelName.LTX_25: Ltx25WorkflowBuilder(
+                LTX25_RESOURCES / "ltx25_bf16.json",
+                LTX25_RESOURCES / "ltx25_int8.json",
+            ),
             ModelName.H3: H3WorkflowBuilder(FIXTURES / "h3_minimal.json"),
         },
         MediaStore(database.data_root),
@@ -297,7 +330,11 @@ def make_gateway(
 
 
 def success_history(request: RenderRequest, prompt_id: str, *, subfolder: str | None = None) -> dict[str, Any]:
-    save_node_id = "save_video" if request.model is ModelName.LTX else "14"
+    save_node_id = {
+        ModelName.LTX: "save_video",
+        ModelName.LTX_25: "4852",
+        ModelName.H3: "14",
+    }[request.model]
     return {
         prompt_id: {
             "status": {"completed": True, "status_str": "success", "messages": []},
@@ -317,9 +354,16 @@ def success_history(request: RenderRequest, prompt_id: str, *, subfolder: str | 
 
 
 def source_path(database: Database, request: RenderRequest) -> Path:
+    relative_root = (
+        Path("comfyui")
+        / request.gpu_slot.value.casefold()
+        / f"ltx25-{request.precision.value.casefold()}"
+        if request.model is ModelName.LTX_25 and request.precision is not None
+        else Path(request.gpu_slot.value.casefold())
+    )
     return (
         database.data_root
-        / request.gpu_slot.value.casefold()
+        / relative_root
         / "output"
         / str(request.job_id)
         / f"{request.item_sequence}_00001_.mp4"
@@ -340,7 +384,7 @@ def install_media_tools(
         if fail_final_primary_probe and target.name == "primary.mp4":
             frame_count = "120"
         else:
-            frame_count = "121" if model is ModelName.LTX else "124"
+            frame_count = "121" if model in {ModelName.LTX, ModelName.LTX_25} else "124"
         has_audio = target.name not in {"primary.mp4", ".primary.tmp.mp4"}
         streams: list[dict[str, object]] = [
             {
@@ -353,7 +397,7 @@ def install_media_tools(
         ]
         if has_audio:
             streams.append({"codec_type": "audio"})
-        duration = "5.0416667" if model is ModelName.LTX else "5.1666667"
+        duration = "5.0416667" if model in {ModelName.LTX, ModelName.LTX_25} else "5.1666667"
         payload = json.dumps({"streams": streams, "format": {"duration": duration}})
         return CompletedProcess(args, 0, payload, "")
 
@@ -417,6 +461,47 @@ def test_gateway_persists_va_and_vt_success(
     run(scenario())
 
 
+def test_gateway_uses_ltx25_precision_workflow_save_node_and_profile_output_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "ltx25-int8",
+            category=Category.A_VA,
+            model=ModelName.LTX_25,
+            precision=Precision.INT8,
+        )
+        gateway, gpu0, _, controller = make_gateway(database)
+        source = source_path(database, request)
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"audio-source")
+
+        prompt_id = await gateway.submit(request)
+        workflow = gpu0.submit_calls[0][0]
+        assert workflow["5004:5569"]["inputs"]["unet_name"] == (
+            "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+        )
+        assert workflow["4852"]["inputs"]["filename_prefix"].startswith(str(request.job_id))
+        assert controller.calls == [
+            (GpuSlotName.GPU0, ModelName.LTX_25, Precision.INT8, False)
+        ]
+
+        gpu0.history = success_history(request, prompt_id)
+        result = await gateway.wait(GpuSlotName.GPU0, prompt_id)
+
+        assert result.output_references[0].startswith(
+            "comfyui/gpu0/ltx25-int8/output/"
+        )
+        with database.read_session() as session:
+            attempt = session.exec(select(GenerationAttempt)).one()
+        assert attempt.model is ModelName.LTX_25
+        assert attempt.precision is Precision.INT8
+
+    install_media_tools(monkeypatch, model=ModelName.LTX_25)
+    run(scenario())
+
+
 @pytest.mark.parametrize(
     ("confirm_switch", "expected_error"),
     [(False, "model_switch_confirmation_required"), (True, None)],
@@ -443,7 +528,7 @@ def test_gateway_requires_explicit_model_switch_confirmation(
 
         prompt_id = await gateway.submit(request)
         assert len(gpu0.submit_calls) == 1
-        assert controller.calls == [(GpuSlotName.GPU0, ModelName.LTX, True)]
+        assert controller.calls == [(GpuSlotName.GPU0, ModelName.LTX, None, True)]
         assert await gateway.cancel(GpuSlotName.GPU0, prompt_id) is CancelOutcome.CANCELLED
 
     run(scenario())
@@ -567,7 +652,7 @@ def test_gateway_execution_failure_is_not_retried_on_any_model_or_slot(tmp_path:
         assert len(gpu0.submit_calls) == 1
         assert gpu0.history_calls == 1
         assert gpu1.submit_calls == []
-        assert controller.calls == [(GpuSlotName.GPU0, ModelName.LTX, False)]
+        assert controller.calls == [(GpuSlotName.GPU0, ModelName.LTX, None, False)]
         with database.read_session() as session:
             attempts = session.exec(select(GenerationAttempt)).all()
         assert len(attempts) == 1

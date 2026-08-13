@@ -4,14 +4,15 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import select
+from pydantic import ValidationError
 
 from backend.adapters.config import Settings
+from backend.adapters.gpu import SlotInspection
 from backend.adapters.llm import UnconfiguredPromptModel
 from backend.adapters.renderer import CancelOutcome, RendererInstallationStatus
+from backend.api.gpu_contracts import GpuSlotRead
 from backend.app import create_app
-from backend.domain.enums import GpuAvailability
-from backend.domain.models import GpuSlot
+from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName, Precision
 
 
 def client_for(tmp_path: Path, renderer: object | None = None) -> TestClient:
@@ -31,8 +32,25 @@ def write_frontend(frontend: Path) -> None:
 class _ConfiguredRendererGateway:
     configured = True
 
+    def __init__(self) -> None:
+        self.states = {
+            slot: SlotInspection(
+                slot,
+                GpuAvailability.AVAILABLE,
+                None,
+                gpu_name="Test GPU",
+                memory_used_mib=0,
+                memory_total_mib=24576,
+                service_status="stopped",
+            )
+            for slot in GpuSlotName
+        }
+        self.probe_calls: list[GpuSlotName] = []
+        self.release_calls: list[tuple[GpuSlotName, ModelName, Precision | None, str]] = []
+
     async def probe(self, slot):  # type: ignore[no-untyped-def]
-        return slot
+        self.probe_calls.append(slot)
+        return self.states[slot]
 
     async def installation_status(self) -> RendererInstallationStatus:
         return RendererInstallationStatus.INSTALLED
@@ -45,6 +63,27 @@ class _ConfiguredRendererGateway:
 
     async def cancel(self, slot, prompt_id):  # type: ignore[no-untyped-def]
         return CancelOutcome.CANCELLED
+
+    async def release(  # type: ignore[no-untyped-def]
+        self,
+        slot,
+        *,
+        expected_model,
+        expected_precision,
+        expected_unit,
+    ):
+        self.release_calls.append((slot, expected_model, expected_precision, expected_unit))
+        released = SlotInspection(
+            slot,
+            GpuAvailability.AVAILABLE,
+            None,
+            gpu_name="Test GPU",
+            memory_used_mib=0,
+            memory_total_mib=24576,
+            service_status="stopped",
+        )
+        self.states[slot] = released
+        return released
 
     async def close(self) -> None:
         return None
@@ -76,6 +115,80 @@ def test_health_reports_not_installed_renderer_units(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()["ok"] is False
     assert response.json()["rendererInstallation"] == "notInstalled"
+
+
+def test_gpu_slots_use_a_fresh_live_inspection_and_expose_runtime_evidence(tmp_path: Path) -> None:
+    renderer = _ConfiguredRendererGateway()
+    renderer.states[GpuSlotName.GPU0] = SlotInspection(
+        GpuSlotName.GPU0,
+        GpuAvailability.AVAILABLE,
+        ModelName.LTX_25,
+        owned_unit="conflictstudio-ltx25-int8-gpu0.service",
+        loaded_precision=Precision.INT8,
+        gpu_name="NVIDIA RTX PRO 6000 Blackwell",
+        memory_used_mib=8192,
+        memory_total_mib=97887,
+        service_status="running",
+    )
+    with client_for(tmp_path, renderer) as client:
+        first = client.get("/api/gpu-slots")
+        renderer.states[GpuSlotName.GPU0] = SlotInspection(
+            GpuSlotName.GPU0,
+            GpuAvailability.AVAILABLE,
+            None,
+            gpu_name="NVIDIA RTX PRO 6000 Blackwell",
+            memory_used_mib=16,
+            memory_total_mib=97887,
+            service_status="stopped",
+        )
+        second = client.get("/api/gpu-slots")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()[0] == {
+        "slot": "GPU0",
+        "availability": "Available",
+        "loadedModel": "LTX-2.5",
+        "loadedPrecision": "INT8",
+        "serviceStatus": "running",
+        "gpuName": "NVIDIA RTX PRO 6000 Blackwell",
+        "memory": {"usedMiB": 8192, "totalMiB": 97887},
+        "activeJobId": None,
+        "revision": 2,
+        "checkedAt": first.json()[0]["checkedAt"],
+        "statusReason": None,
+    }
+    assert second.json()[0]["loadedModel"] is None
+    assert second.json()[0]["serviceStatus"] == "stopped"
+    assert second.json()[0]["memory"] == {"usedMiB": 16, "totalMiB": 97887}
+    assert second.json()[0]["revision"] == 3
+    assert renderer.probe_calls == [
+        GpuSlotName.GPU0,
+        GpuSlotName.GPU1,
+        GpuSlotName.GPU0,
+        GpuSlotName.GPU1,
+    ]
+
+
+def test_gpu_contract_rejects_unsupported_service_status() -> None:
+    with pytest.raises(ValidationError) as error:
+        GpuSlotRead.model_validate(
+            {
+                "slot": "GPU0",
+                "availability": "Available",
+                "loadedModel": None,
+                "loadedPrecision": None,
+                "serviceStatus": "degraded",
+                "gpuName": None,
+                "memory": {"usedMiB": None, "totalMiB": None},
+                "activeJobId": None,
+                "revision": 1,
+                "checkedAt": "2026-08-13T00:00:00Z",
+                "statusReason": None,
+            }
+        )
+
+    assert error.value.errors()[0]["loc"] == ("serviceStatus",)
+    assert error.value.errors()[0]["type"] == "literal_error"
 
 
 def test_dataset_crud_uses_camel_case_and_stable_conflict(tmp_path: Path) -> None:
@@ -345,8 +458,9 @@ def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) ->
     assert response.json()["contentPlan"]["id"] == content.json()["id"]
 
 
-def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
-    with client_for(tmp_path, _ConfiguredRendererGateway()) as client:
+def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> None:
+    renderer = _ConfiguredRendererGateway()
+    with client_for(tmp_path, renderer) as client:
         dataset = client.post(
             "/api/datasets",
             json={"name": "Production", "purpose": "Production", "note": ""},
@@ -373,7 +487,8 @@ def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
             json={
                 "datasetId": dataset.json()["id"],
                 "category": "A-VA",
-                "model": "LTX-2.3",
+                "model": "LTX-2.5",
+                "precision": "INT8",
                 "quantity": 1,
                 "contentPlans": [{"id": content.json()["id"], "expectedRevision": content.json()["revision"]}],
                 "promptPresets": [{"id": prompt.json()["id"], "expectedRevision": prompt.json()["revision"]}],
@@ -382,11 +497,6 @@ def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
                 "gpuSlots": ["GPU0"],
             },
         )
-
-        with client.app.state.database.immediate_session() as session:
-            rows = session.exec(select(GpuSlot).order_by(GpuSlot.slot)).all()
-            for row in rows:
-                row.availability = GpuAvailability.AVAILABLE
 
         preview = client.post(
             f"/api/batch-drafts/{draft.json()['id']}/preview",
@@ -401,5 +511,107 @@ def test_submit_batch_returns_202_with_location(tmp_path: Path) -> None:
         )
         assert submit.status_code == 202
         assert submit.headers["Location"] == f"/api/jobs/{submit.json()['id']}"
+        assert draft.json()["precision"] == "INT8"
+        assert preview.json()["allocations"][0]["model"] == "LTX-2.5"
+        assert preview.json()["allocations"][0]["precision"] == "INT8"
+        assert submit.json()["model"] == "LTX-2.5"
+        assert submit.json()["precision"] == "INT8"
+        assert submit.json()["items"][0]["input"]["precision"] == "INT8"
+        assert preview.json()["gpuRevisions"] == {"GPU0": 2}
 
     assert preview.status_code == 200
+    assert renderer.probe_calls == [GpuSlotName.GPU0, GpuSlotName.GPU0]
+
+
+def test_gpu_release_uses_revision_and_returns_cleared_profile(tmp_path: Path) -> None:
+    renderer = _ConfiguredRendererGateway()
+    renderer.states[GpuSlotName.GPU0] = SlotInspection(
+        GpuSlotName.GPU0,
+        GpuAvailability.AVAILABLE,
+        ModelName.LTX,
+        owned_unit="conflictstudio-ltx-gpu0.service",
+        gpu_name="Test GPU",
+        memory_used_mib=4096,
+        memory_total_mib=24576,
+        service_status="running",
+    )
+    with client_for(tmp_path, renderer) as client:
+        live = client.get("/api/gpu-slots").json()[0]
+        revision = live["revision"]
+
+        response = client.post(
+            "/api/gpu-slots/GPU0/release",
+            json={"expectedRevision": revision},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["loadedModel"] is None
+    assert response.json()["loadedPrecision"] is None
+    assert response.json()["revision"] == revision + 2
+    assert renderer.release_calls == [
+        (
+            GpuSlotName.GPU0,
+            ModelName.LTX,
+            None,
+            "conflictstudio-ltx-gpu0.service",
+        )
+    ]
+
+
+def test_gpu_release_rejects_unknown_ownership_without_stopping(tmp_path: Path) -> None:
+    renderer = _ConfiguredRendererGateway()
+    renderer.states[GpuSlotName.GPU0] = SlotInspection(
+        GpuSlotName.GPU0,
+        GpuAvailability.EXTERNAL_OCCUPIED,
+        None,
+        reason="Port 8188 is owned by an unknown process",
+        gpu_name="Test GPU",
+        memory_used_mib=8192,
+        memory_total_mib=24576,
+        service_status="unknown",
+    )
+    with client_for(tmp_path, renderer) as client:
+        live = client.get("/api/gpu-slots").json()[0]
+        response = client.post(
+            "/api/gpu-slots/GPU0/release",
+            json={"expectedRevision": live["revision"]},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "gpu_ownership_unproven"
+    assert "Port 8188" in response.json()["error"]["message"]
+    assert renderer.release_calls == []
+
+
+def test_gpu_release_rejects_stale_revision_before_stopping(tmp_path: Path) -> None:
+    renderer = _ConfiguredRendererGateway()
+    renderer.states[GpuSlotName.GPU0] = SlotInspection(
+        GpuSlotName.GPU0,
+        GpuAvailability.AVAILABLE,
+        ModelName.LTX_25,
+        owned_unit="conflictstudio-ltx25-bf16-gpu0.service",
+        loaded_precision=Precision.BF16,
+        gpu_name="Test GPU",
+        memory_used_mib=8192,
+        memory_total_mib=24576,
+        service_status="running",
+    )
+    with client_for(tmp_path, renderer) as client:
+        live = client.get("/api/gpu-slots").json()[0]
+        response = client.post(
+            "/api/gpu-slots/GPU0/release",
+            json={"expectedRevision": live["revision"] - 1},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "code": "revision_conflict",
+        "message": "The record has been changed by another operation",
+        "details": {
+            "resource": "gpuSlot",
+            "id": "GPU0",
+            "expectedRevision": live["revision"] - 1,
+            "actualRevision": live["revision"],
+        },
+    }
+    assert renderer.release_calls == []

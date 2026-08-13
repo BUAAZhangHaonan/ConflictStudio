@@ -20,6 +20,7 @@ from backend.services.catalog import CatalogService
 from backend.services.errors import ServiceError
 from backend.services.job_executor import JobExecutor
 from backend.services.prompts import PromptService
+from backend.services.samples import SampleService
 
 
 def create_app(
@@ -65,6 +66,7 @@ def create_app(
     app.state.catalog_service = CatalogService(database)
     app.state.asset_service = AssetService(database)
     app.state.batch_service = batch_service
+    app.state.sample_service = SampleService(database)
     app.state.job_executor = job_executor
 
     @app.exception_handler(ServiceError)

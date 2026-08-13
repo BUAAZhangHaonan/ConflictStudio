@@ -236,7 +236,7 @@ def make_available(database, slots: list[GpuSlotName]) -> None:  # type: ignore[
 
 
 async def enqueue(batches: BatchService, draft):  # type: ignore[no-untyped-def]
-    preview = batches.preview_batch(draft.id, draft.revision)
+    preview = await batches.preview_batch(draft.id, draft.revision)
     return await batches.submit_batch(
         draft.id,
         BatchSubmitRequest(
@@ -608,7 +608,7 @@ def test_submit_is_non_blocking_and_unconfigured_renderer_writes_nothing(tmp_pat
     resources = create_resources(app.state.database, "http")
     draft = create_draft(app.state.batch_service, resources, [GpuSlotName.GPU0])
     make_available(app.state.database, [GpuSlotName.GPU0])
-    preview = app.state.batch_service.preview_batch(draft.id, draft.revision)
+    preview = asyncio.run(app.state.batch_service.preview_batch(draft.id, draft.revision))
     client = TestClient(app)
     try:
         response = client.post(
@@ -647,9 +647,11 @@ def test_submit_is_non_blocking_and_unconfigured_renderer_writes_nothing(tmp_pat
         [GpuSlotName.GPU0],
     )
     make_available(unconfigured_app.state.database, [GpuSlotName.GPU0])
-    unconfigured_preview = unconfigured_app.state.batch_service.preview_batch(
-        unconfigured_draft.id,
-        unconfigured_draft.revision,
+    unconfigured_preview = asyncio.run(
+        unconfigured_app.state.batch_service.preview_batch(
+            unconfigured_draft.id,
+            unconfigured_draft.revision,
+        )
     )
     unconfigured_client = TestClient(unconfigured_app)
     try:

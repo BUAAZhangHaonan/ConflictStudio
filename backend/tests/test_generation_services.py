@@ -7,11 +7,13 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from backend.adapters.database import Database
+from backend.adapters.gpu import SlotInspection
 from backend.adapters.llm import OpenAICompatiblePromptModel, UnconfiguredPromptModel
 from backend.domain.enums import (
     BatchDraftStatus,
@@ -23,7 +25,10 @@ from backend.domain.enums import (
     Gender,
     GpuAvailability,
     GpuSlotName,
+    JobSource,
     ModelName,
+    Precision,
+    TestExecutionMode as ExecutionMode,
 )
 from backend.domain.models import (
     BatchDraft,
@@ -43,6 +48,8 @@ from backend.domain.schemas import (
     DemographicInput,
     PromptPresetCreate,
     SourceSelection,
+    TestComparisonInput as ComparisonInput,
+    TestRunCreate as RunCreate,
     VideoBackgroundPresetCreate,
 )
 from backend.services.batches import BatchService
@@ -54,8 +61,33 @@ from backend.services.prompts import PromptContext, PromptService
 class _ConfiguredRendererGateway:
     configured = True
 
+    def __init__(
+        self,
+        loaded_model: ModelName | None = None,
+        loaded_precision: Precision | None = None,
+        availability: GpuAvailability = GpuAvailability.AVAILABLE,
+        reason: str | None = None,
+    ) -> None:
+        self.loaded_model = loaded_model
+        self.loaded_precision = loaded_precision
+        self.availability = availability
+        self.reason = reason
+        self.probe_calls: list[GpuSlotName] = []
+
     async def probe(self, slot):  # type: ignore[no-untyped-def]
-        return slot
+        self.probe_calls.append(slot)
+        return SlotInspection(
+            slot,
+            self.availability,
+            self.loaded_model,
+            owned_unit=(f"conflictstudio-test-{slot.value.lower()}.service" if self.loaded_model else None),
+            reason=self.reason,
+            loaded_precision=self.loaded_precision,
+            gpu_name="Test GPU",
+            memory_used_mib=0,
+            memory_total_mib=24576,
+            service_status="running" if self.loaded_model else "stopped",
+        )
 
     async def submit(self, request):  # type: ignore[no-untyped-def]
         return "probe"
@@ -68,6 +100,51 @@ class _ConfiguredRendererGateway:
 
     async def close(self) -> None:
         return None
+
+
+class _InterleavingRendererGateway(_ConfiguredRendererGateway):
+    def __init__(self) -> None:
+        super().__init__(ModelName.LTX_25, Precision.INT8)
+        self.block_next_probe = False
+        self.probe_started = asyncio.Event()
+        self.continue_probe = asyncio.Event()
+        self.block_release = False
+        self.release_started = asyncio.Event()
+        self.continue_release = asyncio.Event()
+        self.release_calls: list[tuple[GpuSlotName, ModelName, Precision | None, str]] = []
+
+    async def probe(self, slot):  # type: ignore[no-untyped-def]
+        if self.block_next_probe:
+            self.block_next_probe = False
+            self.probe_started.set()
+            await self.continue_probe.wait()
+        return await super().probe(slot)
+
+    async def release(
+        self,
+        slot: GpuSlotName,
+        *,
+        expected_model: ModelName,
+        expected_precision: Precision | None,
+        expected_unit: str,
+    ) -> SlotInspection:
+        self.release_calls.append(
+            (slot, expected_model, expected_precision, expected_unit)
+        )
+        self.release_started.set()
+        if self.block_release:
+            await self.continue_release.wait()
+        self.loaded_model = None
+        self.loaded_precision = None
+        return SlotInspection(
+            slot,
+            GpuAvailability.AVAILABLE,
+            None,
+            gpu_name="Test GPU",
+            memory_used_mib=0,
+            memory_total_mib=24576,
+            service_status="stopped",
+        )
 
 
 def fixed_resources(database: Database) -> tuple[CatalogService, object, object, object, object]:
@@ -137,12 +214,15 @@ def make_batch(
     background: object,
     slots: list[GpuSlotName],
     quantity: int = 4,
+    model: ModelName = ModelName.LTX,
+    precision: Precision | None = None,
 ):
     return service.create_batch_draft(
         BatchDraftCreate(
             datasetId=dataset.id,
             category=Category.A_VA,
-            model=ModelName.LTX,
+            model=model,
+            precision=precision,
             quantity=quantity,
             seed=1208,
             contentPlans=[SourceSelection(id=content.id, expectedRevision=content.revision)],
@@ -155,6 +235,327 @@ def make_batch(
             gpuSlots=slots,
         )
     )
+
+
+def test_batch_submit_rejects_nonpositive_gpu_revision() -> None:
+    with pytest.raises(ValidationError) as error:
+        BatchSubmitRequest.model_validate(
+            {
+                "expectedRevision": 1,
+                "expectedGpuRevisions": {"GPU0": 1, "GPU1": 0},
+            }
+        )
+
+    assert error.value.errors()[0]["loc"] == ("expectedGpuRevisions", "GPU1")
+    assert error.value.errors()[0]["type"] == "greater_than_equal"
+
+
+def test_ltx25_precision_reaches_draft_preview_job_and_snapshot(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    _, dataset, content, preset, background = fixed_resources(database)
+    batches = BatchService(database, PromptService(OpenAICompatiblePromptModel("test")), _ConfiguredRendererGateway())
+    draft = make_batch(
+        batches,
+        dataset,
+        content,
+        preset,
+        background,
+        [GpuSlotName.GPU0],
+        quantity=1,
+        model=ModelName.LTX_25,
+        precision=Precision.INT8,
+    )
+    preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
+    job = asyncio.run(
+        batches.submit_batch(
+            draft.id,
+            BatchSubmitRequest(
+                expectedRevision=draft.revision,
+                expectedGpuRevisions=preview.gpu_revisions,
+            ),
+        )
+    )
+
+    assert draft.precision is Precision.INT8
+    assert preview.allocations[0].precision is Precision.INT8
+    assert job.precision is Precision.INT8
+    assert job.items[0].input.precision is Precision.INT8
+    assert job.items[0].input.frame_count == 121
+
+
+def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    _, _, content, preset, background = fixed_resources(database)
+    batches = BatchService(
+        database,
+        PromptService(OpenAICompatiblePromptModel("test")),
+        _ConfiguredRendererGateway(),
+    )
+    live = asyncio.run(batches.list_gpu_slots())
+    revisions = {value.slot: value.revision for value in live}
+    payload = RunCreate(
+        contentPlan=SourceSelection(id=content.id, expectedRevision=content.revision),
+        promptPreset=SourceSelection(id=preset.id, expectedRevision=preset.revision),
+        backgroundPreset=SourceSelection(id=background.id, expectedRevision=background.revision),
+        demographic=DemographicInput(
+            age=25,
+            gender=Gender.FEMALE,
+            ethnicity=Ethnicity.EAST_ASIAN,
+        ),
+        seed=77,
+        comparisons=[
+            ComparisonInput(
+                model=ModelName.LTX_25,
+                precision=Precision.BF16,
+                gpuSlot=GpuSlotName.GPU0,
+            ),
+            ComparisonInput(
+                model=ModelName.H3,
+                precision=None,
+                gpuSlot=GpuSlotName.GPU1,
+            ),
+        ],
+        executionMode=ExecutionMode.PARALLEL,
+        expectedGpuRevisions=revisions,
+    )
+
+    job = asyncio.run(batches.submit_test_run(payload))
+
+    assert job.source is JobSource.TEST
+    assert job.model is None and job.precision is None
+    assert job.dataset_id is None and job.batch_draft_id is None
+    assert [item.input.model for item in job.items] == [ModelName.LTX_25, ModelName.H3]
+    assert [item.input.precision for item in job.items] == [Precision.BF16, None]
+    assert {item.input.seed for item in job.items} == {77}
+    assert len({item.input.fixed_positive_prompt for item in job.items}) == 1
+    assert len({item.input.final_negative_prompt for item in job.items}) == 1
+
+
+def test_serial_test_requires_switch_confirmation_for_distinct_profiles(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    _, _, content, preset, background = fixed_resources(database)
+    batches = BatchService(
+        database,
+        PromptService(OpenAICompatiblePromptModel("test")),
+        _ConfiguredRendererGateway(),
+    )
+    live = asyncio.run(batches.list_gpu_slots())
+    revision = next(
+        value.revision for value in live if value.slot is GpuSlotName.GPU0
+    )
+    values = {
+        "contentPlan": SourceSelection(id=content.id, expectedRevision=content.revision),
+        "promptPreset": SourceSelection(id=preset.id, expectedRevision=preset.revision),
+        "backgroundPreset": SourceSelection(id=background.id, expectedRevision=background.revision),
+        "demographic": DemographicInput(
+            age=25,
+            gender=Gender.FEMALE,
+            ethnicity=Ethnicity.EAST_ASIAN,
+        ),
+        "seed": 77,
+        "comparisons": [
+            ComparisonInput(
+                model=ModelName.LTX_25,
+                precision=Precision.BF16,
+                gpuSlot=GpuSlotName.GPU0,
+            ),
+            ComparisonInput(
+                model=ModelName.LTX_25,
+                precision=Precision.INT8,
+                gpuSlot=GpuSlotName.GPU0,
+            ),
+        ],
+        "executionMode": ExecutionMode.SERIAL,
+        "expectedGpuRevisions": {GpuSlotName.GPU0: revision},
+    }
+    with pytest.raises(ServiceError) as error:
+        asyncio.run(batches.submit_test_run(RunCreate(**values)))
+    assert error.value.code == "model_switch_confirmation_required"
+
+    job = asyncio.run(
+        batches.submit_test_run(RunCreate(**values, confirmModelSwitch=True))
+    )
+    assert job.confirm_model_switch is True
+
+
+def test_submit_reports_gpu_revision_race_with_message_and_details(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    _, dataset, content, preset, background = fixed_resources(database)
+    batches = BatchService(
+        database,
+        PromptService(OpenAICompatiblePromptModel("test")),
+        _ConfiguredRendererGateway(),
+    )
+    draft = make_batch(
+        batches,
+        dataset,
+        content,
+        preset,
+        background,
+        [GpuSlotName.GPU0],
+        quantity=1,
+        model=ModelName.LTX_25,
+        precision=Precision.INT8,
+    )
+    preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
+    expected_revision = preview.gpu_revisions[GpuSlotName.GPU0]
+    actual_revision: list[int] = []
+    inspect_slots = batches.gpu_slots._inspect_slots
+
+    async def inspect_then_change(slots: tuple[GpuSlotName, ...]):
+        snapshots = await inspect_slots(slots)
+        with database.immediate_session() as session:
+            row = session.get(GpuSlot, GpuSlotName.GPU0)
+            assert row is not None
+            row.revision += 1
+            actual_revision.append(row.revision)
+        return snapshots
+
+    monkeypatch.setattr(batches.gpu_slots, "_inspect_slots", inspect_then_change)
+
+    with pytest.raises(ServiceError) as error:
+        asyncio.run(
+            batches.submit_batch(
+                draft.id,
+                BatchSubmitRequest(
+                    expectedRevision=draft.revision,
+                    expectedGpuRevisions=preview.gpu_revisions,
+                ),
+            )
+        )
+
+    assert error.value.code == "gpu_state_changed"
+    assert error.value.message == "The selected GPU state changed"
+    assert error.value.details == {
+        "slot": "GPU0",
+        "expectedRevision": expected_revision,
+        "actualRevision": actual_revision[0],
+    }
+    with database.read_session() as session:
+        assert session.exec(select(Job)).all() == []
+
+
+def test_release_blocks_concurrent_submission_until_the_service_is_stopped(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        database = Database(tmp_path)
+        database.initialize()
+        _, dataset, content, preset, background = fixed_resources(database)
+        renderer = _InterleavingRendererGateway()
+        batches = BatchService(
+            database,
+            PromptService(OpenAICompatiblePromptModel("test")),
+            renderer,
+        )
+        draft = make_batch(
+            batches,
+            dataset,
+            content,
+            preset,
+            background,
+            [GpuSlotName.GPU0],
+            quantity=1,
+            model=ModelName.LTX_25,
+            precision=Precision.INT8,
+        )
+        preview = await batches.preview_batch(draft.id, draft.revision)
+        revision = preview.gpu_revisions[GpuSlotName.GPU0]
+        request = BatchSubmitRequest(
+            expectedRevision=draft.revision,
+            expectedGpuRevisions=preview.gpu_revisions,
+        )
+
+        renderer.block_release = True
+        release_task = asyncio.create_task(
+            batches.release_gpu_slot(GpuSlotName.GPU0, revision)
+        )
+        await asyncio.wait_for(renderer.release_started.wait(), timeout=1)
+        probes_during_release = list(renderer.probe_calls)
+
+        submit_task = asyncio.create_task(batches.submit_batch(draft.id, request))
+        await asyncio.sleep(0)
+
+        assert not submit_task.done()
+        assert renderer.probe_calls == probes_during_release
+        with database.read_session() as session:
+            assert session.exec(select(Job)).all() == []
+
+        renderer.continue_release.set()
+        released = await release_task
+        assert released.loaded_model is None
+        with pytest.raises(ServiceError) as error:
+            await submit_task
+        assert error.value.code == "gpu_state_changed"
+        with database.read_session() as session:
+            assert session.exec(select(Job)).all() == []
+
+    asyncio.run(scenario())
+
+
+def test_submission_blocks_concurrent_release_until_the_slot_is_reserved(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        database = Database(tmp_path)
+        database.initialize()
+        _, dataset, content, preset, background = fixed_resources(database)
+        renderer = _InterleavingRendererGateway()
+        batches = BatchService(
+            database,
+            PromptService(OpenAICompatiblePromptModel("test")),
+            renderer,
+        )
+        draft = make_batch(
+            batches,
+            dataset,
+            content,
+            preset,
+            background,
+            [GpuSlotName.GPU0],
+            quantity=1,
+            model=ModelName.LTX_25,
+            precision=Precision.INT8,
+        )
+        preview = await batches.preview_batch(draft.id, draft.revision)
+        revision = preview.gpu_revisions[GpuSlotName.GPU0]
+        request = BatchSubmitRequest(
+            expectedRevision=draft.revision,
+            expectedGpuRevisions=preview.gpu_revisions,
+        )
+
+        renderer.block_next_probe = True
+        submit_task = asyncio.create_task(batches.submit_batch(draft.id, request))
+        await asyncio.wait_for(renderer.probe_started.wait(), timeout=1)
+
+        release_task = asyncio.create_task(
+            batches.release_gpu_slot(GpuSlotName.GPU0, revision)
+        )
+        await asyncio.sleep(0)
+
+        assert not release_task.done()
+        assert renderer.release_calls == []
+
+        renderer.continue_probe.set()
+        job = await submit_task
+        with pytest.raises(ServiceError) as error:
+            await release_task
+        assert error.value.code == "gpu_unavailable"
+        assert renderer.release_calls == []
+        with database.read_session() as session:
+            slot = session.get(GpuSlot, GpuSlotName.GPU0)
+            assert slot is not None
+            assert slot.availability is GpuAvailability.RESERVED
+            assert slot.active_job_id == job.id
+
+    asyncio.run(scenario())
 
 
 def test_catalog_persists_records_and_rejects_stale_revision(tmp_path: Path) -> None:
@@ -356,7 +757,15 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Pat
         )
     )
     prompt_service = PromptService(OpenAICompatiblePromptModel("test"))
-    batches = BatchService(database, prompt_service, _ConfiguredRendererGateway())
+    renderer = _ConfiguredRendererGateway(
+        availability=GpuAvailability.EXTERNAL_OCCUPIED,
+        reason="An unknown process uses the GPU or fixed listener port",
+    )
+    batches = BatchService(
+        database,
+        prompt_service,
+        renderer,
+    )
     draft = batches.create_batch_draft(
         BatchDraftCreate(
             datasetId=dataset.id,
@@ -374,7 +783,7 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Pat
             gpuSlots=[GpuSlotName.GPU0],
         )
     )
-    preview = batches.preview_batch(draft.id, draft.revision)
+    preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
     assert [item.background_preset.id for item in preview.allocations] == [background.id, second.id] * 2
 
     with pytest.raises(ServiceError) as error:
@@ -387,7 +796,8 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Pat
                 ),
             )
         )
-    assert error.value.code == "gpu_unavailable"
+    assert error.value.code == "gpu_occupation_untrusted"
+    assert renderer.probe_calls == [GpuSlotName.GPU0, GpuSlotName.GPU0]
     with database.read_session() as session:
         assert session.exec(select(Job)).all() == []
         assert session.exec(select(BatchVideoInputSnapshot)).all() == []
@@ -406,7 +816,7 @@ def test_submit_blocks_when_renderer_is_not_configured(tmp_path: Path) -> None:
         background,
         [GpuSlotName.GPU0],
     )
-    preview = batches.preview_batch(draft.id, draft.revision)
+    preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
     with database.immediate_session() as session:
         for row in session.exec(select(GpuSlot)).all():
             row.availability = GpuAvailability.AVAILABLE
@@ -436,7 +846,8 @@ def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_conf
     database.initialize()
     catalog, dataset, content, preset, background = fixed_resources(database)
     prompt_service = PromptService(OpenAICompatiblePromptModel("test"))
-    batches = BatchService(database, prompt_service, _ConfiguredRendererGateway())
+    renderer = _ConfiguredRendererGateway(ModelName.H3)
+    batches = BatchService(database, prompt_service, renderer)
     draft = make_batch(
         batches,
         dataset,
@@ -451,7 +862,7 @@ def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_conf
         slot.availability = GpuAvailability.AVAILABLE
         slot.loaded_model = ModelName.H3
         slot.revision += 1
-    preview = batches.preview_batch(draft.id, draft.revision)
+    preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
 
     with pytest.raises(ServiceError) as error:
         asyncio.run(
@@ -480,11 +891,22 @@ def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_conf
             )
         )
     assert job.confirm_model_switch is True
+    assert renderer.probe_calls == [GpuSlotName.GPU0, GpuSlotName.GPU0, GpuSlotName.GPU0]
     with database.read_session() as session:
         slot = session.get(GpuSlot, GpuSlotName.GPU0)
         assert slot is not None
         assert slot.loaded_model is ModelName.H3
         assert slot.availability is GpuAvailability.RESERVED
+
+    with database.immediate_session() as session:
+        stale = session.get(GpuSlot, GpuSlotName.GPU0)
+        assert stale is not None
+        stale.availability = GpuAvailability.AVAILABLE
+        stale.active_job_id = None
+
+    reconciled = asyncio.run(batches.list_gpu_slots())[0]
+    assert reconciled.active_job_id == job.id
+    assert reconciled.availability is GpuAvailability.RESERVED
 
 
 def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path) -> None:
@@ -508,7 +930,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
         for row in session.exec(select(GpuSlot)).all():
             row.availability = GpuAvailability.AVAILABLE
             row.revision += 1
-    preview = batches.preview_batch(draft.id, draft.revision)
+    preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
     job = asyncio.run(
         batches.submit_batch(
             draft.id,
@@ -697,8 +1119,10 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
             row.availability = GpuAvailability.AVAILABLE
             row.revision += 1
 
-    preview = batches.preview_batch(draft.id, draft.revision)
-    repeating_preview = batches.preview_batch(repeating_draft.id, repeating_draft.revision)
+    preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
+    repeating_preview = asyncio.run(
+        batches.preview_batch(repeating_draft.id, repeating_draft.revision)
+    )
 
     expected = list(
         product(
@@ -819,7 +1243,7 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: 
         assert gpu is not None
         gpu.availability = GpuAvailability.AVAILABLE
         gpu.revision += 1
-    preview = batches.preview_batch(draft.id, draft.revision)
+    preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
     job = asyncio.run(
         batches.submit_batch(
             draft.id,

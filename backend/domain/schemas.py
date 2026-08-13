@@ -16,7 +16,6 @@ from .enums import (
     Ethnicity,
     Gender,
     GenerationAttemptStatus,
-    GpuAvailability,
     GpuSlotName,
     JobItemStage,
     JobSource,
@@ -755,15 +754,6 @@ class JobSummaryRead(ApiModel):
 class JobDetailRead(JobSummaryRead):
     items: list[JobItemRead]
     events: list[JobEventRead] = Field(default_factory=list)
-
-
-class GpuSlotRead(ApiModel):
-    slot: GpuSlotName
-    availability: GpuAvailability
-    loaded_model: ModelName | None
-    active_job_id: int | None
-    revision: int
-    checked_at: str
 
 
 class HealthRead(ApiModel):

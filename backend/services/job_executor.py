@@ -21,6 +21,7 @@ from backend.domain.enums import (
     GpuAvailability,
     GpuSlotName,
     JobItemStage,
+    JobSource,
     JobStatus,
 )
 from backend.domain.models import (
@@ -37,6 +38,7 @@ from backend.domain.schemas import JobCancelRequest
 
 from .errors import ServiceError, not_found, revision_conflict, state_conflict
 from .prompts import GeneratedPrompt, PreparedPrompt, PromptResult, PromptService
+from .samples import create_sample_for_completed_item
 
 
 TERMINAL_STATUSES = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
@@ -296,6 +298,7 @@ class JobExecutor:
                 item_sequence=item.sequence,
                 gpu_slot=item.gpu_slot,
                 model=snapshot.model,
+                precision=snapshot.precision,
                 category=snapshot.category,
                 confirm_model_switch=job.confirm_model_switch,
                 seed=snapshot.seed,
@@ -443,6 +446,10 @@ class JobExecutor:
             item.stage = JobItemStage.COMPLETED
             item.updated_at = timestamp
             item.revision += 1
+            if job.source is JobSource.PRODUCTION and item.primary_asset_id is not None:
+                if job.dataset_id is None:
+                    raise RuntimeError("A production job must have a destination dataset")
+                create_sample_for_completed_item(session, job, item, job.dataset_id)
             job.completed_count += 1
             job.updated_at = timestamp
             job.revision += 1

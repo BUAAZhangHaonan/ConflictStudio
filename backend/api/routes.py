@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from backend.adapters.renderer import RendererInstallationStatus
+from backend.domain.enums import GpuSlotName, ReviewDecision
 from backend.domain.schemas import (
     BatchDraftCreate,
     BatchDraftRead,
@@ -22,26 +23,32 @@ from backend.domain.schemas import (
     DatasetCreate,
     DatasetRead,
     DatasetUpdate,
-    GpuSlotRead,
     HealthRead,
     JobCancelRequest,
     JobDetailRead,
     JobEventRead,
     JobItemRead,
     JobSummaryRead,
+    KeepTestResultRequest,
     PromptPresetCreate,
     PromptPresetRead,
     PromptPresetUpdate,
     PromptPreviewRead,
     PromptPreviewRequest,
+    SampleRead,
+    SampleReviewUpdate,
+    TestRunCreate,
     VideoBackgroundPresetCreate,
     VideoBackgroundPresetRead,
     VideoBackgroundPresetUpdate,
 )
+from backend.api.gpu_contracts import GpuMemoryRead, GpuReleaseRequest, GpuSlotRead
 from backend.services.assets import AssetService
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
+from backend.services.gpu_slots import GpuSlotSnapshot
 from backend.services.job_executor import JobExecutor
+from backend.services.samples import SampleService
 
 
 router = APIRouter(prefix="/api")
@@ -66,6 +73,10 @@ def assets(request: Request) -> AssetService:
 
 def executor(request: Request) -> JobExecutor:
     return request.app.state.job_executor
+
+
+def samples(request: Request) -> SampleService:
+    return request.app.state.sample_service
 
 
 async def notify_executor(job_executor: JobExecutor) -> None:
@@ -209,6 +220,17 @@ def preview_prompt(payload: PromptPreviewRequest, request: Request) -> PromptPre
     return batches(request).preview_prompt(payload)
 
 
+@router.post("/test-runs", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)
+async def submit_test_run(payload: TestRunCreate, request: Request) -> Response:
+    job = await batches(request).submit_test_run(payload)
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content=job.model_dump(mode="json", by_alias=True),
+        headers={"Location": f"/api/jobs/{job.id}"},
+        background=BackgroundTask(notify_executor, executor(request)),
+    )
+
+
 @router.get("/batch-drafts", response_model=list[BatchDraftRead])
 def list_batch_drafts(request: Request) -> list[BatchDraftRead]:
     return batches(request).list_batch_drafts()
@@ -240,8 +262,8 @@ def delete_batch_draft(
 
 
 @router.post("/batch-drafts/{draft_id}/preview", response_model=BatchPreviewRead)
-def preview_batch(draft_id: int, payload: BatchPreviewRequest, request: Request) -> BatchPreviewRead:
-    return batches(request).preview_batch(draft_id, payload.expected_revision)
+async def preview_batch(draft_id: int, payload: BatchPreviewRequest, request: Request) -> BatchPreviewRead:
+    return await batches(request).preview_batch(draft_id, payload.expected_revision)
 
 
 @router.post("/batch-drafts/{draft_id}/submit", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)
@@ -273,6 +295,33 @@ def list_job_items(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[JobItemRead]:
     return batches(request).list_job_items(job_id, offset, limit)
+
+
+@router.post("/job-items/{item_id}/keep", response_model=SampleRead, status_code=status.HTTP_201_CREATED)
+def keep_test_result(item_id: int, payload: KeepTestResultRequest, request: Request) -> SampleRead:
+    return samples(request).keep_test_result(item_id, payload)
+
+
+@router.get("/samples", response_model=list[SampleRead])
+def list_samples(
+    request: Request,
+    decision: ReviewDecision | None = Query(default=None),
+) -> list[SampleRead]:
+    return samples(request).list_samples(decision)
+
+
+@router.get("/samples/{sample_id}", response_model=SampleRead)
+def get_sample(sample_id: int, request: Request) -> SampleRead:
+    return samples(request).get_sample(sample_id)
+
+
+@router.patch("/samples/{sample_id}/review", response_model=SampleRead)
+def update_sample_review(
+    sample_id: int,
+    payload: SampleReviewUpdate,
+    request: Request,
+) -> SampleRead:
+    return samples(request).update_review(sample_id, payload)
 
 
 @router.api_route("/media/{asset_id}", methods=["GET", "HEAD"], response_class=Response)
@@ -478,6 +527,31 @@ async def cancel_job(job_id: int, payload: JobCancelRequest, request: Request) -
     return batches(request).get_job(job_id)
 
 
+def _gpu_slot_read(snapshot: GpuSlotSnapshot) -> GpuSlotRead:
+    return GpuSlotRead(
+        slot=snapshot.slot,
+        availability=snapshot.availability,
+        loaded_model=snapshot.loaded_model,
+        loaded_precision=snapshot.loaded_precision,
+        service_status=snapshot.service_status,
+        gpu_name=snapshot.gpu_name,
+        memory=GpuMemoryRead(
+            usedMiB=snapshot.memory_used_mib,
+            totalMiB=snapshot.memory_total_mib,
+        ),
+        active_job_id=snapshot.active_job_id,
+        revision=snapshot.revision,
+        checked_at=snapshot.checked_at,
+        status_reason=snapshot.status_reason,
+    )
+
+
 @router.get("/gpu-slots", response_model=list[GpuSlotRead])
-def list_gpu_slots(request: Request) -> list[GpuSlotRead]:
-    return batches(request).list_gpu_slots()
+async def list_gpu_slots(request: Request) -> list[GpuSlotRead]:
+    return [_gpu_slot_read(snapshot) for snapshot in await batches(request).list_gpu_slots()]
+
+
+@router.post("/gpu-slots/{slot}/release", response_model=GpuSlotRead)
+async def release_gpu_slot(slot: GpuSlotName, payload: GpuReleaseRequest, request: Request) -> GpuSlotRead:
+    snapshot = await batches(request).release_gpu_slot(slot, payload.expected_revision)
+    return _gpu_slot_read(snapshot)

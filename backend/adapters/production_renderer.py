@@ -12,7 +12,13 @@ from sqlmodel import select
 from backend.adapters.comfyui import AdapterError, ComfyUIClient
 from backend.adapters.config import RendererSettings
 from backend.adapters.database import Database
-from backend.adapters.gpu import PORTS, UNIT_DEFINITIONS, SlotInspection, SlotInspector
+from backend.adapters.gpu import (
+    PORTS,
+    UNIT_DEFINITIONS,
+    UNITS_BY_SLOT_PROFILE,
+    SlotInspection,
+    SlotInspector,
+)
 from backend.adapters.media import MediaError, MediaStore, PreparedMedia
 from backend.adapters.model_service import ModelServiceController
 from backend.adapters.renderer import (
@@ -26,6 +32,7 @@ from backend.adapters.renderer import (
 from backend.adapters.workflows import (
     H3WorkflowBuilder,
     Ltx23WorkflowBuilder,
+    Ltx25WorkflowBuilder,
     WorkflowTemplateError,
 )
 from backend.domain.enums import (
@@ -35,8 +42,18 @@ from backend.domain.enums import (
     JobItemStage,
     JobStatus,
     ModelName,
+    Precision,
+    validate_model_precision,
 )
-from backend.domain.models import GenerationAttempt, GpuSlot, Job, JobEvent, JobItem, utc_now
+from backend.domain.models import (
+    BatchVideoInputSnapshot,
+    GenerationAttempt,
+    GpuSlot,
+    Job,
+    JobEvent,
+    JobItem,
+    utc_now,
+)
 
 
 @dataclass
@@ -60,7 +77,10 @@ class ProductionRendererGateway:
         inspector: SlotInspector,
         model_controller: ModelServiceController,
         clients: Mapping[GpuSlotName, ComfyUIClient],
-        workflow_builders: Mapping[ModelName, Ltx23WorkflowBuilder | H3WorkflowBuilder],
+        workflow_builders: Mapping[
+            ModelName,
+            Ltx23WorkflowBuilder | Ltx25WorkflowBuilder | H3WorkflowBuilder,
+        ],
         media_store: MediaStore,
         *,
         render_timeout_seconds: float = 60 * 60,
@@ -68,8 +88,9 @@ class ProductionRendererGateway:
     ) -> None:
         if set(clients) != set(GpuSlotName):
             raise ValueError("One ComfyUI client is required for every GPU slot")
-        if set(workflow_builders) != set(ModelName):
-            raise ValueError("One workflow builder is required for every renderer model")
+        controlled_models = {definition.model for definition in UNIT_DEFINITIONS}
+        if set(workflow_builders) != controlled_models:
+            raise ValueError("One workflow builder is required for every controlled renderer model")
         if render_timeout_seconds <= 0 or status_poll_seconds <= 0:
             raise ValueError("Renderer timing must be positive")
         if media_store.data_root != database.data_root:
@@ -102,6 +123,10 @@ class ProductionRendererGateway:
 
         workflow_builders = {
             ModelName.LTX: Ltx23WorkflowBuilder(settings.ltx23_template),
+            ModelName.LTX_25: Ltx25WorkflowBuilder(
+                settings.ltx25_bf16_template,
+                settings.ltx25_int8_template,
+            ),
             ModelName.H3: H3WorkflowBuilder(settings.h3_template),
         }
         inspector = SlotInspector()
@@ -143,11 +168,13 @@ class ProductionRendererGateway:
             ready = await self.model_controller.ensure_model(
                 request.gpu_slot,
                 request.model,
+                precision=request.precision,
                 confirm_switch=request.confirm_model_switch,
             )
             if (
                 ready.availability is not GpuAvailability.AVAILABLE
                 or ready.loaded_model is not request.model
+                or ready.loaded_precision is not request.precision
                 or ready.owned_unit is None
             ):
                 raise RendererGatewayError(
@@ -155,13 +182,23 @@ class ProductionRendererGateway:
                     "The ready model service does not match the requested controlled unit",
                 )
             self._record_live_model(request, ready)
-            workflow = self.workflow_builders[request.model].build(
-                final_positive_prompt=request.positive_prompt,
-                final_negative_prompt=request.negative_prompt,
-                seed=request.seed,
-                job_id=request.job_id,
-                sequence=request.item_sequence,
-            )
+            builder = self.workflow_builders[request.model]
+            build_arguments = {
+                "final_positive_prompt": request.positive_prompt,
+                "final_negative_prompt": request.negative_prompt,
+                "seed": request.seed,
+                "job_id": request.job_id,
+                "sequence": request.item_sequence,
+            }
+            if isinstance(builder, Ltx25WorkflowBuilder):
+                if request.precision is None:
+                    raise RendererGatewayError(
+                        "renderer_input_invalid",
+                        "LTX-2.5 rendering requires a precision profile",
+                    )
+                workflow = builder.build(precision=request.precision, **build_arguments)
+            else:
+                workflow = builder.build(**build_arguments)
             client_id = f"conflictstudio-{request.job_id}-{request.job_item_id}"
             prompt_id = await self.clients[request.gpu_slot].submit_prompt(workflow, client_id)
         except asyncio.CancelledError:
@@ -187,7 +224,11 @@ class ProductionRendererGateway:
             prompt_id=prompt_id,
             attempt_id=attempt_id,
             attempt_number=1,
-            save_node_id="save_video" if request.model is ModelName.LTX else "14",
+            save_node_id={
+                ModelName.LTX: "save_video",
+                ModelName.LTX_25: "4852",
+                ModelName.H3: "14",
+            }[request.model],
         )
         self._contexts[(request.gpu_slot, prompt_id)] = context
         return prompt_id
@@ -258,18 +299,41 @@ class ProductionRendererGateway:
             self.model_controller.close(),
         )
 
+    async def release(
+        self,
+        slot: GpuSlotName,
+        *,
+        expected_model: ModelName,
+        expected_precision: Precision | None,
+        expected_unit: str,
+    ) -> RendererSlotState:
+        return await self.model_controller.release_model(
+            slot,
+            expected_model=expected_model,
+            expected_precision=expected_precision,
+            expected_unit=expected_unit,
+        )
+
     def _validate_request(self, request: RenderRequest) -> None:
         with self.database.read_session() as session:
             job = session.get(Job, request.job_id)
             item = session.get(JobItem, request.job_item_id)
+            snapshot = (
+                session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
+                if item is not None
+                else None
+            )
             slot = session.get(GpuSlot, request.gpu_slot)
             if (
                 job is None
                 or item is None
+                or snapshot is None
                 or item.job_id != request.job_id
                 or item.sequence != request.item_sequence
                 or item.gpu_slot is not request.gpu_slot
-                or job.model is not request.model
+                or snapshot.model is not request.model
+                or snapshot.precision is not request.precision
+                or snapshot.category is not request.category
                 or job.category is not request.category
                 or job.confirm_model_switch is not request.confirm_model_switch
                 or job.status is not JobStatus.RUNNING
@@ -287,6 +351,11 @@ class ProductionRendererGateway:
             raise RendererGatewayError(
                 "renderer_input_invalid",
                 "Renderer source video must contain audio",
+            )
+        if not validate_model_precision(request.model, request.precision):
+            raise RendererGatewayError(
+                "renderer_input_invalid",
+                "The renderer model and precision do not match",
             )
         expected_silent = request.category.value.endswith("VT")
         if request.derive_silent_primary is not expected_silent:
@@ -308,6 +377,7 @@ class ProductionRendererGateway:
                     "The GPU reservation changed before rendering",
                 )
             slot.loaded_model = inspection.loaded_model
+            slot.loaded_precision = request.precision
             slot.checked_at = utc_now()
             slot.revision += 1
 
@@ -335,6 +405,7 @@ class ProductionRendererGateway:
                 job_item_id=item.id,
                 attempt_number=1,
                 model=request.model,
+                precision=request.precision,
                 gpu_slot=request.gpu_slot,
                 seed=request.seed,
                 renderer_prompt_id=prompt_id,
@@ -567,12 +638,23 @@ class ProductionRendererGateway:
                 "renderer_output_invalid",
                 "ComfyUI returned an unexpected video output path",
             )
-        relative = f"{context.request.gpu_slot.value.casefold()}/output/{subfolder}/{filename}"
+        definition = UNITS_BY_SLOT_PROFILE.get(
+            (
+                context.request.gpu_slot,
+                context.request.model,
+                context.request.precision,
+            )
+        )
+        if definition is None:
+            raise RendererGatewayError(
+                "renderer_output_invalid",
+                "The renderer profile is not allowlisted",
+            )
+        output_root_relative = f"{definition.relative_data_directory}/output"
+        relative = f"{output_root_relative}/{subfolder}/{filename}"
         try:
             resolved = self.media_store.resolve(relative)
-            output_root = self.media_store.resolve(
-                f"{context.request.gpu_slot.value.casefold()}/output"
-            )
+            output_root = self.media_store.resolve(output_root_relative)
             resolved.relative_to(output_root)
         except (MediaError, ValueError) as error:
             raise RendererGatewayError(

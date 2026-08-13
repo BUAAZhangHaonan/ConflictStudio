@@ -24,6 +24,7 @@ from backend.domain.enums import (
     JobSource,
     JobStatus,
     ModelName,
+    Precision,
     ResourceStatus,
 )
 from backend.domain.models import (
@@ -36,6 +37,7 @@ from backend.domain.models import (
     BatchVideoInputSnapshot,
     ContentPlan,
     Dataset,
+    GenerationAttempt,
     GpuSlot,
     Job,
     JobEvent,
@@ -44,6 +46,7 @@ from backend.domain.models import (
     PromptExample,
     PromptPreset,
     RENDERER_PROFILE_VERSION,
+    Sample,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
@@ -59,7 +62,7 @@ from backend.domain.schemas import (
     BatchSubmitRequest,
     BilingualSelectionRead,
     DemographicInput,
-    GpuSlotRead,
+    GenerationAttemptRead,
     JobDetailRead,
     JobEventPayloadRead,
     JobEventRead,
@@ -70,10 +73,13 @@ from backend.domain.schemas import (
     PromptPreviewRequest,
     SelectionRead,
     SnapshotRead,
+    SourceSelection,
+    TestRunCreate,
 )
 
 from .errors import ServiceError, not_found, revision_conflict, state_conflict
 from .assets import asset_content_url
+from .gpu_slots import GpuSlotService, GpuSlotSnapshot
 from .prompts import PreparedPrompt, PromptContext, PromptService
 
 
@@ -101,7 +107,16 @@ class Allocation:
     demographic: BatchDraftDemographic
     gpu_slot: GpuSlotName
     model: ModelName
+    precision: Precision | None
     seed: int
+    prepared: PreparedPrompt
+
+
+@dataclass(frozen=True)
+class PromptSelection:
+    content: ContentPlan
+    preset: PromptPreset
+    background: VideoBackgroundPreset
     prepared: PreparedPrompt
 
 
@@ -126,6 +141,7 @@ class BatchService:
         self.database = database
         self.prompts = prompts
         self.renderer = renderer or UnconfiguredRendererGateway()
+        self.gpu_slots = GpuSlotService(database, self.renderer)
 
     def list_batch_drafts(self) -> list[BatchDraftRead]:
         with self.database.read_session() as session:
@@ -146,6 +162,7 @@ class BatchService:
                 category=payload.category,
                 conflict_direction=payload.conflict_direction,
                 model=payload.model,
+                precision=payload.precision,
                 quantity=payload.quantity,
                 seed_base=seed,
             )
@@ -167,6 +184,7 @@ class BatchService:
             row.category = payload.category
             row.conflict_direction = payload.conflict_direction
             row.model = payload.model
+            row.precision = payload.precision
             row.quantity = payload.quantity
             if payload.seed is not None:
                 row.seed_base = payload.seed
@@ -185,67 +203,34 @@ class BatchService:
                 raise state_conflict("batchDraft", draft_id, "A submitted batch cannot be deleted")
             session.delete(row)
 
-    def preview_batch(self, draft_id: int, expected_revision: int) -> BatchPreviewRead:
+    async def preview_batch(self, draft_id: int, expected_revision: int) -> BatchPreviewRead:
         with self.database.read_session() as session:
             aggregate = self._load_aggregate(session, draft_id)
             self._check_draft_revision(aggregate.draft, expected_revision)
             self._validate_aggregate(aggregate)
-            gpu_rows = self._gpu_rows(session, aggregate.gpu_slots)
             allocations = self._build_allocations(aggregate)
-            return BatchPreviewRead(
-                batch_draft_id=draft_id,
-                expected_revision=aggregate.draft.revision,
-                gpu_revisions={row.slot: row.revision for row in gpu_rows},
-                allocations=[self._allocation_read(value) for value in allocations],
-            )
+
+        live_gpu_slots = await self.gpu_slots.inspect_slots(aggregate.gpu_slots)
+        return BatchPreviewRead(
+            batch_draft_id=draft_id,
+            expected_revision=aggregate.draft.revision,
+            gpu_revisions={slot: snapshot.revision for slot, snapshot in live_gpu_slots.items()},
+            allocations=[self._allocation_read(value) for value in allocations],
+        )
 
     def preview_prompt(self, payload: PromptPreviewRequest) -> PromptPreviewRead:
         with self.database.read_session() as session:
-            content = self._required(session, ContentPlan, payload.content_plan.id, "contentPlan")
-            preset = self._required(session, PromptPreset, payload.prompt_preset.id, "promptPreset")
-            background = self._required(
+            selection = self._prepare_prompt_selection(
                 session,
-                VideoBackgroundPreset,
-                payload.background_preset.id,
-                "videoBackgroundPreset",
+                payload.content_plan,
+                payload.prompt_preset,
+                payload.background_preset,
+                payload.demographic,
             )
-            self._check_source(content, payload.content_plan.expected_revision, "contentPlan")
-            self._check_source(preset, payload.prompt_preset.expected_revision, "promptPreset")
-            self._check_source(
-                background,
-                payload.background_preset.expected_revision,
-                "videoBackgroundPreset",
-            )
-            if content.status is not ContentStatus.ACTIVE:
-                raise state_conflict("contentPlan", content.id, "The selected content plan is not active")
-            if preset.status is not ResourceStatus.ACTIVE:
-                raise state_conflict("promptPreset", preset.id, "The selected prompt preset is disabled")
-            if background.status is not ResourceStatus.ACTIVE:
-                raise state_conflict(
-                    "videoBackgroundPreset",
-                    background.id,
-                    "The selected background preset is disabled",
-                )
-            if preset.category is not content.category:
-                raise ServiceError(422, "validation_error", "The prompt preset category does not match the content")
-            examples = session.exec(
-                select(PromptExample)
-                .where(PromptExample.preset_id == preset.id)
-                .order_by(PromptExample.kind, PromptExample.position)
-            ).all()
-            prepared = self.prompts.prepare(
-                PromptContext(
-                    content=content,
-                    preset=preset,
-                    positive_examples=[row.text for row in examples if row.kind is ExampleKind.POSITIVE],
-                    negative_examples=[row.text for row in examples if row.kind is ExampleKind.NEGATIVE],
-                    background=background,
-                    age=payload.demographic.age,
-                    gender=payload.demographic.gender,
-                    ethnicity=payload.demographic.ethnicity,
-                )
-            )
-            fixed = prepared.fixed_output
+            content = selection.content
+            preset = selection.preset
+            background = selection.background
+            fixed = selection.prepared.fixed_output
             return PromptPreviewRead(
                 content_plan=BilingualSelectionRead(
                     id=content.id,
@@ -264,11 +249,151 @@ class BatchService:
                 conflict_direction=content.conflict_direction,
                 demographic=payload.demographic,
                 requires_prompt_generation=fixed is None,
-                system_input=prepared.system_input,
-                user_input=prepared.user_input,
+                system_input=selection.prepared.system_input,
+                user_input=selection.prepared.user_input,
                 final_positive_prompt=fixed.positive_prompt if fixed else None,
-                final_negative_prompt=prepared.final_negative_prompt,
+                final_negative_prompt=selection.prepared.final_negative_prompt,
             )
+
+    async def submit_test_run(self, payload: TestRunCreate) -> JobDetailRead:
+        if not self.renderer.configured:
+            raise ServiceError(
+                503,
+                "renderer_not_configured",
+                "Rendering requires a configured renderer gateway",
+            )
+
+        with self.database.read_session() as session:
+            selection = self._prepare_prompt_selection(
+                session,
+                payload.content_plan,
+                payload.prompt_preset,
+                payload.background_preset,
+                payload.demographic,
+            )
+        prompt_result = await self.prompts.complete(selection.prepared, selection.content.category)
+        seed = payload.seed if payload.seed is not None else random.SystemRandom().randrange(0, 2**31)
+        selected_slots = list(dict.fromkeys(value.gpu_slot for value in payload.comparisons))
+        async with self.gpu_slots.submission_inspection(selected_slots) as live_gpu_slots:
+            with self.database.immediate_session() as session:
+                current = self._prepare_prompt_selection(
+                    session,
+                    payload.content_plan,
+                    payload.prompt_preset,
+                    payload.background_preset,
+                    payload.demographic,
+                )
+                requested_profiles: dict[GpuSlotName, list[tuple[ModelName, Precision | None]]] = {
+                    slot: [] for slot in selected_slots
+                }
+                for comparison in payload.comparisons:
+                    requested_profiles[comparison.gpu_slot].append(
+                        (comparison.model, comparison.precision)
+                    )
+                self.gpu_slots.validate_profiles(
+                    live_gpu_slots,
+                    expected_revisions=payload.expected_gpu_revisions,
+                    requested_profiles=requested_profiles,
+                    confirm_model_switch=payload.confirm_model_switch,
+                )
+                self._validate_live_gpu_rows(session, selected_slots, live_gpu_slots)
+
+                timestamp = utc_now()
+                job = Job(
+                    display_name=self._job_name(current.content.category),
+                    source=JobSource.TEST,
+                    dataset_id=None,
+                    batch_draft_id=None,
+                    category=current.content.category,
+                    conflict_direction=current.content.conflict_direction,
+                    model=None,
+                    precision=None,
+                    status=JobStatus.QUEUED,
+                    total_count=len(payload.comparisons),
+                    confirm_model_switch=payload.confirm_model_switch,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+                session.add(job)
+                session.flush()
+
+                snapshots: list[BatchVideoInputSnapshot] = []
+                for sequence, comparison in enumerate(payload.comparisons, start=1):
+                    snapshot = BatchVideoInputSnapshot(
+                        batch_draft_id=None,
+                        dataset_id=None,
+                        dataset_revision=None,
+                        sequence=sequence,
+                        content_plan_id=current.content.id,
+                        content_plan_revision=current.content.revision,
+                        prompt_preset_id=current.preset.id,
+                        prompt_preset_revision=current.preset.revision,
+                        background_preset_id=current.background.id,
+                        background_preset_revision=current.background.revision,
+                        policy_version=prompt_result.policy_version,
+                        category=current.content.category,
+                        conflict_direction=current.content.conflict_direction,
+                        age=payload.demographic.age,
+                        gender=payload.demographic.gender,
+                        ethnicity=payload.demographic.ethnicity,
+                        model=comparison.model,
+                        precision=comparison.precision,
+                        seed=seed,
+                        width=VIDEO_WIDTH,
+                        height=VIDEO_HEIGHT,
+                        fps=VIDEO_FPS,
+                        frame_count=124 if comparison.model is ModelName.H3 else 121,
+                        renderer_profile_version=RENDERER_PROFILE_VERSION,
+                        prompt_model=PROMPT_MODEL,
+                        source_has_audio=True,
+                        derive_silent_primary=current.content.category
+                        in {Category.A_VT, Category.C_VT},
+                        system_input=prompt_result.system_input,
+                        user_input=prompt_result.user_input,
+                        final_negative_prompt=prompt_result.final_negative_prompt,
+                        fixed_positive_prompt=prompt_result.final_positive_prompt,
+                        fixed_dialogue=prompt_result.dialogue,
+                        fixed_vt_text=prompt_result.vt_text,
+                        fixed_true_emotion_description=prompt_result.true_emotion_description,
+                        true_emotion=current.content.true_emotion,
+                        apparent_emotion=current.content.apparent_emotion,
+                        created_at=timestamp,
+                    )
+                    session.add(snapshot)
+                    snapshots.append(snapshot)
+                session.flush()
+
+                for sequence, (comparison, snapshot) in enumerate(
+                    zip(payload.comparisons, snapshots, strict=True),
+                    start=1,
+                ):
+                    session.add(
+                        JobItem(
+                            job_id=job.id,
+                            sequence=sequence,
+                            input_snapshot_id=snapshot.id,
+                            gpu_slot=comparison.gpu_slot,
+                            stage=JobItemStage.PROMPT_QUEUED,
+                            status=JobStatus.QUEUED,
+                            created_at=timestamp,
+                            updated_at=timestamp,
+                        )
+                    )
+                session.add(
+                    JobEvent(
+                        job_id=job.id,
+                        item_id=None,
+                        event_type="JobQueued",
+                        payload_json=json.dumps({"slotCount": len(selected_slots)}),
+                    )
+                )
+                for gpu in self._gpu_rows(session, selected_slots):
+                    gpu.availability = GpuAvailability.RESERVED
+                    gpu.active_job_id = job.id
+                    gpu.revision += 1
+                    gpu.checked_at = timestamp
+                session.flush()
+                return self._job_detail(session, job)
 
     async def submit_batch(self, draft_id: int, payload: BatchSubmitRequest) -> JobDetailRead:
         if not self.renderer.configured:
@@ -282,121 +407,123 @@ class BatchService:
             aggregate = self._load_aggregate(session, draft_id)
             self._check_draft_revision(aggregate.draft, payload.expected_revision)
             self._validate_aggregate(aggregate)
-            self._validate_gpu_request(session, aggregate, payload)
             allocations = self._build_allocations(aggregate)
 
-        with self.database.immediate_session() as session:
-            current = self._load_aggregate(session, draft_id)
-            self._check_draft_revision(current.draft, payload.expected_revision)
-            self._validate_aggregate(current)
-            self._validate_gpu_request(session, current, payload)
-            if not self._same_allocations(aggregate, current):
-                raise ServiceError(
-                    409,
-                    "referenced_resource_changed",
-                    "A selected record changed before the batch was submitted",
-                    {"resource": "batchDraft", "id": draft_id},
-                )
+        async with self.gpu_slots.submission_inspection(aggregate.gpu_slots) as live_gpu_slots:
+            with self.database.immediate_session() as session:
+                current = self._load_aggregate(session, draft_id)
+                self._check_draft_revision(current.draft, payload.expected_revision)
+                self._validate_aggregate(current)
+                if not self._same_allocations(aggregate, current):
+                    raise ServiceError(
+                        409,
+                        "referenced_resource_changed",
+                        "A selected record changed before the batch was submitted",
+                        {"resource": "batchDraft", "id": draft_id},
+                    )
+                self._validate_gpu_request(session, current, payload, live_gpu_slots)
 
-            timestamp = utc_now()
-            job = Job(
-                display_name=self._job_name(current.draft.category),
-                source=JobSource.PRODUCTION,
-                dataset_id=current.dataset.id,
-                batch_draft_id=draft_id,
-                category=current.draft.category,
-                conflict_direction=current.draft.conflict_direction,
-                model=current.draft.model,
-                status=JobStatus.QUEUED,
-                total_count=current.draft.quantity,
-                confirm_model_switch=payload.confirm_model_switch,
-                created_at=timestamp,
-                updated_at=timestamp,
-            )
-            session.add(job)
-            session.flush()
-
-            snapshots: list[BatchVideoInputSnapshot] = []
-            for allocation in allocations:
-                fixed = allocation.prepared.fixed_output
-                snapshot = BatchVideoInputSnapshot(
-                    batch_draft_id=draft_id,
+                timestamp = utc_now()
+                job = Job(
+                    display_name=self._job_name(current.draft.category),
+                    source=JobSource.PRODUCTION,
                     dataset_id=current.dataset.id,
-                    dataset_revision=current.draft.dataset_revision,
-                    sequence=allocation.sequence,
-                    content_plan_id=allocation.content.id,
-                    content_plan_revision=current.content_revisions[allocation.content.id],
-                    prompt_preset_id=allocation.preset.id,
-                    prompt_preset_revision=current.preset_revisions[allocation.preset.id],
-                    background_preset_id=allocation.background.id,
-                    background_preset_revision=current.background_revisions[allocation.background.id],
-                    policy_version=allocation.prepared.policy_version,
+                    batch_draft_id=draft_id,
                     category=current.draft.category,
                     conflict_direction=current.draft.conflict_direction,
-                    age=allocation.demographic.age,
-                    gender=allocation.demographic.gender,
-                    ethnicity=allocation.demographic.ethnicity,
                     model=current.draft.model,
-                    seed=allocation.seed,
-                    width=VIDEO_WIDTH,
-                    height=VIDEO_HEIGHT,
-                    fps=VIDEO_FPS,
-                    frame_count=121 if current.draft.model is ModelName.LTX else 124,
-                    renderer_profile_version=RENDERER_PROFILE_VERSION,
-                    prompt_model=PROMPT_MODEL,
-                    source_has_audio=True,
-                    derive_silent_primary=current.draft.category in {Category.A_VT, Category.C_VT},
-                    system_input=allocation.prepared.system_input,
-                    user_input=allocation.prepared.user_input,
-                    final_negative_prompt=allocation.prepared.final_negative_prompt,
-                    fixed_positive_prompt=fixed.positive_prompt if fixed is not None else None,
-                    fixed_dialogue=fixed.dialogue if fixed is not None else None,
-                    fixed_vt_text=fixed.vt_text if fixed is not None else None,
-                    fixed_true_emotion_description=(
-                        fixed.true_emotion_description if fixed is not None else None
-                    ),
-                    true_emotion=allocation.content.true_emotion,
-                    apparent_emotion=allocation.content.apparent_emotion,
+                    precision=current.draft.precision,
+                    status=JobStatus.QUEUED,
+                    total_count=current.draft.quantity,
+                    confirm_model_switch=payload.confirm_model_switch,
                     created_at=timestamp,
+                    updated_at=timestamp,
                 )
-                session.add(snapshot)
-                snapshots.append(snapshot)
+                session.add(job)
+                session.flush()
 
-            session.flush()
-
-            for allocation, snapshot in zip(allocations, snapshots, strict=True):
-                session.add(
-                    JobItem(
-                        job_id=job.id,
+                snapshots: list[BatchVideoInputSnapshot] = []
+                for allocation in allocations:
+                    fixed = allocation.prepared.fixed_output
+                    snapshot = BatchVideoInputSnapshot(
+                        batch_draft_id=draft_id,
+                        dataset_id=current.dataset.id,
+                        dataset_revision=current.draft.dataset_revision,
                         sequence=allocation.sequence,
-                        input_snapshot_id=snapshot.id,
-                        gpu_slot=allocation.gpu_slot,
-                        stage=JobItemStage.PROMPT_QUEUED,
-                        status=JobStatus.QUEUED,
+                        content_plan_id=allocation.content.id,
+                        content_plan_revision=current.content_revisions[allocation.content.id],
+                        prompt_preset_id=allocation.preset.id,
+                        prompt_preset_revision=current.preset_revisions[allocation.preset.id],
+                        background_preset_id=allocation.background.id,
+                        background_preset_revision=current.background_revisions[allocation.background.id],
+                        policy_version=allocation.prepared.policy_version,
+                        category=current.draft.category,
+                        conflict_direction=current.draft.conflict_direction,
+                        age=allocation.demographic.age,
+                        gender=allocation.demographic.gender,
+                        ethnicity=allocation.demographic.ethnicity,
+                        model=current.draft.model,
+                        precision=current.draft.precision,
+                        seed=allocation.seed,
+                        width=VIDEO_WIDTH,
+                        height=VIDEO_HEIGHT,
+                        fps=VIDEO_FPS,
+                        frame_count=124 if current.draft.model is ModelName.H3 else 121,
+                        renderer_profile_version=RENDERER_PROFILE_VERSION,
+                        prompt_model=PROMPT_MODEL,
+                        source_has_audio=True,
+                        derive_silent_primary=current.draft.category in {Category.A_VT, Category.C_VT},
+                        system_input=allocation.prepared.system_input,
+                        user_input=allocation.prepared.user_input,
+                        final_negative_prompt=allocation.prepared.final_negative_prompt,
+                        fixed_positive_prompt=fixed.positive_prompt if fixed is not None else None,
+                        fixed_dialogue=fixed.dialogue if fixed is not None else None,
+                        fixed_vt_text=fixed.vt_text if fixed is not None else None,
+                        fixed_true_emotion_description=(
+                            fixed.true_emotion_description if fixed is not None else None
+                        ),
+                        true_emotion=allocation.content.true_emotion,
+                        apparent_emotion=allocation.content.apparent_emotion,
                         created_at=timestamp,
-                        updated_at=timestamp,
+                    )
+                    session.add(snapshot)
+                    snapshots.append(snapshot)
+
+                session.flush()
+
+                for allocation, snapshot in zip(allocations, snapshots, strict=True):
+                    session.add(
+                        JobItem(
+                            job_id=job.id,
+                            sequence=allocation.sequence,
+                            input_snapshot_id=snapshot.id,
+                            gpu_slot=allocation.gpu_slot,
+                            stage=JobItemStage.PROMPT_QUEUED,
+                            status=JobStatus.QUEUED,
+                            created_at=timestamp,
+                            updated_at=timestamp,
+                        )
+                    )
+
+                session.add(
+                    JobEvent(
+                        job_id=job.id,
+                        item_id=None,
+                        event_type="JobQueued",
+                        payload_json=json.dumps({"slotCount": len(current.gpu_slots)}),
                     )
                 )
 
-            session.add(
-                JobEvent(
-                    job_id=job.id,
-                    item_id=None,
-                    event_type="JobQueued",
-                    payload_json=json.dumps({"slotCount": len(current.gpu_slots)}),
-                )
-            )
-
-            for gpu in self._gpu_rows(session, current.gpu_slots):
-                gpu.availability = GpuAvailability.RESERVED
-                gpu.active_job_id = job.id
-                gpu.revision += 1
-                gpu.checked_at = timestamp
-            current.draft.status = BatchDraftStatus.SUBMITTED
-            current.draft.revision += 1
-            current.draft.updated_at = timestamp
-            session.flush()
-            return self._job_detail(session, job)
+                for gpu in self._gpu_rows(session, current.gpu_slots):
+                    gpu.availability = GpuAvailability.RESERVED
+                    gpu.active_job_id = job.id
+                    gpu.revision += 1
+                    gpu.checked_at = timestamp
+                current.draft.status = BatchDraftStatus.SUBMITTED
+                current.draft.revision += 1
+                current.draft.updated_at = timestamp
+                session.flush()
+                return self._job_detail(session, job)
 
     def list_jobs(self) -> list[JobSummaryRead]:
         with self.database.read_session() as session:
@@ -450,10 +577,67 @@ class BatchService:
                 JobStatus.CANCELLED,
             }
 
-    def list_gpu_slots(self) -> list[GpuSlotRead]:
-        with self.database.read_session() as session:
-            rows = session.exec(select(GpuSlot).order_by(GpuSlot.slot)).all()
-            return [GpuSlotRead.model_validate(row) for row in rows]
+    async def list_gpu_slots(self) -> list[GpuSlotSnapshot]:
+        return await self.gpu_slots.inspect_all()
+
+    async def release_gpu_slot(
+        self,
+        slot: GpuSlotName,
+        expected_revision: int,
+    ) -> GpuSlotSnapshot:
+        if not self.renderer.configured:
+            raise ServiceError(503, "renderer_not_configured", "Rendering requires a configured renderer gateway")
+        return await self.gpu_slots.release(slot, expected_revision)
+
+    def _prepare_prompt_selection(
+        self,
+        session: Session,
+        content_selection: SourceSelection,
+        preset_selection: SourceSelection,
+        background_selection: SourceSelection,
+        demographic: DemographicInput,
+    ) -> PromptSelection:
+        content = self._required(session, ContentPlan, content_selection.id, "contentPlan")
+        preset = self._required(session, PromptPreset, preset_selection.id, "promptPreset")
+        background = self._required(
+            session,
+            VideoBackgroundPreset,
+            background_selection.id,
+            "videoBackgroundPreset",
+        )
+        self._check_source(content, content_selection.expected_revision, "contentPlan")
+        self._check_source(preset, preset_selection.expected_revision, "promptPreset")
+        self._check_source(background, background_selection.expected_revision, "videoBackgroundPreset")
+        if content.status is not ContentStatus.ACTIVE:
+            raise state_conflict("contentPlan", content.id, "The selected content plan is not active")
+        if preset.status is not ResourceStatus.ACTIVE:
+            raise state_conflict("promptPreset", preset.id, "The selected prompt preset is disabled")
+        if background.status is not ResourceStatus.ACTIVE:
+            raise state_conflict(
+                "videoBackgroundPreset",
+                background.id,
+                "The selected background preset is disabled",
+            )
+        if preset.category is not content.category:
+            raise ServiceError(422, "validation_error", "The prompt preset category does not match the content")
+        examples = session.exec(
+            select(PromptExample)
+            .where(PromptExample.preset_id == preset.id)
+            .order_by(PromptExample.kind, PromptExample.position)
+        ).all()
+        prepared = self.prompts.prepare(
+            PromptContext(
+                content=content,
+                preset=preset,
+                positive_examples=[row.text for row in examples if row.kind is ExampleKind.POSITIVE],
+                negative_examples=[row.text for row in examples if row.kind is ExampleKind.NEGATIVE],
+                background=background,
+                age=demographic.age,
+                gender=demographic.gender,
+                ethnicity=demographic.ethnicity,
+            )
+        )
+        return PromptSelection(content, preset, background, prepared)
 
     def _resolve_selections(
         self,
@@ -682,6 +866,7 @@ class BatchService:
                     demographic=demographic,
                     gpu_slot=aggregate.gpu_slots[offset % len(aggregate.gpu_slots)],
                     model=aggregate.draft.model,
+                    precision=aggregate.draft.precision,
                     seed=seed_source.randrange(0, 2**31),
                     prepared=prepared,
                 )
@@ -717,6 +902,7 @@ class BatchService:
             ),
             gpu_slot=allocation.gpu_slot,
             model=allocation.model,
+            precision=allocation.precision,
             seed=allocation.seed,
             requires_prompt_generation=fixed is None,
             system_input=allocation.prepared.system_input,
@@ -730,39 +916,34 @@ class BatchService:
         session: Session,
         aggregate: DraftAggregate,
         payload: BatchSubmitRequest,
+        live_slots: dict[GpuSlotName, GpuSlotSnapshot],
     ) -> None:
-        selected = set(aggregate.gpu_slots)
-        if set(payload.expected_gpu_revisions) != selected:
-            raise ServiceError(422, "validation_error", "GPU revisions must match the selected GPU slots")
-        for row in self._gpu_rows(session, aggregate.gpu_slots):
-            expected = payload.expected_gpu_revisions[row.slot]
-            if row.revision != expected:
+        self.gpu_slots.validate_submission(
+            live_slots,
+            expected_revisions=payload.expected_gpu_revisions,
+            requested_model=aggregate.draft.model,
+            requested_precision=aggregate.draft.precision,
+            confirm_model_switch=payload.confirm_model_switch,
+        )
+        self._validate_live_gpu_rows(session, aggregate.gpu_slots, live_slots)
+
+    def _validate_live_gpu_rows(
+        self,
+        session: Session,
+        slots: list[GpuSlotName],
+        live_slots: dict[GpuSlotName, GpuSlotSnapshot],
+    ) -> None:
+        for row in self._gpu_rows(session, slots):
+            live = live_slots[row.slot]
+            if row.revision != live.revision:
                 raise ServiceError(
                     409,
                     "gpu_state_changed",
                     "The selected GPU state changed",
-                    {"slot": row.slot.value, "expectedRevision": expected, "actualRevision": row.revision},
-                )
-            if row.availability is not GpuAvailability.AVAILABLE:
-                raise ServiceError(
-                    409,
-                    "gpu_unavailable",
-                    "The selected GPU is not available",
-                    {"slot": row.slot.value, "availability": row.availability.value},
-                )
-            if (
-                row.loaded_model is not None
-                and row.loaded_model is not aggregate.draft.model
-                and not payload.confirm_model_switch
-            ):
-                raise ServiceError(
-                    409,
-                    "model_switch_confirmation_required",
-                    "The GPU is loaded with a different model",
                     {
                         "slot": row.slot.value,
-                        "loadedModel": row.loaded_model.value,
-                        "requestedModel": aggregate.draft.model.value,
+                        "expectedRevision": live.revision,
+                        "actualRevision": row.revision,
                     },
                 )
 
@@ -784,6 +965,7 @@ class BatchService:
             category=aggregate.draft.category,
             conflict_direction=aggregate.draft.conflict_direction,
             model=aggregate.draft.model,
+            precision=aggregate.draft.precision,
             quantity=aggregate.draft.quantity,
             seed=aggregate.draft.seed_base,
             status=aggregate.draft.status,
@@ -862,6 +1044,24 @@ class BatchService:
             else []
         )
         prompt_by_item = {row.job_item_id: row for row in prompt_results}
+        attempts = (
+            session.exec(
+                select(GenerationAttempt)
+                .where(GenerationAttempt.job_item_id.in_([item.id for item in items]))
+                .order_by(GenerationAttempt.job_item_id, GenerationAttempt.attempt_number)
+            ).all()
+            if items
+            else []
+        )
+        attempts_by_item: dict[int, list[GenerationAttempt]] = {}
+        for attempt in attempts:
+            attempts_by_item.setdefault(attempt.job_item_id, []).append(attempt)
+        samples = (
+            session.exec(select(Sample).where(Sample.job_item_id.in_([item.id for item in items]))).all()
+            if items
+            else []
+        )
+        sample_by_item = {row.job_item_id: row.id for row in samples}
         item_reads: list[JobItemRead] = []
         for item in items:
             snapshot = session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
@@ -889,6 +1089,15 @@ class BatchService:
                     prompt_result=JobItemPromptResultRead.model_validate(prompt_result)
                     if prompt_result is not None
                     else None,
+                    attempts=[
+                        GenerationAttemptRead(
+                            **attempt.model_dump(exclude={"job_item_id"}),
+                            source_asset_url=asset_content_url(attempt.source_asset_id),
+                            primary_asset_url=asset_content_url(attempt.primary_asset_id),
+                        )
+                        for attempt in attempts_by_item.get(item.id, [])
+                    ],
+                    sample_id=sample_by_item.get(item.id),
                 )
             )
         return item_reads
