@@ -57,3 +57,31 @@ bash scripts/run.sh
 ```
 
 `scripts/run.sh` only validates these prerequisites and starts exactly one Uvicorn worker. It does not install dependencies, create directories, run migrations, or start the renderer services.
+
+### LTX-2.5 user services
+
+The four LTX-2.5 renderer units in `deploy/systemd` are separate BF16 and INT8 profiles for GPU0/port 8188 and GPU1/port 8189. They run `/home/team/zhanghaonan/LTX-2.5-ComfyUI` with its fixed Python 3.13 runtime. Each profile keeps its input, output, temp, user, cache, and SQLite data below `/home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui`.
+
+Install the unit files into the user's systemd directory and reload their definitions:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/conflictstudio-ltx25-*.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+```
+
+The units are on-demand. Do not enable them. Start exactly the required profile, for example:
+
+```bash
+systemctl --user start conflictstudio-ltx25-bf16-gpu0.service
+systemctl --user stop conflictstudio-ltx25-bf16-gpu0.service
+```
+
+The two LTX-2.5 profiles conflict with each other and with the existing ConflictStudio renderer units on the same GPU slot. Starting a profile therefore leaves only one ConflictStudio renderer on that slot. The unit files set these runtime variables directly:
+
+- `CUDA_VISIBLE_DEVICES=0` or `1`
+- `PYTHONPATH=/home/team/zhanghaonan/LTX-2.5-ComfyUI/.venv/lib/python3.13/site-packages`
+- `XDG_CACHE_HOME` to the selected profile's data-root cache directory
+- `CONFLICTSTUDIO_LTX25_PRECISION=BF16` or `INT8`
+
+No LTX-2.5 workflow path is part of the unit configuration.

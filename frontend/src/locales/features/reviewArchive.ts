@@ -105,6 +105,7 @@ export const reviewArchiveEnUS = {
     },
     seed: 'Seed',
     model: 'Model',
+    precision: 'Precision',
     updatedAt: 'Updated',
     decision: 'Decision',
     decisionDescription: {
@@ -378,6 +379,7 @@ export const reviewArchiveZhCN = {
     },
     seed: '种子',
     model: '模型',
+    precision: '精度',
     updatedAt: '更新时间',
     decision: '审核决定',
     decisionDescription: {

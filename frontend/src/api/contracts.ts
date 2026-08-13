@@ -1,4 +1,11 @@
-import type { Category, ConflictDirection, ContentMode, ContentStatus, ModelName } from '../types';
+import type {
+  Category,
+  ConflictDirection,
+  ContentMode,
+  ContentStatus,
+  ModelName,
+  ModelPrecision,
+} from '../types';
 
 export type ResourceStatus = 'Active' | 'Disabled';
 export type DatasetPurpose = 'Production' | 'Validation';
@@ -8,6 +15,9 @@ export type Gender = 'Male' | 'Female';
 export type Ethnicity = 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
 export type Age = 25 | 35 | 45 | 60;
 export type JobStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
+export type GenerationAttemptStatus = 'Running' | 'Completed' | 'Failed';
+export type ReviewDecision = 'Pending' | 'Accepted' | 'Rejected';
+export type TestExecutionMode = 'Parallel' | 'Serial';
 export type JobItemStage =
   | 'PromptQueued'
   | 'PromptGenerating'
@@ -137,6 +147,7 @@ export interface BatchDraftFields {
   category: Category;
   conflictDirection: ConflictDirection | null;
   model: ModelName;
+  precision: ModelPrecision | null;
   quantity: number;
   seed: number | null;
   contentPlans: SourceSelection[];
@@ -155,6 +166,7 @@ export interface BatchDraft extends RevisionedResource {
   category: Category;
   conflictDirection: ConflictDirection | null;
   model: ModelName;
+  precision: ModelPrecision | null;
   quantity: number;
   seed: number;
   status: 'Draft' | 'Submitted';
@@ -173,6 +185,7 @@ export interface BatchAllocation {
   demographic: Demographic;
   gpuSlot: GpuSlotName;
   model: ModelName;
+  precision: ModelPrecision | null;
   seed: number;
   requiresPromptGeneration: boolean;
   systemInput: string;
@@ -207,6 +220,24 @@ export interface PromptPreview {
   userInput: string;
   finalPositivePrompt: string | null;
   finalNegativePrompt: string;
+}
+
+export interface TestComparisonInput {
+  model: ModelName;
+  precision: ModelPrecision | null;
+  gpuSlot: GpuSlotName;
+}
+
+export interface TestRunCreate {
+  contentPlan: SourceSelection;
+  promptPreset: SourceSelection;
+  backgroundPreset: SourceSelection;
+  demographic: Demographic;
+  seed: number | null;
+  comparisons: TestComparisonInput[];
+  executionMode: TestExecutionMode;
+  expectedGpuRevisions: Partial<Record<GpuSlotName, number>>;
+  confirmModelSwitch: boolean;
 }
 
 export interface JobEventPayload {
@@ -252,8 +283,8 @@ export interface JobEvent {
 export interface Snapshot {
   id: number;
   sequence: number;
-  datasetId: number;
-  datasetRevision: number;
+  datasetId: number | null;
+  datasetRevision: number | null;
   contentPlanId: number;
   contentPlanRevision: number;
   promptPresetId: number;
@@ -267,6 +298,7 @@ export interface Snapshot {
   gender: Gender;
   ethnicity: Ethnicity;
   model: ModelName;
+  precision: ModelPrecision | null;
   seed: number;
   width: number;
   height: number;
@@ -303,6 +335,24 @@ export interface JobItemPromptResult {
   createdAt: string;
 }
 
+export interface GenerationAttempt {
+  id: number;
+  attemptNumber: number;
+  model: ModelName;
+  precision: ModelPrecision | null;
+  gpuSlot: GpuSlotName;
+  seed: number;
+  sourceAssetId: number | null;
+  sourceAssetUrl: string | null;
+  primaryAssetId: number | null;
+  primaryAssetUrl: string | null;
+  rendererPromptId: string;
+  status: GenerationAttemptStatus;
+  failureReason: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
 export interface JobItem {
   id: number;
   sequence: number;
@@ -325,17 +375,73 @@ export interface JobItem {
   updatedAt: string;
   input: Snapshot;
   promptResult: JobItemPromptResult | null;
+  attempts: GenerationAttempt[];
+  sampleId: number | null;
+}
+
+export interface KeepTestResultRequest {
+  datasetId: number;
+  expectedRevision: number;
+}
+
+export interface SampleReviewUpdate {
+  decision: ReviewDecision;
+  expectedRevision: number;
+}
+
+export interface Sample {
+  id: number;
+  displayId: string;
+  jobItemId: number;
+  datasetId: number;
+  category: Category;
+  conflictDirection: ConflictDirection | null;
+  reviewDecision: ReviewDecision;
+  reviewRevision: number;
+  model: ModelName;
+  precision: ModelPrecision | null;
+  gpuSlot: GpuSlotName;
+  contentPlanId: number;
+  contentPlanRevision: number;
+  promptPresetId: number;
+  sourceAssetId: number | null;
+  sourceAssetUrl: string | null;
+  primaryAssetId: number;
+  primaryAssetUrl: string;
+  dialogue: string | null;
+  displayText: string | null;
+  videoPrompt: string;
+  negativePrompt: string;
+  trueEmotionDescription: string;
+  trueEmotion: string;
+  apparentEmotion: string;
+  contentPlanNameZh: string;
+  contentPlanNameEn: string;
+  sceneZh: string;
+  sceneEn: string;
+  triggerEventZh: string;
+  triggerEventEn: string;
+  psychologicalBackgroundZh: string;
+  psychologicalBackgroundEn: string;
+  age: Age;
+  gender: Gender;
+  ethnicity: Ethnicity;
+  seed: number;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface JobSummary {
   id: number;
   displayName: string;
-  source: 'Production';
-  datasetId: number;
-  batchDraftId: number;
+  source: 'Production' | 'Test';
+  datasetId: number | null;
+  batchDraftId: number | null;
   category: Category;
   conflictDirection: ConflictDirection | null;
-  model: ModelName;
+  model: ModelName | null;
+  precision: ModelPrecision | null;
   status: JobStatus;
   totalCount: number;
   preparedCount: number;
@@ -361,7 +467,15 @@ export interface GpuSlot {
   slot: GpuSlotName;
   availability: GpuAvailability;
   loadedModel: ModelName | null;
+  loadedPrecision: ModelPrecision | null;
+  serviceStatus: 'running' | 'stopped' | 'unknown' | 'notInstalled' | 'notConfigured';
+  gpuName: string | null;
+  memory: {
+    usedMiB: number | null;
+    totalMiB: number | null;
+  };
   activeJobId: number | null;
   revision: number;
   checkedAt: string;
+  statusReason: string | null;
 }

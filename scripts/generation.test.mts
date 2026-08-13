@@ -11,6 +11,27 @@ import {
   validateBatchGpuSelection,
 } from '../frontend/src/generation.ts';
 import type { BatchDraft, ContentItem, Job, Preset, Sample, TestDraft } from '../frontend/src/types.ts';
+import {
+  buildGenerationProfile,
+  comparisonEntriesAreValid,
+  defaultGenerationProfile,
+} from '../frontend/src/generationProfile.ts';
+
+test('accepts only valid model and precision combinations', () => {
+  assert.deepEqual(defaultGenerationProfile, { model: 'LTX-2.5', precision: 'INT8' });
+  assert.deepEqual(buildGenerationProfile('LTX-2.5', 'BF16'), { model: 'LTX-2.5', precision: 'BF16' });
+  assert.deepEqual(buildGenerationProfile('LTX-2.3', null), { model: 'LTX-2.3', precision: null });
+  assert.equal(buildGenerationProfile('LTX-2.5', null), null);
+  assert.equal(buildGenerationProfile('MiniMax H3', 'INT8'), null);
+  assert.equal(comparisonEntriesAreValid([
+    { model: 'LTX-2.5', precision: 'BF16' },
+    { model: 'LTX-2.5', precision: 'INT8' },
+  ]), true);
+  assert.equal(comparisonEntriesAreValid([
+    { model: 'LTX-2.5', precision: 'INT8' },
+    { model: 'LTX-2.5', precision: 'INT8' },
+  ]), false);
+});
 
 test('composes only the prompts sent to ComfyUI', () => {
   const input = composeVideoGenerationInput(
@@ -57,7 +78,7 @@ test('starts production videos on selected GPUs without completed results', () =
 test('stores immutable prompt and reference snapshots for every video', () => {
   const draft = {
     datasetId: 'dataset', category: 'C-VA', conflictDirection: 'Audio', contentItemIds: ['content'],
-    presetId: 'preset', model: 'LTX-2.3', gpus: ['GPU0'], quantity: 1, seed: 42,
+    presetId: 'preset', model: 'LTX-2.3', precision: null, gpus: ['GPU0'], quantity: 1, seed: 42,
     ages: [25], genders: ['Female'], ethnicities: ['EastAsian'],
   } satisfies BatchDraft;
   const content = {
@@ -89,7 +110,7 @@ test('stores a complete immutable input snapshot for a test task', () => {
   const draft = {
     category: 'C-VT', conflictDirection: 'Text', contentItemId: 'content', presetId: 'preset',
     age: 35, gender: 'Female', ethnicity: 'EastAsian', seed: 77,
-    assignments: [{ model: 'MiniMax H3', gpu: 'GPU1', order: 1 }], executionMode: 'Serial',
+    assignments: [{ model: 'MiniMax H3', precision: null, gpu: 'GPU1', order: 1 }], executionMode: 'Serial',
   } satisfies TestDraft;
   const content = {
     id: 'content', name: 'Quiet refusal', revision: 4, dialogue: null, displayText: 'I need some time.',
@@ -121,7 +142,7 @@ test('stores a complete immutable input snapshot for a test task', () => {
 test('loads a saved batch without replacing its GPU or references', () => {
   const saved = {
     datasetId: 'saved-dataset', category: 'A-VT', conflictDirection: null, contentItemIds: ['disabled-content'],
-    presetId: 'disabled-preset', model: 'MiniMax H3', gpus: ['GPU1'], quantity: 12, seed: 77,
+    presetId: 'disabled-preset', model: 'MiniMax H3', precision: null, gpus: ['GPU1'], quantity: 12, seed: 77,
     ages: [45], genders: ['Male'], ethnicities: ['SouthAsian'],
   } satisfies BatchDraft;
   const defaults = {

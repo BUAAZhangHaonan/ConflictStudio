@@ -85,6 +85,7 @@ export function createBatchAllocationSnapshot(
     conflictDirection: draft.conflictDirection,
     ...demographics,
     model: draft.model,
+    precision: draft.precision,
     seed: draft.seed === null ? 100_000 + sequence : draft.seed + sequence - 1,
     finalPositivePrompt: prompts.positivePrompt,
     finalNegativePrompt: prompts.negativePrompt,

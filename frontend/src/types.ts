@@ -10,7 +10,8 @@ export type PresetStatus = 'Active' | 'Disabled';
 export type DatasetStatus = 'Active' | 'Disabled';
 export type DatasetPurpose = 'Production' | 'Validation' | 'General';
 export type ContentMode = 'Fixed' | 'Generative';
-export type ModelName = 'LTX-2.3' | 'MiniMax H3';
+export type ModelName = 'LTX-2.3' | 'LTX-2.5' | 'MiniMax H3';
+export type ModelPrecision = 'BF16' | 'INT8';
 export type GpuSlot = 'GPU0' | 'GPU1';
 export type GpuAvailability = 'Available' | 'Reserved' | 'ExternalOccupied' | 'Unknown';
 export type ArchiveStatus = 'Current' | 'NeedsUpdate';
@@ -48,6 +49,7 @@ export interface GpuState {
   slot: GpuSlot;
   availability: GpuAvailability;
   loadedModel: ModelName | null;
+  loadedPrecision: ModelPrecision | null;
   activeJobId: string | null;
   checkedAt: string;
 }
@@ -61,6 +63,7 @@ export interface Sample extends Revisioned {
   reviewDecision: ReviewDecision;
   reviewRevision: number;
   model: ModelName;
+  precision: ModelPrecision | null;
   gpu: GpuSlot;
   contentItemId: string | null;
   presetId: string | null;
@@ -132,6 +135,7 @@ export interface Job extends Revisioned {
   category: Category;
   conflictDirection: ConflictDirection | null;
   model: ModelName;
+  precision: ModelPrecision | null;
   gpus: GpuSlot[];
   status: JobStatus;
   failureReason: JobFailureReason | null;
@@ -293,6 +297,7 @@ export interface BatchDraft {
   contentItemIds: string[];
   presetId: string;
   model: ModelName;
+  precision: ModelPrecision | null;
   gpus: GpuSlot[];
   quantity: number;
   seed: number | null;
@@ -315,6 +320,7 @@ export interface BatchAllocation {
   gender: 'Male' | 'Female';
   ethnicity: 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
   model: ModelName;
+  precision: ModelPrecision | null;
   seed: number;
   finalPositivePrompt: string;
   finalNegativePrompt: string;
@@ -340,7 +346,7 @@ export interface PreparedTest {
   gender: 'Male' | 'Female';
   ethnicity: 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
   seed: number | null;
-  assignments: Array<{ model: ModelName; gpu: GpuSlot; order: number }>;
+  assignments: Array<{ model: ModelName; precision: ModelPrecision | null; gpu: GpuSlot; order: number }>;
   executionMode: TestExecutionMode;
   dialogue: string | null;
   displayText: string | null;
@@ -363,7 +369,7 @@ export interface TestDraft {
   gender: 'Male' | 'Female';
   ethnicity: 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
   seed: number | null;
-  assignments: Array<{ model: ModelName; gpu: GpuSlot; order: number }>;
+  assignments: Array<{ model: ModelName; precision: ModelPrecision | null; gpu: GpuSlot; order: number }>;
   executionMode: TestExecutionMode;
 }
 

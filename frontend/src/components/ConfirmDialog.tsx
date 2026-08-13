@@ -38,7 +38,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p>{body}</p>
+      {typeof body === 'string' ? <p>{body}</p> : body}
     </Dialog>
   );
 }

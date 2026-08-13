@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ConfirmDialog, Dialog, Field, TableShell, useToast } from '../../components';
 import {
   useBackgroundPresetsQuery,
@@ -22,7 +22,18 @@ import type {
   Gender,
   GpuSlotName,
 } from '../../api/contracts';
-import { allowedDirections, type Category, type ConflictDirection, type ModelName } from '../../types';
+import {
+  buildGenerationProfile,
+  ltx25Precisions,
+  precisionForModel,
+} from '../../generationProfile';
+import {
+  allowedDirections,
+  type Category,
+  type ConflictDirection,
+  type ModelName,
+  type ModelPrecision,
+} from '../../types';
 import {
   ages,
   categories,
@@ -50,6 +61,7 @@ interface BatchForm {
   category: Category;
   conflictDirection: ConflictDirection | null;
   model: ModelName;
+  precision: ModelPrecision | null;
   quantity: number;
   seed: string;
   contentPlanIds: number[];
@@ -76,7 +88,8 @@ function emptyBatchForm(): BatchForm {
     datasetId: null,
     category: 'A-VA',
     conflictDirection: null,
-    model: 'LTX-2.3',
+    model: 'LTX-2.5',
+    precision: 'INT8',
     quantity: 8,
     seed: '',
     contentPlanIds: [],
@@ -95,6 +108,7 @@ function formFromDraft(value: BatchDraft): BatchForm {
     category: value.category,
     conflictDirection: value.conflictDirection,
     model: value.model,
+    precision: precisionForModel(value.model, value.precision ?? null),
     quantity: value.quantity,
     seed: String(value.seed),
     contentPlanIds: value.contentPlans.map(item => item.id),
@@ -121,7 +135,8 @@ export function batchFormIsValid(form: BatchForm): boolean {
     && form.selectedGenders.length > 0
     && form.selectedEthnicities.length > 0
     && form.gpuSlots.length >= 1
-    && form.gpuSlots.length <= 2,
+    && form.gpuSlots.length <= 2
+    && buildGenerationProfile(form.model, form.precision),
   );
 }
 
@@ -138,7 +153,7 @@ export function BatchesPage() {
   const saveMutation = useSaveBatchDraftMutation();
   const previewMutation = usePreviewBatchMutation();
   const submitMutation = useSubmitBatchMutation();
-  const stored = useState(() => readGenerationDraft<{ selectedId: number | null; form: BatchForm }>('batch-form'))[0];
+  const stored = useState(() => readGenerationDraft<{ selectedId: number | null; form: BatchForm }>('batch-form-v2'))[0];
   const [selectedId, setSelectedId] = useState<number | null>(stored?.selectedId ?? null);
   const [form, setForm] = useState<BatchForm>(stored?.form ?? emptyBatchForm());
   const [baseline, setBaseline] = useState<BatchForm | null>(null);
@@ -146,19 +161,22 @@ export function BatchesPage() {
   const [validation, setValidation] = useState(false);
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
+  const batchDefaultsInitialized = useRef(stored !== null);
   const savedDraft = (draftsQuery.data ?? []).find(item => item.id === selectedId) ?? null;
   const queries = [datasetsQuery, contentQuery, presetsQuery, backgroundsQuery, draftsQuery, gpuQuery];
+  const initialQueriesPending = queries.some(query => query.isPending);
   const queryError = queries.find(query => query.isError)?.error ?? null;
   const mutationError = saveMutation.error ?? previewMutation.error ?? submitMutation.error ?? null;
 
   useEffect(() => {
-    if (stored || queries.some(query => query.isPending)) return;
+    if (batchDefaultsInitialized.current || initialQueriesPending) return;
+    batchDefaultsInitialized.current = true;
     const defaults = emptyBatchForm();
     defaults.datasetId = datasetsQuery.data?.find(item => item.status === 'Active')?.id ?? null;
     defaults.gpuSlots = (gpuQuery.data ?? []).filter(item => item.availability === 'Available').slice(0, 1).map(item => item.slot);
     setForm(defaults);
     setBaseline(defaults);
-  }, [datasetsQuery.data, gpuQuery.data, stored]);
+  }, [datasetsQuery.data, gpuQuery.data, initialQueriesPending]);
 
   const matchingContent = useMemo(() => (contentQuery.data ?? []).filter(item =>
     item.status === 'Active' && item.category === form.category && item.conflictDirection === form.conflictDirection,
@@ -197,7 +215,8 @@ export function BatchesPage() {
   };
 
   const payload = (): BatchDraftCreate | null => {
-    if (!batchFormIsValid(form) || form.datasetId === null) return null;
+    const profile = buildGenerationProfile(form.model, form.precision);
+    if (!batchFormIsValid(form) || form.datasetId === null || !profile) return null;
     const contentById = new Map((contentQuery.data ?? []).map(item => [item.id, item]));
     const presetById = new Map((presetsQuery.data ?? []).map(item => [item.id, item]));
     const backgroundById = new Map((backgroundsQuery.data ?? []).map(item => [item.id, item]));
@@ -209,7 +228,7 @@ export function BatchesPage() {
       datasetId: form.datasetId,
       category: form.category,
       conflictDirection: form.conflictDirection,
-      model: form.model,
+      ...profile,
       quantity: form.quantity,
       seed: parseSeed(form.seed),
       contentPlans: selectedContent.map(item => ({ id: item.id, expectedRevision: item.revision })),
@@ -270,7 +289,7 @@ export function BatchesPage() {
     }
   };
 
-  useGenerationDraft('batch-form', { selectedId, form }, dirty);
+  useGenerationDraft('batch-form-v2', { selectedId, form }, dirty);
   const unsavedDialog = useUnsavedChanges(dirty);
 
   if (queries.some(query => query.isPending)) return <GenerationScaffold title="batches.title" subtitle="batches.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
@@ -288,7 +307,8 @@ export function BatchesPage() {
             <Field label={g('batches.dataset')} htmlFor="batch-dataset" required><select id="batch-dataset" value={form.datasetId ?? ''} onChange={event => setForm(current => ({ ...current, datasetId: Number(event.target.value) }))}>{(datasetsQuery.data ?? []).filter(item => item.status === 'Active').map(item => <option key={item.id} value={item.id}>{item.name} / {item.purpose}</option>)}</select></Field>
             <Field label={g('batches.category')} htmlFor="batch-category" required><select id="batch-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
             <Field label={g('batches.direction')} htmlFor="batch-direction" required={directions.length > 0}><select id="batch-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentPlanIds: [] }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
-            <Field label={g('batches.model')} htmlFor="batch-model" required><select id="batch-model" value={form.model} onChange={event => setForm(current => ({ ...current, model: event.target.value as ModelName }))}>{models.map(value => <option key={value} value={value}>{g(`model.${value}`)}</option>)}</select></Field>
+            <Field label={g('batches.model')} htmlFor="batch-model" required><select id="batch-model" value={form.model} onChange={event => { const model = event.target.value as ModelName; setForm(current => ({ ...current, model, precision: precisionForModel(model, current.precision) })); }}>{models.map(value => <option key={value} value={value}>{value}</option>)}</select></Field>
+            {form.model === 'LTX-2.5' ? <Field label={g('batches.precision')} htmlFor="batch-precision" required><select id="batch-precision" value={form.precision ?? ''} onChange={event => setForm(current => ({ ...current, precision: event.target.value as ModelPrecision }))}>{ltx25Precisions.map(value => <option key={value} value={value}>{value}</option>)}</select></Field> : null}
             <Field label={g('batches.outputProfile')} htmlFor="batch-output-profile"><textarea id="batch-output-profile" value={modelSpecLabel(g, form.model)} readOnly rows={2} /></Field>
             <Field label={g('batches.quantity')} htmlFor="batch-quantity" required><input id="batch-quantity" type="number" min="1" max="10000" value={form.quantity} onChange={event => setForm(current => ({ ...current, quantity: Number(event.target.value) }))} /></Field>
             <Field label={g('batches.seed')} htmlFor="batch-seed"><input id="batch-seed" inputMode="numeric" value={form.seed} onChange={event => setForm(current => ({ ...current, seed: event.target.value }))} /></Field>
@@ -305,7 +325,7 @@ export function BatchesPage() {
       </div>
       {unsavedDialog}
       <Dialog open={preview !== null} title={g('batches.previewTitle')} closeLabel={g('common.close')} onClose={() => setPreview(null)} size="wide" footer={<><Button onClick={() => setPreview(null)}>{g('common.cancel')}</Button><Button variant="primary" onClick={() => setSubmitConfirmOpen(true)}>{g('batches.submit')}</Button></>}>
-        {preview ? <><p>{g('batches.previewIntro', { count: preview.allocations.length })}</p><TableShell caption={g('batches.allocationCaption')} columns={[{ key: 'row', label: g('batches.sequence') }, { key: 'content', label: g('batches.contentName') }, { key: 'preset', label: g('batches.preset') }, { key: 'background', label: g('batches.background') }, { key: 'person', label: g('batches.allocation') }, { key: 'gpu', label: g('batches.gpu') }, { key: 'prompt', label: g('promptPreview.title') }]}>{preview.allocations.map(row => <tr key={row.sequence}><th scope="row">{row.sequence}/{preview.allocations.length}</th><td>{localizedName(locale, row.contentPlan)}</td><td>{row.promptPreset.name}</td><td>{localizedName(locale, row.backgroundPreset)}</td><td>{row.demographic.age} / {row.demographic.gender} / {row.demographic.ethnicity}</td><td>{row.gpuSlot}</td><td><details><summary>{g('promptPreview.title')}</summary><pre>{row.finalPositivePrompt ?? row.userInput}</pre><pre>{row.finalNegativePrompt}</pre></details></td></tr>)}</TableShell></> : null}
+        {preview ? <><p>{g('batches.previewIntro', { count: preview.allocations.length })}</p><TableShell caption={g('batches.allocationCaption')} columns={[{ key: 'row', label: g('batches.sequence') }, { key: 'content', label: g('batches.contentName') }, { key: 'preset', label: g('batches.preset') }, { key: 'background', label: g('batches.background') }, { key: 'person', label: g('batches.allocation') }, { key: 'model', label: g('batches.model') }, { key: 'gpu', label: g('batches.gpu') }, { key: 'prompt', label: g('promptPreview.title') }]}>{preview.allocations.map(row => <tr key={row.sequence}><th scope="row">{row.sequence}/{preview.allocations.length}</th><td>{localizedName(locale, row.contentPlan)}</td><td>{row.promptPreset.name}</td><td>{localizedName(locale, row.backgroundPreset)}</td><td>{row.demographic.age} / {row.demographic.gender} / {row.demographic.ethnicity}</td><td>{row.model}{row.precision ? ` / ${row.precision}` : ''}</td><td>{row.gpuSlot}</td><td><details><summary>{g('promptPreview.title')}</summary><pre>{row.finalPositivePrompt ?? row.userInput}</pre><pre>{row.finalNegativePrompt}</pre></details></td></tr>)}</TableShell></> : null}
       </Dialog>
       <ConfirmDialog open={submitConfirmOpen} title={g('batches.submitConfirmTitle')} body={preview ? g('batches.submitConfirmBody', { count: preview.allocations.length }) : g('batches.confirmBody')} confirmLabel={g('common.yes')} cancelLabel={g('common.no')} closeLabel={g('common.close')} onConfirm={() => void submit(false)} onClose={() => setSubmitConfirmOpen(false)} />
       <ConfirmDialog open={switchConfirmOpen} title={g('batches.releaseModelTitle')} body={g('batches.modelSwitchConfirmation')} confirmLabel={g('common.yes')} cancelLabel={g('common.no')} closeLabel={g('common.close')} onConfirm={() => void submit(true)} onClose={() => setSwitchConfirmOpen(false)} />

@@ -62,6 +62,7 @@ import {
   validateBatchGpuSelection,
 } from './generation';
 import { applyConflictDirectionChange } from './reviewArchive';
+import { buildGenerationProfile, profileKey } from './generationProfile';
 
 type Listener = () => void;
 
@@ -105,7 +106,7 @@ function loadLocale(storage: Storage): Locale {
 }
 
 function createJob(
-  input: Pick<Job, 'source' | 'datasetId' | 'category' | 'conflictDirection' | 'model' | 'gpus' | 'status' | 'seed' | 'quantity'>,
+  input: Pick<Job, 'source' | 'datasetId' | 'category' | 'conflictDirection' | 'model' | 'precision' | 'gpus' | 'status' | 'seed' | 'quantity'>,
   timestamp: string,
   startedAt: string | null,
 ): Job {
@@ -167,7 +168,7 @@ function reserveRunningJobs(
   return gpuStates.map(item => {
     const job = runningByGpu.get(item.slot);
     return job
-      ? { ...item, availability: 'Reserved', loadedModel: job.model, activeJobId: job.id, checkedAt: timestamp }
+      ? { ...item, availability: 'Reserved', loadedModel: job.model, loadedPrecision: job.precision, activeJobId: job.id, checkedAt: timestamp }
       : item;
   });
 }
@@ -361,6 +362,9 @@ export class MockRepository {
     if (!isDirectionValid(draft.category, draft.conflictDirection)) {
       return failure('InvalidInput', { field: 'conflictDirection' });
     }
+    if (!buildGenerationProfile(draft.model, draft.precision)) {
+      return failure('InvalidInput', { field: 'precision' });
+    }
     if (
       draft.quantity < 1 ||
       draft.contentItemIds.length === 0 ||
@@ -437,6 +441,7 @@ export class MockRepository {
         category: preview.draft.category,
         conflictDirection: preview.draft.conflictDirection,
         model: preview.draft.model,
+        precision: preview.draft.precision,
         gpus: preview.draft.gpus,
         status: 'Running',
         seed: preview.draft.seed,
@@ -458,7 +463,7 @@ export class MockRepository {
     data.jobs.unshift(job);
     data.gpuStates = data.gpuStates.map(item =>
       job.gpus.includes(item.slot)
-        ? { ...item, availability: 'Reserved', loadedModel: job.model, activeJobId: job.id, checkedAt: timestamp }
+        ? { ...item, availability: 'Reserved', loadedModel: job.model, loadedPrecision: job.precision, activeJobId: job.id, checkedAt: timestamp }
         : item,
     );
     data.activities.unshift({
@@ -479,8 +484,10 @@ export class MockRepository {
     if (draft.assignments.length < 1 || draft.assignments.length > 2) {
       return failure('InvalidInput', { field: 'assignments' });
     }
-    const models = new Set(draft.assignments.map(item => item.model));
-    if (models.size !== draft.assignments.length) return failure('InvalidInput', { field: 'assignments' });
+    const profiles = draft.assignments.map(item => buildGenerationProfile(item.model, item.precision));
+    if (profiles.some(profile => profile === null)) return failure('InvalidInput', { field: 'assignments' });
+    const profileKeys = new Set(profiles.map(profile => profileKey(profile!)));
+    if (profileKeys.size !== draft.assignments.length) return failure('InvalidInput', { field: 'assignments' });
     if (draft.executionMode === 'Parallel' && new Set(draft.assignments.map(item => item.gpu)).size !== draft.assignments.length) {
       return failure('InvalidInput', { field: 'assignments' });
     }
@@ -526,6 +533,7 @@ export class MockRepository {
             category: prepared.category,
             conflictDirection: prepared.conflictDirection,
             model: assignment.model,
+            precision: assignment.precision,
             gpus: [assignment.gpu],
             status: immediatelyRunning ? 'Running' : 'Queued',
             seed: prepared.seed,
@@ -635,7 +643,7 @@ export class MockRepository {
     data.jobs.unshift(job);
     data.gpuStates = data.gpuStates.map(item =>
       item.slot === gpu
-        ? { ...item, availability: 'Reserved', loadedModel: job.model, activeJobId: job.id, checkedAt: timestamp }
+        ? { ...item, availability: 'Reserved', loadedModel: job.model, loadedPrecision: job.precision, activeJobId: job.id, checkedAt: timestamp }
         : item,
     );
     this.commitData(data);
@@ -662,6 +670,7 @@ export class MockRepository {
       reviewDecision: 'Pending',
       reviewRevision: 0,
       model: assignment.model,
+      precision: assignment.precision,
       gpu: assignment.gpu,
       contentItemId: input.contentItemId,
       presetId: input.presetId,
@@ -712,7 +721,7 @@ export class MockRepository {
     const timestamp = now();
     const data = copy(this.snapshot.data);
     data.gpuStates = data.gpuStates.map(item =>
-      item.slot === slot ? { ...item, loadedModel: null, checkedAt: timestamp } : item,
+      item.slot === slot ? { ...item, loadedModel: null, loadedPrecision: null, checkedAt: timestamp } : item,
     );
     this.commitData(data);
     return success(slot);
@@ -775,6 +784,7 @@ export class MockRepository {
             category: sample.category,
             conflictDirection: sample.conflictDirection,
             model: sample.model,
+            precision: sample.precision,
             gpus: [input.rerenderGpu!],
             status: 'Queued',
             seed: sample.seed,

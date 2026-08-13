@@ -14,6 +14,10 @@ const contentPageSource = readFileSync(new URL('../frontend/src/pages/generate/C
 const backgroundPageSource = readFileSync(new URL('../frontend/src/pages/generate/BackgroundsPage.tsx', import.meta.url), 'utf8');
 const batchesPageSource = readFileSync(new URL('../frontend/src/pages/generate/BatchesPage.tsx', import.meta.url), 'utf8');
 const testPageSource = readFileSync(new URL('../frontend/src/pages/generate/TestPage.tsx', import.meta.url), 'utf8');
+const jobsPageSource = readFileSync(new URL('../frontend/src/pages/generate/JobsPage.tsx', import.meta.url), 'utf8');
+const reviewPageSource = readFileSync(new URL('../frontend/src/pages/ReviewPage.tsx', import.meta.url), 'utf8');
+const sharedGenerationSource = readFileSync(new URL('../frontend/src/pages/generate/shared.tsx', import.meta.url), 'utf8');
+const generationLocaleSource = readFileSync(new URL('../frontend/src/locales/features/generation.ts', import.meta.url), 'utf8');
 
 function loadClient(fetchMock) {
   const output = ts.transpileModule(clientSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -36,12 +40,65 @@ test('API request uses mocked fetch and maps HTTP and network failures', async (
   await assert.rejects(() => networkClient.apiRequest('/api/jobs'), error => error.code === 'network_error' && error.kind === 'network');
 });
 
-test('CRUD and batch mutations carry revision and confirmation contracts', () => {
+test('CRUD, batch, and GPU release mutations carry revision and confirmation contracts', () => {
   for (const name of ['expectedRevision', 'expectedGpuRevisions', 'confirmModelSwitch']) assert.match(querySource, new RegExp(name));
   for (const path of ['/api/datasets', '/api/content-plans', '/api/prompt-presets', '/api/video-background-presets', '/api/batch-drafts', '/api/jobs']) assert.match(querySource, new RegExp(path.replaceAll('/', '\\/')));
   assert.match(querySource, /invalidateJobAuthority/);
   assert.match(querySource, /queryKeys\.jobItems/);
   assert.match(querySource, /queryKeys\.jobEvents/);
+  assert.match(querySource, /\/api\/gpu-slots\/\$\{slot\}\/release/u);
+  assert.match(querySource, /\/api\/test-runs/u);
+  assert.match(contractSource, /export interface TestRunCreate/u);
+  assert.match(contractSource, /loadedPrecision: ModelPrecision \| null/u);
+  assert.match(contractSource, /precision: ModelPrecision \| null/u);
+  for (const field of ['serviceStatus', 'gpuName', 'memory', 'statusReason']) assert.match(contractSource, new RegExp(field));
+  assert.match(querySource, /refetchInterval: 5000/u);
+});
+
+test('live GPU polling cannot reinitialize an edited new batch', () => {
+  assert.match(batchesPageSource, /const batchDefaultsInitialized = useRef\(stored !== null\)/u);
+  assert.match(batchesPageSource, /if \(batchDefaultsInitialized\.current \|\| initialQueriesPending\) return/u);
+  assert.match(batchesPageSource, /batchDefaultsInitialized\.current = true/u);
+  assert.match(batchesPageSource, /\[datasetsQuery\.data, gpuQuery\.data, initialQueriesPending\]/u);
+});
+
+test('GPU release errors stay in React Query feedback and live status reasons are visible', () => {
+  assert.match(sharedGenerationSource, /releaseMutation\.mutate\(/u);
+  assert.doesNotMatch(sharedGenerationSource, /releaseMutation\.mutateAsync/u);
+  assert.match(sharedGenerationSource, /gpu\.statusReason \? <p>\{g\('gpu\.statusReason'/u);
+  assert.equal(generationLocaleSource.match(/'gpu\.statusReason'/gu)?.length, 2);
+});
+
+test('test bench submits only the currently previewed form through the real test-run API', () => {
+  assert.match(testPageSource, /useSubmitTestRunMutation/u);
+  assert.match(testPageSource, /const result = previewedFormKey === formKey \? previewMutation\.data : undefined/u);
+  assert.match(testPageSource, /!result[\s\S]*!validExecution/u);
+  assert.match(testPageSource, /expectedGpuRevisions/u);
+  assert.match(testPageSource, /test-bench-v3/u);
+});
+
+test('job results expose retained assets and generation attempts', () => {
+  assert.match(contractSource, /export interface GenerationAttempt/u);
+  assert.match(contractSource, /attempts: GenerationAttempt\[\]/u);
+  assert.match(contractSource, /primaryAssetUrl: string \| null/u);
+  assert.match(jobsPageSource, /item\.primaryAssetUrl \? <video/u);
+  assert.match(jobsPageSource, /item\.sourceAssetUrl/u);
+  assert.match(jobsPageSource, /item\.attempts\.map/u);
+});
+
+test('completed test results can be kept as formal samples without a mock path', () => {
+  assert.match(querySource, /\/api\/job-items\/\$\{itemId\}\/keep/u);
+  assert.match(jobsPageSource, /selected\.source === 'Test'/u);
+  assert.match(jobsPageSource, /item\.sampleId !== null/u);
+  assert.doesNotMatch(jobsPageSource, /keepTestResult/u);
+});
+
+test('the visible review queue reads pending current Sample records', () => {
+  assert.match(querySource, /\/api\/samples\?decision=Pending/u);
+  assert.match(querySource, /\/api\/samples\/\$\{id\}\/review/u);
+  assert.match(reviewPageSource, /useSamplesQuery/u);
+  assert.match(reviewPageSource, /sample\.reviewDecision === 'Pending'/u);
+  assert.doesNotMatch(reviewPageSource, /useMockRepository|useRepositorySnapshot/u);
 });
 
 test('generation catalogs use paired Chinese and English business fields', () => {

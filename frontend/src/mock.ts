@@ -58,7 +58,8 @@ function makeSample(category: Category, index: number, sampleIndex: number): Sam
     conflictDirection,
     reviewDecision: decision,
     reviewRevision: decision === 'Pending' ? 0 : 1,
-    model: sampleIndex % 2 === 0 ? 'LTX-2.3' : 'MiniMax H3',
+    model: sampleIndex % 3 === 0 ? 'LTX-2.5' : sampleIndex % 3 === 1 ? 'LTX-2.3' : 'MiniMax H3',
+    precision: sampleIndex % 3 === 0 ? 'INT8' : null,
     gpu: sampleIndex % 2 === 0 ? 'GPU0' : 'GPU1',
     contentItemId: `content-${category.toLowerCase()}`,
     presetId: `preset-${category.toLowerCase()}`,
@@ -182,7 +183,8 @@ function makeJob(
   historicalDual = false,
 ): Job {
   const id = historicalDual ? 'job-dual-history' : `job-${status.toLowerCase()}`;
-  const model = index % 2 === 0 ? 'LTX-2.3' : 'MiniMax H3';
+  const model = index % 3 === 0 ? 'LTX-2.5' : index % 3 === 1 ? 'LTX-2.3' : 'MiniMax H3';
+  const precision = model === 'LTX-2.5' ? 'INT8' : null;
   const gpus = (historicalDual
     ? ['GPU0', 'GPU1']
     : status === 'Running'
@@ -210,6 +212,7 @@ function makeJob(
     category,
     conflictDirection,
     model,
+    precision,
     gpus,
     status,
     failureReason: status === 'Failed' ? 'ModelServiceUnavailable' : null,
@@ -255,7 +258,7 @@ function makeJob(
       gender: 'Female',
       ethnicity: 'EastAsian',
       seed,
-      assignments: [{ model, gpu: gpus[0], order: 1 }],
+      assignments: [{ model, precision, gpu: gpus[0], order: 1 }],
       executionMode: 'Serial',
       dialogue: content.dialogue,
       displayText: content.displayText,
@@ -286,6 +289,7 @@ function makeJob(
       contentItemIds: contentIds,
       presetId: preset.id,
       model,
+      precision,
       gpus,
       quantity: job.quantity,
       seed,
@@ -470,8 +474,8 @@ export const initialData: RepositoryData = {
     { id: 'reviewer-chen', name: '陈宁', revision: 2, createdAt: baseDate, updatedAt: baseDate },
   ],
   gpuStates: [
-    { slot: 'GPU0', availability: 'Available', loadedModel: 'LTX-2.3', activeJobId: null, checkedAt: baseDate },
-    { slot: 'GPU1', availability: 'Available', loadedModel: 'MiniMax H3', activeJobId: null, checkedAt: baseDate },
+    { slot: 'GPU0', availability: 'Available', loadedModel: 'LTX-2.3', loadedPrecision: null, activeJobId: null, checkedAt: baseDate },
+    { slot: 'GPU1', availability: 'Available', loadedModel: 'MiniMax H3', loadedPrecision: null, activeJobId: null, checkedAt: baseDate },
   ],
   samples,
   reviews,

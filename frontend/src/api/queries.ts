@@ -25,11 +25,15 @@ import type {
   JobEvent,
   JobItem,
   JobSummary,
+  KeepTestResultRequest,
   PromptPreset,
   PromptPresetCreate,
   PromptPresetUpdate,
   PromptPreview,
   PromptPreviewRequest,
+  Sample,
+  SampleReviewUpdate,
+  TestRunCreate,
 } from './contracts';
 
 export const queryKeys = {
@@ -44,6 +48,7 @@ export const queryKeys = {
   jobItems: (id: number) => ['jobs', id, 'items'] as const,
   jobEvents: (id: number) => ['jobs', id, 'events'] as const,
   gpuSlots: ['gpuSlots'] as const,
+  samples: ['samples'] as const,
 };
 
 export const generationQueries = {
@@ -56,7 +61,13 @@ export const generationQueries = {
   job: (id: number) => queryOptions({ queryKey: queryKeys.job(id), queryFn: () => apiRequest<JobDetail>(`/api/jobs/${id}`) }),
   jobItems: (id: number) => queryOptions({ queryKey: queryKeys.jobItems(id), queryFn: () => fetchAllJobItems(id) }),
   jobEvents: (id: number) => queryOptions({ queryKey: queryKeys.jobEvents(id), queryFn: () => fetchAllJobEvents(id) }),
-  gpuSlots: () => queryOptions({ queryKey: queryKeys.gpuSlots, queryFn: () => apiRequest<GpuSlot[]>('/api/gpu-slots') }),
+  gpuSlots: () => queryOptions({
+    queryKey: queryKeys.gpuSlots,
+    queryFn: () => apiRequest<GpuSlot[]>('/api/gpu-slots'),
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
+  }),
+  samples: () => queryOptions({ queryKey: queryKeys.samples, queryFn: () => apiRequest<Sample[]>('/api/samples?decision=Pending') }),
 };
 
 const pageSize = 500;
@@ -125,6 +136,23 @@ export function useBackgroundPresetsQuery() { return useQuery(generationQueries.
 export function useBatchDraftsQuery() { return useQuery(generationQueries.batchDrafts()); }
 export function useJobsQuery() { return useQuery(generationQueries.jobs()); }
 export function useGpuSlotsQuery() { return useQuery(generationQueries.gpuSlots()); }
+export function useSamplesQuery() { return useQuery(generationQueries.samples()); }
+
+export function useReleaseGpuMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slot, expectedRevision }: { slot: GpuSlot['slot']; expectedRevision: number }) => apiRequest<GpuSlot>(`/api/gpu-slots/${slot}/release`, {
+      method: 'POST',
+      ...json({ expectedRevision }),
+    }),
+    onSuccess: async value => {
+      client.setQueryData<GpuSlot[]>(queryKeys.gpuSlots, current =>
+        current?.map(item => item.slot === value.slot ? value : item) ?? [value],
+      );
+      await client.invalidateQueries({ queryKey: queryKeys.gpuSlots, exact: true });
+    },
+  });
+}
 
 export function useJobQuery(id: number | null) {
   const client = useQueryClient();
@@ -276,6 +304,51 @@ export function useSubmitBatchMutation() {
 export function usePromptPreviewMutation() {
   return useMutation({
     mutationFn: (input: PromptPreviewRequest) => apiRequest<PromptPreview>('/api/prompt-preview', { method: 'POST', ...json(input) }),
+  });
+}
+
+export function useSubmitTestRunMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: TestRunCreate) => apiRequest<JobDetail>('/api/test-runs', {
+      method: 'POST',
+      ...json(input),
+    }),
+    onSuccess: async value => {
+      setJobDetailData(client, value);
+      await Promise.all([
+        invalidateCatalog(client, queryKeys.jobs),
+        invalidateCatalog(client, queryKeys.gpuSlots),
+      ]);
+    },
+  });
+}
+
+export function useKeepTestResultMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ itemId, input }: { itemId: number; input: KeepTestResultRequest }) => apiRequest<Sample>(`/api/job-items/${itemId}/keep`, {
+      method: 'POST',
+      ...json(input),
+    }),
+    onSuccess: async value => {
+      await Promise.all([
+        invalidateCatalog(client, queryKeys.jobs),
+        invalidateCatalog(client, queryKeys.samples),
+        invalidateCatalog(client, queryKeys.jobItems(value.jobItemId)),
+      ]);
+    },
+  });
+}
+
+export function useUpdateSampleReviewMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: number; input: SampleReviewUpdate }) => apiRequest<Sample>(`/api/samples/${id}/review`, {
+      method: 'PATCH',
+      ...json(input),
+    }),
+    onSuccess: () => invalidateCatalog(client, queryKeys.samples),
   });
 }
 

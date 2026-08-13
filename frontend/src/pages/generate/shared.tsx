@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useBlocker } from 'react-router-dom';
 import { Button, ConfirmDialog, PageHeader, StatusBadge } from '../../components';
 import { apiErrorMessage } from '../../api/client';
-import { useGpuSlotsQuery } from '../../api/queries';
+import { useGpuSlotsQuery, useReleaseGpuMutation } from '../../api/queries';
 import { generationText, type GenerationKey } from '../../locales/features/generation';
 import { useRepositorySnapshot } from '../../store';
 import { formatDateTime } from '../../time';
@@ -12,10 +12,10 @@ import type {
   Locale,
   ModelName,
 } from '../../types';
-import type { GpuAvailability, JobStatus } from '../../api/contracts';
+import type { GpuAvailability, GpuSlot, JobStatus } from '../../api/contracts';
 
 export const categories: Category[] = ['A-VA', 'A-VT', 'C-VA', 'C-VT'];
-export const models = ['LTX-2.3', 'MiniMax H3'] as const;
+export { models } from '../../generationProfile';
 export const ages = [25, 35, 45, 60] as const;
 export const genders = ['Male', 'Female'] as const;
 export const ethnicities = ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'] as const;
@@ -167,13 +167,28 @@ function availabilityKind(status: GpuAvailability) {
 export function GpuPanel({ description }: { description?: GenerationKey } = {}) {
   const g = useGenerationCopy();
   const gpuQuery = useGpuSlotsQuery();
+  const releaseMutation = useReleaseGpuMutation();
+  const [releaseTarget, setReleaseTarget] = useState<GpuSlot | null>(null);
+
+  const release = () => {
+    if (!releaseTarget) return;
+    releaseMutation.mutate(
+      {
+        slot: releaseTarget.slot,
+        expectedRevision: releaseTarget.revision,
+      },
+      { onSettled: () => setReleaseTarget(null) },
+    );
+  };
 
   return (
+    <>
     <section className="panel generation-gpus" aria-labelledby="generation-gpus-title">
       <div className="section-header"><h2 id="generation-gpus-title">{g('gpu.title')}</h2></div>
       {description ? <p className="generation-section-note">{g(description)}</p> : null}
       {gpuQuery.isPending ? <p role="status">{g('state.loadingBody')}</p> : null}
       {gpuQuery.isError ? <OperationFeedback error={gpuQuery.error} onDismiss={() => void gpuQuery.refetch()} /> : null}
+      {releaseMutation.isError ? <OperationFeedback error={releaseMutation.error} onDismiss={() => releaseMutation.reset()} /> : null}
       <div className="generation-gpus__grid">
         {(gpuQuery.data ?? []).map(gpu => (
             <article key={gpu.slot} className="generation-gpu-card">
@@ -181,12 +196,21 @@ export function GpuPanel({ description }: { description?: GenerationKey } = {}) 
                 <strong>{g(`gpu.${gpu.slot}` as GenerationKey)}</strong>
                 <StatusBadge label={g(`gpu.${gpu.availability}` as GenerationKey)} kind={availabilityKind(gpu.availability)} />
               </div>
-              <p>{gpu.loadedModel ? g('gpu.loadedModel', { model: g(`model.${gpu.loadedModel}` as GenerationKey) }) : g('gpu.noModel')}</p>
+              <p>{gpu.loadedModel ? g('gpu.loadedModel', { model: gpu.loadedPrecision ? `${gpu.loadedModel} ${gpu.loadedPrecision}` : gpu.loadedModel }) : g('gpu.noModel')}</p>
+              <p>{g(`gpu.service.${gpu.serviceStatus}` as GenerationKey)}</p>
+              {gpu.statusReason ? <p>{g('gpu.statusReason', { reason: gpu.statusReason })}</p> : null}
+              {gpu.gpuName ? <p>{g('gpu.hardware', { name: gpu.gpuName })}</p> : null}
+              <p>{gpu.memory.usedMiB !== null && gpu.memory.totalMiB !== null
+                ? g('gpu.memory', { used: gpu.memory.usedMiB, total: gpu.memory.totalMiB })
+                : g('gpu.memoryUnknown')}</p>
               <p>{g('gpu.checked', { time: formatDateTime(gpu.checkedAt) })}</p>
+              {gpu.loadedModel ? <Button variant="quiet" disabled={gpu.availability !== 'Available' || gpu.activeJobId !== null || releaseMutation.isPending} onClick={() => setReleaseTarget(gpu)}>{g('gpu.release')}</Button> : null}
             </article>
         ))}
       </div>
     </section>
+    <ConfirmDialog open={releaseTarget !== null} title={g('gpu.releaseTitle')} body={releaseTarget ? g('gpu.releaseBody', { model: releaseTarget.loadedPrecision ? `${releaseTarget.loadedModel ?? ''} ${releaseTarget.loadedPrecision}` : releaseTarget.loadedModel ?? '', gpu: releaseTarget.slot }) : ''} confirmLabel={g('common.yes')} cancelLabel={g('common.no')} closeLabel={g('common.close')} onConfirm={release} onClose={() => setReleaseTarget(null)} />
+    </>
   );
 }
 
