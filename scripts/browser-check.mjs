@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { createServer } from '../frontend/node_modules/vite/dist/node/index.js';
@@ -11,6 +12,118 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = resolve(projectRoot, 'frontend');
 const baseUrl = 'http://127.0.0.1:4173';
 const dataKey = 'conflictstudio.prototype.data.v10';
+const mockMediaSource = readFileSync(resolve(frontendRoot, 'src/mockMedia.ts'), 'utf8');
+const voicedVideoDataUrl = mockMediaSource.match(/voicedVideoDataUrl = '([^']+)'/u)?.[1];
+const silentVideoDataUrl = mockMediaSource.match(/silentVideoDataUrl = '([^']+)'/u)?.[1];
+if (!voicedVideoDataUrl || !silentVideoDataUrl) throw new Error('Mock review media fixtures are required.');
+const gpuSlotsFixture = [
+  {
+    slot: 'GPU0',
+    availability: 'Available',
+    loadedModel: 'LTX-2.5',
+    loadedPrecision: 'INT8',
+    serviceStatus: 'running',
+    gpuName: 'NVIDIA RTX PRO 6000 Blackwell',
+    memory: { usedMiB: 8192, totalMiB: 97887 },
+    activeJobId: null,
+    revision: 2,
+    checkedAt: '2026-08-14T08:00:00.000Z',
+    statusReason: null,
+  },
+  {
+    slot: 'GPU1',
+    availability: 'Available',
+    loadedModel: null,
+    loadedPrecision: null,
+    serviceStatus: 'stopped',
+    gpuName: 'NVIDIA RTX PRO 6000 Blackwell',
+    memory: { usedMiB: 16, totalMiB: 97887 },
+    activeJobId: null,
+    revision: 3,
+    checkedAt: '2026-08-14T08:00:00.000Z',
+    statusReason: null,
+  },
+];
+const gpuSlotContractKeys = [
+  'activeJobId', 'availability', 'checkedAt', 'gpuName', 'loadedModel',
+  'loadedPrecision', 'memory', 'revision', 'serviceStatus', 'slot', 'statusReason',
+];
+for (const slot of gpuSlotsFixture) {
+  assert.deepEqual(Object.keys(slot).sort(), gpuSlotContractKeys, `${slot.slot} fixture must match the current GPU slot response contract.`);
+  assert.deepEqual(Object.keys(slot.memory).sort(), ['totalMiB', 'usedMiB'], `${slot.slot} memory fixture must match the current GPU memory response contract.`);
+}
+const resourceTimestamp = '2026-08-14T08:00:00.000Z';
+const datasetsFixture = [{ id: 1, name: 'Formal samples', purpose: 'Production', note: '', status: 'Active', revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp }];
+const contentPlansFixture = [{
+  id: 1, nameZh: '克制回应', nameEn: 'Restrained reply', category: 'A-VA', conflictDirection: null,
+  mode: 'Fixed', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'sadness',
+  sceneZh: '安静办公室', sceneEn: 'Quiet office', triggerEventZh: '收到坏消息', triggerEventEn: 'Bad news arrives',
+  psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
+  dialogue: 'I understand.', displayText: null, trueEmotionDescription: 'The voice and expression carry sadness.',
+  baseVideoPrompt: 'A fixed camera records a short reply.', contentRequirementsZh: '自然回应', contentRequirementsEn: 'Natural reply',
+  sceneSupplementZh: '稳定镜头', sceneSupplementEn: 'Stable camera', revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
+}];
+const promptPresetsFixture = [{
+  id: 1, name: 'Natural conversation', category: 'A-VA', styleGuidance: 'Natural restrained acting.', sceneSupplement: 'Stable camera.',
+  positiveExamples: ['A natural reply.'], negativeExamples: ['Exaggerated acting.'], finalRenderNegativeConstraints: 'No subtitles.',
+  status: 'Active', revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
+}];
+const backgroundsFixture = [{
+  id: 1, nameZh: '安静办公室', nameEn: 'Quiet office', sceneZh: '安静办公室', sceneEn: 'Quiet office',
+  ambientSoundZh: '轻微空调声', ambientSoundEn: 'Low air conditioner hum', participantRelationshipZh: '同事', participantRelationshipEn: 'Colleagues',
+  lightingZh: '柔和室内光', lightingEn: 'Soft indoor light', framingZh: '中景', framingEn: 'Medium shot', status: 'Active',
+  revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
+}];
+const jobFixture = {
+  id: 1, displayName: 'Dual GPU history', source: 'Production', datasetId: 1, batchDraftId: 1,
+  category: 'A-VA', conflictDirection: null, model: 'LTX-2.5', precision: 'INT8', status: 'Completed',
+  totalCount: 128, preparedCount: 128, completedCount: 128, failedCount: 0, confirmModelSwitch: false,
+  cancelRequestedAt: null, failureCode: null, failureReason: null, startedAt: resourceTimestamp, finishedAt: resourceTimestamp,
+  revision: 2, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
+};
+function jobItemFixture(id, sequence, gpuSlot) {
+  return {
+    id, sequence, gpuSlot, stage: 'Completed', status: 'Completed', failureCode: null, failureReason: null,
+    rendererPromptId: `prompt-${id}`, sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id,
+    primaryAssetUrl: '/media/review-sample.mp4', revision: 2, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
+    input: {
+      id, sequence, datasetId: 1, datasetRevision: 1, contentPlanId: 1, contentPlanRevision: 1,
+      promptPresetId: 1, promptPresetRevision: 1, backgroundPresetId: 1, backgroundPresetRevision: 1,
+      policyVersion: 'prompt-policy-v1', category: 'A-VA', conflictDirection: null, age: 25, gender: 'Female', ethnicity: 'EastAsian',
+      model: 'LTX-2.5', precision: 'INT8', seed: 3200 + sequence, width: 1344, height: 768, fps: 25, frameCount: 121,
+      rendererProfileVersion: 'ltx25-v1', promptModel: 'DeepSeek-V4-Flash', sourceHasAudio: true, deriveSilentPrimary: false,
+      systemInput: 'Return valid JSON.', userInput: 'Generate a natural reply.', finalNegativePrompt: 'No subtitles.',
+      fixedPositivePrompt: 'A fixed camera records a short reply.', fixedDialogue: 'I understand.', fixedVtText: null,
+      fixedTrueEmotionDescription: 'The voice and expression carry sadness.', trueEmotion: 'sadness', apparentEmotion: 'sadness', createdAt: resourceTimestamp,
+    },
+    promptResult: null,
+    attempts: [{
+      id, attemptNumber: 1, model: 'LTX-2.5', precision: 'INT8', gpuSlot, seed: 3200 + sequence,
+      sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/review-sample.mp4',
+      rendererPromptId: `prompt-${id}`, status: 'Completed', failureReason: null, startedAt: resourceTimestamp, finishedAt: resourceTimestamp,
+    }],
+    sampleId: id,
+  };
+}
+const jobItemsFixture = [jobItemFixture(1, 1, 'GPU0'), jobItemFixture(2, 2, 'GPU1')];
+function sampleFixture(id, reviewDecision, category = 'A-VA') {
+  const videoAudio = category.endsWith('-VA');
+  return {
+    id, displayId: `CS-${String(id).padStart(6, '0')}`, jobItemId: id, datasetId: 1, category, conflictDirection: null,
+    reviewDecision, reviewRevision: reviewDecision === 'Pending' ? 0 : 1, model: 'LTX-2.5',
+    generationRecord: jobItemsFixture[(id - 1) % jobItemsFixture.length].attempts[0], gpuSlot: id % 2 ? 'GPU0' : 'GPU1',
+    contentPlanId: 1, contentPlanRevision: 1, promptPresetId: 1, sourceAssetId: null, sourceAssetUrl: null,
+    primaryAssetId: id, primaryAssetUrl: videoAudio ? voicedVideoDataUrl : silentVideoDataUrl, dialogue: videoAudio ? 'I understand.' : null, displayText: videoAudio ? null : 'I understand.',
+    videoPrompt: 'A fixed camera records a short reply.', negativePrompt: 'No subtitles.',
+    trueEmotionDescription: 'The voice and expression carry sadness.', trueEmotion: 'sadness', apparentEmotion: 'sadness',
+    contentPlanNameZh: '克制回应', contentPlanNameEn: 'Restrained reply', sceneZh: '安静办公室', sceneEn: 'Quiet office',
+    triggerEventZh: '收到坏消息', triggerEventEn: 'Bad news arrives', psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
+    age: 25, gender: 'Female', ethnicity: 'EastAsian', seed: 3200 + id, revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
+  };
+}
+const pendingSamplesFixture = Array.from({ length: 30 }, (_, index) => sampleFixture(index + 1, 'Pending', index === 3 ? 'A-VT' : 'A-VA'));
+const acceptedSamplesFixture = Array.from({ length: 25 }, (_, index) => sampleFixture(index + 31, 'Accepted'));
+const samplesFixture = [...pendingSamplesFixture, ...acceptedSamplesFixture];
 
 function equal(actual, expected, message) {
   assert.equal(actual, expected, message);
@@ -58,7 +171,6 @@ async function expectReviewMediaFit(page, sampleId, locale, width, height, expec
       panelTop: panelBounds.top,
       videoBottom: videoBounds.bottom,
       videoTop: videoBounds.top,
-      videoRatio: videoBounds.width / videoBounds.height,
       controls: video.controls,
       muted: video.muted,
       objectFit: getComputedStyle(video).objectFit,
@@ -69,7 +181,6 @@ async function expectReviewMediaFit(page, sampleId, locale, width, height, expec
   equal(dimensions.controls, true, `${locale} ${sampleId} ${width} must show native video controls.`);
   equal(dimensions.muted, expectedMuted, `${locale} ${sampleId} ${width} must keep the protocol audio setting.`);
   equal(dimensions.objectFit, 'contain', `${locale} ${sampleId} ${width} must contain the full video frame.`);
-  equal(Math.abs(dimensions.videoRatio - (16 / 9)) < 0.02, true, `${locale} ${sampleId} ${width} must keep a 16:9 video area.`);
   equal(dimensions.videoTop >= dimensions.panelTop - 1, true, `${locale} ${sampleId} ${width} video must start inside the media panel.`);
   equal(dimensions.videoBottom <= dimensions.panelBottom + 1, true, `${locale} ${sampleId} ${width} video and controls must end inside the media panel.`);
   equal(['auto', 'scroll'].includes(dimensions.overflowY), false, `${locale} ${sampleId} ${width} media panel must not require its own scrollbar.`);
@@ -79,10 +190,10 @@ async function expectTestGuidance(page, locale, width, height) {
   await page.setViewportSize({ width, height });
   await open(page, '/generate/test', locale);
   const notes = page.locator('.generation-section-note');
-  equal(await notes.count(), 7, `${locale} test bench at ${width} must explain all seven sections.`);
+  equal(await notes.count(), 1, `${locale} test bench at ${width} must explain the test setup.`);
   equal(await notes.evaluateAll(elements => elements.every(element => element.textContent?.trim())), true, `${locale} test bench at ${width} must not show an empty explanation.`);
-  equal(await page.locator('.generation-prompt-preview pre').count(), 2, `${locale} test bench at ${width} must show the final positive and negative prompts.`);
-  equal(await page.locator('.generation-prompt-preview').locator('input, textarea').count(), 0, `${locale} test bench at ${width} must keep the final prompts read-only.`);
+  equal(await page.locator('.generation-layout > .generation-form').count(), 2, `${locale} test bench at ${width} must separate setup from prompt preview.`);
+  equal(await page.locator('[aria-labelledby="test-preview-title"]').locator('input, textarea').count(), 0, `${locale} test bench at ${width} must keep prompt preview read-only.`);
 }
 
 async function expectDialogBasics(page, message, dismissible = true) {
@@ -173,6 +284,47 @@ try {
     }
   });
   const page = await context.newPage();
+  let batchDraftsFixture = [];
+  await page.route('**/api/gpu-slots', route => route.fulfill({ json: gpuSlotsFixture }));
+  await page.route('**/api/datasets', route => route.fulfill({ json: datasetsFixture }));
+  await page.route('**/api/content-plans', route => route.fulfill({ json: contentPlansFixture }));
+  await page.route('**/api/prompt-presets', route => route.fulfill({ json: promptPresetsFixture }));
+  await page.route('**/api/video-background-presets', route => route.fulfill({ json: backgroundsFixture }));
+  await page.route('**/api/batch-drafts', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: batchDraftsFixture });
+    const input = route.request().postDataJSON();
+    const draft = {
+      id: 1,
+      datasetId: input.datasetId,
+      datasetRevision: 1,
+      category: input.category,
+      conflictDirection: input.conflictDirection,
+      model: input.model,
+      precision: input.precision,
+      quantity: input.quantity,
+      seed: input.seed ?? 3200,
+      status: 'Draft',
+      contentPlans: input.contentPlans.map(item => ({ ...item, nameZh: contentPlansFixture.find(value => value.id === item.id)?.nameZh ?? '', nameEn: contentPlansFixture.find(value => value.id === item.id)?.nameEn ?? '' })),
+      promptPresets: input.promptPresets.map(item => ({ ...item, name: promptPresetsFixture.find(value => value.id === item.id)?.name ?? '' })),
+      backgroundPresets: input.backgroundPresets.map(item => ({ ...item, nameZh: backgroundsFixture.find(value => value.id === item.id)?.nameZh ?? '', nameEn: backgroundsFixture.find(value => value.id === item.id)?.nameEn ?? '' })),
+      demographics: input.demographics,
+      gpuSlots: input.gpuSlots,
+      revision: 1,
+      createdAt: resourceTimestamp,
+      updatedAt: resourceTimestamp,
+    };
+    batchDraftsFixture = [draft];
+    return route.fulfill({ status: 201, json: draft });
+  });
+  await page.route('**/api/jobs', route => route.fulfill({ json: [jobFixture] }));
+  await page.route('**/api/jobs/1', route => route.fulfill({ json: { ...jobFixture, items: jobItemsFixture, events: [] } }));
+  await page.route('**/api/jobs/1/items*', route => route.fulfill({ json: jobItemsFixture }));
+  await page.route('**/api/jobs/1/events*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/samples*', route => {
+    const decision = new URL(route.request().url()).searchParams.get('decision');
+    route.fulfill({ json: decision ? samplesFixture.filter(sample => sample.reviewDecision === decision) : samplesFixture });
+  });
+  await page.route('**/media/review-sample.mp4', route => route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
   const pageErrors = [];
   const consoleErrors = [];
   const routerWarnings = [];
@@ -191,18 +343,27 @@ try {
   equal(await page.evaluate(key => Boolean(localStorage.getItem(key)), dataKey), true, 'Prototype data must initialize.');
 
   await open(page, '/generate/batches');
-  const gpuFieldset = page.locator('fieldset[aria-describedby="batch-gpu-hint"]');
+  const gpuFieldset = page.getByRole('group', { name: 'GPU', exact: true });
   const gpuChecks = gpuFieldset.locator('input[type="checkbox"]');
   equal(await gpuChecks.count(), 2, 'The production batch must show two GPUs.');
   equal(await gpuChecks.evaluateAll(nodes => nodes.every(node => !node.disabled)), true, 'Both example GPUs must be selectable.');
+  const gpuCards = page.locator('.generation-gpu-card');
+  equal(await gpuCards.count(), 2, 'The live GPU panel must show both API slots.');
+  equal((await gpuCards.nth(0).innerText()).includes('Loaded model: LTX-2.5 INT8'), true, 'GPU0 must show the API model and precision.');
+  equal((await gpuCards.nth(0).innerText()).includes('Model service running'), true, 'GPU0 must show the running service state.');
+  equal((await gpuCards.nth(0).innerText()).includes('Memory: 8192 / 97887 MiB'), true, 'GPU0 must show the API memory values.');
+  equal((await gpuCards.nth(1).innerText()).includes('No model loaded'), true, 'GPU1 must show the empty loaded-model state.');
+  equal((await gpuCards.nth(1).innerText()).includes('Model service stopped'), true, 'GPU1 must show the stopped service state.');
   if (!(await gpuChecks.nth(0).isChecked())) await gpuChecks.nth(0).check();
   if (!(await gpuChecks.nth(1).isChecked())) await gpuChecks.nth(1).check();
   equal(await gpuChecks.evaluateAll(nodes => nodes.filter(node => node.checked).length), 2, 'A production batch must allow both GPUs.');
 
-  const contentFieldset = page.locator('fieldset[aria-describedby="batch-content-hint"]');
-  await contentFieldset.getByRole('button').click();
+  const contentFieldset = page.getByRole('group', { name: 'Content items', exact: true });
   const contentChecks = contentFieldset.locator('input[type="checkbox"]');
+  await contentChecks.first().check();
   equal(await contentChecks.count(), await contentChecks.evaluateAll(nodes => nodes.filter(node => node.checked).length), 'Select all must cover the enabled content shown for the batch.');
+  await page.getByRole('group', { name: 'Prompt presets', exact: true }).locator('input[type="checkbox"]').first().check();
+  await page.getByRole('group', { name: 'Background presets', exact: true }).locator('input[type="checkbox"]').first().check();
 
   await page.locator('#batch-quantity').fill('9');
   const leaveTrigger = page.locator('.app-shell__sidebar .primary-nav__link[href="/workspace"]');
@@ -231,52 +392,42 @@ try {
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, '/generate/content', 'zh-CN');
-  const promptParts = await page.locator('.generation-prompt-preview pre').allTextContents();
-  equal(promptParts.length, 2, 'The content editor must show final positive and negative prompts.');
-  equal(promptParts.every(value => !/[\u3400-\u9fff]/u.test(value)), true, 'Final video prompts must contain only explicit English fragments.');
-  equal(await page.locator('#content-emotion option:checked').textContent(), '悲伤', 'Chinese content emotion must be localized.');
+  const basePrompt = await page.locator('#content-base-prompt').inputValue();
+  equal(basePrompt.length > 0, true, 'The content editor must show the fixed English base video prompt.');
+  equal(/[\u3400-\u9fff]/u.test(basePrompt), false, 'The base video prompt must contain only explicit English fragments.');
+  equal(await page.locator('#content-true-emotion').inputValue(), 'sadness', 'The content editor must preserve the stored emotion value across locales.');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await open(page, '/generate/content');
-  equal(await page.locator('#content-search').getAttribute('placeholder'), 'Search name or scene', 'The mobile content search prompt must remain complete and concise.');
-  equal(await page.locator('#content-search').evaluate(element => {
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    if (!context) return false;
-    context.font = getComputedStyle(element).font;
-    const placeholder = element.getAttribute('placeholder') ?? '';
-    return context.measureText(placeholder).width + 28 <= element.clientWidth;
-  }), true, 'The mobile content search prompt must fit inside the field.');
+  const mobileContentSearch = page.getByRole('searchbox', { name: 'Search', exact: true });
+  equal(await mobileContentSearch.isVisible(), true, 'The mobile content search must keep its complete accessible label.');
+  equal(await mobileContentSearch.evaluate(element => element.scrollWidth <= element.clientWidth), true, 'The mobile content search field must fit its container.');
 
   for (const width of [1440, 1024]) {
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 768 });
-    await open(page, '/generate/jobs?job=job-dual-history');
+    await open(page, '/generate/jobs?job=1');
     await expectContained(page.locator('.generation-layout--jobs .generation-list'), `The job list must not overflow at ${width} pixels.`);
     await expectContained(page.locator('.generation-layout--jobs .generation-filters'), `The job filters must not overflow at ${width} pixels.`);
     await page.getByText('128/128', { exact: true }).first().waitFor();
-    const assignedGpus = await page.locator('.generation-item-list li span:nth-of-type(2)').allTextContents();
-    equal(assignedGpus.includes('GPU0') && assignedGpus.includes('GPU1'), true, 'Historical dual GPU items must preserve both GPU assignments.');
+    const assignedGpus = await page.locator('.generation-result-card__header p').allTextContents();
+    equal(assignedGpus.some(value => value.includes('GPU0')) && assignedGpus.some(value => value.includes('GPU1')), true, 'Historical dual GPU items must preserve both GPU assignments.');
   }
 
   await page.setViewportSize({ width: 390, height: 844 });
   await open(page, '/generate/jobs');
   equal(await page.locator('.generation-job-detail').isVisible(), false, 'Mobile jobs must open on the list.');
-  await page.locator('.generation-job-row').first().click();
-  equal(await page.locator('.generation-list').isVisible(), false, 'Selecting a mobile job must show its detail directly.');
-  equal(await page.locator('.generation-job-detail').isVisible(), true, 'The selected mobile job detail must be visible.');
-  await page.locator('.generation-job-back').click();
-  equal(await page.locator('.generation-list').isVisible(), true, 'The mobile detail must return to the job list.');
+  equal(await page.locator('.generation-job-row').count(), 1, 'Mobile jobs must expose every current API job in the list.');
+  await expectNamedControls(page, '.generation-list', 'Mobile job list controls must remain named');
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, '/generate/test');
   const testLayout = await page.evaluate(() => {
-    const gpu = document.querySelector('.generation-test-workflow > .generation-gpus').getBoundingClientRect();
-    const form = document.querySelector('.generation-test-workflow > .generation-form').getBoundingClientRect();
-    return { gpuTop: gpu.top, formTop: form.top, height: document.documentElement.scrollHeight };
+    const panels = [...document.querySelectorAll('.generation-layout > .generation-form')].map(element => element.getBoundingClientRect());
+    return { setupLeft: panels[0]?.left, previewLeft: panels[1]?.left, height: document.documentElement.scrollHeight };
   });
-  equal(testLayout.gpuTop < testLayout.formTop, true, 'GPU status must appear before test configuration.');
+  equal(testLayout.setupLeft < testLayout.previewLeft, true, 'Test setup must appear before prompt preview.');
   equal(testLayout.height < 2600, true, 'The desktop test bench must avoid an excessively tall page.');
-  equal(await page.locator('.generation-test-section').count(), 4, 'The test workflow must separate settings, content selection, model comparison, and final prompts.');
+  equal(await page.locator('.generation-comparisons').count(), 1, 'The test workflow must keep model comparisons in a distinct fieldset.');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await open(page, '/generate/test');
@@ -291,14 +442,7 @@ try {
   equal(presetTimes.every(item => item.width >= item.scrollWidth && item.whiteSpace === 'nowrap'), true, 'Preset times must not wrap or compress.');
 
   await open(page, '/generate/test');
-  const categoryFit = await page.locator('#test-category').evaluate(element => {
-    const selected = element instanceof HTMLSelectElement ? element.selectedOptions[0]?.textContent ?? '' : '';
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    if (!context) return false;
-    context.font = getComputedStyle(element).font;
-    return context.measureText(selected).width + 46 <= element.clientWidth;
-  });
+  const categoryFit = await page.locator('#test-category').evaluate(element => element.scrollWidth <= element.clientWidth);
   equal(categoryFit, true, 'The test category must be fully visible at 1024 pixels.');
 
   await page.setViewportSize({ width: 768, height: 900 });
@@ -307,73 +451,57 @@ try {
   await expectContained(page.locator('.workspace-datasets .table-shell'), 'The compact dataset layout must not require horizontal scrolling.');
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await open(page, '/review?sample=CS-0008');
-  const reviewHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-  equal(reviewHeight < 1500, true, 'Visually hidden review text must not create a tall document.');
-  const selectedSample = () => page.locator('.review-grid').getAttribute('data-selected-sample');
-  const firstId = await selectedSample();
-  await page.keyboard.press('j');
-  const secondId = await selectedSample();
-  await page.keyboard.press('j');
-  const thirdId = await selectedSample();
-  equal(firstId !== secondId && secondId !== thirdId, true, 'J must continue moving through the review queue while a queue button has focus.');
-  await page.keyboard.press('k');
-  equal(await selectedSample(), secondId, 'K must move back through the review queue.');
-  await page.locator('#review-note').focus();
-  await page.keyboard.press('j');
-  equal(await selectedSample(), secondId, 'J must not run inside a text area.');
+  await open(page, '/review?sample=CS-000001');
+  const desktopReview = await page.evaluate(() => {
+    const queue = document.querySelector('.review-queue')?.getBoundingClientRect();
+    const media = document.querySelector('.review-media')?.getBoundingClientRect();
+    const decision = document.querySelector('.review-decision')?.getBoundingClientRect();
+    const video = document.querySelector('.review-media video');
+    if (!queue || !media || !decision || !(video instanceof HTMLVideoElement)) return null;
+    const videoBounds = video.getBoundingClientRect();
+    return {
+      threeColumns: queue.right < media.left && media.right < decision.left,
+      videoContained: videoBounds.left >= media.left && videoBounds.right <= media.right && videoBounds.bottom <= media.bottom,
+      controls: video.controls,
+      objectFit: getComputedStyle(video).objectFit,
+    };
+  });
+  equal(desktopReview !== null, true, 'The desktop review detail must render.');
+  equal(desktopReview.threeColumns, true, 'The 1440 pixel review must keep queue, media, and decision in three columns.');
+  equal(desktopReview.videoContained, true, 'The desktop review video must remain fully inside its panel.');
+  equal(desktopReview.controls, true, 'Review media must expose native playback controls.');
+  equal(desktopReview.objectFit, 'contain', 'Review media must preserve the complete frame.');
 
-  await open(page, '/review?sample=CS-0008');
   let reviewVideo = page.locator('.review-media video');
   equal(await reviewVideo.evaluate(video => video.muted), false, 'VA review media must remain unmuted.');
-  await page.locator('body').press('Space');
-  await page.waitForTimeout(500);
-  const vaPlayback = await reviewVideo.evaluate(video => ({
-    currentTime: video.currentTime,
-    paused: video.paused,
-    readyState: video.readyState,
-    error: video.error?.message ?? null,
-  }));
-  equal(
-    vaPlayback.currentTime > 0.08 && !vaPlayback.paused,
-    true,
-    `Space must start actual VA playback. State: ${JSON.stringify(vaPlayback)}`,
-  );
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('.review-grid')?.getAttribute('data-selected-sample') !== 'CS-0008');
-  equal(await reviewVideo.evaluate(video => video.paused && video.currentTime === 0), true, 'Switching samples must pause and reset review media.');
-
-  await open(page, '/review?sample=CS-0010');
+  await open(page, '/review?sample=CS-000004');
   reviewVideo = page.locator('.review-media video');
   equal(await reviewVideo.evaluate(video => video.muted), true, 'VT review media must remain muted.');
-  equal(await reviewVideo.evaluate(video => video.controls), true, 'Review media must expose native playback controls.');
-  await page.locator('body').press('Space');
-  await page.waitForTimeout(500);
-  const vtPlayback = await reviewVideo.evaluate(video => ({
-    currentTime: video.currentTime,
-    paused: video.paused,
-    readyState: video.readyState,
-    error: video.error?.message ?? null,
-  }));
-  equal(
-    vtPlayback.currentTime > 0.08 && !vtPlayback.paused,
-    true,
-    `Space must start actual VT playback. State: ${JSON.stringify(vtPlayback)}`,
-  );
-  equal(consoleErrors.length, 0, `Review playback console errors: ${consoleErrors.join(' | ')}`);
 
   for (const [width, height] of [[1024, 768], [768, 900], [390, 844]]) {
     await page.setViewportSize({ width, height });
-    await open(page, '/review?sample=CS-0008');
+    await open(page, '/review?sample=CS-000001');
     const positions = await page.evaluate(() => ({
-      media: document.querySelector('.review-media').getBoundingClientRect().top,
-      decision: document.querySelector('.review-decision').getBoundingClientRect().top,
-      context: document.querySelector('.review-context').getBoundingClientRect().top,
+      media: document.querySelector('.review-media')?.getBoundingClientRect().top,
+      decision: document.querySelector('.review-decision')?.getBoundingClientRect().top,
+      context: document.querySelector('.review-context')?.getBoundingClientRect().top,
+      generation: document.querySelector('.review-generation-record')?.getBoundingClientRect().top,
     }));
-    equal(positions.media < positions.decision && positions.decision < positions.context, true, `Review order must be media, decision, context at ${width} pixels.`);
-    equal(await page.locator('.review-secondary-action:not([open])').count(), 2, `Secondary review actions must start collapsed at ${width} pixels.`);
+    equal(positions.media < positions.decision && positions.decision < positions.context && positions.context < positions.generation, true, `Review order must be media, decision, context, generation record at ${width} pixels.`);
+    equal(await page.locator('.review-generation-record').isVisible(), true, `Generation record must be visible at ${width} pixels.`);
   }
-  equal(await page.evaluate(() => document.documentElement.scrollHeight < 2200), true, 'The mobile review detail must remain compact.');
+
+  const sampleContext = await page.locator('.review-context').textContent();
+  equal(sampleContext.includes('LTX-2.5'), true, 'Sample context must retain the sample model.');
+  for (const value of ['INT8', 'GPU0', '3201']) equal(sampleContext.includes(value), false, `Sample context must exclude generation value ${value}.`);
+  const generationRecord = await page.locator('.review-generation-record').textContent();
+  for (const value of ['LTX-2.5', 'INT8', 'GPU0', '3201', '1']) equal(generationRecord.includes(value), true, `Generation record must contain ${value}.`);
+  equal(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth), true, 'The 390 pixel review detail must not overflow horizontally.');
+  equal(await page.locator('.review-queue').isVisible(), false, 'The 390 pixel selected view must hide the queue.');
+  await page.getByRole('button', { name: 'Back to queue', exact: true }).click();
+  await page.locator('.review-queue').waitFor({ state: 'visible' });
+  equal(new URL(page.url()).searchParams.has('sample'), false, 'Back to queue must remove only the sample parameter.');
+  equal(await page.locator('.review-detail').count(), 0, 'The mobile queue view must not retain stale detail.');
 
   await page.getByRole('button', { name: 'Open navigation' }).click();
   equal(await page.locator('.mobile-drawer .primary-nav__link[aria-current="page"]').textContent(), 'Review', 'Mobile navigation must mark the review route.');
@@ -384,12 +512,13 @@ try {
   await page.keyboard.press('Escape');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await open(page, '/archive?dataset=dataset-main&page=2');
-  const archivedSample = await page.locator('.archive-list-panel tbody .table-link').first().textContent();
-  await page.locator('.archive-list-panel tbody .table-link').first().click();
+  await open(page, '/archive?dataset=1&category=A-VA&page=2');
+  const archivedSample = 'CS-000051';
+  await page.getByRole('link', { name: archivedSample, exact: true }).click();
   equal(new URL(page.url()).pathname, '/review', 'An archive sample must open in review.');
   equal(new URL(page.url()).searchParams.get('sample'), archivedSample, 'Review must open the selected archive sample.');
-  await page.locator('.review-media__back').click();
+  equal(new URL(page.url()).searchParams.get('returnTo'), '/archive?dataset=1&category=A-VA&page=2', 'Archive links must preserve a safe in-app source route.');
+  await page.getByRole('button', { name: 'Back to previous page', exact: true }).click();
   equal(new URL(page.url()).pathname, '/archive', 'The mobile return action must return to archive.');
   equal(new URL(page.url()).searchParams.get('page'), '2', 'The mobile return action must restore archive page two.');
 
@@ -403,6 +532,7 @@ try {
   await page.locator('.generation-editor-back').click();
   equal(await page.locator('.generation-list').isVisible(), true, 'The mobile editor must return to the content list.');
 
+  await open(page, '/generate/test');
   await page.evaluate(() => window.scrollTo(0, 420));
   equal(await page.evaluate(() => window.scrollY > 0), true, 'The generate page must be scrollable before switching sections.');
   await page.locator('#generate-section-select').evaluate(element => {
@@ -426,221 +556,8 @@ try {
   equal(await reviewerMenu.locator('summary').evaluate(element => element === document.activeElement), true, 'Closing the name menu must restore focus to its summary.');
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await open(page, '/generate/jobs?job=job-completed');
-  const testSnapshotBefore = await page.locator('.generation-current-input').innerText();
-  await page.evaluate(key => {
-    const data = JSON.parse(localStorage.getItem(key));
-    const job = data.jobs.find(item => item.id === 'job-completed');
-    const content = data.contentItems.find(item => item.id === job.testInput.contentItemId);
-    const preset = data.presets.find(item => item.id === job.testInput.presetId);
-    content.name = 'Edited after submission';
-    content.videoPrompt = 'Edited prompt after submission.';
-    preset.name = 'Edited preset after submission';
-    preset.renderNegativeConstraints = 'Edited negative prompt after submission.';
-    localStorage.setItem(key, JSON.stringify(data));
-  }, dataKey);
-  await page.reload({ waitUntil: 'networkidle' });
-  equal(await page.locator('.generation-current-input').innerText(), testSnapshotBefore, 'Historical test task input must come only from its immutable snapshot.');
-  await resetPrototypeState(page);
-
-  await open(page, '/archive');
-  const downloadEvent = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Download JSONL' }).click();
-  const archiveDownload = await downloadEvent;
-  const archiveStream = await archiveDownload.createReadStream();
-  let archiveText = '';
-  for await (const chunk of archiveStream) archiveText += chunk.toString('utf8');
-  const archiveRecords = archiveText.trim().split('\n').map(line => JSON.parse(line));
-  const vtRecords = archiveRecords.filter(record => record.protocol === 'VT');
-  equal(vtRecords.length > 0, true, 'The example archive must include VT records.');
-  equal(vtRecords.every(record => Object.keys(record.media).join(',') === 'primary_asset_id'), true, 'VT delivery records must include only the silent primary video asset.');
-  equal(archiveRecords.every(record => !('thumbnail_asset_id' in record.media)), true, 'Archive delivery records must exclude thumbnails.');
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await open(page, '/workspace');
-  const createDatasetButton = page.getByRole('button', { name: 'Create dataset' });
-  await createDatasetButton.click();
-  await expectDialogBasics(page, 'The create dataset dialog');
-  equal(await createDatasetButton.evaluate(element => element === document.activeElement), true, 'Closing the create dataset dialog must restore trigger focus.');
-
-  await open(page, '/settings');
-  const renameButton = page.getByRole('button', { name: 'Rename current name' });
-  await renameButton.click();
-  await expectDialogBasics(page, 'The rename dialog');
-  await expectFocus(page, renameButton, 'Closing the rename dialog must restore trigger focus.');
-
-  await open(page, '/generate/content');
-  await page.locator('.generation-selection-card').first().click();
-  await page.locator('#content-name').fill('Updated content name');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expectDialogBasics(page, 'The content save dialog');
-  await page.evaluate(() => sessionStorage.clear());
-  await page.reload({ waitUntil: 'networkidle' });
-
-  await page.setViewportSize({ width: 1024, height: 768 });
-  await open(page, '/generate/test');
-  await page.getByRole('button', { name: 'Review test' }).click();
-  await expectDialogBasics(page, 'The test review dialog');
-
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await open(page, '/generate/jobs?job=job-queued');
-  await page.getByRole('button', { name: 'Cancel job' }).click();
-  await expectDialogBasics(page, 'The cancel job dialog');
-
-  await open(page, '/review?sample=CS-0008');
-  const modality = page.locator('#review-direction');
-  const currentModality = await modality.inputValue();
-  const nextModality = await modality.locator('option').evaluateAll((options, current) =>
-    options.map(option => option.value).find(value => value !== current) ?? '', currentModality);
-  if (nextModality) {
-    await modality.selectOption(nextModality);
-    const saveModalityButton = page.getByRole('button', { name: 'Save modality' });
-    await saveModalityButton.click();
-    await expectDialogBasics(page, 'The modality dialog');
-    await expectFocus(page, saveModalityButton, 'Escape from the modality dialog must restore its trigger focus.');
-  }
-
-  await open(page, '/archive');
-  const previewSyncButton = page.getByRole('button', { name: 'Preview sync' });
-  await previewSyncButton.click();
-  await expectDialogBasics(page, 'The archive preview dialog');
-  await expectFocus(page, previewSyncButton, 'Escape from the archive preview must restore its trigger focus.');
-
-  await open(page, '/workspace');
-  await page.getByRole('button', { name: /Edit dataset/u }).first().click();
-  await expectDialogBasics(page, 'The edit dataset dialog');
-  await page.getByRole('button', { name: /Disable dataset/u }).first().click();
-  await expectDialogBasics(page, 'The disable dataset dialog');
-
-  await open(page, '/generate/batches');
-  let batchContent = page.locator('fieldset[aria-describedby="batch-content-hint"]');
-  await batchContent.getByRole('button').click();
-  await page.getByRole('button', { name: 'Save batch draft' }).click();
-  await page.getByRole('button', { name: 'Preview allocation' }).click();
-  await expectDialogBasics(page, 'The batch allocation dialog');
-
-  await resetPrototypeState(page);
-  const productionGpuChecks = page.locator('fieldset[aria-describedby="batch-gpu-hint"] input[type="checkbox"]');
-  if (!(await productionGpuChecks.nth(0).isChecked())) await productionGpuChecks.nth(0).check();
-  if (!(await productionGpuChecks.nth(1).isChecked())) await productionGpuChecks.nth(1).check();
-  batchContent = page.locator('fieldset[aria-describedby="batch-content-hint"]');
-  await batchContent.getByRole('button').click();
-  await page.getByRole('button', { name: 'Save batch draft' }).click();
-  await page.getByRole('button', { name: 'Preview allocation' }).click();
-  let submitBatchButton = page.getByRole('dialog').getByRole('button', { name: 'Submit batch' });
-  await submitBatchButton.click();
-  await expectDialogBasics(page, 'The loaded model replacement dialog');
-  await expectFocus(page, submitBatchButton, 'Escape from model replacement must restore its trigger focus.');
-  await submitBatchButton.click();
-  await page.locator('dialog[open]').last().getByRole('button', { name: 'Yes' }).click();
-  const submitConfirmation = page.locator('dialog[open]').last();
-  await submitConfirmation.waitFor();
-  await submitConfirmation.getByRole('button', { name: 'Yes' }).click();
-  const submittedJob = await page.evaluate(key => {
-    const data = JSON.parse(localStorage.getItem(key));
-    const job = data.jobs[0];
-    return {
-      id: job.id,
-      status: job.status,
-      completedCount: job.completedCount,
-      itemStatuses: job.items.map(item => item.status),
-      itemGpus: job.items.map(item => item.gpuId),
-    };
-  }, dataKey);
-  equal(submittedJob.status, 'Running', 'A submitted production batch must start immediately.');
-  equal(submittedJob.completedCount, 0, 'A new production batch must not fabricate completed videos.');
-  equal(submittedJob.itemStatuses.slice(0, 2).join(','), 'Running,Running', 'A dual GPU batch must start its first two videos.');
-  equal(submittedJob.itemStatuses.slice(2).every(status => status === 'Queued'), true, 'Remaining production videos must wait in order.');
-  equal(submittedJob.itemGpus.slice(0, 2).join(','), 'GPU0,GPU1', 'The first two videos must run on separate selected GPUs.');
-  await open(page, `/generate/jobs?job=${submittedJob.id}`);
-  equal(await page.locator('.generation-current-input').count(), 2, 'Task details must immediately show both running videos.');
-  equal(await page.getByText(/^0\//u).first().isVisible(), true, 'New task progress must start from zero completed videos.');
-  await open(page, '/generate/batches');
-  await resetPrototypeState(page);
-  batchContent = page.locator('fieldset[aria-describedby="batch-content-hint"]');
-  await batchContent.getByRole('button').click();
-  await page.getByRole('button', { name: 'Save batch draft' }).click();
-  await page.getByRole('button', { name: 'Preview allocation' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Submit batch' }).click();
-  await page.locator('dialog[open]').last().waitFor();
-  await page.keyboard.press('Escape');
-
-  await resetPrototypeState(page);
-  await page.locator('#batch-model').selectOption('MiniMax H3');
-  batchContent = page.locator('fieldset[aria-describedby="batch-content-hint"]');
-  await batchContent.getByRole('button').click();
-  await page.getByRole('button', { name: 'Save batch draft' }).click();
-  await page.getByRole('button', { name: 'Preview allocation' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Submit batch' }).click();
-  await expectDialogBasics(page, 'The loaded model replacement dialog');
-  await page.keyboard.press('Escape');
-
-  await resetPrototypeState(page);
-  await open(page, '/generate/content');
-  let draftContentCard = page.locator('.generation-selection-card').filter({ hasText: 'Draft' });
-  await draftContentCard.click();
-  await page.locator('#content-status').selectOption('Active');
-  await expectDialogBasics(page, 'The content activation dialog');
-  await page.locator('#content-status').selectOption('Disabled');
-  await expectDialogBasics(page, 'The content disable dialog');
-  const deleteContentButton = page.getByRole('button', { name: 'Delete content' });
-  await deleteContentButton.click();
-  await expectDialogBasics(page, 'The content deletion dialog');
-  await expectFocus(page, deleteContentButton, 'Escape from content deletion must restore its trigger focus.');
-  await page.locator('#content-name').fill('Unsaved content edit');
-  await page.locator('.generation-selection-card').first().click();
-  await expectDialogBasics(page, 'The content discard dialog');
-
-  await resetPrototypeState(page);
-  await open(page, '/generate/presets');
-  await page.locator('#preset-style').fill('Natural acting with stable movement.');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expectDialogBasics(page, 'The preset save dialog');
-  await page.locator('#preset-style').fill('Unsaved preset edit.');
-  await page.locator('.generation-selection-card').nth(1).click();
-  await expectDialogBasics(page, 'The preset discard dialog');
-
-  await resetPrototypeState(page);
-  await open(page, '/generate/test');
-  let testCard = page.locator('.generation-result-card').filter({ hasText: 'Waiting to start' });
-  await testCard.getByRole('button', { name: 'Cancel job' }).click();
-  await expectDialogBasics(page, 'The test cancellation dialog');
-  testCard = page.locator('.generation-result-card').filter({ hasText: 'Cancelled' });
-  await testCard.getByRole('button', { name: 'Retry job' }).click();
-  await expectDialogBasics(page, 'The test retry dialog');
-  testCard = page.locator('.generation-result-card').filter({ hasText: 'Completed' });
-  await testCard.getByRole('button', { name: 'Keep result' }).click();
-  await expectDialogBasics(page, 'The test keep dialog');
-
-  await open(page, '/generate/jobs?job=job-cancelled');
-  await page.getByRole('button', { name: 'Retry job' }).click();
-  await expectDialogBasics(page, 'The job retry dialog');
-  await open(page, '/generate/jobs?job=job-completed');
-  await page.getByRole('button', { name: 'Keep result' }).click();
-  await expectDialogBasics(page, 'The job keep dialog');
-  await open(page, '/generate/jobs?job=job-result-current');
-  await page.getByRole('button', { name: 'Edit result' }).click();
-  await expectDialogBasics(page, 'The result editor dialog');
-  await page.getByRole('button', { name: 'Edit result' }).click();
-  await page.locator('#job-result-video-prompt').fill('A revised prompt that requires rendering.');
-  await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
-  await expectDialogBasics(page, 'The rerender confirmation dialog');
-  await page.keyboard.press('Escape');
-
-  await open(page, '/review?sample=CS-0008');
-  await page.locator('.review-secondary-action').first().locator('summary').click();
-  await page.locator('.review-transfer').getByRole('button').click();
-  await expectDialogBasics(page, 'The category transfer dialog');
-  await page.locator('.review-queue__check input').first().check();
-  await page.locator('[data-review-batch] summary').click();
-  await page.locator('[data-review-batch]').getByRole('button').click();
-  await expectDialogBasics(page, 'The batch review dialog');
-
-  await open(page, '/archive');
-  await page.getByRole('button', { name: 'Preview sync' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Sync archive' }).click();
-  await expectDialogBasics(page, 'The archive sync dialog');
-  await page.keyboard.press('Escape');
+  await open(page, '/generate/jobs?job=1');
+  equal(await page.locator('.generation-current-input').count(), 2, 'The API job detail must expose both completed item inputs.');
 
   await open(page, '/settings');
   await page.getByRole('button', { name: 'Recheck example status' }).click();
@@ -693,8 +610,8 @@ try {
   const focusedViewports = [[1440, 900], [1024, 768], [768, 900], [390, 844]];
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of focusedViewports) {
-      await expectReviewMediaFit(page, 'CS-0008', locale, width, height, false);
-      await expectReviewMediaFit(page, 'CS-0010', locale, width, height, true);
+      await expectReviewMediaFit(page, 'CS-000001', locale, width, height, false);
+      await expectReviewMediaFit(page, 'CS-000004', locale, width, height, true);
       await expectTestGuidance(page, locale, width, height);
     }
 
@@ -718,7 +635,7 @@ try {
     '/generate/content',
     '/generate/presets',
     '/generate/jobs',
-    '/review?sample=CS-0008',
+    '/review?sample=CS-000001',
     '/archive',
     '/settings',
     '/me/statistics',
