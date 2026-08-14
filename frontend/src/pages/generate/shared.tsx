@@ -34,6 +34,15 @@ export function useGenerationLocale(): Locale {
   return usePreferences().locale;
 }
 
+export function jobFailureMessage(code: string | null, g: ReturnType<typeof useGenerationCopy>): string {
+  if (code === 'interrupted_by_restart') return g('jobs.failure.interrupted');
+  if (code === 'gpu_reservation_lost' || code?.startsWith('gpu_')) return g('jobs.failure.gpu');
+  if (code?.startsWith('prompt_') || code?.startsWith('llm_')) return g('jobs.failure.prompt');
+  if (code?.startsWith('media_') || code?.startsWith('ffmpeg_')) return g('jobs.failure.media');
+  if (code?.startsWith('model_') || code?.startsWith('renderer_')) return g('jobs.failure.model');
+  return g('jobs.failure.general');
+}
+
 export function localizedName(
   locale: Locale,
   value: { nameZh: string; nameEn: string },
@@ -159,9 +168,19 @@ export function OperationFeedback({
 
 function availabilityKind(status: GpuAvailability) {
   if (status === 'Available') return 'complete' as const;
-  if (status === 'Reserved') return 'active' as const;
+  if (status === 'Reserved' || status === 'Busy') return 'active' as const;
   if (status === 'ExternalOccupied') return 'problem' as const;
   return 'neutral' as const;
+}
+
+function gpuReason(gpu: GpuSlot, g: ReturnType<typeof useGenerationCopy>): string {
+  if (gpu.activeJobId !== null) return g('gpu.reason.activeJob');
+  if (gpu.availability === 'ExternalOccupied') return g('gpu.reason.external');
+  if (gpu.serviceStatus === 'notInstalled') return g('gpu.reason.notInstalled');
+  if (gpu.serviceStatus === 'notConfigured') return g('gpu.reason.notConfigured');
+  if (gpu.availability === 'Unknown') return g('gpu.reason.unknown');
+  if (gpu.availability === 'Reserved' || gpu.availability === 'Busy') return g('gpu.reason.busy');
+  return gpu.loadedModel ? g('gpu.reason.loaded') : g('gpu.reason.ready');
 }
 
 export function GpuPanel({ description }: { description?: GenerationKey } = {}) {
@@ -198,7 +217,7 @@ export function GpuPanel({ description }: { description?: GenerationKey } = {}) 
               </div>
               <p>{gpu.loadedModel ? g('gpu.loadedModel', { model: gpu.loadedPrecision ? `${gpu.loadedModel} ${gpu.loadedPrecision}` : gpu.loadedModel }) : g('gpu.noModel')}</p>
               <p>{g(`gpu.service.${gpu.serviceStatus}` as GenerationKey)}</p>
-              {gpu.statusReason ? <p>{g('gpu.statusReason', { reason: gpu.statusReason })}</p> : null}
+              <p>{gpuReason(gpu, g)}</p>
               {gpu.gpuName ? <p>{g('gpu.hardware', { name: gpu.gpuName })}</p> : null}
               <p>{gpu.memory.usedMiB !== null && gpu.memory.totalMiB !== null
                 ? g('gpu.memory', { used: gpu.memory.usedMiB, total: gpu.memory.totalMiB })

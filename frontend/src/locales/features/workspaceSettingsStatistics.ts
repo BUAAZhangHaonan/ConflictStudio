@@ -143,7 +143,12 @@ export const workspaceSettingsStatisticsEnUS = {
       updatedAt: 'Updated {{value}}',
       failureLabel: 'Failure reason',
       failureReason: {
-        ModelServiceUnavailable: 'The video model service did not respond before the task time limit.',
+        interrupted: 'The task stopped when the service restarted.',
+        gpu: 'The selected GPU became unavailable.',
+        prompt: 'The prompt could not be generated.',
+        media: 'The video file could not be processed.',
+        model: 'The video model could not complete the request.',
+        general: 'The task could not be completed.',
       },
     },
     activity: {
@@ -410,7 +415,12 @@ export const workspaceSettingsStatisticsZhCN = {
       updatedAt: '更新于 {{value}}',
       failureLabel: '失败原因',
       failureReason: {
-        ModelServiceUnavailable: '视频模型服务未在任务时限内响应。',
+        interrupted: '服务重启时任务已停止。',
+        gpu: '所选显卡已不可用。',
+        prompt: '无法生成提示词。',
+        media: '无法处理视频文件。',
+        model: '视频模型未能完成任务。',
+        general: '任务未能完成。',
       },
     },
     activity: {
