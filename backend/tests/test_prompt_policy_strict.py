@@ -371,7 +371,7 @@ def test_generated_prompt_model_rejects_blank_and_wrong_types() -> None:
     "field,value",
     [
         ("appearance", "她穿着一件深色夹克。"),
-        ("bodyAction", "She clearly raises her chin and keeps both hands still."),
+        ("bodyAction", "She obviously raises her chin and keeps both hands still."),
         ("vocalDelivery", "She sounds sad through the final word."),
     ],
 )
@@ -383,6 +383,50 @@ def test_components_reject_chinese_certainty_and_emotion_labels(
     with pytest.raises(ServiceError) as error:
         complete_generated(values)
     assert error.value.code == "invalid_prompt_response"
+
+
+def test_camera_allows_clearly_for_direct_physical_framing() -> None:
+    values = component_values()
+    values["camera"] = (
+        "The camera clearly frames the face in a static front-facing close-up head-and-shoulders view."
+    )
+
+    result, _ = complete_generated(values)
+
+    assert str(values["camera"]) in result.final_positive_prompt
+
+
+@pytest.mark.parametrize(
+    "field,value,required_violation",
+    [
+        (
+            "appearance",
+            "Her plain charcoal jacket clearly shows sadness.",
+            "emotion labels: sadness",
+        ),
+        (
+            "vocalDelivery",
+            "Her vocal delivery clearly reveals anxiety.",
+            "certainty claims: clearly reveals",
+        ),
+        (
+            "setting",
+            "The sparse room clearly indicates an unspoken conflict.",
+            "certainty claims: clearly indicates",
+        ),
+    ],
+)
+def test_components_reject_clearly_scoped_to_semantic_claims(
+    field: str, value: str, required_violation: str
+) -> None:
+    values = component_values()
+    values[field] = value
+
+    with pytest.raises(ServiceError) as error:
+        complete_generated(values)
+
+    assert error.value.code == "invalid_prompt_response"
+    assert required_violation in error.value.message
 
 
 @pytest.mark.parametrize("spoken_text", ["Hello there", "你A", "含有'引号"])

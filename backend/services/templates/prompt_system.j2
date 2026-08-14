@@ -9,7 +9,7 @@ Follow these rules:
 6. appearance describes only observable clothing, hair and other visible traits. The application adds the selected age, population and gender itself.
 7. bodyAction describes concrete visible body and facial behavior. vocalDelivery describes only audible delivery. environmentalSound describes non-musical room sound. setting describes only the physical place. camera and lighting describe only their named production component.
 8. The assembled positive prompt must contain 80 to 150 English words, excluding spokenText. Size the seven English components accordingly.
-9. Use present tense only. Never use these certainty words: {{ banned_certainty_modifiers | join(", ") }}.
+9. Use present tense only. Never use these certainty modifiers: {{ banned_certainty_modifiers | join(", ") }}. Do not use clearly to make an emotion or psychological judgment or with inference verbs such as indicates or reveals. Clearly may describe a directly observable physical camera or lighting property, such as clearly visible or clearly framed.
 10. Never name an emotion, channel, category, protocol or internal field in a video component. Express affect only through observable action or vocal delivery.
 11. Do not invent music, a score, background speech, voiceover, narration, subtitles, captions or rendered text.
 12. camera uses a static front-facing close-up or head-and-shoulders view with a readable face. lighting is bright, soft and even. Do not request camera movement, a wide shot, dim lighting or heavy facial shadows.

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .enums import Category, ConflictDirection
 
 
-POLICY_VERSION = "2026-08-14.1"
+POLICY_VERSION = "2026-08-14.2"
 
 
 @dataclass(frozen=True)
@@ -86,12 +86,19 @@ BANNED_EMOTION_LABELS: tuple[str, ...] = (
 )
 
 BANNED_CERTAINTY_MODIFIERS: tuple[str, ...] = (
-    "clearly",
     "obviously",
     "definitely",
     "unmistakably",
     "undeniably",
     "evidently",
+)
+
+BANNED_CERTAINTY_CLAIM_PHRASES: tuple[str, ...] = (
+    "clearly indicates",
+    "clearly reveals",
+    "clearly implies",
+    "clearly proves",
+    "clearly demonstrates",
 )
 
 FORBIDDEN_MULTI_SUBJECT_PHRASES: tuple[str, ...] = (
@@ -410,6 +417,9 @@ def validate_final_positive_prompt(
         violations, prompt, BANNED_CERTAINTY_MODIFIERS, "certainty claims"
     )
     _append_phrase_violation(
+        violations, prompt, BANNED_CERTAINTY_CLAIM_PHRASES, "certainty claims"
+    )
+    _append_phrase_violation(
         violations, prompt, FORBIDDEN_MUSIC_PHRASES, "music or score terms"
     )
     _append_phrase_violation(
@@ -487,6 +497,7 @@ def validate_generated_component(value: str, field_name: str) -> str:
     for phrases, label in (
         (BANNED_EMOTION_LABELS, "emotion labels"),
         (BANNED_CERTAINTY_MODIFIERS, "certainty claims"),
+        (BANNED_CERTAINTY_CLAIM_PHRASES, "certainty claims"),
         (FORBIDDEN_MUSIC_PHRASES, "music or score terms"),
         (FORBIDDEN_INTERNAL_PHRASES, "internal category or protocol names"),
         (FORBIDDEN_RENDERED_TEXT_PHRASES, "subtitles, captions or rendered text"),
