@@ -225,10 +225,13 @@ export const workspaceSettingsStatisticsEnUS = {
       gpuReason: {
         activeJob: 'Running a task',
         external: 'In use by another process',
+        unknown: 'Current ownership cannot be confirmed',
+        reserved: 'Reserved for a task',
+        busy: 'Busy with another task',
         notInstalled: 'Video generation is not installed',
         notConfigured: 'Video generation is not configured',
         loaded: '{{model}} {{precision}} is loaded',
-        ready: 'Ready',
+        ready: 'Ready for a task',
       },
     },
     renameDialog: {
@@ -497,10 +500,13 @@ export const workspaceSettingsStatisticsZhCN = {
       gpuReason: {
         activeJob: '正在运行任务',
         external: '被其他进程占用',
+        unknown: '无法确认当前归属',
+        reserved: '已为任务预留',
+        busy: '正在处理其他任务',
         notInstalled: '未安装视频生成环境',
         notConfigured: '未配置视频生成环境',
         loaded: '已加载 {{model}} {{precision}}',
-        ready: '可用',
+        ready: '可以运行任务',
       },
     },
     renameDialog: {

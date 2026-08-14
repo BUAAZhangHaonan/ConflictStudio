@@ -6,6 +6,7 @@ import { useGpuSlotsQuery, useReleaseGpuMutation } from '../../api/queries';
 import { generationText, type GenerationKey } from '../../locales/features/generation';
 import { usePreferences } from '../../preferences';
 import { formatDateTime } from '../../time';
+import { gpuStatusReason } from '../../gpuStatus';
 import type {
   Category,
   ConflictDirection,
@@ -173,16 +174,6 @@ function availabilityKind(status: GpuAvailability) {
   return 'neutral' as const;
 }
 
-function gpuReason(gpu: GpuSlot, g: ReturnType<typeof useGenerationCopy>): string {
-  if (gpu.activeJobId !== null) return g('gpu.reason.activeJob');
-  if (gpu.availability === 'ExternalOccupied') return g('gpu.reason.external');
-  if (gpu.serviceStatus === 'notInstalled') return g('gpu.reason.notInstalled');
-  if (gpu.serviceStatus === 'notConfigured') return g('gpu.reason.notConfigured');
-  if (gpu.availability === 'Unknown') return g('gpu.reason.unknown');
-  if (gpu.availability === 'Reserved' || gpu.availability === 'Busy') return g('gpu.reason.busy');
-  return gpu.loadedModel ? g('gpu.reason.loaded') : g('gpu.reason.ready');
-}
-
 export function GpuPanel({ description }: { description?: GenerationKey } = {}) {
   const g = useGenerationCopy();
   const gpuQuery = useGpuSlotsQuery();
@@ -217,7 +208,7 @@ export function GpuPanel({ description }: { description?: GenerationKey } = {}) 
               </div>
               <p>{gpu.loadedModel ? g('gpu.loadedModel', { model: gpu.loadedPrecision ? `${gpu.loadedModel} ${gpu.loadedPrecision}` : gpu.loadedModel }) : g('gpu.noModel')}</p>
               <p>{g(`gpu.service.${gpu.serviceStatus}` as GenerationKey)}</p>
-              <p>{gpuReason(gpu, g)}</p>
+              <p>{g(`gpu.reason.${gpuStatusReason(gpu)}` as GenerationKey)}</p>
               {gpu.gpuName ? <p>{g('gpu.hardware', { name: gpu.gpuName })}</p> : null}
               <p>{gpu.memory.usedMiB !== null && gpu.memory.totalMiB !== null
                 ? g('gpu.memory', { used: gpu.memory.usedMiB, total: gpu.memory.totalMiB })

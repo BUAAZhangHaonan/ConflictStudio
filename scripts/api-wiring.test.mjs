@@ -19,6 +19,7 @@ const workspaceSource = read('../frontend/src/pages/WorkspacePage.tsx');
 const workspaceCss = read('../frontend/src/pages/WorkspacePage.css');
 const jobsSource = read('../frontend/src/pages/generate/JobsPage.tsx');
 const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
+const gpuStatusSource = read('../frontend/src/gpuStatus.ts');
 const archiveHelpers = read('../frontend/src/reviewArchive.ts');
 const mainSource = read('../frontend/src/main.tsx');
 const localeSource = `${read('../frontend/src/locales/features/reviewArchive.ts')}\n${read('../frontend/src/locales/features/workspaceSettingsStatistics.ts')}\n${read('../frontend/src/locales/features/generation.ts')}`;
@@ -27,6 +28,13 @@ function loadClient(fetchMock) {
   const output = ts.transpileModule(clientSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(output, { module, exports: module.exports, fetch: fetchMock, window: { location: { protocol: 'http:', host: 'example.test' } }, URLSearchParams });
+  return module.exports;
+}
+
+function loadGpuStatus() {
+  const output = ts.transpileModule(gpuStatusSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const module = { exports: {} };
+  vm.runInNewContext(output, { module, exports: module.exports });
   return module.exports;
 }
 
@@ -101,12 +109,26 @@ test('workspace is a card list through 1024px and keeps every action visible', (
 });
 
 test('GPU and task failures are localized from stable fields instead of raw backend text', () => {
-  assert.match(sharedSource, /function gpuReason/u);
+  assert.match(settingsSource, /gpuStatusReason\(gpu\)/u);
+  assert.match(sharedSource, /gpuStatusReason\(gpu\)/u);
   assert.doesNotMatch(sharedSource, /gpu\.statusReason \?/u);
   assert.match(jobsSource, /jobFailureMessage\(selected\.failureCode/u);
   assert.match(jobsSource, /jobFailureMessage\(item\.failureCode/u);
   assert.doesNotMatch(jobsSource, />\{selected\.failureReason\}</u);
   assert.match(workspaceSource, /failureKey\(job\.failureCode\)/u);
+});
+
+test('GPU status reasons cover every availability without contradictory ready text', () => {
+  const { gpuStatusReason } = loadGpuStatus();
+  const gpu = { activeJobId: null, availability: 'Available', loadedModel: null, serviceStatus: 'stopped' };
+  assert.equal(gpuStatusReason(gpu), 'ready');
+  assert.equal(gpuStatusReason({ ...gpu, loadedModel: 'LTX-2.5' }), 'loaded');
+  assert.equal(gpuStatusReason({ ...gpu, serviceStatus: 'notInstalled' }), 'notInstalled');
+  assert.equal(gpuStatusReason({ ...gpu, availability: 'Reserved' }), 'reserved');
+  assert.equal(gpuStatusReason({ ...gpu, availability: 'Busy' }), 'busy');
+  assert.equal(gpuStatusReason({ ...gpu, availability: 'ExternalOccupied' }), 'external');
+  assert.equal(gpuStatusReason({ ...gpu, availability: 'Unknown', loadedModel: 'LTX-2.5' }), 'unknown');
+  assert.equal(gpuStatusReason({ ...gpu, availability: 'Unknown', activeJobId: 7 }), 'activeJob');
 });
 
 test('production source is disconnected from the removed business mock system', () => {

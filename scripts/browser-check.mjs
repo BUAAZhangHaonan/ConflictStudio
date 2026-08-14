@@ -442,6 +442,27 @@ try {
   equal((await page.locator('.settings-service-list').innerText()).includes('2 datasets'), true, 'Settings must show the datasets API response.');
   equal((await page.locator('.settings-service-list').innerText()).includes('Installed'), true, 'Settings must show the health API renderer state.');
   equal(await page.locator('.settings-gpu-row').count(), 2, 'Settings must show both GPU API records.');
+  const originalGpu0 = { ...gpuSlotsFixture[0] };
+  const statusCases = [
+    ['Available', 'Ready for a task', '可以运行任务'],
+    ['Reserved', 'Reserved for a task', '已为任务预留'],
+    ['Busy', 'Busy with another task', '正在处理其他任务'],
+    ['ExternalOccupied', 'In use by another process', '被其他进程占用'],
+    ['Unknown', 'Current ownership cannot be confirmed', '无法确认当前归属'],
+  ];
+  for (const [availability, englishReason, chineseReason] of statusCases) {
+    Object.assign(gpuSlotsFixture[0], originalGpu0, { availability, activeJobId: null, loadedModel: null, loadedPrecision: null, serviceStatus: 'stopped' });
+    await open(page, '/settings', 'en-US');
+    const englishRow = await page.locator('.settings-gpu-row').first().innerText();
+    equal(englishRow.includes(englishReason), true, `${availability} must have an English reason.`);
+    if (availability !== 'Available') equal(englishRow.includes('Ready for a task'), false, `${availability} must not claim that a task can start.`);
+    await open(page, '/settings', 'zh-CN');
+    const chineseRow = await page.locator('.settings-gpu-row').first().innerText();
+    equal(chineseRow.includes(chineseReason), true, `${availability} must have a Chinese reason.`);
+    if (availability !== 'Available') equal(chineseRow.includes('可以运行任务'), false, `${availability} must not claim that a task can start in Chinese.`);
+  }
+  Object.assign(gpuSlotsFixture[0], originalGpu0);
+  await open(page, '/settings', 'en-US');
   await page.getByRole('button', { name: 'Check again' }).click();
   await page.locator('.settings-services__recheck').getByText('Current status is shown below.').waitFor();
   equal(await page.locator('.settings-services__recheck').getAttribute('aria-live'), 'polite', 'The service recheck result must use a polite live region.');

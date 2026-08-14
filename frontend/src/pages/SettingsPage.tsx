@@ -11,6 +11,7 @@ import {
   useReviewersQuery,
 } from '../api/queries';
 import { Button, Dialog, Field, PageHeader, StateView, StatusBadge } from '../components';
+import { gpuStatusReason } from '../gpuStatus';
 import { setCurrentReviewer, setPreferredLocale, usePreferences } from '../preferences';
 import { formatDateTime } from '../time';
 import './SettingsPage.css';
@@ -119,7 +120,7 @@ export function SettingsPage() {
           <div><dt>{t(`${copyKey}.services.data`)}</dt><dd>{t(`${copyKey}.services.datasetCount`, { count: datasets.length })}</dd></div>
           <div><dt>{t(`${copyKey}.services.prompt`)}</dt><dd>{t(`${copyKey}.services.promptStatus.${health?.promptServiceConfigured ? 'available' : 'unavailable'}`)}</dd></div>
           <div><dt>{t(`${copyKey}.services.renderer`)}</dt><dd>{t(`${copyKey}.services.rendererStatus.${health?.rendererInstallation ?? 'unknown'}`)}</dd></div>
-          {gpuSlots.map(gpu => <div className="settings-gpu-row" key={gpu.slot}><dt><strong>{gpu.slot}</strong><span>{t(`${copyKey}.services.checkedAt`, { value: formatDateTime(gpu.checkedAt) })}</span></dt><dd><StatusBadge label={t(`status.gpu.${gpu.availability}`)} kind={gpuKind(gpu.availability)} /><span>{gpu.activeJobId !== null ? t(`${copyKey}.services.gpuReason.activeJob`) : gpu.availability === 'ExternalOccupied' ? t(`${copyKey}.services.gpuReason.external`) : gpu.serviceStatus === 'notInstalled' ? t(`${copyKey}.services.gpuReason.notInstalled`) : gpu.serviceStatus === 'notConfigured' ? t(`${copyKey}.services.gpuReason.notConfigured`) : gpu.loadedModel ? t(`${copyKey}.services.gpuReason.loaded`, { model: gpu.loadedModel, precision: gpu.loadedPrecision ?? '' }) : t(`${copyKey}.services.gpuReason.ready`)}</span></dd></div>)}
+          {gpuSlots.map(gpu => <div className="settings-gpu-row" key={gpu.slot}><dt><strong>{gpu.slot}</strong><span>{t(`${copyKey}.services.checkedAt`, { value: formatDateTime(gpu.checkedAt) })}</span></dt><dd><StatusBadge label={t(`status.gpu.${gpu.availability}`)} kind={gpuKind(gpu.availability)} /><span>{t(`${copyKey}.services.gpuReason.${gpuStatusReason(gpu)}`, { model: gpu.loadedModel ?? '', precision: gpu.loadedPrecision ?? '' })}</span></dd></div>)}
         </dl>
       </section>
       <Dialog open={renameTarget !== null} title={t(`${copyKey}.renameDialog.title`)} closeLabel={t(`${copyKey}.renameDialog.closeLabel`)} onClose={() => setRenameTarget(null)} footer={<><Button variant="secondary" onClick={() => setRenameTarget(null)}>{t(`${copyKey}.renameDialog.cancel`)}</Button><Button type="submit" form="rename-reviewer-form" variant="primary" busy={renameMutation.isPending}>{t(`${copyKey}.renameDialog.save`)}</Button></>}><form id="rename-reviewer-form" onSubmit={renameReviewer}><Field label={t(`${copyKey}.renameDialog.nameLabel`)} htmlFor="rename-reviewer-name"><input id="rename-reviewer-name" required autoFocus maxLength={80} value={renameValue} onChange={event => { setRenameValue(event.target.value); renameMutation.reset(); }} /></Field></form></Dialog>
