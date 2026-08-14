@@ -1,11 +1,19 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useDatasetsQuery, useSamplesQuery } from '../api/queries';
 import { apiErrorMessage } from '../api/client';
-import { Button, Metric, PageHeader } from '../components';
+import type { ArchivePreview, Sample } from '../api/contracts';
+import {
+  useArchivesQuery,
+  useDatasetsQuery,
+  usePreviewArchiveMutation,
+  useSamplesQuery,
+  useSyncArchiveMutation,
+} from '../api/queries';
+import { Button, ConfirmDialog, Metric, PageHeader, StatusBadge } from '../components';
 import {
   ARCHIVE_PAGE_SIZE,
+  buildArchiveLocation,
   clampPage,
   pageCount,
   pageItems,
@@ -15,233 +23,110 @@ import { formatDateTime } from '../time';
 import type { Category } from '../types';
 import './ArchivePage.css';
 
-type ArchiveSortKey = 'id' | 'category' | 'updatedAt';
-type SortDirection = 'ascending' | 'descending';
-
-interface ArchiveStateViewProps {
-  title: ReactNode;
-  body: ReactNode;
-  loading?: boolean;
-  urgent?: boolean;
-  action?: { label: ReactNode; onClick: () => void };
-}
-
 const categories: readonly Category[] = ['A-VA', 'C-VA', 'A-VT', 'C-VT'];
 
-function compareText(left: string, right: string): number {
-  return left.localeCompare(right);
-}
-
-function ArchiveStateView({ title, body, loading = false, urgent = false, action }: ArchiveStateViewProps) {
-  return (
-    <section
-      className="archive-state"
-      role={urgent ? 'alert' : 'status'}
-      aria-live={urgent ? 'assertive' : 'polite'}
-      aria-busy={loading || undefined}
-    >
-      {loading ? <span className="archive-state__progress" aria-hidden="true" /> : null}
-      <h2>{title}</h2>
-      <p>{body}</p>
-      {action ? <Button onClick={action.onClick}>{action.label}</Button> : null}
-    </section>
-  );
+function previewSamples(preview: ArchivePreview, samples: Sample[]): Array<{ sample: Sample; change: 'added' | 'updated' | 'removed' }> {
+  const byId = new Map(samples.map(sample => [sample.id, sample]));
+  return [
+    ...preview.added.map(item => ({ sample: byId.get(item.sampleId), change: 'added' as const })),
+    ...preview.updated.map(item => ({ sample: byId.get(item.sampleId), change: 'updated' as const })),
+    ...preview.removed.map(item => ({ sample: byId.get(item.sampleId), change: 'removed' as const })),
+  ].flatMap(item => item.sample ? [{ sample: item.sample, change: item.change }] : []);
 }
 
 export function ArchivePage() {
   const { t, i18n } = useTranslation();
-  const datasetsQuery = useDatasetsQuery();
-  const samplesQuery = useSamplesQuery('Accepted');
   const location = useLocation();
   const navigate = useNavigate();
-  const initialParams = new URLSearchParams(location.search);
-  const requestedDatasetId = Number(initialParams.get('dataset'));
-  const initialPage = Number(initialParams.get('page'));
-  const initialCategory = initialParams.get('category');
-  const [datasetId, setDatasetId] = useState<number | null>(
-    Number.isInteger(requestedDatasetId) && requestedDatasetId > 0 ? requestedDatasetId : null,
-  );
-  const [search, setSearch] = useState(initialParams.get('search') ?? '');
-  const [categoryFilter, setCategoryFilter] = useState<Category | 'All'>(() =>
-    categories.includes(initialCategory as Category) ? initialCategory as Category : 'All',
-  );
-  const [page, setPage] = useState(Number.isInteger(initialPage) && initialPage > 0 ? initialPage : 1);
-  const [sortKey, setSortKey] = useState<ArchiveSortKey>('id');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('ascending');
+  const datasetsQuery = useDatasetsQuery();
+  const samplesQuery = useSamplesQuery();
+  const archivesQuery = useArchivesQuery();
+  const previewMutation = usePreviewArchiveMutation();
+  const syncMutation = useSyncArchiveMutation();
+  const initial = new URLSearchParams(location.search);
+  const requestedDataset = Number(initial.get('dataset'));
+  const requestedPage = Number(initial.get('page'));
+  const initialCategory = initial.get('category');
+  const [datasetId, setDatasetId] = useState<number | null>(Number.isInteger(requestedDataset) && requestedDataset > 0 ? requestedDataset : null);
+  const [search, setSearch] = useState(initial.get('search') ?? '');
+  const [category, setCategory] = useState<Category | 'All'>(categories.includes(initialCategory as Category) ? initialCategory as Category : 'All');
+  const [page, setPage] = useState(Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const datasets = datasetsQuery.data ?? [];
-  const acceptedSamples = samplesQuery.data ?? [];
-  const locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
+  const samples = samplesQuery.data ?? [];
+  const archives = archivesQuery.data ?? [];
   const dataset = datasets.find(item => item.id === datasetId) ?? datasets[0] ?? null;
+  const archive = archives.find(item => item.datasetId === dataset?.id) ?? null;
+  const locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
 
   useEffect(() => {
     if (!datasetsQuery.isSuccess) return;
-    if (dataset && dataset.id !== datasetId) setDatasetId(dataset.id);
-    if (!dataset && datasetId !== null) setDatasetId(null);
-  }, [dataset, datasetId, datasetsQuery.isSuccess]);
+    const nextId = dataset?.id ?? null;
+    if (nextId !== datasetId) setDatasetId(nextId);
+  }, [dataset?.id, datasetId, datasetsQuery.isSuccess]);
 
-  const rows = useMemo(
-    () => dataset ? acceptedSamples.filter(sample => sample.datasetId === dataset.id) : [],
-    [acceptedSamples, dataset],
-  );
+  const rows = useMemo(() => dataset ? samples.filter(sample => sample.datasetId === dataset.id && (sample.inArchive || sample.reviewDecision === 'Accepted')) : [], [dataset, samples]);
   const filteredRows = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase(locale);
-    const matching = rows.filter(sample => {
-      const searchText = [sample.displayId, dataset?.name, sample.category, sample.model]
-        .filter(Boolean)
-        .join(' ')
-        .toLocaleLowerCase(locale);
-      return (!query || searchText.includes(query))
-        && (categoryFilter === 'All' || sample.category === categoryFilter);
-    });
-    const direction = sortDirection === 'ascending' ? 1 : -1;
-    return [...matching].sort((left, right) => {
-      let result = 0;
-      if (sortKey === 'id') result = compareText(left.displayId, right.displayId);
-      if (sortKey === 'category') result = compareText(left.category, right.category);
-      if (sortKey === 'updatedAt') result = compareText(left.updatedAt, right.updatedAt);
-      return direction * (result || left.id - right.id);
-    });
-  }, [categoryFilter, dataset?.name, locale, rows, search, sortDirection, sortKey]);
+    const needle = search.trim().toLocaleLowerCase(locale);
+    return rows.filter(sample => (category === 'All' || sample.category === category) && (!needle || `${sample.displayId} ${sample.category} ${sample.model}`.toLocaleLowerCase(locale).includes(needle))).sort((left, right) => left.id - right.id);
+  }, [category, locale, rows, search]);
+  const currentPage = clampPage(page, filteredRows.length);
   const totalPages = pageCount(filteredRows.length);
-  const currentPage = samplesQuery.isSuccess ? clampPage(page, filteredRows.length) : page;
   const visibleRows = pageItems(filteredRows, currentPage);
-  const hasFilters = search.trim() !== '' || categoryFilter !== 'All';
-  const reviewReturnTo = `${location.pathname}${location.search}`;
+  const returnTo = buildArchiveLocation({ datasetId: dataset?.id ?? null, search, category, page: currentPage });
+  const preview = previewMutation.data ?? null;
+  const previewRows = preview ? previewSamples(preview, samples) : [];
 
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage);
   }, [currentPage, page]);
-
   useEffect(() => {
     if (!datasetsQuery.isSuccess) return;
-    const params = new URLSearchParams();
-    if (dataset) params.set('dataset', String(dataset.id));
-    if (search.trim()) params.set('search', search.trim());
-    if (categoryFilter !== 'All') params.set('category', categoryFilter);
-    if (currentPage > 1) params.set('page', String(currentPage));
-    const nextSearch = params.toString();
-    if (nextSearch !== location.search.slice(1)) {
-      navigate({ pathname: '/archive', search: nextSearch ? `?${nextSearch}` : '' }, { replace: true });
-    }
-  }, [categoryFilter, currentPage, dataset, datasetsQuery.isSuccess, location.search, navigate, search]);
+    if (`${location.pathname}${location.search}` !== returnTo) navigate(returnTo, { replace: true });
+  }, [datasetsQuery.isSuccess, location.pathname, location.search, navigate, returnTo]);
 
-  const requestSort = (nextKey: ArchiveSortKey) => {
-    if (nextKey === sortKey) {
-      setSortDirection(current => current === 'ascending' ? 'descending' : 'ascending');
-      return;
-    }
-    setSortKey(nextKey);
-    setSortDirection(nextKey === 'updatedAt' ? 'descending' : 'ascending');
-  };
-
-  const clearFilters = () => {
+  const selectDataset = (value: number) => {
+    setDatasetId(value);
     setSearch('');
-    setCategoryFilter('All');
+    setCategory('All');
     setPage(1);
+    previewMutation.reset();
+    syncMutation.reset();
+  };
+  const sync = () => {
+    if (!preview) return;
+    syncMutation.mutate(preview, {
+      onSuccess: () => {
+        setConfirmOpen(false);
+        previewMutation.reset();
+      },
+    });
   };
 
-  const pageHeader = <PageHeader title={t('archive.title')} />;
-
-  if (datasetsQuery.isPending || samplesQuery.isPending) {
-    return (
-      <div className="page-stack archive-page" role="region" aria-label={t('archive.aria.page')}>
-        {pageHeader}
-        <section className="panel"><ArchiveStateView loading title={t('archive.loadingTitle')} body={t('archive.loadingBody')} /></section>
-      </div>
-    );
+  if (datasetsQuery.isPending || samplesQuery.isPending || archivesQuery.isPending) {
+    return <div className="page-stack archive-page"><PageHeader title={t('archive.title')} /><section className="archive-state" role="status"><h2>{t('archive.loadingTitle')}</h2><p>{t('archive.loadingBody')}</p></section></div>;
+  }
+  const queryError = datasetsQuery.error ?? samplesQuery.error ?? archivesQuery.error;
+  if (queryError) {
+    return <div className="page-stack archive-page"><PageHeader title={t('archive.title')} /><section className="archive-state" role="alert"><h2>{t('archive.errorTitle')}</h2><p>{apiErrorMessage(queryError, locale)}</p></section></div>;
   }
 
-  const error = datasetsQuery.error ?? samplesQuery.error;
-  if (error) {
-    return (
-      <div className="page-stack archive-page" role="region" aria-label={t('archive.aria.page')}>
-        {pageHeader}
-        <section className="panel"><ArchiveStateView urgent title={t('archive.errorTitle')} body={apiErrorMessage(error, locale)} /></section>
-      </div>
-    );
-  }
-
+  const actionError = previewMutation.error ?? syncMutation.error;
+  const hasFilters = search.trim() !== '' || category !== 'All';
   return (
-    <div className="page-stack archive-page" role="region" aria-label={t('archive.aria.page')}>
-      {pageHeader}
-      {datasets.length === 0 ? (
-        <section className="panel"><ArchiveStateView title={t('archive.emptyTitle')} body={t('workspaceSettingsStatistics.workspace.datasets.emptyBody')} /></section>
-      ) : (
-        <>
-          <section className="panel archive-toolbar" aria-label={t('archive.aria.toolbar')}>
-            <label className="archive-dataset-select">
-              <span>{t('archive.datasetLabel')}</span>
-              <select value={dataset?.id ?? ''} onChange={event => { setDatasetId(Number(event.target.value)); clearFilters(); }} aria-label={t('archive.aria.dataset')}>
-                {datasets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-          </section>
-
-          <section className="panel archive-overview" aria-label={t('archive.aria.overview')}>
-            <div className="archive-overview__header"><h2>{t('workspaceSettingsStatistics.workspace.attention.pendingArchive')}</h2></div>
-            <div className="metric-grid archive-metrics">
-              <Metric label={t('workspaceSettingsStatistics.workspace.attention.pendingArchive')} value={rows.length} />
-            </div>
-          </section>
-
-          {rows.length === 0 ? (
-            <section className="panel"><ArchiveStateView title={t('archive.emptyTitle')} body={t('archive.emptyBody')} /></section>
-          ) : (
-            <>
-              <section className="panel archive-filters" aria-label={t('archive.aria.page')}>
-                <label className="archive-filter archive-filter--search">
-                  <span>{t('fields.search')}</span>
-                  <input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder={t('fields.searchPlaceholder')} aria-label={t('fields.search')} />
-                </label>
-                <label className="archive-filter">
-                  <span>{t('archive.category')}</span>
-                  <select value={categoryFilter} onChange={event => { setCategoryFilter(event.target.value as Category | 'All'); setPage(1); }} aria-label={t('archive.category')}>
-                    <option value="All">{t('review.allCategories')}</option>
-                    {categories.map(category => <option key={category} value={category}>{t(`category.${category}`)}</option>)}
-                  </select>
-                </label>
-                {hasFilters ? <Button variant="quiet" onClick={clearFilters}>{t('actions.clearFilters')}</Button> : null}
-              </section>
-
-              <section className="panel archive-list-panel">
-                <div className="section-header"><h2>{t('workspaceSettingsStatistics.workspace.attention.pendingArchive')}</h2><span>{t('archive.pageSize', { count: ARCHIVE_PAGE_SIZE })}</span></div>
-                {filteredRows.length === 0 ? (
-                  <ArchiveStateView title={t('archive.filteredTitle')} body={t('archive.filteredBody')} action={{ label: t('actions.clearFilters'), onClick: clearFilters }} />
-                ) : (
-                  <>
-                    <div className="table-shell archive-table-shell">
-                      <table aria-label={t('archive.aria.currentTable')} data-page-size={ARCHIVE_PAGE_SIZE}>
-                        <caption>{t('table.archiveCaption')}</caption>
-                        <thead><tr>
-                          <th scope="col">{t('archive.thumbnail')}</th>
-                          <th scope="col" aria-sort={sortKey === 'id' ? sortDirection : 'none'}><button type="button" onClick={() => requestSort('id')}>{t('archive.sampleId')}</button></th>
-                          <th scope="col" aria-sort={sortKey === 'category' ? sortDirection : 'none'}><button type="button" onClick={() => requestSort('category')}>{t('archive.category')}</button></th>
-                          <th scope="col">{t('review.model')}</th>
-                          <th scope="col" aria-sort={sortKey === 'updatedAt' ? sortDirection : 'none'}><button type="button" onClick={() => requestSort('updatedAt')}>{t('fields.updatedAt')}</button></th>
-                        </tr></thead>
-                        <tbody>{visibleRows.map(sample => (
-                          <tr key={sample.id} data-sample-id={sample.displayId}>
-                            <td><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /></td>
-                            <th scope="row"><Link to={reviewLocation(sample.displayId, reviewReturnTo)} state={{ reviewReturnTo }}><strong>{sample.displayId}</strong></Link><span className="archive-sample-meta">{t(`category.${sample.category}`)}<br />{formatDateTime(sample.updatedAt)}</span></th>
-                            <td>{t(`category.${sample.category}`)}</td>
-                            <td>{sample.model}</td>
-                            <td>{formatDateTime(sample.updatedAt)}</td>
-                          </tr>
-                        ))}</tbody>
-                      </table>
-                    </div>
-                    <nav className="archive-pagination" aria-label={t('archive.aria.pagination')}>
-                      <Button variant="secondary" onClick={() => setPage(current => Math.max(1, current - 1))} disabled={currentPage === 1}>{t('archive.previousPage')}</Button>
-                      <label><span>{t('archive.page')}</span><select value={currentPage} onChange={event => setPage(Number(event.target.value))}>{Array.from({ length: totalPages }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select><span>{t('archive.pageTotal', { count: totalPages })}</span></label>
-                      <Button variant="secondary" onClick={() => setPage(current => Math.min(totalPages, current + 1))} disabled={currentPage === totalPages}>{t('archive.nextPage')}</Button>
-                    </nav>
-                  </>
-                )}
-              </section>
-            </>
-          )}
-        </>
-      )}
+    <div className="page-stack archive-page" aria-label={t('archive.aria.page')}>
+      <PageHeader title={t('archive.title')} />
+      {actionError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(actionError, locale)}</p></section> : null}
+      {datasets.length === 0 ? <section className="panel archive-state"><h2>{t('archive.emptyTitle')}</h2><p>{t('workspaceSettingsStatistics.workspace.datasets.emptyBody')}</p></section> : <>
+        <section className="panel archive-toolbar" aria-label={t('archive.aria.toolbar')}><label className="archive-dataset-select"><span>{t('archive.datasetLabel')}</span><select value={dataset?.id ?? ''} onChange={event => selectDataset(Number(event.target.value))}>{datasets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><div className="archive-toolbar__actions"><Button variant="secondary" busy={previewMutation.isPending} onClick={() => dataset && previewMutation.mutate({ datasetId: dataset.id })}>{t('actions.previewSync')}</Button>{archive?.manifestAvailable ? <a className="button button--quiet" href={`/api/archives/${archive.datasetId}/manifest`} download>{t('archive.downloadJsonl')}</a> : null}</div></section>
+        <section className="panel archive-overview" aria-label={t('archive.aria.overview')}><div className="archive-overview__header"><h2>{t('archive.overview')}</h2><span>{archive?.lastSyncedAt ? t('archive.lastSynced', { date: formatDateTime(archive.lastSyncedAt) }) : t('archive.neverSynced')}</span></div><div className="metric-grid archive-metrics"><Metric label={t('archive.current')} value={archive?.currentCount ?? 0} /><Metric label={t('statistics.needsUpdate')} value={archive?.needsUpdateCount ?? 0} /></div></section>
+        {preview ? <section className="panel archive-preview" aria-label={t('archive.aria.preview')}><div className="section-header"><h2>{t('archive.previewTitle')}</h2></div><div className="metric-grid archive-metrics"><Metric label={t('archive.toAdd')} value={preview.added.length} /><Metric label={t('archive.toUpdate')} value={preview.updated.length} /><Metric label={t('archive.toRemove')} value={preview.removed.length} /><Metric label={t('archive.unchanged')} value={preview.unchangedCount} /></div>{previewRows.length ? <ul className="archive-preview__list">{previewRows.map(({ sample, change }) => <li key={`${change}-${sample.id}`}><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" /><Link to={reviewLocation(sample.displayId, returnTo)}>{sample.displayId}</Link><StatusBadge label={t(`archive.${change}`)} kind={change === 'removed' ? 'problem' : 'neutral'} /></li>)}</ul> : <p>{t('archive.noChangesBody')}</p>}<Button variant="primary" disabled={previewRows.length === 0} onClick={() => setConfirmOpen(true)}>{t('actions.syncArchive')}</Button></section> : null}
+        {rows.length === 0 ? <section className="panel archive-state"><h2>{t('archive.emptyTitle')}</h2><p>{t('archive.emptyBody')}</p><Button variant="primary" onClick={() => navigate(`/review?${new URLSearchParams({ returnTo }).toString()}`)}>{t('actions.openReview')}</Button></section> : <>
+          <section className="panel archive-filters"><label className="archive-filter archive-filter--search"><span>{t('fields.search')}</span><input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} /></label><label className="archive-filter"><span>{t('archive.category')}</span><select value={category} onChange={event => { setCategory(event.target.value as Category | 'All'); setPage(1); }}><option value="All">{t('review.allCategories')}</option>{categories.map(value => <option key={value} value={value}>{t(`category.${value}`)}</option>)}</select></label>{hasFilters ? <Button variant="quiet" onClick={() => { setSearch(''); setCategory('All'); setPage(1); }}>{t('actions.clearFilters')}</Button> : null}</section>
+          <section className="panel archive-list-panel"><div className="section-header"><h2>{t('archive.currentArchive')}</h2><span>{t('archive.pageSize', { count: ARCHIVE_PAGE_SIZE })}</span></div>{filteredRows.length === 0 ? <section className="archive-state"><h2>{t('archive.filteredTitle')}</h2><p>{t('archive.filteredBody')}</p></section> : <><div className="table-shell archive-table-shell"><table><caption>{t('table.archiveCaption')}</caption><thead><tr><th>{t('archive.thumbnail')}</th><th>{t('archive.sampleId')}</th><th>{t('archive.category')}</th><th>{t('fields.status')}</th><th>{t('fields.updatedAt')}</th></tr></thead><tbody>{visibleRows.map(sample => <tr key={sample.id}><td><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /></td><th scope="row"><Link to={reviewLocation(sample.displayId, returnTo)}>{sample.displayId}</Link></th><td>{t(`category.${sample.category}`)}</td><td><StatusBadge label={t(`status.archive.${sample.archiveSyncStatus}`)} kind={sample.archiveSyncStatus === 'Current' ? 'complete' : 'problem'} /></td><td>{formatDateTime(sample.updatedAt)}</td></tr>)}</tbody></table></div><nav className="archive-pagination" aria-label={t('archive.aria.pagination')}><Button variant="secondary" disabled={currentPage === 1} onClick={() => setPage(value => value - 1)}>{t('archive.previousPage')}</Button><label><span>{t('archive.page')}</span><select value={currentPage} onChange={event => setPage(Number(event.target.value))}>{Array.from({ length: totalPages }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select><span>{t('archive.pageTotal', { count: totalPages })}</span></label><Button variant="secondary" disabled={currentPage === totalPages} onClick={() => setPage(value => value + 1)}>{t('archive.nextPage')}</Button></nav></>}</section>
+        </>}
+      </>}
+      <ConfirmDialog open={confirmOpen} title={t('archive.confirmTitle')} body={<><p>{t('archive.confirmBody', { add: preview?.added.length ?? 0, update: preview?.updated.length ?? 0, remove: preview?.removed.length ?? 0 })}</p><p>{t('archive.confirmWarning')}</p></>} confirmLabel={t('actions.syncArchive')} cancelLabel={t('actions.cancel')} closeLabel={t('actions.close')} busy={syncMutation.isPending} onClose={() => setConfirmOpen(false)} onConfirm={sync} />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState, type PropsWithChildren } from 'react';
 import { useTranslation } from 'react-i18next';
-import { allocatePrototypeId } from '../id';
+import { allocateClientId } from '../id';
 
 interface ToastMessage {
   id: string;
@@ -20,7 +20,7 @@ export function ToastProvider({ children }: PropsWithChildren) {
     setMessages(current => current.filter(message => message.id !== id));
   }, []);
   const showToast = useCallback((message: string) => {
-    const id = allocatePrototypeId('toast');
+    const id = allocateClientId('toast');
     setMessages(current => [...current, { id, message }]);
     window.setTimeout(() => dismiss(id), 4000);
   }, [dismiss]);

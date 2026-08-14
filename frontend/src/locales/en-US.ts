@@ -81,6 +81,7 @@ const enUS = {
     gpu: {
       Available: 'Available',
       Reserved: 'In use by this system',
+      Busy: 'Busy',
       ExternalOccupied: 'In use by another process',
       Unknown: 'Unknown',
     },
@@ -137,7 +138,7 @@ const enUS = {
     english: 'English',
     application: 'Application',
     data: 'Data',
-    readOnlyNotice: 'This section shows example status only.',
+    readOnlyNotice: 'This section shows current status only.',
     nameSaved: 'Name saved.',
   },
   statistics: {

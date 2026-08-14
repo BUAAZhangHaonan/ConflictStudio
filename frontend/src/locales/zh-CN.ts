@@ -86,6 +86,7 @@ const zhCN = {
     gpu: {
       Available: '可用',
       Reserved: '本系统使用中',
+      Busy: '忙碌',
       ExternalOccupied: '其他进程占用',
       Unknown: '无法确认',
     },
@@ -142,7 +143,7 @@ const zhCN = {
     english: '英文',
     application: '应用',
     data: '数据',
-    readOnlyNotice: '此区域只显示示例状态。',
+    readOnlyNotice: '此区域只显示当前状态。',
     nameSaved: '姓名已保存。',
   },
   statistics: {

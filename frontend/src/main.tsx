@@ -4,7 +4,6 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import './locales';
 import { App } from './app/App';
-import { RepositoryProvider } from './store';
 import { ToastProvider } from './components';
 import { createGenerationQueryClient } from './api/queryClient';
 import './styles/tokens.css';
@@ -32,9 +31,7 @@ const router = createBrowserRouter([{
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RepositoryProvider>
-        <RouterProvider router={router} future={{ v7_startTransition: true }} />
-      </RepositoryProvider>
+      <RouterProvider router={router} future={{ v7_startTransition: true }} />
     </QueryClientProvider>
   </StrictMode>,
 );

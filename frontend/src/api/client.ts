@@ -93,5 +93,4 @@ const messages: Record<Locale, Record<ApiErrorKind, string>> = {
 export function apiErrorMessage(error: unknown, locale: Locale): string { return messages[locale][error instanceof ApiError ? error.kind : 'unavailable']; }
 export function isModelSwitchConfirmationRequired(error: unknown): boolean { return error instanceof ApiError && error.code === 'model_switch_confirmation_required'; }
 export function shouldReloadAfterApiError(error: unknown): boolean { return error instanceof ApiError && error.recovery === 'reload'; }
-export function shouldRetryQuery(failureCount: number, error: unknown): boolean { return !(error instanceof ApiError) || error.recovery === 'retry' ? failureCount < 1 : false; }
 export function jobEventsWebSocketUrl(jobId: number, afterEventId: number): string { const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'; return `${scheme}//${window.location.host}/api/ws/jobs/${jobId}?${new URLSearchParams({ afterEventId: String(afterEventId) }).toString()}`; }
