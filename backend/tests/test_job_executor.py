@@ -31,7 +31,13 @@ from backend.domain.enums import (
     JobStatus,
     ModelName,
 )
-from backend.domain.models import BatchDraft, BatchVideoInputSnapshot, GpuSlot, Job, JobItem
+from backend.domain.models import (
+    BatchDraft,
+    BatchVideoInputSnapshot,
+    GpuSlot,
+    Job,
+    JobItem,
+)
 from backend.domain.schemas import (
     BatchDraftCreate,
     BatchSubmitRequest,
@@ -50,6 +56,8 @@ from backend.services.prompts import PromptService
 
 
 DIALOGUE = "我没事，只是需要一点时间。"
+
+
 class RecordingPromptModel:
     configured = True
 
@@ -59,25 +67,32 @@ class RecordingPromptModel:
     async def generate(self, system_input: str, user_input: str) -> str:
         self.calls += 1
         if "Age: 35" in user_input:
-            appearance = "A 35-year-old White man in a plain navy shirt keeps his short hair neatly combed."
+            appearance = "He wears a plain navy shirt, and his short dark hair remains neatly combed away from his face."
             pronoun = "He"
         else:
-            appearance = (
-                "A 25-year-old East Asian woman in a charcoal jacket keeps her dark hair tucked behind one ear."
-            )
+            appearance = "She wears a charcoal jacket, and her dark hair remains neatly tucked behind one ear."
             pronoun = "She"
         return json.dumps(
             {
-                "positivePrompt": (
-                    f"{appearance} {pronoun} sits upright, folds both hands on the lap, presses the lips together, "
-                    f"and raises the chin while the gaze stays level. {pronoun} says \"{DIALOGUE}\" in a low steady "
-                    "voice as the ventilation hums softly and a wall clock ticks evenly. The private office has "
-                    "pale walls, a bare wooden table, and one closed window. The camera holds a static front-facing "
-                    "close-up head-and-shoulders shot. Soft daylight falls from the left and keeps the face evenly "
-                    "lit with gentle highlights across the plain fabric."
+                "spokenText": DIALOGUE,
+                "appearance": appearance,
+                "bodyAction": (
+                    f"{pronoun} sits upright, folds both hands on the lap, presses the lips together, raises the "
+                    "chin, and keeps the gaze level through the final word."
                 ),
-                "dialogue": DIALOGUE,
-                "vtText": None,
+                "vocalDelivery": (
+                    f"{pronoun} keeps the voice low and steady, with measured pacing and firm articulation."
+                ),
+                "environmentalSound": (
+                    "A soft ventilation hum and the even ticking of a wall clock remain audible."
+                ),
+                "setting": (
+                    "The private office contains pale walls, a bare wooden table, and one closed window behind the seat."
+                ),
+                "camera": "The camera holds a static front-facing close-up head-and-shoulders view.",
+                "lighting": (
+                    "Soft daylight keeps the face bright and evenly lit with gentle highlights across the plain fabric."
+                ),
                 "trueEmotionDescription": "说话内容和可见动作共同表达受控状态。",
             },
             ensure_ascii=False,
@@ -140,12 +155,16 @@ class FakeRenderer:
         self.active_total += 1
         self.max_active_total = max(self.max_active_total, self.active_total)
         self.active_by_slot[slot] += 1
-        self.max_active_by_slot[slot] = max(self.max_active_by_slot[slot], self.active_by_slot[slot])
+        self.max_active_by_slot[slot] = max(
+            self.max_active_by_slot[slot], self.active_by_slot[slot]
+        )
         try:
             if self.hold:
                 await gate.wait()
             if item_id in self.fail_items:
-                raise RendererGatewayError("fake_render_failed", "The fake renderer rejected this item")
+                raise RendererGatewayError(
+                    "fake_render_failed", "The fake renderer rejected this item"
+                )
             return RenderResult()
         finally:
             self.active_total -= 1
@@ -169,7 +188,9 @@ class FakeRenderer:
 def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
     catalog = CatalogService(database)
     dataset = catalog.create_dataset(
-        DatasetCreate(name=f"Production {suffix}", purpose=DatasetPurpose.PRODUCTION, note="")
+        DatasetCreate(
+            name=f"Production {suffix}", purpose=DatasetPurpose.PRODUCTION, note=""
+        )
     )
     content = catalog.create_content_plan(
         ContentPlanCreate(
@@ -235,11 +256,19 @@ def create_draft(
             model=model,
             quantity=quantity,
             seed=1208,
-            contentPlans=[SourceSelection(id=content.id, expectedRevision=content.revision)],
-            promptPresets=[SourceSelection(id=preset.id, expectedRevision=preset.revision)],
-            backgroundPresets=[SourceSelection(id=background.id, expectedRevision=background.revision)],
+            contentPlans=[
+                SourceSelection(id=content.id, expectedRevision=content.revision)
+            ],
+            promptPresets=[
+                SourceSelection(id=preset.id, expectedRevision=preset.revision)
+            ],
+            backgroundPresets=[
+                SourceSelection(id=background.id, expectedRevision=background.revision)
+            ],
             demographics=[
-                DemographicInput(age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN),
+                DemographicInput(
+                    age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
+                ),
                 DemographicInput(age=35, gender=Gender.MALE, ethnicity=Ethnicity.WHITE),
             ],
             gpuSlots=slots,
@@ -281,7 +310,9 @@ async def wait_for_status(
         if job.status in statuses:
             return job
         if asyncio.get_running_loop().time() >= deadline:
-            raise AssertionError(f"Job {job_id} did not reach {statuses}; current status is {job.status}")
+            raise AssertionError(
+                f"Job {job_id} did not reach {statuses}; current status is {job.status}"
+            )
         await asyncio.sleep(0.01)
 
 
@@ -336,11 +367,17 @@ def test_executor_persists_results_and_runs_two_gpu_channels(tmp_path: Path) -> 
         assert all(renderer.submit_counts[item_id] == 1 for item_id in items.values())
         assert renderer.max_active_total == 2
         assert renderer.max_active_by_slot == {GpuSlotName.GPU0: 1, GpuSlotName.GPU1: 1}
-        assert (completed.prepared_count, completed.completed_count, completed.failed_count) == (4, 4, 0)
+        assert (
+            completed.prepared_count,
+            completed.completed_count,
+            completed.failed_count,
+        ) == (4, 4, 0)
         assert all(item.prompt_result is not None for item in completed.items)
         assert all(item.prompt_result.final_positive_prompt for item in completed.items)
         assert completed.events[-1].event_type == "JobCompleted"
-        assert completed.events[-1].payload.model_dump(by_alias=True, exclude_none=True) == {
+        assert completed.events[-1].payload.model_dump(
+            by_alias=True, exclude_none=True
+        ) == {
             "preparedCount": 4,
             "completedCount": 4,
             "failedCount": 0,
@@ -354,7 +391,9 @@ def test_executor_persists_results_and_runs_two_gpu_channels(tmp_path: Path) -> 
     asyncio.run(scenario())
 
 
-def test_two_single_gpu_jobs_with_different_models_run_concurrently(tmp_path: Path) -> None:
+def test_two_single_gpu_jobs_with_different_models_run_concurrently(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
         from backend.adapters.database import Database
 
@@ -383,7 +422,10 @@ def test_two_single_gpu_jobs_with_different_models_run_concurrently(tmp_path: Pa
         await executor.start()
         try:
             await wait_until(lambda: len(renderer.wait_started) == 2)
-            assert {request.model for request in renderer.requests.values()} == {ModelName.LTX, ModelName.H3}
+            assert {request.model for request in renderer.requests.values()} == {
+                ModelName.LTX,
+                ModelName.H3,
+            }
             assert renderer.max_active_total == 2
             for item_id in list(renderer.wait_started):
                 renderer.release(item_id)
@@ -395,7 +437,9 @@ def test_two_single_gpu_jobs_with_different_models_run_concurrently(tmp_path: Pa
     asyncio.run(scenario())
 
 
-def test_concurrent_prompt_generation_releases_database_transactions(tmp_path: Path) -> None:
+def test_concurrent_prompt_generation_releases_database_transactions(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
         from backend.adapters.database import Database
 
@@ -449,7 +493,9 @@ def test_concurrent_prompt_generation_releases_database_transactions(tmp_path: P
     asyncio.run(scenario())
 
 
-def test_single_item_failure_is_not_retried_and_other_items_continue(tmp_path: Path) -> None:
+def test_single_item_failure_is_not_retried_and_other_items_continue(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
         from backend.adapters.database import Database
 
@@ -478,7 +524,11 @@ def test_single_item_failure_is_not_retried_and_other_items_continue(tmp_path: P
 
         assert model.calls == 3
         assert renderer.submit_counts == Counter({item.id: 1 for item in job.items})
-        assert (failed.prepared_count, failed.completed_count, failed.failed_count) == (3, 2, 1)
+        assert (failed.prepared_count, failed.completed_count, failed.failed_count) == (
+            3,
+            2,
+            1,
+        )
         failed_item = next(item for item in failed.items if item.id == failed_item_id)
         assert failed_item.failure_code == "fake_render_failed"
         assert failed_item.failure_reason == "The fake renderer rejected this item"
@@ -492,7 +542,9 @@ def test_single_item_failure_is_not_retried_and_other_items_continue(tmp_path: P
     asyncio.run(scenario())
 
 
-def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(tmp_path: Path) -> None:
+def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
         from backend.adapters.database import Database
 
@@ -511,10 +563,14 @@ def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(tmp_pa
         )
         make_available(queued_database, [GpuSlotName.GPU0])
         queued_job = await enqueue(queued_batches, queued_draft)
-        resumed = JobExecutor(queued_database, queued_prompts, queued_renderer, scan_interval_seconds=0.05)
+        resumed = JobExecutor(
+            queued_database, queued_prompts, queued_renderer, scan_interval_seconds=0.05
+        )
         await resumed.start()
         try:
-            completed = await wait_for_status(queued_batches, queued_job.id, {JobStatus.COMPLETED})
+            completed = await wait_for_status(
+                queued_batches, queued_job.id, {JobStatus.COMPLETED}
+            )
         finally:
             await resumed.stop()
         assert completed.completed_count == 1
@@ -526,7 +582,9 @@ def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(tmp_pa
         running_model = RecordingPromptModel()
         running_renderer = FakeRenderer()
         running_prompts = PromptService(running_model)
-        running_batches = BatchService(running_database, running_prompts, running_renderer)
+        running_batches = BatchService(
+            running_database, running_prompts, running_renderer
+        )
         running_draft = create_draft(
             running_batches,
             create_resources(running_database, "restart"),
@@ -539,14 +597,21 @@ def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(tmp_pa
             assert job_row is not None
             job_row.status = JobStatus.RUNNING
             job_row.started_at = job_row.updated_at
-            for item in session.exec(select(JobItem).where(JobItem.job_id == running_job.id)).all():
+            for item in session.exec(
+                select(JobItem).where(JobItem.job_id == running_job.id)
+            ).all():
                 item.status = JobStatus.RUNNING
                 item.stage = JobItemStage.PROMPT_GENERATING
             slot = session.get(GpuSlot, GpuSlotName.GPU0)
             assert slot is not None
             slot.availability = GpuAvailability.BUSY
 
-        recovered = JobExecutor(running_database, running_prompts, running_renderer, scan_interval_seconds=0.05)
+        recovered = JobExecutor(
+            running_database,
+            running_prompts,
+            running_renderer,
+            scan_interval_seconds=0.05,
+        )
         await recovered.start()
         try:
             interrupted = running_batches.get_job(running_job.id)
@@ -554,7 +619,9 @@ def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(tmp_pa
             await recovered.stop()
         assert interrupted.status is JobStatus.FAILED
         assert interrupted.failure_code == "interrupted_by_restart"
-        assert all(item.failure_code == "interrupted_by_restart" for item in interrupted.items)
+        assert all(
+            item.failure_code == "interrupted_by_restart" for item in interrupted.items
+        )
         assert "JobInterrupted" in [event.event_type for event in interrupted.events]
         with running_database.read_session() as session:
             slot = session.get(GpuSlot, GpuSlotName.GPU0)
@@ -565,7 +632,9 @@ def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(tmp_pa
     asyncio.run(scenario())
 
 
-def test_queued_and_running_cancellation_only_release_owned_slots(tmp_path: Path) -> None:
+def test_queued_and_running_cancellation_only_release_owned_slots(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
         from backend.adapters.database import Database
 
@@ -589,15 +658,23 @@ def test_queued_and_running_cancellation_only_release_owned_slots(tmp_path: Path
         first_job = await enqueue(batches, first_draft)
         second_job = await enqueue(batches, second_draft)
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
-        await executor.cancel_job(first_job.id, JobCancelRequest(expectedRevision=first_job.revision))
+        await executor.cancel_job(
+            first_job.id, JobCancelRequest(expectedRevision=first_job.revision)
+        )
         cancelled_before_start = batches.get_job(first_job.id)
         assert cancelled_before_start.status is JobStatus.CANCELLED
         with database.read_session() as session:
             gpu0 = session.get(GpuSlot, GpuSlotName.GPU0)
             gpu1 = session.get(GpuSlot, GpuSlotName.GPU1)
             assert gpu0 is not None and gpu1 is not None
-            assert gpu0.availability is GpuAvailability.AVAILABLE and gpu0.active_job_id is None
-            assert gpu1.availability is GpuAvailability.RESERVED and gpu1.active_job_id == second_job.id
+            assert (
+                gpu0.availability is GpuAvailability.AVAILABLE
+                and gpu0.active_job_id is None
+            )
+            assert (
+                gpu1.availability is GpuAvailability.RESERVED
+                and gpu1.active_job_id == second_job.id
+            )
 
         await executor.start()
         try:
@@ -608,7 +685,9 @@ def test_queued_and_running_cancellation_only_release_owned_slots(tmp_path: Path
                 second_job.id,
                 JobCancelRequest(expectedRevision=running.revision),
             )
-            cancelled_running = await wait_for_status(batches, second_job.id, {JobStatus.CANCELLED})
+            cancelled_running = await wait_for_status(
+                batches, second_job.id, {JobStatus.CANCELLED}
+            )
         finally:
             await executor.stop()
 
@@ -667,9 +746,9 @@ def test_cancel_race_keeps_an_already_completed_item(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_submit_is_non_blocking_and_unconfigured_renderer_writes_nothing(tmp_path: Path) -> None:
-    from backend.adapters.database import Database
-
+def test_submit_is_non_blocking_and_unconfigured_renderer_writes_nothing(
+    tmp_path: Path,
+) -> None:
     configured_root = tmp_path / "configured"
     configured_root.mkdir()
     configured_frontend = configured_root / "frontend"
@@ -684,7 +763,9 @@ def test_submit_is_non_blocking_and_unconfigured_renderer_writes_nothing(tmp_pat
     resources = create_resources(app.state.database, "http")
     draft = create_draft(app.state.batch_service, resources, [GpuSlotName.GPU0])
     make_available(app.state.database, [GpuSlotName.GPU0])
-    preview = asyncio.run(app.state.batch_service.preview_batch(draft.id, draft.revision))
+    preview = asyncio.run(
+        app.state.batch_service.preview_batch(draft.id, draft.revision)
+    )
     client = TestClient(app)
     try:
         response = client.post(
@@ -692,7 +773,8 @@ def test_submit_is_non_blocking_and_unconfigured_renderer_writes_nothing(tmp_pat
             json={
                 "expectedRevision": draft.revision,
                 "expectedGpuRevisions": {
-                    slot.value: revision for slot, revision in preview.gpu_revisions.items()
+                    slot.value: revision
+                    for slot, revision in preview.gpu_revisions.items()
                 },
             },
         )
@@ -716,7 +798,9 @@ def test_submit_is_non_blocking_and_unconfigured_renderer_writes_nothing(tmp_pat
         Settings(data_root=unconfigured_root, frontend_dist=unconfigured_frontend),
         unconfigured_model,
     )
-    unconfigured_resources = create_resources(unconfigured_app.state.database, "missing renderer")
+    unconfigured_resources = create_resources(
+        unconfigured_app.state.database, "missing renderer"
+    )
     unconfigured_draft = create_draft(
         unconfigured_app.state.batch_service,
         unconfigured_resources,

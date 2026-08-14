@@ -80,7 +80,11 @@ class _ConfiguredRendererGateway:
             slot,
             self.availability,
             self.loaded_model,
-            owned_unit=(f"conflictstudio-test-{slot.value.lower()}.service" if self.loaded_model else None),
+            owned_unit=(
+                f"conflictstudio-test-{slot.value.lower()}.service"
+                if self.loaded_model
+                else None
+            ),
             reason=self.reason,
             loaded_precision=self.loaded_precision,
             gpu_name="Test GPU",
@@ -111,7 +115,9 @@ class _InterleavingRendererGateway(_ConfiguredRendererGateway):
         self.block_release = False
         self.release_started = asyncio.Event()
         self.continue_release = asyncio.Event()
-        self.release_calls: list[tuple[GpuSlotName, ModelName, Precision | None, str]] = []
+        self.release_calls: list[
+            tuple[GpuSlotName, ModelName, Precision | None, str]
+        ] = []
 
     async def probe(self, slot):  # type: ignore[no-untyped-def]
         if self.block_next_probe:
@@ -147,10 +153,14 @@ class _InterleavingRendererGateway(_ConfiguredRendererGateway):
         )
 
 
-def fixed_resources(database: Database) -> tuple[CatalogService, object, object, object, object]:
+def fixed_resources(
+    database: Database,
+) -> tuple[CatalogService, object, object, object, object]:
     catalog = CatalogService(database)
     dataset = catalog.create_dataset(
-        DatasetCreate(name="正式生成集", purpose=DatasetPurpose.PRODUCTION, note="第一批真实生成")
+        DatasetCreate(
+            name="正式生成集", purpose=DatasetPurpose.PRODUCTION, note="第一批真实生成"
+        )
     )
     content = catalog.create_content_plan(
         ContentPlanCreate(
@@ -171,7 +181,7 @@ def fixed_resources(database: Database) -> tuple[CatalogService, object, object,
             trueEmotionDescription="说话者在克制悲伤，语言和可见表现保持一致。",
             baseVideoPrompt=(
                 "{demographic} sits alone at a desk, keeps both hands visible, and says aloud "
-                "\"I am fine and only need a little time.\" in a steady voice. Quiet room tone remains audible. "
+                '"I am fine and only need a little time." in a steady voice. Quiet room tone remains audible. '
                 "The camera stays static in a front-facing portrait and soft daylight keeps the face readable."
             ),
             contentRequirementsZh="",
@@ -186,7 +196,9 @@ def fixed_resources(database: Database) -> tuple[CatalogService, object, object,
             category=Category.A_VA,
             styleGuidance="Use restrained natural performance and a static medium shot.",
             sceneSupplement="Keep the room visually simple.",
-            positiveExamples=["Observable behavior is specific and physically plausible."],
+            positiveExamples=[
+                "Observable behavior is specific and physically plausible."
+            ],
             negativeExamples=["Do not name the target emotion."],
             finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
         )
@@ -229,11 +241,19 @@ def make_batch(
             precision=precision,
             quantity=quantity,
             seed=1208,
-            contentPlans=[SourceSelection(id=content.id, expectedRevision=content.revision)],
-            promptPresets=[SourceSelection(id=preset.id, expectedRevision=preset.revision)],
-            backgroundPresets=[SourceSelection(id=background.id, expectedRevision=background.revision)],
+            contentPlans=[
+                SourceSelection(id=content.id, expectedRevision=content.revision)
+            ],
+            promptPresets=[
+                SourceSelection(id=preset.id, expectedRevision=preset.revision)
+            ],
+            backgroundPresets=[
+                SourceSelection(id=background.id, expectedRevision=background.revision)
+            ],
             demographics=[
-                DemographicInput(age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN),
+                DemographicInput(
+                    age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
+                ),
                 DemographicInput(age=35, gender=Gender.MALE, ethnicity=Ethnicity.WHITE),
             ],
             gpuSlots=slots,
@@ -258,7 +278,11 @@ def test_ltx25_precision_reaches_draft_preview_job_and_snapshot(tmp_path: Path) 
     database = Database(tmp_path)
     database.initialize()
     _, dataset, content, preset, background = fixed_resources(database)
-    batches = BatchService(database, PromptService(OpenAICompatiblePromptModel("test")), _ConfiguredRendererGateway())
+    batches = BatchService(
+        database,
+        PromptService(OpenAICompatiblePromptModel("test")),
+        _ConfiguredRendererGateway(),
+    )
     draft = make_batch(
         batches,
         dataset,
@@ -302,7 +326,9 @@ def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -
     payload = RunCreate(
         contentPlan=SourceSelection(id=content.id, expectedRevision=content.revision),
         promptPreset=SourceSelection(id=preset.id, expectedRevision=preset.revision),
-        backgroundPreset=SourceSelection(id=background.id, expectedRevision=background.revision),
+        backgroundPreset=SourceSelection(
+            id=background.id, expectedRevision=background.revision
+        ),
         demographic=DemographicInput(
             age=25,
             gender=Gender.FEMALE,
@@ -337,7 +363,9 @@ def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -
     assert len({item.input.final_negative_prompt for item in job.items}) == 1
 
 
-def test_serial_test_requires_switch_confirmation_for_distinct_profiles(tmp_path: Path) -> None:
+def test_serial_test_requires_switch_confirmation_for_distinct_profiles(
+    tmp_path: Path,
+) -> None:
     database = Database(tmp_path)
     database.initialize()
     _, _, content, preset, background = fixed_resources(database)
@@ -347,13 +375,15 @@ def test_serial_test_requires_switch_confirmation_for_distinct_profiles(tmp_path
         _ConfiguredRendererGateway(),
     )
     live = asyncio.run(batches.list_gpu_slots())
-    revision = next(
-        value.revision for value in live if value.slot is GpuSlotName.GPU0
-    )
+    revision = next(value.revision for value in live if value.slot is GpuSlotName.GPU0)
     values = {
-        "contentPlan": SourceSelection(id=content.id, expectedRevision=content.revision),
+        "contentPlan": SourceSelection(
+            id=content.id, expectedRevision=content.revision
+        ),
         "promptPreset": SourceSelection(id=preset.id, expectedRevision=preset.revision),
-        "backgroundPreset": SourceSelection(id=background.id, expectedRevision=background.revision),
+        "backgroundPreset": SourceSelection(
+            id=background.id, expectedRevision=background.revision
+        ),
         "demographic": DemographicInput(
             age=25,
             gender=Gender.FEMALE,
@@ -573,7 +603,9 @@ def test_catalog_persists_records_and_rejects_stale_revision(tmp_path: Path) -> 
     )
     assert updated.revision == 2
     with pytest.raises(ServiceError, match="changed") as error:
-        catalog.update_dataset(dataset.id, DatasetUpdate(expectedRevision=1, note="过期写入"))
+        catalog.update_dataset(
+            dataset.id, DatasetUpdate(expectedRevision=1, note="过期写入")
+        )
     assert error.value.code == "revision_conflict"
 
     with pytest.raises(ServiceError) as delete_error:
@@ -591,7 +623,11 @@ def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) ->
     database.initialize()
     _, _, content_read, preset_read, background_read = fixed_resources(database)
     with database.read_session() as session:
-        from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
+        from backend.domain.models import (
+            ContentPlan,
+            PromptPreset,
+            VideoBackgroundPreset,
+        )
 
         content = session.get(ContentPlan, content_read.id)
         preset = session.get(PromptPreset, preset_read.id)
@@ -617,7 +653,10 @@ def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) ->
     assert result.final_positive_prompt.startswith("A 25-year-old East Asian woman")
     assert "A small private office" not in result.final_positive_prompt
     assert result.dialogue == "我没事，只是需要一点时间。"
-    assert result.final_negative_prompt == "subtitles, captions, exaggerated acting, camera shake"
+    assert (
+        result.final_negative_prompt
+        == "subtitles, captions, exaggerated acting, camera shake"
+    )
 
 
 def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> None:
@@ -653,9 +692,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
             positiveExamples=[
                 "The person grips a ceramic cup with the right hand and lowers both shoulders."
             ],
-            negativeExamples=[
-                "The person sits still with both hands on the table."
-            ],
+            negativeExamples=["The person sits still with both hands on the table."],
             finalRenderNegativeConstraints="subtitles, exaggerated movement",
         )
     )
@@ -672,18 +709,29 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "positivePrompt": (
-                                        "A 45-year-old East Asian woman in a charcoal jacket keeps her dark hair "
-                                        "neatly tucked behind one ear. She sits upright, folds both hands on her lap, "
-                                        "presses her lips together, and raises her chin while her gaze stays level. "
-                                        "She says \"结果出来了，没什么需要担心的。\" in a low steady voice as the ventilation hums "
-                                        "softly and a wall clock ticks evenly. The private clinic office has pale walls, "
-                                        "a bare wooden table, and one closed window. The camera holds a static front-facing "
-                                        "close-up head-and-shoulders shot. Soft daylight falls from the left and keeps her "
-                                        "face evenly lit with gentle highlights across the jacket fabric."
+                                    "spokenText": "结果出来了，没什么需要担心的。",
+                                    "appearance": (
+                                        "She wears a charcoal jacket, and her dark hair remains neatly tucked behind one ear."
                                     ),
-                                    "dialogue": "结果出来了，没什么需要担心的。",
-                                    "vtText": None,
+                                    "bodyAction": (
+                                        "She sits upright, folds both hands on her lap, presses her lips together, raises "
+                                        "her chin, and keeps her gaze level through the final word."
+                                    ),
+                                    "vocalDelivery": (
+                                        "She keeps her voice low and steady, with measured pacing and firm articulation."
+                                    ),
+                                    "environmentalSound": (
+                                        "A soft ventilation hum and the even ticking of a wall clock remain audible."
+                                    ),
+                                    "setting": (
+                                        "The private clinic office contains pale walls, a bare wooden table, and one closed window."
+                                    ),
+                                    "camera": (
+                                        "The camera holds a static front-facing close-up head-and-shoulders view."
+                                    ),
+                                    "lighting": (
+                                        "Soft daylight keeps her face bright and evenly lit with gentle highlights across the jacket fabric."
+                                    ),
                                     "trueEmotionDescription": "声音中的放松表达真实感受，视觉表现仍显得担忧。",
                                 },
                                 ensure_ascii=False,
@@ -698,7 +746,11 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     model = OpenAICompatiblePromptModel("test-key", client)
     service = PromptService(model)
     with database.read_session() as session:
-        from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
+        from backend.domain.models import (
+            ContentPlan,
+            PromptPreset,
+            VideoBackgroundPreset,
+        )
 
         prepared = service.prepare(
             PromptContext(
@@ -719,19 +771,30 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     assert calls[0]["model"] == "deepseek-v4-flash"
     assert calls[0]["thinking"] == {"type": "disabled"}
     assert calls[0]["response_format"] == {"type": "json_object"}
-    assert "The person grips a ceramic cup with the right hand and lowers both shoulders." in prepared.user_input
-    assert "The person sits still with both hands on the table." not in result.final_positive_prompt
-    assert "between 80 and 150 English words" in prepared.system_input
+    assert (
+        "The person grips a ceramic cup with the right hand and lowers both shoulders."
+        in prepared.user_input
+    )
+    assert (
+        "The person sits still with both hands on the table."
+        not in result.final_positive_prompt
+    )
+    assert "80 to 150 English words" in prepared.system_input
     assert "Use present tense only" in prepared.system_input
-    assert "clearly, obviously, definitely, unmistakably, undeniably, evidently" in prepared.system_input
-    assert "concrete action involving a visible body part or object" in prepared.system_input
-    assert "Return the final fields directly" in prepared.system_input
+    assert (
+        "clearly, obviously, definitely, unmistakably, undeniably, evidently"
+        in prepared.system_input
+    )
+    assert "concrete visible body and facial behavior" in prepared.system_input
+    assert "Return exactly one JSON object" in prepared.system_input
     assert "A clinic waiting area." in prepared.user_input
-    assert "A small private office with a desk and neutral walls." in prepared.user_input
+    assert (
+        "A small private office with a desk and neutral walls." in prepared.user_input
+    )
     assert "Age: 45" in prepared.user_input
-    assert "The application does not append" in prepared.user_input
+    assert "The application maps spokenText" in prepared.user_input
     assert result.final_positive_prompt.startswith("A 45-year-old East Asian woman")
-    assert '"结果出来了，没什么需要担心的。"' in result.final_positive_prompt
+    assert "'结果出来了，没什么需要担心的。'" in result.final_positive_prompt
     assert "front-facing close-up head-and-shoulders" in result.final_positive_prompt
 
 
@@ -739,10 +802,14 @@ def test_prompt_model_requires_only_api_key_and_ignores_removed_endpoint_setting
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CONFLICTSTUDIO_LLM_API_KEY", raising=False)
-    monkeypatch.setenv("CONFLICTSTUDIO_LLM_ENDPOINT", "https://removed.example/v1/chat/completions")
+    monkeypatch.setenv(
+        "CONFLICTSTUDIO_LLM_ENDPOINT", "https://removed.example/v1/chat/completions"
+    )
     monkeypatch.setenv("CONFLICTSTUDIO_LLM_BASE_URL", "https://removed.example/v1")
 
-    assert isinstance(OpenAICompatiblePromptModel.from_environment(), UnconfiguredPromptModel)
+    assert isinstance(
+        OpenAICompatiblePromptModel.from_environment(), UnconfiguredPromptModel
+    )
 
     monkeypatch.setenv("CONFLICTSTUDIO_LLM_API_KEY", "test-key")
     model = OpenAICompatiblePromptModel.from_environment()
@@ -752,7 +819,9 @@ def test_prompt_model_requires_only_api_key_and_ignores_removed_endpoint_setting
     asyncio.run(model.close())
 
 
-def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Path) -> None:
+def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
+    tmp_path: Path,
+) -> None:
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, content, preset, background = fixed_resources(database)
@@ -789,18 +858,29 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(tmp_path: Pat
             model=ModelName.LTX,
             quantity=4,
             seed=7,
-            contentPlans=[SourceSelection(id=content.id, expectedRevision=content.revision)],
-            promptPresets=[SourceSelection(id=preset.id, expectedRevision=preset.revision)],
+            contentPlans=[
+                SourceSelection(id=content.id, expectedRevision=content.revision)
+            ],
+            promptPresets=[
+                SourceSelection(id=preset.id, expectedRevision=preset.revision)
+            ],
             backgroundPresets=[
                 SourceSelection(id=background.id, expectedRevision=background.revision),
                 SourceSelection(id=second.id, expectedRevision=second.revision),
             ],
-            demographics=[DemographicInput(age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.LATINO)],
+            demographics=[
+                DemographicInput(
+                    age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.LATINO
+                )
+            ],
             gpuSlots=[GpuSlotName.GPU0],
         )
     )
     preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
-    assert [item.background_preset.id for item in preview.allocations] == [background.id, second.id] * 2
+    assert [item.background_preset.id for item in preview.allocations] == [
+        background.id,
+        second.id,
+    ] * 2
 
     with pytest.raises(ServiceError) as error:
         asyncio.run(
@@ -857,7 +937,9 @@ def test_submit_blocks_when_renderer_is_not_configured(tmp_path: Path) -> None:
         assert draft_row.status is BatchDraftStatus.DRAFT
 
 
-def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_confirmation(tmp_path: Path) -> None:
+def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_confirmation(
+    tmp_path: Path,
+) -> None:
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, content, preset, background = fixed_resources(database)
@@ -898,16 +980,20 @@ def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_conf
 
     job = asyncio.run(
         batches.submit_batch(
-                draft.id,
-                BatchSubmitRequest(
-                    expectedRevision=draft.revision,
-                    expectedGpuRevisions=preview.gpu_revisions,
-                    confirm_model_switch=True,
-                ),
-            )
+            draft.id,
+            BatchSubmitRequest(
+                expectedRevision=draft.revision,
+                expectedGpuRevisions=preview.gpu_revisions,
+                confirm_model_switch=True,
+            ),
         )
+    )
     assert job.confirm_model_switch is True
-    assert renderer.probe_calls == [GpuSlotName.GPU0, GpuSlotName.GPU0, GpuSlotName.GPU0]
+    assert renderer.probe_calls == [
+        GpuSlotName.GPU0,
+        GpuSlotName.GPU0,
+        GpuSlotName.GPU0,
+    ]
     with database.read_session() as session:
         slot = session.get(GpuSlot, GpuSlotName.GPU0)
         assert slot is not None
@@ -925,7 +1011,9 @@ def test_submit_rejects_model_switch_without_confirmation_and_succeeds_with_conf
     assert reconciled.availability is GpuAvailability.RESERVED
 
 
-def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path) -> None:
+def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
+    tmp_path: Path,
+) -> None:
     database = Database(tmp_path)
     database.initialize()
     _, dataset, content, preset, background = fixed_resources(database)
@@ -966,10 +1054,22 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
     assert len({item.input.seed for item in job.items}) == 4
     first_input = job.items[0].input
     first_preview = preview.allocations[0]
-    assert (first_input.dataset_id, first_input.dataset_revision) == (dataset.id, dataset.revision)
-    assert (first_input.content_plan_id, first_input.content_plan_revision) == (content.id, content.revision)
-    assert (first_input.prompt_preset_id, first_input.prompt_preset_revision) == (preset.id, preset.revision)
-    assert (first_input.background_preset_id, first_input.background_preset_revision) == (
+    assert (first_input.dataset_id, first_input.dataset_revision) == (
+        dataset.id,
+        dataset.revision,
+    )
+    assert (first_input.content_plan_id, first_input.content_plan_revision) == (
+        content.id,
+        content.revision,
+    )
+    assert (first_input.prompt_preset_id, first_input.prompt_preset_revision) == (
+        preset.id,
+        preset.revision,
+    )
+    assert (
+        first_input.background_preset_id,
+        first_input.background_preset_revision,
+    ) == (
         background.id,
         background.revision,
     )
@@ -978,7 +1078,12 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
         first_preview.demographic.gender,
         first_preview.demographic.ethnicity,
     )
-    assert (first_input.width, first_input.height, first_input.fps, first_input.frame_count) == (1344, 768, 24, 121)
+    assert (
+        first_input.width,
+        first_input.height,
+        first_input.fps,
+        first_input.frame_count,
+    ) == (1344, 768, 24, 121)
     assert first_input.renderer_profile_version == RENDERER_PROFILE_VERSION
     assert first_input.prompt_model == "deepseek-v4-flash"
     assert first_input.source_has_audio is True
@@ -1008,7 +1113,11 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
             session.delete(snapshot)
     with pytest.raises(IntegrityError):
         with database.immediate_session() as session:
-            session.exec(update(JobEvent).where(JobEvent.id == job.events[0].id).values(event_type="JobRestarted"))
+            session.exec(
+                update(JobEvent)
+                .where(JobEvent.id == job.events[0].id)
+                .values(event_type="JobRestarted")
+            )
             session.flush()
     with database.immediate_session() as session:
         prompt_result = JobItemPromptResult(
@@ -1019,7 +1128,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
             raw_structured_response="{}",
             final_positive_prompt="a good answer",
             final_negative_prompt="no subtitles",
-            dialogue='',
+            dialogue="",
             vt_text=None,
             true_emotion_description="测试情绪描述",
         )
@@ -1041,13 +1150,20 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(tmp_path: Path)
         _ConfiguredRendererGateway(),
     ).get_job(job.id)
     assert len(restored.items) == 4
-    assert restored.items[0].input.final_negative_prompt == job.items[0].input.final_negative_prompt
+    assert (
+        restored.items[0].input.final_negative_prompt
+        == job.items[0].input.final_negative_prompt
+    )
 
 
-def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Path) -> None:
+def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
+    tmp_path: Path,
+) -> None:
     database = Database(tmp_path)
     database.initialize()
-    catalog, dataset, content_one, preset_one, background_one = fixed_resources(database)
+    catalog, dataset, content_one, preset_one, background_one = fixed_resources(
+        database
+    )
     content_two = catalog.create_content_plan(
         ContentPlanCreate(
             nameZh="一致回应二",
@@ -1122,14 +1238,20 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
             SourceSelection(id=preset_two.id, expectedRevision=preset_two.revision),
         ],
         "backgroundPresets": [
-            SourceSelection(id=background_one.id, expectedRevision=background_one.revision),
-            SourceSelection(id=background_two.id, expectedRevision=background_two.revision),
+            SourceSelection(
+                id=background_one.id, expectedRevision=background_one.revision
+            ),
+            SourceSelection(
+                id=background_two.id, expectedRevision=background_two.revision
+            ),
         ],
         "demographics": demographics,
         "gpuSlots": [GpuSlotName.GPU0, GpuSlotName.GPU1],
     }
     draft = batches.create_batch_draft(BatchDraftCreate(quantity=16, **selections))
-    repeating_draft = batches.create_batch_draft(BatchDraftCreate(quantity=18, **selections))
+    repeating_draft = batches.create_batch_draft(
+        BatchDraftCreate(quantity=18, **selections)
+    )
     with database.immediate_session() as session:
         for row in session.exec(select(GpuSlot)).all():
             row.availability = GpuAvailability.AVAILABLE
@@ -1158,7 +1280,11 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
                 item.content_plan.id,
                 item.prompt_preset.id,
                 item.background_preset.id,
-                (item.demographic.age, item.demographic.gender, item.demographic.ethnicity),
+                (
+                    item.demographic.age,
+                    item.demographic.gender,
+                    item.demographic.ethnicity,
+                ),
             )
             for item in allocations
         ]
@@ -1169,7 +1295,10 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
     assert len(set(preview_values)) == 16
     assert repeating_values[:16] == expected
     assert repeating_values[16:] == expected[:2]
-    assert [item.gpu_slot for item in preview.allocations] == [GpuSlotName.GPU0, GpuSlotName.GPU1] * 8
+    assert [item.gpu_slot for item in preview.allocations] == [
+        GpuSlotName.GPU0,
+        GpuSlotName.GPU1,
+    ] * 8
 
     job = asyncio.run(
         batches.submit_batch(
@@ -1190,12 +1319,20 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(tmp_path: Pa
         for item in job.items
     ]
     assert submitted_values == preview_values
-    assert [item.input.seed for item in job.items] == [item.seed for item in preview.allocations]
-    assert [item.input.model for item in job.items] == [item.model for item in preview.allocations]
-    assert [item.gpu_slot for item in job.items] == [item.gpu_slot for item in preview.allocations]
+    assert [item.input.seed for item in job.items] == [
+        item.seed for item in preview.allocations
+    ]
+    assert [item.input.model for item in job.items] == [
+        item.model for item in preview.allocations
+    ]
+    assert [item.gpu_slot for item in job.items] == [
+        item.gpu_slot for item in preview.allocations
+    ]
 
 
-def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: Path) -> None:
+def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
+    tmp_path: Path,
+) -> None:
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, _, _, background = fixed_resources(database)
@@ -1247,10 +1384,20 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: 
             model=ModelName.H3,
             quantity=1,
             seed=83,
-            contentPlans=[SourceSelection(id=content.id, expectedRevision=content.revision)],
-            promptPresets=[SourceSelection(id=preset.id, expectedRevision=preset.revision)],
-            backgroundPresets=[SourceSelection(id=background.id, expectedRevision=background.revision)],
-            demographics=[DemographicInput(age=45, gender=Gender.MALE, ethnicity=Ethnicity.SOUTH_ASIAN)],
+            contentPlans=[
+                SourceSelection(id=content.id, expectedRevision=content.revision)
+            ],
+            promptPresets=[
+                SourceSelection(id=preset.id, expectedRevision=preset.revision)
+            ],
+            backgroundPresets=[
+                SourceSelection(id=background.id, expectedRevision=background.revision)
+            ],
+            demographics=[
+                DemographicInput(
+                    age=45, gender=Gender.MALE, ethnicity=Ethnicity.SOUTH_ASIAN
+                )
+            ],
             gpuSlots=[GpuSlotName.GPU0],
         )
     )
@@ -1271,18 +1418,34 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(tmp_path: 
     )
 
     snapshot = job.items[0].input
-    assert (snapshot.width, snapshot.height, snapshot.fps, snapshot.frame_count) == (1344, 768, 24, 124)
+    assert (snapshot.width, snapshot.height, snapshot.fps, snapshot.frame_count) == (
+        1344,
+        768,
+        24,
+        124,
+    )
     assert snapshot.renderer_profile_version == RENDERER_PROFILE_VERSION
     assert snapshot.prompt_model == "deepseek-v4-flash"
     assert snapshot.source_has_audio is True
     assert snapshot.derive_silent_primary is True
     assert snapshot.final_negative_prompt == preset.final_negative_prompt
-    assert snapshot.final_negative_prompt == preview.allocations[0].final_negative_prompt
+    assert (
+        snapshot.final_negative_prompt == preview.allocations[0].final_negative_prompt
+    )
     assert snapshot.seed == preview.allocations[0].seed
     assert snapshot.model is ModelName.H3
-    assert (snapshot.dataset_id, snapshot.dataset_revision) == (dataset.id, dataset.revision)
-    assert (snapshot.content_plan_id, snapshot.content_plan_revision) == (content.id, content.revision)
-    assert (snapshot.prompt_preset_id, snapshot.prompt_preset_revision) == (preset.id, preset.revision)
+    assert (snapshot.dataset_id, snapshot.dataset_revision) == (
+        dataset.id,
+        dataset.revision,
+    )
+    assert (snapshot.content_plan_id, snapshot.content_plan_revision) == (
+        content.id,
+        content.revision,
+    )
+    assert (snapshot.prompt_preset_id, snapshot.prompt_preset_revision) == (
+        preset.id,
+        preset.revision,
+    )
     assert (snapshot.background_preset_id, snapshot.background_preset_revision) == (
         background.id,
         background.revision,

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .enums import Category, ConflictDirection
 
 
-POLICY_VERSION = "2026-08-13.1"
+POLICY_VERSION = "2026-08-14.1"
 
 
 @dataclass(frozen=True)
@@ -26,8 +26,7 @@ POLICIES = {
         ),
         relation_rule="Keep the visible and audible evidence aligned.",
         output_rule=(
-            "Set dialogue to the short Mandarin dialogue and vtText to null. Include the exact dialogue once "
-            "as audible on-screen speech in positivePrompt."
+            "spokenText is the Mandarin dialogue. bodyAction and vocalDelivery both carry the true state."
         ),
     ),
     Category.A_VT: CategoryPolicy(
@@ -38,8 +37,8 @@ POLICIES = {
         ),
         relation_rule="Keep the visible evidence and stored text aligned without rendering the text on screen.",
         output_rule=(
-            "Set dialogue to null and vtText to the short Mandarin text. Include the exact vtText once as "
-            "audible source-video speech in positivePrompt without rendering it on screen."
+            "spokenText is the independently stored Mandarin vtText. bodyAction, vocalDelivery and spokenText "
+            "all carry the true state in the audio-bearing source video; the application removes its audio later."
         ),
     ),
     Category.C_VA: CategoryPolicy(
@@ -47,8 +46,8 @@ POLICIES = {
         protocol_rule="The visible behavior intentionally disagrees with the Mandarin words and vocal delivery.",
         relation_rule="Follow the selected direction exactly and keep the disagreement readable throughout the clip.",
         output_rule=(
-            "Set dialogue to the short Mandarin dialogue and vtText to null. Include the exact dialogue once "
-            "as audible on-screen speech in positivePrompt."
+            "spokenText is the Mandarin dialogue. bodyAction carries the Vision assignment; vocalDelivery and "
+            "spokenText carry the Audio assignment."
         ),
     ),
     Category.C_VT: CategoryPolicy(
@@ -59,8 +58,8 @@ POLICIES = {
         ),
         relation_rule="Follow the selected direction exactly and never render the stored text on screen.",
         output_rule=(
-            "Set dialogue to null and vtText to the short Mandarin text. Include the exact vtText once as "
-            "audible source-video speech in positivePrompt without rendering it on screen."
+            "spokenText is the independently stored Mandarin vtText. bodyAction and vocalDelivery carry the "
+            "Vision assignment in the audio-bearing source video; spokenText carries the Text assignment."
         ),
     ),
 }
@@ -151,6 +150,14 @@ FORBIDDEN_INTERNAL_PHRASES: tuple[str, ...] = (
     "internal plan",
     "protocol rule",
     "category name",
+    "spokentext",
+    "appearance field",
+    "bodyaction",
+    "vocaldelivery",
+    "environmentalsound",
+    "camera field",
+    "lighting field",
+    "trueemotiondescription",
     "ltx-2.3",
     "minimax h3",
 )
@@ -298,48 +305,10 @@ _PAST_TENSE_MARKERS: tuple[str, ...] = (
 _ENGLISH_WORD_RE = re.compile(r"\b[A-Za-z]+(?:[-'][A-Za-z]+)*\b")
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _BULLET_RE = re.compile(r"(?:^|\s)(?:[-*\u2022]|\d+\.)\s")
-_QUOTED_TEXT_RE = re.compile(r'"([^"\r\n]+)"')
 _UNRESOLVED_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
 _AUDIBLE_SPEECH_RE = re.compile(
     r"\b(?:audible|aloud|dialogue|says|speaks|speech|talks|voice|vocal|whispers|murmurs|utters)\b",
     re.IGNORECASE,
-)
-
-_APPEARANCE_PATTERNS: tuple[str, ...] = (
-    r"\b(?:adult|man|woman|male|female|person|subject)\b",
-    r"\b\d{2}-year-old\b",
-    r"\b(?:east asian|south asian|white|black|latino)\b",
-    r"\b(?:hair|skin|face|eyes|jacket|shirt|blouse|dress|sweater|coat|clothing|wears|wearing)\b",
-)
-_ACTION_PATTERNS: tuple[str, ...] = (
-    r"\b(?:sits|stands|walks|turns|raises|lowers|holds|rests|leans|folds|grips|moves|glances|blinks|nods)\b",
-    r"\b(?:presses|tightens|shifts|lifts|keeps|places|taps|reaches|draws|tilts|straightens|clasps)\b",
-)
-_SPEECH_PATTERNS: tuple[str, ...] = (
-    r"\b(?:says|speaks|whispers|murmurs|utters|asks|replies|answers)\b",
-    r"\b(?:voice|speech|spoken phrase|spoken line)\b",
-)
-_ENVIRONMENTAL_SOUND_PATTERNS: tuple[str, ...] = (
-    r"\bambient (?:sound|noise)\b",
-    r"\broom tone\b",
-    r"\bventilation\b",
-    r"\b(?:hum|hums|humming|buzz|buzzes|buzzing|rustle|rustles|rustling)\b",
-    r"\b(?:rain|wind|traffic|airflow|thunder|waves|birds|insects)\b",
-    r"\b(?:fan|clock|printer|machine|engine|air conditioner)\b.*\b(?:ticks|hums|buzzes|runs|whirs|rattles)\b",
-    r"\b(?:ticking|clatter|whir|whirring|creak|creaking|drip|dripping)\b",
-)
-_SETTING_PATTERNS: tuple[str, ...] = (
-    r"\b(?:room|office|kitchen|hallway|cafe|caf\u00e9|station|interior|exterior|street|studio|lobby)\b",
-    r"\b(?:apartment|house|library|classroom|workshop|platform|corridor|restaurant|bedroom)\b",
-    r"\b(?:walls|window|doorway|background|surroundings|location|setting)\b",
-)
-_CAMERA_PATTERNS: tuple[str, ...] = (
-    r"\b(?:camera|shot|frame|framed|framing|lens|close-up|push-in|dolly|handheld)\b",
-    r"\b(?:medium|wide|static|eye-level|tracking) shot\b",
-)
-_LIGHTING_PATTERNS: tuple[str, ...] = (
-    r"\b(?:light|lights|lighting|daylight|sunlight|shadow|shadows|glow|illumination|highlight|highlights)\b",
-    r"\b(?:lit|backlit|side-lit)\b",
 )
 
 
@@ -362,7 +331,9 @@ def validate_fixed_positive_prompt(prompt: str, *, category: Category) -> None:
         )
     if not _AUDIBLE_SPEECH_RE.search(prompt):
         protocol = "VA" if category in {Category.A_VA, Category.C_VA} else "VT source"
-        violations.append(f"fixed {protocol} positivePrompt must describe audible speech")
+        violations.append(
+            f"fixed {protocol} positivePrompt must describe audible speech"
+        )
     if category in {Category.A_VT, Category.C_VT}:
         rendered_text = _find_phrases(prompt, FORBIDDEN_RENDERED_TEXT_PHRASES)
         if rendered_text:
@@ -412,28 +383,41 @@ def validate_final_positive_prompt(
         violations.append("positivePrompt must not contain a Markdown code fence")
 
     quoted_spoken_text = _validate_spoken_text(spoken_text, violations)
-    quoted_values = _QUOTED_TEXT_RE.findall(prompt)
-    if prompt.count('"') != 2 or quoted_values != [spoken_text]:
-        violations.append("positivePrompt must contain the exact short spoken text once in straight double quotes")
+    if prompt.count(spoken_text) != 1 or quoted_spoken_text not in prompt:
+        violations.append(
+            "positivePrompt must contain the exact short spoken text once in single quotes"
+        )
 
-    narrative = prompt.replace(quoted_spoken_text, "", 1) if quoted_spoken_text else prompt
-    structural_text = (
-        prompt.replace(quoted_spoken_text, " " * len(quoted_spoken_text), 1)
-        if quoted_spoken_text
-        else prompt
+    narrative = (
+        prompt.replace(quoted_spoken_text, "", 1) if quoted_spoken_text else prompt
     )
     word_count = len(_ENGLISH_WORD_RE.findall(narrative))
     if not 80 <= word_count <= 150:
-        violations.append(f"positivePrompt must contain 80 to 150 English words; found {word_count}")
+        violations.append(
+            f"positivePrompt must contain 80 to 150 English words; found {word_count}"
+        )
     if _CJK_RE.search(narrative):
-        violations.append("positivePrompt narrative must be English outside the quoted Mandarin speech")
+        violations.append(
+            "positivePrompt narrative must be English outside the quoted Mandarin speech"
+        )
 
     banned_emotions = list(BANNED_EMOTION_LABELS)
-    banned_emotions.extend(value for value in (true_emotion, apparent_emotion) if value.strip())
+    banned_emotions.extend(
+        value for value in (true_emotion, apparent_emotion) if value.strip()
+    )
     _append_phrase_violation(violations, prompt, banned_emotions, "emotion labels")
-    _append_phrase_violation(violations, prompt, BANNED_CERTAINTY_MODIFIERS, "certainty claims")
-    _append_phrase_violation(violations, prompt, FORBIDDEN_MUSIC_PHRASES, "music or score terms")
-    _append_phrase_violation(violations, prompt, FORBIDDEN_INTERNAL_PHRASES, "internal category or protocol names")
+    _append_phrase_violation(
+        violations, prompt, BANNED_CERTAINTY_MODIFIERS, "certainty claims"
+    )
+    _append_phrase_violation(
+        violations, prompt, FORBIDDEN_MUSIC_PHRASES, "music or score terms"
+    )
+    _append_phrase_violation(
+        violations,
+        prompt,
+        FORBIDDEN_INTERNAL_PHRASES,
+        "internal category or protocol names",
+    )
     _append_phrase_violation(
         violations,
         prompt,
@@ -441,75 +425,86 @@ def validate_final_positive_prompt(
         "subtitles, captions or rendered text",
     )
 
-    first_sentence = re.split(r"(?<=[.!?])\s+", narrative, maxsplit=1)[0]
-    appearance_position = _first_pattern_position(structural_text, _APPEARANCE_PATTERNS)
-    if appearance_position is None or _first_pattern_position(first_sentence, _APPEARANCE_PATTERNS) is None:
-        violations.append("positivePrompt must open with one person's appearance")
     _append_phrase_violation(
         violations,
         narrative,
         FORBIDDEN_MULTI_SUBJECT_PHRASES,
         "multiple on-screen people",
     )
-    if re.search(r"\b(?:another|second)\s+(?:person|adult|man|woman|character)\b", narrative, re.IGNORECASE):
+    if re.search(
+        r"\b(?:another|second)\s+(?:person|adult|man|woman|character)\b",
+        narrative,
+        re.IGNORECASE,
+    ):
         violations.append("positivePrompt must contain exactly one on-screen person")
-    if re.search(r"\b(?:three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:[a-z]+\s+){0,2}(?:adults|people|persons|men|women|characters)\b", narrative, re.IGNORECASE):
+    if re.search(
+        r"\b(?:three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:[a-z]+\s+){0,2}(?:adults|people|persons|men|women|characters)\b",
+        narrative,
+        re.IGNORECASE,
+    ):
         violations.append("positivePrompt must contain exactly one on-screen person")
-    if re.search(r"\b(?:man|woman|adult|person)\b[^.!?]{0,80}\band\b[^.!?]{0,80}\b(?:man|woman|adult|person)\b", narrative, re.IGNORECASE):
+    if re.search(
+        r"\b(?:man|woman|adult|person)\b[^.!?]{0,80}\band\b[^.!?]{0,80}\b(?:man|woman|adult|person)\b",
+        narrative,
+        re.IGNORECASE,
+    ):
         violations.append("positivePrompt must contain exactly one on-screen person")
-    _validate_expected_demographic(narrative, expected_ethnicity, expected_gender, violations)
-    if expected_age is not None and not re.search(rf"\b{expected_age}-year-old\b", narrative, re.IGNORECASE):
+    _validate_expected_demographic(
+        narrative, expected_ethnicity, expected_gender, violations
+    )
+    if expected_age is not None and not re.search(
+        rf"\b{expected_age}-year-old\b", narrative, re.IGNORECASE
+    ):
         violations.append("positivePrompt appearance must match the selected age")
 
-    action_position = _first_pattern_position(structural_text, _ACTION_PATTERNS)
-    speech_position = _first_pattern_position(prompt, _SPEECH_PATTERNS)
-    sound_position = _first_pattern_position(prompt, _ENVIRONMENTAL_SOUND_PATTERNS)
-    quote_position = prompt.find(quoted_spoken_text) if quoted_spoken_text else -1
-    setting_text = _mask_pattern_matches(structural_text, _ENVIRONMENTAL_SOUND_PATTERNS)
-    setting_position = _first_pattern_position(setting_text, _SETTING_PATTERNS)
-    camera_position = _first_pattern_position(structural_text, _CAMERA_PATTERNS)
-    lighting_position = _first_pattern_position(structural_text, _LIGHTING_PATTERNS)
-
-    required_positions = {
-        "appearance": appearance_position,
-        "body action": action_position,
-        "speech cue": speech_position,
-        "environmental sound": sound_position,
-        "setting": setting_position,
-        "camera": camera_position,
-        "lighting": lighting_position,
-    }
-    for label, position in required_positions.items():
-        if position is None:
-            violations.append(f"positivePrompt must include concrete {label} substance")
-
-    if quote_position < 0:
-        audio_position = None
-    else:
-        audio_values = [position for position in (speech_position, sound_position, quote_position) if position is not None]
-        audio_position = max(audio_values) if len(audio_values) == 3 else None
-    ordered_positions = (
-        appearance_position,
-        action_position,
-        audio_position,
-        setting_position,
-        camera_position,
-        lighting_position,
+    prompt_without_quote = (
+        prompt.replace(quoted_spoken_text, "", 1) if quoted_spoken_text else prompt
     )
-    if all(position is not None for position in ordered_positions):
-        numeric_positions = tuple(int(position) for position in ordered_positions if position is not None)
-        if any(left >= right for left, right in zip(numeric_positions, numeric_positions[1:])):
-            violations.append(
-                "positivePrompt substance must follow appearance, body action, audio, setting, camera, lighting order"
-            )
-
-    prompt_without_quote = prompt.replace(quoted_spoken_text, "", 1) if quoted_spoken_text else prompt
     past_markers = _find_phrases(prompt_without_quote, _PAST_TENSE_MARKERS)
     if past_markers:
-        violations.append(f"positivePrompt must use present tense; found: {', '.join(past_markers)}")
+        violations.append(
+            f"positivePrompt must use present tense; found: {', '.join(past_markers)}"
+        )
 
     if violations:
         raise PromptPolicyViolation(violations)
+
+
+def validate_generated_component(value: str, field_name: str) -> str:
+    """Validate one schema component without guessing whether it fulfills another component's meaning."""
+
+    violations: list[str] = []
+    if not value.strip():
+        violations.append(f"{field_name} must not be blank")
+    if value != value.strip() or "\n" in value or "\r" in value:
+        violations.append(f"{field_name} must be one trimmed line")
+    if not value.endswith("."):
+        violations.append(
+            f"{field_name} must be a complete English sentence ending with a period"
+        )
+    if _CJK_RE.search(value):
+        violations.append(f"{field_name} must use English only")
+    for phrases, label in (
+        (BANNED_EMOTION_LABELS, "emotion labels"),
+        (BANNED_CERTAINTY_MODIFIERS, "certainty claims"),
+        (FORBIDDEN_MUSIC_PHRASES, "music or score terms"),
+        (FORBIDDEN_INTERNAL_PHRASES, "internal category or protocol names"),
+        (FORBIDDEN_RENDERED_TEXT_PHRASES, "subtitles, captions or rendered text"),
+        (FORBIDDEN_MULTI_SUBJECT_PHRASES, "multiple people"),
+    ):
+        found = _find_phrases(value, phrases)
+        if found:
+            violations.append(
+                f"{field_name} must not contain {label}: {', '.join(found)}"
+            )
+    past_markers = _find_phrases(value, _PAST_TENSE_MARKERS)
+    if past_markers:
+        violations.append(
+            f"{field_name} must use present tense; found: {', '.join(past_markers)}"
+        )
+    if violations:
+        raise PromptPolicyViolation(violations)
+    return value
 
 
 def validate_background_policy_text(value: str, field_name: str = "background") -> str:
@@ -518,15 +513,30 @@ def validate_background_policy_text(value: str, field_name: str = "background") 
     if not isinstance(value, str):
         raise TypeError(f"{field_name} must be a string")
     violations: list[str] = []
-    _append_phrase_violation(violations, value, FORBIDDEN_BACKGROUND_PERSON_PHRASES, "another person")
-    _append_phrase_violation(violations, value, FORBIDDEN_MUSIC_PHRASES, "music or score terms")
+    _append_phrase_violation(
+        violations, value, FORBIDDEN_BACKGROUND_PERSON_PHRASES, "another person"
+    )
+    _append_phrase_violation(
+        violations, value, FORBIDDEN_MUSIC_PHRASES, "music or score terms"
+    )
     emotion_labels = _find_explicit_emotion_label_uses(value, BANNED_EMOTION_LABELS)
     if emotion_labels:
-        violations.append(f"positivePrompt must not contain emotion labels: {', '.join(emotion_labels)}")
-    _append_phrase_violation(violations, value, FORBIDDEN_INTERNAL_PHRASES, "internal category or protocol names")
-    _append_phrase_violation(violations, value, FORBIDDEN_BACKGROUND_PROTOCOL_PHRASES, "protocol conflicts")
+        violations.append(
+            f"positivePrompt must not contain emotion labels: {', '.join(emotion_labels)}"
+        )
+    _append_phrase_violation(
+        violations,
+        value,
+        FORBIDDEN_INTERNAL_PHRASES,
+        "internal category or protocol names",
+    )
+    _append_phrase_violation(
+        violations, value, FORBIDDEN_BACKGROUND_PROTOCOL_PHRASES, "protocol conflicts"
+    )
     if violations:
-        raise PromptPolicyViolation(tuple(f"{field_name}: {violation}" for violation in violations))
+        raise PromptPolicyViolation(
+            tuple(f"{field_name}: {violation}" for violation in violations)
+        )
     return value
 
 
@@ -540,8 +550,13 @@ def _validate_spoken_text(spoken_text: str, violations: list[str]) -> str:
         violations.append("spoken text must not be blank")
         return ""
     if spoken_text != spoken_text.strip() or "\n" in spoken_text or "\r" in spoken_text:
-        violations.append("spoken text must not contain surrounding whitespace or line breaks")
-    if any(mark in spoken_text for mark in ('"', "\u201c", "\u201d")):
+        violations.append(
+            "spoken text must not contain surrounding whitespace or line breaks"
+        )
+    if any(
+        mark in spoken_text
+        for mark in ('"', "'", "\u2018", "\u2019", "\u201c", "\u201d")
+    ):
         violations.append("spoken text must not contain quote marks")
     han_count = sum(1 for character in spoken_text if _CJK_RE.fullmatch(character))
     other_alphanumeric_count = sum(
@@ -550,10 +565,12 @@ def _validate_spoken_text(spoken_text: str, violations: list[str]) -> str:
         if character.isalnum() and not _CJK_RE.fullmatch(character)
     )
     if han_count < 2 or han_count <= other_alphanumeric_count:
-        violations.append("spoken text must be predominantly Chinese and contain at least two Chinese characters")
+        violations.append(
+            "spoken text must be predominantly Chinese and contain at least two Chinese characters"
+        )
     if not 2 <= len(spoken_text) <= 40:
         violations.append("spoken text must contain 2 to 40 characters")
-    return f'"{spoken_text}"'
+    return f"'{spoken_text}'"
 
 
 def _append_phrase_violation(
@@ -564,7 +581,9 @@ def _append_phrase_violation(
 ) -> None:
     found = _find_phrases(text, phrases)
     if found:
-        violations.append(f"positivePrompt must not contain {label}: {', '.join(found)}")
+        violations.append(
+            f"positivePrompt must not contain {label}: {', '.join(found)}"
+        )
 
 
 def _find_phrases(text: str, phrases: Sequence[str]) -> list[str]:
@@ -581,8 +600,12 @@ def _find_phrases(text: str, phrases: Sequence[str]) -> list[str]:
 
 def _find_explicit_emotion_label_uses(text: str, labels: Sequence[str]) -> list[str]:
     normalized = text.casefold()
-    context_noun = r"(?:emotion|mood|feeling|affect|emotional state|atmosphere|tone|expression)"
-    field_name = rf"(?:(?:true|apparent|surface|target|expressed|displayed)\s+)?{context_noun}"
+    context_noun = (
+        r"(?:emotion|mood|feeling|affect|emotional state|atmosphere|tone|expression)"
+    )
+    field_name = (
+        rf"(?:(?:true|apparent|surface|target|expressed|displayed)\s+)?{context_noun}"
+    )
     attribution = r"(?:feels?|seems?|appears?|looks?|sounds?|conveys?|expresses?|evokes?|shows?|indicates?|signals?)"
     found: list[str] = []
 
@@ -623,26 +646,23 @@ def _validate_expected_demographic(
     if expected_ethnicity is not None:
         expected = expected_ethnicity.strip().casefold()
         if found_ethnicities != {expected}:
-            violations.append("positivePrompt appearance must match the selected ethnicity")
+            violations.append(
+                "positivePrompt appearance must match the selected ethnicity"
+            )
 
     if expected_gender is not None:
         expected = expected_gender.strip().casefold()
-        accepted = {"female": ("female", "woman"), "male": ("male", "man")}.get(expected, (expected,))
+        accepted = {"female": ("female", "woman"), "male": ("male", "man")}.get(
+            expected, (expected,)
+        )
         opposite = ("male", "man") if expected == "female" else ("female", "woman")
-        has_expected = any(re.search(rf"(?<![a-z]){term}(?![a-z])", normalized) for term in accepted)
-        has_opposite = any(re.search(rf"(?<![a-z]){term}(?![a-z])", normalized) for term in opposite)
+        has_expected = any(
+            re.search(rf"(?<![a-z]){term}(?![a-z])", normalized) for term in accepted
+        )
+        has_opposite = any(
+            re.search(rf"(?<![a-z]){term}(?![a-z])", normalized) for term in opposite
+        )
         if not has_expected or has_opposite:
-            violations.append("positivePrompt appearance must match the selected gender")
-
-
-def _first_pattern_position(text: str, patterns: Sequence[str]) -> int | None:
-    positions = [match.start() for pattern in patterns if (match := re.search(pattern, text, re.IGNORECASE))]
-    return min(positions) if positions else None
-
-
-def _mask_pattern_matches(text: str, patterns: Sequence[str]) -> str:
-    characters = list(text)
-    for pattern in patterns:
-        for match in re.finditer(pattern, text, re.IGNORECASE):
-            characters[match.start() : match.end()] = " " * (match.end() - match.start())
-    return "".join(characters)
+            violations.append(
+                "positivePrompt appearance must match the selected gender"
+            )

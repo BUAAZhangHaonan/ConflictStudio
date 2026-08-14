@@ -8,7 +8,11 @@ from sqlmodel import select
 
 from backend.adapters.config import Settings
 from backend.adapters.gpu import SlotInspection
-from backend.adapters.renderer import CancelOutcome, RenderResult, RendererInstallationStatus
+from backend.adapters.renderer import (
+    CancelOutcome,
+    RenderResult,
+    RendererInstallationStatus,
+)
 from backend.app import create_app
 from backend.domain.enums import (
     BatchDraftStatus,
@@ -75,17 +79,25 @@ class ApiPromptModel:
     async def generate(self, system_input: str, user_input: str) -> str:
         return json.dumps(
             {
-                "positivePrompt": (
-                    "A 25-year-old East Asian woman in a charcoal jacket keeps her dark hair tucked behind one "
-                    "ear. She sits upright, folds both hands on her lap, presses her lips together, and raises her "
-                    "chin while her gaze stays level. She says \"我没事，只是需要一点时间。\" in a low steady voice as "
-                    "the ventilation hums softly and a wall clock ticks evenly. The private office has pale walls, "
-                    "a bare wooden table, and one closed window. The camera holds a static front-facing close-up "
-                    "head-and-shoulders shot. Soft daylight falls from the left and keeps her face evenly lit with "
-                    "gentle highlights across the jacket fabric."
+                "spokenText": "我没事，只是需要一点时间。",
+                "appearance": "She wears a charcoal jacket, and her dark hair remains tucked behind one ear.",
+                "bodyAction": (
+                    "She sits upright, folds both hands on her lap, presses her lips together, raises her chin, "
+                    "and keeps her gaze level through the final word."
                 ),
-                "dialogue": "我没事，只是需要一点时间。",
-                "vtText": None,
+                "vocalDelivery": (
+                    "She keeps her voice low and steady, with measured pacing and firm articulation."
+                ),
+                "environmentalSound": (
+                    "A soft ventilation hum and the even ticking of a wall clock remain audible."
+                ),
+                "setting": (
+                    "The private office contains pale walls, a bare wooden table, and one closed window behind the seat."
+                ),
+                "camera": "The camera holds a static front-facing close-up head-and-shoulders view.",
+                "lighting": (
+                    "Soft daylight keeps her face bright and evenly lit with gentle highlights across the jacket fabric."
+                ),
                 "trueEmotionDescription": "说话内容和可见动作共同表明她在平静地回应当前事件。",
             },
             ensure_ascii=False,
@@ -99,9 +111,14 @@ class InvalidApiPromptModel(ApiPromptModel):
     async def generate(self, system_input: str, user_input: str) -> str:
         return json.dumps(
             {
-                "positivePrompt": "A woman speaks aloud.",
-                "dialogue": "我没事，只是需要一点时间。",
-                "vtText": None,
+                "spokenText": "我没事，只是需要一点时间。",
+                "appearance": "She wears a plain jacket.",
+                "bodyAction": "She sits upright.",
+                "vocalDelivery": "She speaks slowly.",
+                "environmentalSound": "A clock ticks nearby.",
+                "setting": "The room contains one table.",
+                "camera": "The camera holds a static close-up.",
+                "lighting": "Soft light reaches her face.",
                 "trueEmotionDescription": "说话内容和可见动作共同表明她在平静地回应当前事件。",
             },
             ensure_ascii=False,
@@ -118,7 +135,9 @@ def make_app(tmp_path: Path, prompt_model=None):  # type: ignore[no-untyped-def]
     )
 
 
-def create_api_sources(client: TestClient) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+def create_api_sources(
+    client: TestClient,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
     content = client.post(
         "/api/content-plans",
         json={
@@ -178,12 +197,27 @@ def test_post_test_runs_creates_real_test_job_and_items(tmp_path: Path) -> None:
         response = client.post(
             "/api/test-runs",
             json={
-                "contentPlan": {"id": content["id"], "expectedRevision": content["revision"]},
-                "promptPreset": {"id": prompt["id"], "expectedRevision": prompt["revision"]},
-                "backgroundPreset": {"id": background["id"], "expectedRevision": background["revision"]},
-                "demographic": {"age": 25, "gender": "Female", "ethnicity": "EastAsian"},
+                "contentPlan": {
+                    "id": content["id"],
+                    "expectedRevision": content["revision"],
+                },
+                "promptPreset": {
+                    "id": prompt["id"],
+                    "expectedRevision": prompt["revision"],
+                },
+                "backgroundPreset": {
+                    "id": background["id"],
+                    "expectedRevision": background["revision"],
+                },
+                "demographic": {
+                    "age": 25,
+                    "gender": "Female",
+                    "ethnicity": "EastAsian",
+                },
                 "seed": 77,
-                "comparisons": [{"model": "LTX-2.3", "precision": None, "gpuSlot": "GPU0"}],
+                "comparisons": [
+                    {"model": "LTX-2.3", "precision": None, "gpuSlot": "GPU0"}
+                ],
                 "executionMode": "Serial",
                 "expectedGpuRevisions": {"GPU0": gpu["revision"]},
                 "confirmModelSwitch": False,
@@ -200,7 +234,9 @@ def test_post_test_runs_creates_real_test_job_and_items(tmp_path: Path) -> None:
     assert payload["items"][0]["input"]["seed"] == 77
 
 
-def test_invalid_generative_prompt_creates_no_job_or_generation_records(tmp_path: Path) -> None:
+def test_invalid_generative_prompt_creates_no_job_or_generation_records(
+    tmp_path: Path,
+) -> None:
     app = make_app(tmp_path, InvalidApiPromptModel())
     with TestClient(app) as client:
         content, prompt, background = create_api_sources(client)
@@ -208,12 +244,27 @@ def test_invalid_generative_prompt_creates_no_job_or_generation_records(tmp_path
         response = client.post(
             "/api/test-runs",
             json={
-                "contentPlan": {"id": content["id"], "expectedRevision": content["revision"]},
-                "promptPreset": {"id": prompt["id"], "expectedRevision": prompt["revision"]},
-                "backgroundPreset": {"id": background["id"], "expectedRevision": background["revision"]},
-                "demographic": {"age": 25, "gender": "Female", "ethnicity": "EastAsian"},
+                "contentPlan": {
+                    "id": content["id"],
+                    "expectedRevision": content["revision"],
+                },
+                "promptPreset": {
+                    "id": prompt["id"],
+                    "expectedRevision": prompt["revision"],
+                },
+                "backgroundPreset": {
+                    "id": background["id"],
+                    "expectedRevision": background["revision"],
+                },
+                "demographic": {
+                    "age": 25,
+                    "gender": "Female",
+                    "ethnicity": "EastAsian",
+                },
                 "seed": 77,
-                "comparisons": [{"model": "LTX-2.3", "precision": None, "gpuSlot": "GPU0"}],
+                "comparisons": [
+                    {"model": "LTX-2.3", "precision": None, "gpuSlot": "GPU0"}
+                ],
                 "executionMode": "Serial",
                 "expectedGpuRevisions": {"GPU0": gpu["revision"]},
                 "confirmModelSwitch": False,
@@ -340,7 +391,9 @@ def add_completed_result(app, source: JobSource) -> tuple[int, int, int]:  # typ
         session.add(job)
         session.flush()
         relative_path = f"media/{source.value.casefold()}.mp4"
-        (app.state.database.data_root / relative_path).parent.mkdir(parents=True, exist_ok=True)
+        (app.state.database.data_root / relative_path).parent.mkdir(
+            parents=True, exist_ok=True
+        )
         (app.state.database.data_root / relative_path).write_bytes(b"video")
         asset = Asset(
             storage_root=str(app.state.database.data_root),
@@ -401,7 +454,9 @@ def add_completed_result(app, source: JobSource) -> tuple[int, int, int]:  # typ
         return job.id, item.id, dataset.id
 
 
-def test_completed_production_result_enters_pending_review_queue(tmp_path: Path) -> None:
+def test_completed_production_result_enters_pending_review_queue(
+    tmp_path: Path,
+) -> None:
     app = make_app(tmp_path)
     job_id, item_id, _ = add_completed_result(app, JobSource.PRODUCTION)
     app.state.job_executor._complete_item(job_id, item_id)
@@ -419,7 +474,9 @@ def test_completed_production_result_enters_pending_review_queue(tmp_path: Path)
     assert item["sampleId"] == sample["id"]
 
 
-def test_test_result_keep_reuses_assets_and_review_decision_is_revisioned(tmp_path: Path) -> None:
+def test_test_result_keep_reuses_assets_and_review_decision_is_revisioned(
+    tmp_path: Path,
+) -> None:
     app = make_app(tmp_path)
     job_id, item_id, dataset_id = add_completed_result(app, JobSource.TEST)
     app.state.job_executor._complete_item(job_id, item_id)

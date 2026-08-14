@@ -19,6 +19,7 @@ from backend.domain.prompt_policy import (
     direction_rule,
     validate_final_positive_prompt,
     validate_fixed_positive_prompt,
+    validate_generated_component,
 )
 
 from .errors import ServiceError
@@ -53,24 +54,41 @@ FORBIDDEN_TRUE_EMOTION_DESCRIPTION_TOKENS = (
 class GeneratedPrompt(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    positive_prompt: str = Field(alias="positivePrompt", min_length=1)
-    dialogue: str | None
-    vt_text: str | None = Field(alias="vtText")
+    spoken_text: str = Field(alias="spokenText", min_length=1)
+    appearance: str = Field(min_length=1)
+    body_action: str = Field(alias="bodyAction", min_length=1)
+    vocal_delivery: str = Field(alias="vocalDelivery", min_length=1)
+    environmental_sound: str = Field(alias="environmentalSound", min_length=1)
+    setting: str = Field(min_length=1)
+    camera: str = Field(min_length=1)
+    lighting: str = Field(min_length=1)
     true_emotion_description: str = Field(alias="trueEmotionDescription", min_length=1)
 
-    @field_validator("positive_prompt", "true_emotion_description")
+    @field_validator(
+        "spoken_text",
+        "appearance",
+        "body_action",
+        "vocal_delivery",
+        "environmental_sound",
+        "setting",
+        "camera",
+        "lighting",
+        "true_emotion_description",
+    )
     @classmethod
     def reject_blank_required_text(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("The field must not be blank")
         return value
 
-    @field_validator("dialogue", "vt_text")
-    @classmethod
-    def reject_blank_optional_text(cls, value: str | None) -> str | None:
-        if value is not None and not value.strip():
-            raise ValueError("The field must not be blank")
-        return value
+
+class FixedPrompt(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    positive_prompt: str = Field(alias="positivePrompt", min_length=1)
+    dialogue: str | None
+    vt_text: str | None = Field(alias="vtText")
+    true_emotion_description: str = Field(alias="trueEmotionDescription", min_length=1)
 
 
 @dataclass(frozen=True)
@@ -97,7 +115,7 @@ class PreparedPrompt:
     system_input: str
     user_input: str
     final_negative_prompt: str
-    fixed_output: GeneratedPrompt | None
+    fixed_output: FixedPrompt | None
 
 
 @dataclass(frozen=True)
@@ -136,7 +154,9 @@ class PromptService:
             policy = POLICIES[context.content.category]
             system_input = self.system_template.render(
                 policy=policy,
-                direction_rule=direction_rule(context.content.category, context.content.conflict_direction),
+                direction_rule=direction_rule(
+                    context.content.category, context.content.conflict_direction
+                ),
                 banned_certainty_modifiers=BANNED_CERTAINTY_MODIFIERS,
             ).strip()
             user_input = self.user_template.render(
@@ -182,12 +202,20 @@ class PromptService:
             fixed_output=fixed_output,
         )
 
-    async def complete(self, prepared: PreparedPrompt, category: Category) -> PromptResult:
+    async def complete(
+        self, prepared: PreparedPrompt, category: Category
+    ) -> PromptResult:
         if category is not prepared.category:
-            raise ServiceError(422, "validation_error", "The prepared prompt category does not match the request")
+            raise ServiceError(
+                422,
+                "validation_error",
+                "The prepared prompt category does not match the request",
+            )
         if prepared.fixed_output is None:
             try:
-                raw = await self.model.generate(prepared.system_input, prepared.user_input)
+                raw = await self.model.generate(
+                    prepared.system_input, prepared.user_input
+                )
             except PromptAdapterError as error:
                 status = 503 if error.code == "external_configuration_missing" else 502
                 raise ServiceError(status, error.code, error.message) from error
@@ -202,40 +230,59 @@ class PromptService:
         else:
             output = prepared.fixed_output
             raw = output.model_dump_json(by_alias=True)
-        return self._result(
-            prepared,
-            category,
-            output,
-            raw,
-            generated=prepared.fixed_output is None,
-        )
+            return self._fixed_result(prepared, category, output, raw)
+        return self._generated_result(prepared, category, output, raw)
 
     @classmethod
-    def _result(
+    def _generated_result(
         cls,
         prepared: PreparedPrompt,
         category: Category,
         output: GeneratedPrompt,
         raw: str,
-        *,
-        generated: bool,
     ) -> PromptResult:
-        cls._validate_output(category, output)
-        spoken_text = output.dialogue if category in {Category.A_VA, Category.C_VA} else output.vt_text
-        assert spoken_text is not None
+        cls._validate_generated_output(output)
+        positive_prompt = cls._assemble_positive_prompt(prepared, output)
         try:
-            if generated:
-                validate_final_positive_prompt(
-                    output.positive_prompt,
-                    spoken_text=spoken_text,
-                    true_emotion=prepared.true_emotion,
-                    apparent_emotion=prepared.apparent_emotion,
-                    expected_ethnicity=cls._ethnicity_text(prepared.ethnicity),
-                    expected_gender=prepared.gender.value,
-                    expected_age=prepared.age,
-                )
-            else:
-                validate_fixed_positive_prompt(output.positive_prompt, category=category)
+            validate_final_positive_prompt(
+                positive_prompt,
+                spoken_text=output.spoken_text,
+                true_emotion=prepared.true_emotion,
+                apparent_emotion=prepared.apparent_emotion,
+                expected_ethnicity=cls._ethnicity_text(prepared.ethnicity),
+                expected_gender=prepared.gender.value,
+                expected_age=prepared.age,
+            )
+        except PromptPolicyViolation as error:
+            raise ServiceError(
+                502,
+                "invalid_prompt_response",
+                f"The final positive prompt violates the prompt policy: {error}",
+            ) from error
+        is_va = category in {Category.A_VA, Category.C_VA}
+        return PromptResult(
+            policy_version=prepared.policy_version,
+            system_input=prepared.system_input,
+            user_input=prepared.user_input,
+            raw_structured_response=raw,
+            final_positive_prompt=positive_prompt,
+            final_negative_prompt=prepared.final_negative_prompt,
+            dialogue=output.spoken_text if is_va else None,
+            vt_text=None if is_va else output.spoken_text,
+            true_emotion_description=output.true_emotion_description,
+        )
+
+    @classmethod
+    def _fixed_result(
+        cls,
+        prepared: PreparedPrompt,
+        category: Category,
+        output: FixedPrompt,
+        raw: str,
+    ) -> PromptResult:
+        cls._validate_fixed_output(category, output)
+        try:
+            validate_fixed_positive_prompt(output.positive_prompt, category=category)
         except PromptPolicyViolation as error:
             raise ServiceError(
                 502,
@@ -254,11 +301,13 @@ class PromptService:
             true_emotion_description=output.true_emotion_description,
         )
 
-    def _fixed_output(self, context: PromptContext) -> GeneratedPrompt:
+    def _fixed_output(self, context: PromptContext) -> FixedPrompt:
         content = context.content
-        demographic = self._fixed_demographic_text(context.age, context.ethnicity, context.gender)
+        demographic = self._fixed_demographic_text(
+            context.age, context.ethnicity, context.gender
+        )
         positive = content.base_video_prompt.replace("{demographic}", demographic)
-        return GeneratedPrompt(
+        return FixedPrompt(
             positivePrompt=positive,
             dialogue=content.dialogue,
             vtText=content.display_text,
@@ -266,14 +315,28 @@ class PromptService:
         )
 
     @staticmethod
-    def _validate_output(category: Category, output: GeneratedPrompt) -> None:
+    def _validate_fixed_output(category: Category, output: FixedPrompt) -> None:
         is_va = category in {Category.A_VA, Category.C_VA}
         if is_va and (not output.dialogue or output.vt_text is not None):
-            raise ServiceError(502, "invalid_prompt_response", "VA prompt output must contain dialogue and no VT text")
+            raise ServiceError(
+                502,
+                "invalid_prompt_response",
+                "VA prompt output must contain dialogue and no VT text",
+            )
         if not is_va and (not output.vt_text or output.dialogue is not None):
-            raise ServiceError(502, "invalid_prompt_response", "VT prompt output must contain VT text and no dialogue")
-        chinese_values = [output.dialogue if is_va else output.vt_text, output.true_emotion_description]
-        if any(not value or not re.search(r"[\u4e00-\u9fff]", value) for value in chinese_values):
+            raise ServiceError(
+                502,
+                "invalid_prompt_response",
+                "VT prompt output must contain VT text and no dialogue",
+            )
+        chinese_values = [
+            output.dialogue if is_va else output.vt_text,
+            output.true_emotion_description,
+        ]
+        if any(
+            not value or not re.search(r"[\u4e00-\u9fff]", value)
+            for value in chinese_values
+        ):
             raise ServiceError(
                 502,
                 "invalid_prompt_response",
@@ -289,6 +352,49 @@ class PromptService:
             ) from error
 
     @staticmethod
+    def _validate_generated_output(output: GeneratedPrompt) -> None:
+        try:
+            _validate_spoken_text_component(output.spoken_text)
+            for field_name in (
+                "appearance",
+                "body_action",
+                "vocal_delivery",
+                "environmental_sound",
+                "setting",
+                "camera",
+                "lighting",
+            ):
+                validate_generated_component(getattr(output, field_name), field_name)
+            _validate_true_emotion_description(output.true_emotion_description)
+        except (PromptPolicyViolation, ValueError) as error:
+            raise ServiceError(502, "invalid_prompt_response", str(error)) from error
+
+    @classmethod
+    def _assemble_positive_prompt(
+        cls, prepared: PreparedPrompt, output: GeneratedPrompt
+    ) -> str:
+        person = "woman" if prepared.gender is Gender.FEMALE else "man"
+        pronoun = "She" if prepared.gender is Gender.FEMALE else "He"
+        demographic = (
+            f"A {prepared.age}-year-old {cls._ethnicity_text(prepared.ethnicity)} {person} "
+            "appears alone and faces the camera."
+        )
+        speech = f"{pronoun} says '{output.spoken_text}' once."
+        return " ".join(
+            (
+                demographic,
+                output.appearance,
+                output.body_action,
+                speech,
+                output.vocal_delivery,
+                output.environmental_sound,
+                output.setting,
+                output.camera,
+                output.lighting,
+            )
+        )
+
+    @staticmethod
     def _ethnicity_text(value: Ethnicity) -> str:
         return {
             Ethnicity.EAST_ASIAN: "East Asian",
@@ -299,7 +405,9 @@ class PromptService:
         }[value]
 
     @classmethod
-    def _fixed_demographic_text(cls, age: int, ethnicity: Ethnicity, gender: Gender) -> str:
+    def _fixed_demographic_text(
+        cls, age: int, ethnicity: Ethnicity, gender: Gender
+    ) -> str:
         person = "woman" if gender is Gender.FEMALE else "man"
         return f"A {age}-year-old {cls._ethnicity_text(ethnicity)} {person}"
 
@@ -319,12 +427,46 @@ def _load_unique_json_object(raw: str) -> dict[str, object]:
     return value
 
 
+def _validate_spoken_text_component(value: str) -> str:
+    if value != value.strip() or "\n" in value or "\r" in value:
+        raise ValueError(
+            "spokenText must not contain surrounding whitespace or line breaks"
+        )
+    if any(
+        mark in value for mark in ('"', "'", "\u2018", "\u2019", "\u201c", "\u201d")
+    ):
+        raise ValueError("spokenText must not contain quote marks")
+    han_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value))
+    other_alphanumeric_count = sum(
+        1
+        for character in value
+        if character.isalnum()
+        and not re.fullmatch(r"[\u3400-\u4dbf\u4e00-\u9fff]", character)
+    )
+    if han_count < 2 or han_count <= other_alphanumeric_count:
+        raise ValueError(
+            "spokenText must be natural Chinese and contain at least two Chinese characters"
+        )
+    if not 2 <= len(value) <= 40:
+        raise ValueError("spokenText must contain 2 to 40 characters")
+    return value
+
+
 def _validate_true_emotion_description(value: str) -> str:
     if value != value.strip() or "\n" in value or "\r" in value:
-        raise ValueError("True emotion description must not contain surrounding whitespace or line breaks")
+        raise ValueError(
+            "True emotion description must not contain surrounding whitespace or line breaks"
+        )
     if not re.search(r"[\u3400-\u4dbf\u4e00-\u9fff]", value):
-        raise ValueError("True emotion description must use natural Chinese for a reviewer")
+        raise ValueError(
+            "True emotion description must use natural Chinese for a reviewer"
+        )
     normalized = re.sub(r"[\s_-]+", "", value).casefold()
-    if any(re.sub(r"[\s_-]+", "", token).casefold() in normalized for token in FORBIDDEN_TRUE_EMOTION_DESCRIPTION_TOKENS):
-        raise ValueError("True emotion description must use natural Chinese for a reviewer")
+    if any(
+        re.sub(r"[\s_-]+", "", token).casefold() in normalized
+        for token in FORBIDDEN_TRUE_EMOTION_DESCRIPTION_TOKENS
+    ):
+        raise ValueError(
+            "True emotion description must use natural Chinese for a reviewer"
+        )
     return value

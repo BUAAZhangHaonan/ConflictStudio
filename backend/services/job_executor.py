@@ -41,7 +41,7 @@ from backend.domain.models import (
 from backend.domain.schemas import JobCancelRequest
 
 from .errors import ServiceError, not_found, revision_conflict, state_conflict
-from .prompts import GeneratedPrompt, PreparedPrompt, PromptResult, PromptService
+from .prompts import FixedPrompt, PreparedPrompt, PromptResult, PromptService
 from .samples import create_sample_for_completed_item
 
 
@@ -93,7 +93,9 @@ class JobExecutor:
             return
         self._stopping = False
         self.recover()
-        self._loop_task = asyncio.create_task(self._run_loop(), name="conflictstudio-job-executor")
+        self._loop_task = asyncio.create_task(
+            self._run_loop(), name="conflictstudio-job-executor"
+        )
         self.notify()
 
     async def stop(self) -> None:
@@ -152,9 +154,13 @@ class JobExecutor:
             if job is None:
                 raise not_found("job", job_id)
             if job.revision != payload.expected_revision:
-                raise revision_conflict("job", job_id, payload.expected_revision, job.revision)
+                raise revision_conflict(
+                    "job", job_id, payload.expected_revision, job.revision
+                )
             if job.status in TERMINAL_STATUSES:
-                raise state_conflict("job", job_id, "A finished job cannot be cancelled")
+                raise state_conflict(
+                    "job", job_id, "A finished job cannot be cancelled"
+                )
 
             timestamp = utc_now()
             if job.status is JobStatus.QUEUED:
@@ -164,7 +170,9 @@ class JobExecutor:
                 job.finished_at = timestamp
                 job.updated_at = timestamp
                 job.revision += 1
-                self._release_owned_slots(session, job.id, GpuAvailability.AVAILABLE, timestamp)
+                self._release_owned_slots(
+                    session, job.id, GpuAvailability.AVAILABLE, timestamp
+                )
                 self._append_event(
                     session,
                     job,
@@ -174,7 +182,9 @@ class JobExecutor:
             elif job.cancel_requested_at is None:
                 task_to_cancel = self._active_tasks.get(job_id)
                 if task_to_cancel is None:
-                    raise state_conflict("job", job_id, "The running job is not owned by this executor")
+                    raise state_conflict(
+                        "job", job_id, "The running job is not owned by this executor"
+                    )
                 job.cancel_requested_at = timestamp
                 job.updated_at = timestamp
                 job.revision += 1
@@ -182,7 +192,9 @@ class JobExecutor:
             else:
                 task_to_cancel = self._active_tasks.get(job_id)
                 if task_to_cancel is None:
-                    raise state_conflict("job", job_id, "The running job is not owned by this executor")
+                    raise state_conflict(
+                        "job", job_id, "The running job is not owned by this executor"
+                    )
 
         if task_to_cancel is not None:
             task_to_cancel.cancel()
@@ -203,14 +215,26 @@ class JobExecutor:
                 )
                 job.status = JobStatus.FAILED
                 job.failure_code = "interrupted_by_restart"
-                job.failure_reason = "The application stopped while this job was running"
+                job.failure_reason = (
+                    "The application stopped while this job was running"
+                )
                 job.finished_at = timestamp
                 job.updated_at = timestamp
                 job.revision += 1
                 self._sync_counts(session, job)
-                self._release_owned_slots(session, job.id, GpuAvailability.UNKNOWN, timestamp)
-                self._append_event(session, job, "JobInterrupted", code=job.failure_code)
-                self._append_event(session, job, "JobFailed", code=job.failure_code, reason=job.failure_reason)
+                self._release_owned_slots(
+                    session, job.id, GpuAvailability.UNKNOWN, timestamp
+                )
+                self._append_event(
+                    session, job, "JobInterrupted", code=job.failure_code
+                )
+                self._append_event(
+                    session,
+                    job,
+                    "JobFailed",
+                    code=job.failure_code,
+                    reason=job.failure_reason,
+                )
 
             queued_jobs = session.exec(
                 select(Job).where(Job.status == JobStatus.QUEUED).order_by(Job.id)
@@ -221,12 +245,21 @@ class JobExecutor:
 
             occupied_slots = session.exec(
                 select(GpuSlot).where(
-                    GpuSlot.availability.in_([GpuAvailability.RESERVED, GpuAvailability.BUSY])
+                    GpuSlot.availability.in_(
+                        [GpuAvailability.RESERVED, GpuAvailability.BUSY]
+                    )
                 )
             ).all()
             for slot in occupied_slots:
-                owner = session.get(Job, slot.active_job_id) if slot.active_job_id is not None else None
-                if owner is None or owner.status not in {JobStatus.QUEUED, JobStatus.RUNNING}:
+                owner = (
+                    session.get(Job, slot.active_job_id)
+                    if slot.active_job_id is not None
+                    else None
+                )
+                if owner is None or owner.status not in {
+                    JobStatus.QUEUED,
+                    JobStatus.RUNNING,
+                }:
                     slot.availability = GpuAvailability.UNKNOWN
                     slot.active_job_id = None
                     slot.revision += 1
@@ -238,12 +271,20 @@ class JobExecutor:
                 for job_id in self._claim_queued_jobs():
                     if job_id in self._active_tasks:
                         continue
-                    task = asyncio.create_task(self._run_job(job_id), name=f"conflictstudio-job-{job_id}")
+                    task = asyncio.create_task(
+                        self._run_job(job_id), name=f"conflictstudio-job-{job_id}"
+                    )
                     self._active_tasks[job_id] = task
-                    task.add_done_callback(lambda completed, value=job_id: self._task_finished(value, completed))
+                    task.add_done_callback(
+                        lambda completed, value=job_id: self._task_finished(
+                            value, completed
+                        )
+                    )
             self._wake.clear()
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=self.scan_interval_seconds)
+                await asyncio.wait_for(
+                    self._wake.wait(), timeout=self.scan_interval_seconds
+                )
             except TimeoutError:
                 pass
 
@@ -288,7 +329,9 @@ class JobExecutor:
         try:
             with self.database.read_session() as session:
                 items = session.exec(
-                    select(JobItem).where(JobItem.job_id == job_id).order_by(JobItem.sequence)
+                    select(JobItem)
+                    .where(JobItem.job_id == job_id)
+                    .order_by(JobItem.sequence)
                 ).all()
                 channels: dict[GpuSlotName, list[int]] = defaultdict(list)
                 for item in items:
@@ -316,7 +359,9 @@ class JobExecutor:
         try:
             execution = self._begin_item(job_id, item_id)
             gpu_slot = execution.gpu_slot
-            result = await self.prompts.complete(execution.prepared_prompt, execution.category)
+            result = await self.prompts.complete(
+                execution.prepared_prompt, execution.category
+            )
             self._store_prompt_result(job_id, item_id, result)
 
             request = RenderRequest(
@@ -408,9 +453,9 @@ class JobExecutor:
 
     @staticmethod
     def _prepared_prompt(snapshot: BatchVideoInputSnapshot) -> PreparedPrompt:
-        fixed_output: GeneratedPrompt | None = None
+        fixed_output: FixedPrompt | None = None
         if snapshot.fixed_positive_prompt is not None:
-            fixed_output = GeneratedPrompt(
+            fixed_output = FixedPrompt(
                 positivePrompt=snapshot.fixed_positive_prompt,
                 dialogue=snapshot.fixed_dialogue,
                 vtText=snapshot.fixed_vt_text,
@@ -430,7 +475,9 @@ class JobExecutor:
             fixed_output=fixed_output,
         )
 
-    def _store_prompt_result(self, job_id: int, item_id: int, result: PromptResult) -> None:
+    def _store_prompt_result(
+        self, job_id: int, item_id: int, result: PromptResult
+    ) -> None:
         with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
@@ -490,7 +537,9 @@ class JobExecutor:
             item.revision += 1
             if job.source is JobSource.PRODUCTION and item.primary_asset_id is not None:
                 if job.dataset_id is None:
-                    raise RuntimeError("A production job must have a destination dataset")
+                    raise RuntimeError(
+                        "A production job must have a destination dataset"
+                    )
                 create_sample_for_completed_item(session, job, item, job.dataset_id)
             job.completed_count += 1
             job.updated_at = timestamp
@@ -522,7 +571,9 @@ class JobExecutor:
             job.failed_count += 1
             job.updated_at = timestamp
             job.revision += 1
-            self._append_event(session, job, "ItemFailed", item=item, code=code, reason=reason)
+            self._append_event(
+                session, job, "ItemFailed", item=item, code=code, reason=reason
+            )
 
     def _cancel_item(self, job_id: int, item_id: int) -> None:
         with self._event_session() as session:
@@ -559,12 +610,16 @@ class JobExecutor:
             job.status = JobStatus.FAILED if job.failed_count else JobStatus.COMPLETED
             job.failure_code = "item_failed" if job.failed_count else None
             job.failure_reason = (
-                f"{job.failed_count} of {job.total_count} job items failed" if job.failed_count else None
+                f"{job.failed_count} of {job.total_count} job items failed"
+                if job.failed_count
+                else None
             )
             job.finished_at = timestamp
             job.updated_at = timestamp
             job.revision += 1
-            self._release_owned_slots(session, job.id, GpuAvailability.AVAILABLE, timestamp)
+            self._release_owned_slots(
+                session, job.id, GpuAvailability.AVAILABLE, timestamp
+            )
             self._append_event(
                 session,
                 job,
@@ -607,13 +662,23 @@ class JobExecutor:
             )
             job.status = JobStatus.FAILED
             job.failure_code = "job_execution_failed"
-            job.failure_reason = "The job stopped because its execution state became invalid"
+            job.failure_reason = (
+                "The job stopped because its execution state became invalid"
+            )
             job.finished_at = timestamp
             job.updated_at = timestamp
             job.revision += 1
             self._sync_counts(session, job)
-            self._release_owned_slots(session, job.id, GpuAvailability.UNKNOWN, timestamp)
-            self._append_event(session, job, "JobFailed", code=job.failure_code, reason=job.failure_reason)
+            self._release_owned_slots(
+                session, job.id, GpuAvailability.UNKNOWN, timestamp
+            )
+            self._append_event(
+                session,
+                job,
+                "JobFailed",
+                code=job.failure_code,
+                reason=job.failure_reason,
+            )
 
     def _fail_queued_reservation(self, session: Session, job: Job) -> None:
         timestamp = utc_now()
@@ -632,7 +697,9 @@ class JobExecutor:
         job.revision += 1
         self._sync_counts(session, job)
         self._release_owned_slots(session, job.id, GpuAvailability.UNKNOWN, timestamp)
-        self._append_event(session, job, "JobFailed", code=job.failure_code, reason=job.failure_reason)
+        self._append_event(
+            session, job, "JobFailed", code=job.failure_code, reason=job.failure_reason
+        )
 
     def _reservations_match(self, session: Session, job: Job) -> bool:
         slots = self._job_slots(session, job.id)
@@ -658,7 +725,11 @@ class JobExecutor:
     def _cancel_requested(self, job_id: int) -> bool:
         with self.database.read_session() as session:
             job = session.get(Job, job_id)
-            return job is None or job.cancel_requested_at is not None or job.status is not JobStatus.RUNNING
+            return (
+                job is None
+                or job.cancel_requested_at is not None
+                or job.status is not JobStatus.RUNNING
+            )
 
     def _cancel_items(self, session: Session, job: Job, timestamp: str) -> None:
         items = session.exec(select(JobItem).where(JobItem.job_id == job.id)).all()
@@ -699,7 +770,9 @@ class JobExecutor:
                 changed.append(item)
         self._sync_counts(session, job)
         for item in changed:
-            self._append_event(session, job, "ItemFailed", item=item, code=code, reason=reason)
+            self._append_event(
+                session, job, "ItemFailed", item=item, code=code, reason=reason
+            )
 
     @staticmethod
     def _sync_counts(session: Session, job: Job) -> None:
@@ -720,7 +793,9 @@ class JobExecutor:
         availability: GpuAvailability,
         timestamp: str,
     ) -> None:
-        rows = session.exec(select(GpuSlot).where(GpuSlot.active_job_id == job_id)).all()
+        rows = session.exec(
+            select(GpuSlot).where(GpuSlot.active_job_id == job_id)
+        ).all()
         for row in rows:
             row.availability = availability
             row.active_job_id = None
@@ -755,7 +830,9 @@ class JobExecutor:
                 job_id=job.id,
                 item_id=item.id if item is not None else None,
                 event_type=event_type,
-                payload_json=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                payload_json=json.dumps(
+                    payload, ensure_ascii=False, separators=(",", ":")
+                ),
                 created_at=utc_now(),
             )
         )

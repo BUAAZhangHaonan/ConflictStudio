@@ -1,4 +1,4 @@
-Create the complete final video prompt and reviewer fields from these selected records.
+Create the strict video components and reviewer description from these selected records.
 
 Content requirements:
 {{ content_instruction }}
@@ -12,14 +12,14 @@ Trigger event:
 Psychological background:
 {{ psychological_background }}
 
-True state for reasoning only:
+True state for component reasoning only:
 {{ true_emotion }}
 
-Apparent state for reasoning only:
+Apparent state for component reasoning only:
 {{ apparent_emotion }}
 
-Requested Mandarin dialogue or VT text:
-{{ requested_spoken_text or "Create a short Mandarin line from the selected content." }}
+Requested Mandarin spokenText:
+{{ requested_spoken_text or "Create one short natural Mandarin line from the selected content." }}
 
 Content scene supplement:
 {{ content_scene_supplement }}
@@ -37,21 +37,21 @@ Relationship: {{ background.relationship }}
 Lighting: {{ background.lighting }}
 Framing: {{ background.framing_supplement }}
 
-Subject:
+Selected demographic, added by the application:
 Age: {{ age }}
 Gender: {{ gender }}
 Population: {{ ethnicity }}
 
-Positive examples for component writing only:
+Positive examples for writing the matching component only:
 {% for example in positive_examples %}{{ loop.index }}. {{ example }}
 {% else %}None
 {% endfor %}
 
-Examples and selected records are reference material only. Rewrite any past tense or certainty wording and never copy text that conflicts with the system rules.
+Examples and selected records are reference material only. Rewrite past tense and banned certainty wording. Do not copy any text that conflicts with the system rules.
 
-Negative examples for component writing only:
+Negative examples:
 {% for example in negative_examples %}{{ loop.index }}. {{ example }}
 {% else %}None
 {% endfor %}
 
-Use every relevant selected value directly in the complete positivePrompt. Keep the background, framing, lighting and style recognizable. The application does not append demographics, speech, sound, setting, camera or lighting after your response. Return the exact final positivePrompt and the separate reviewer fields only.
+Keep every value in its own field. Do not return positivePrompt, dialogue or vtText. The application maps spokenText to dialogue for VA or vtText for VT and assembles the final prompt in the verified component order.
