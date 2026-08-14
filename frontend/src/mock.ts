@@ -54,7 +54,7 @@ function makeSample(category: Category, index: number, sampleIndex: number): Sam
         : '人物的视觉表现和显示文本都表达相同情绪，两种信息相互支持。';
   return {
     id,
-    displayId: `CS-${String(sampleIndex + 1).padStart(4, '0')}`,
+    displayId: `CS-${String(sampleIndex + 1).padStart(6, '0')}`,
     datasetId: sampleIndex < 8 ? 'dataset-main' : 'dataset-validation',
     category,
     conflictDirection,
@@ -110,7 +110,7 @@ const archiveSamples = Array.from({ length: 28 }, (_, index): Sample => {
   return {
     ...makeSample(category, 1, sampleIndex),
     id: `archive-sample-${String(index + 1).padStart(3, '0')}`,
-    displayId: `CS-${String(index + 101).padStart(4, '0')}`,
+    displayId: `CS-${String(index + 101).padStart(6, '0')}`,
     datasetId: 'dataset-main',
     reviewDecision: 'Accepted',
     reviewRevision: 1,
@@ -501,7 +501,7 @@ export const initialData: RepositoryData = {
   presets,
   archives,
   activities: [
-    { id: 'activity-1', action: 'ReviewSaved', objectLabel: 'CS-0002', reviewerId: 'reviewer-lin', occurredAt: baseDate },
+    { id: 'activity-1', action: 'ReviewSaved', objectLabel: 'CS-000002', reviewerId: 'reviewer-lin', occurredAt: baseDate },
     { id: 'activity-2', action: 'JobCreated', objectLabel: 'A-VA-20260809-175845', reviewerId: null, occurredAt: baseDate },
     { id: 'activity-3', action: 'ArchiveSynced', objectLabel: '正式生成集', reviewerId: 'reviewer-chen', occurredAt: '2026-08-08T09:00:00.000Z' },
   ],

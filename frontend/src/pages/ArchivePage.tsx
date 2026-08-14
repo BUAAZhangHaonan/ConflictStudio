@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useDatasetsQuery, useSamplesQuery } from '../api/queries';
 import { apiErrorMessage } from '../api/client';
 import { Button, Metric, PageHeader } from '../components';
@@ -9,6 +9,7 @@ import {
   clampPage,
   pageCount,
   pageItems,
+  reviewLocation,
 } from '../reviewArchive';
 import { formatDateTime } from '../time';
 import type { Category } from '../types';
@@ -102,9 +103,10 @@ export function ArchivePage() {
     });
   }, [categoryFilter, dataset?.name, locale, rows, search, sortDirection, sortKey]);
   const totalPages = pageCount(filteredRows.length);
-  const currentPage = clampPage(page, filteredRows.length);
+  const currentPage = samplesQuery.isSuccess ? clampPage(page, filteredRows.length) : page;
   const visibleRows = pageItems(filteredRows, currentPage);
   const hasFilters = search.trim() !== '' || categoryFilter !== 'All';
+  const reviewReturnTo = `${location.pathname}${location.search}`;
 
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage);
@@ -220,7 +222,7 @@ export function ArchivePage() {
                         <tbody>{visibleRows.map(sample => (
                           <tr key={sample.id} data-sample-id={sample.displayId}>
                             <td><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /></td>
-                            <th scope="row"><strong>{sample.displayId}</strong><span className="archive-sample-meta">{t(`category.${sample.category}`)}<br />{formatDateTime(sample.updatedAt)}</span></th>
+                            <th scope="row"><Link to={reviewLocation(sample.displayId, reviewReturnTo)} state={{ reviewReturnTo }}><strong>{sample.displayId}</strong></Link><span className="archive-sample-meta">{t(`category.${sample.category}`)}<br />{formatDateTime(sample.updatedAt)}</span></th>
                             <td>{t(`category.${sample.category}`)}</td>
                             <td>{sample.model}</td>
                             <td>{formatDateTime(sample.updatedAt)}</td>

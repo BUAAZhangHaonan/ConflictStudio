@@ -17,8 +17,34 @@ export function pageItems<T>(items: readonly T[], page: number): T[] {
 }
 
 export function reviewLocation(displayId: string, returnTo: string): string {
-  const params = new URLSearchParams({ sample: displayId, returnTo });
+  const params = new URLSearchParams({ sample: displayId });
+  const safeReturnTo = safeReviewReturnTarget(returnTo);
+  if (safeReturnTo) params.set('returnTo', safeReturnTo);
   return `/review?${params.toString()}`;
+}
+
+const reviewReturnPaths = new Set([
+  '/workspace',
+  '/generate/batches',
+  '/generate/test',
+  '/generate/content',
+  '/generate/backgrounds',
+  '/generate/presets',
+  '/generate/jobs',
+  '/archive',
+  '/settings',
+  '/me/statistics',
+]);
+
+export function safeReviewReturnTarget(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const target = new URL(value, 'https://conflictstudio.local');
+    if (target.origin !== 'https://conflictstudio.local' || !reviewReturnPaths.has(target.pathname)) return null;
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return null;
+  }
 }
 
 function readableModality(direction: ConflictDirection | null): 'visual' | 'audio' | 'text' | null {
@@ -71,14 +97,6 @@ export function archiveJsonl(datasetName: string, samples: readonly Sample[]): s
 
 export function archiveFileName(datasetName: string): string {
   return `${datasetName.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/gu, '_')}.jsonl`;
-}
-
-export function archiveReturnTarget(value: string | null): string | null {
-  if (!value) return null;
-  const target = new URL(value, 'https://conflictstudio.local');
-  return target.origin === 'https://conflictstudio.local' && target.pathname === '/archive'
-    ? `${target.pathname}${target.search}`
-    : null;
 }
 
 export function applyConflictDirectionChange(

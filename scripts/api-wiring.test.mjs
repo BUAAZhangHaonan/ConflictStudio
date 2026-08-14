@@ -23,6 +23,8 @@ const generationLocaleSource = readFileSync(new URL('../frontend/src/locales/fea
 const reviewArchiveLocaleSource = readFileSync(new URL('../frontend/src/locales/features/reviewArchive.ts', import.meta.url), 'utf8');
 const workspaceLocaleSource = readFileSync(new URL('../frontend/src/locales/features/workspaceSettingsStatistics.ts', import.meta.url), 'utf8');
 const generationCssSource = readFileSync(new URL('../frontend/src/pages/generate/GenerationPage.css', import.meta.url), 'utf8');
+const reviewCssSource = readFileSync(new URL('../frontend/src/pages/ReviewPage.css', import.meta.url), 'utf8');
+const reviewArchiveSource = readFileSync(new URL('../frontend/src/reviewArchive.ts', import.meta.url), 'utf8');
 
 const operationalPageSources = {
   workspace: workspacePageSource,
@@ -105,21 +107,49 @@ test('completed test results can be kept as formal samples without a mock path',
   assert.doesNotMatch(jobsPageSource, /keepTestResult/u);
 });
 
-test('the visible review queue reads pending current Sample records', () => {
+test('the review page reads all current samples and keeps only pending samples in the queue', () => {
   assert.match(querySource, /samples: \(decision\?: ReviewDecision\) => \['samples', decision \?\? 'All'\] as const/u);
   assert.match(querySource, /useSamplesQuery\(decision\?: ReviewDecision\)/u);
   assert.match(querySource, /new URLSearchParams\(\{ decision \}\)/u);
   assert.match(querySource, /\/api\/samples\/\$\{id\}\/review/u);
-  assert.match(reviewPageSource, /useSamplesQuery\('Pending'\)/u);
+  assert.match(reviewPageSource, /useSamplesQuery\(\)/u);
+  assert.match(reviewPageSource, /pendingSamples = useMemo/u);
   assert.match(reviewPageSource, /sample\.reviewDecision === 'Pending'/u);
   const sampleContract = contractSource.match(/export interface Sample \{([\s\S]*?)\n\}/u)?.[1];
   assert.ok(sampleContract);
   assert.match(sampleContract, /model: ModelName;/u);
   assert.match(sampleContract, /generationRecord: GenerationAttempt;/u);
   assert.doesNotMatch(sampleContract, /precision:/u);
-  assert.match(reviewPageSource, /selected\.generationRecord\.precision/u);
+  for (const field of ['model', 'precision', 'gpuSlot', 'seed', 'attemptNumber', 'id']) {
+    assert.match(reviewPageSource, new RegExp(`selected\\.generationRecord\\.${field}`));
+  }
   assert.doesNotMatch(reviewPageSource, /selected\.precision/u);
+  const sampleContext = reviewPageSource.match(/className="panel review-context"([\s\S]*?)className="panel review-generation-record"/u)?.[1] ?? '';
+  assert.match(sampleContext, /selected\.model/u);
+  assert.doesNotMatch(sampleContext, /generationRecord|selected\.seed|gpuSlot|attemptNumber/u);
   assert.doesNotMatch(reviewPageSource, /useMockRepository|useRepositorySnapshot/u);
+});
+
+test('review navigation is same-origin allowlisted and mobile detail is split from the queue', () => {
+  assert.match(reviewArchiveSource, /const reviewReturnPaths = new Set/u);
+  assert.match(reviewArchiveSource, /target\.origin !== 'https:\/\/conflictstudio\.local'/u);
+  assert.match(reviewArchiveSource, /reviewReturnPaths\.has\(target\.pathname\)/u);
+  assert.match(reviewPageSource, /next\.delete\('sample'\)/u);
+  assert.match(reviewPageSource, /review-grid--mobile-detail/u);
+  assert.match(reviewPageSource, /review-page--mobile-detail/u);
+  assert.match(reviewCssSource, /@media \(max-width: 768px\)[\s\S]*\.review-grid:not\(\.review-grid--mobile-detail\) \.review-detail[\s\S]*display: none/u);
+  assert.match(reviewCssSource, /\.review-grid--mobile-detail \.review-queue[\s\S]*display: none/u);
+  assert.match(reviewCssSource, /\.review-media \.media-panel video \{[\s\S]*object-fit: contain/u);
+  assert.match(reviewCssSource, /@media \(max-width: 390px\)[\s\S]*\.review-generation-record dl[\s\S]*grid-template-columns: minmax\(0, 1fr\)/u);
+});
+
+test('review generation record and navigation copy is complete in English and Chinese', () => {
+  for (const key of ['generationRecord', 'attemptRevision', 'attemptId', 'notApplicable', 'returnToSource', 'detailNavigation']) {
+    assert.equal(reviewArchiveLocaleSource.match(new RegExp(`${key}:`, 'gu'))?.length, 2, `${key} must have two translations`);
+  }
+  for (const text of ['Generation record', 'Attempt revision', 'Attempt ID', 'Back to previous page', '生成记录', '尝试序号', '尝试记录编号', '返回上一页']) {
+    assert.equal(reviewArchiveLocaleSource.includes(text), true, `${text} must remain translated`);
+  }
 });
 
 test('workspace, jobs, review, and archive read operational data only from API queries', () => {
@@ -135,7 +165,7 @@ test('workspace, jobs, review, and archive read operational data only from API q
   assert.match(workspacePageSource, /useJobsQuery\(\)/u);
   assert.match(workspacePageSource, /useSamplesQuery\(\)/u);
   assert.match(jobsPageSource, /useJobsQuery\(\)/u);
-  assert.match(reviewPageSource, /useSamplesQuery\('Pending'\)/u);
+  assert.match(reviewPageSource, /useSamplesQuery\(\)/u);
   assert.match(archivePageSource, /useDatasetsQuery\(\)/u);
   assert.match(archivePageSource, /useSamplesQuery\('Accepted'\)/u);
   assert.match(archivePageSource, /<td>\{sample\.model\}<\/td>/u);
@@ -151,7 +181,7 @@ test('empty API arrays drive truthful empty states on all four operational pages
   assert.match(jobsPageSource, /jobs\.length === 0 \? 'jobs\.empty' : 'jobs\.filtered'/u);
 
   assert.match(reviewPageSource, /const samples = samplesQuery\.data \?\? \[\]/u);
-  assert.match(reviewPageSource, /samples\.length === 0[\s\S]*review\.emptyTitle[\s\S]*review\.emptyBody/u);
+  assert.match(reviewPageSource, /pendingSamples\.length === 0[\s\S]*review\.emptyTitle[\s\S]*review\.emptyBody/u);
 
   assert.match(archivePageSource, /const datasets = datasetsQuery\.data \?\? \[\]/u);
   assert.match(archivePageSource, /const acceptedSamples = samplesQuery\.data \?\? \[\]/u);

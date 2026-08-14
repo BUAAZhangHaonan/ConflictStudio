@@ -663,7 +663,7 @@ export class MockRepository {
     const protocol = protocolForCategory(input.category);
     const sample: Sample = {
       id: sampleId,
-      displayId: `CS-${String(this.snapshot.data.samples.length + 1).padStart(4, '0')}`,
+      displayId: `CS-${String(this.snapshot.data.samples.length + 1).padStart(6, '0')}`,
       datasetId,
       category: input.category,
       conflictDirection: input.conflictDirection,

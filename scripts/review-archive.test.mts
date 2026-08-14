@@ -5,10 +5,10 @@ import {
   applyConflictDirectionChange,
   archiveFileName,
   archiveJsonl,
-  archiveReturnTarget,
   pageCount,
   pageItems,
   reviewLocation,
+  safeReviewReturnTarget,
 } from '../frontend/src/reviewArchive.ts';
 import type { Sample } from '../frontend/src/types.ts';
 
@@ -41,13 +41,28 @@ test('uses fixed pages of twenty archive rows', () => {
   assert.deepEqual(pageItems(rows, 9), rows.slice(40, 45));
 });
 
-test('keeps the archive page and filters in the review return target', () => {
+test('keeps safe application pages and filters in the review return target', () => {
   const returnTo = '/archive?dataset=dataset-main&category=C-VA&page=3';
-  const location = reviewLocation('CS-0008', returnTo);
+  const location = reviewLocation('CS-000008', returnTo);
   const params = new URL(location, 'https://conflictstudio.local').searchParams;
-  assert.equal(params.get('sample'), 'CS-0008');
-  assert.equal(archiveReturnTarget(params.get('returnTo')), returnTo);
-  assert.equal(archiveReturnTarget('/workspace'), null);
+  assert.equal(params.get('sample'), 'CS-000008');
+  assert.equal(safeReviewReturnTarget(params.get('returnTo')), returnTo);
+  assert.equal(safeReviewReturnTarget('/workspace?dataset=1#pending'), '/workspace?dataset=1#pending');
+});
+
+test('rejects external, protocol-relative, review, and unknown return targets', () => {
+  for (const target of [
+    'https://example.com/archive',
+    '//example.com/archive',
+    '/review?sample=CS-000001',
+    '/unknown',
+    'https://conflictstudio.local.evil.example/archive',
+  ]) {
+    assert.equal(safeReviewReturnTarget(target), null);
+  }
+  const location = new URL(reviewLocation('CS-000001', 'https://example.com/archive'), 'https://conflictstudio.local');
+  assert.equal(location.searchParams.get('sample'), 'CS-000001');
+  assert.equal(location.searchParams.has('returnTo'), false);
 });
 
 test('exports stable delivery fields without internal ids or embedded media', () => {
