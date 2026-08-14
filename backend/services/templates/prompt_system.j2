@@ -7,20 +7,24 @@ Follow these rules:
 4. Write appearance, bodyAction, vocalDelivery, environmentalSound, setting, camera and lighting as separate complete English sentences ending with a period. Never put Mandarin in those fields.
 5. spokenText is one natural Mandarin line of 2 to 40 characters with no quote marks. Copy the requested line exactly when one is supplied. Do not repeat it or translate it in another component.
 6. appearance describes only observable clothing, hair and other visible traits. The application adds the selected age, population and gender itself.
-7. bodyAction describes concrete visible body and facial behavior. vocalDelivery describes only audible delivery. environmentalSound describes non-musical room sound. setting describes only the physical place. camera and lighting describe only their named production component.
-8. The assembled positive prompt must contain 80 to 150 English words, excluding spokenText. Size the seven English components accordingly.
-9. Use present tense only. Never use these certainty modifiers: {{ banned_certainty_modifiers | join(", ") }}. Do not use clearly to make an emotion or psychological judgment or with inference verbs such as indicates or reveals. Clearly may describe a directly observable physical camera or lighting property, such as clearly visible or clearly framed.
-10. Never name an emotion, channel, category, protocol or internal field in a video component. Express affect only through observable action or vocal delivery.
-11. Do not invent music, a score, background speech, voiceover, narration, subtitles, captions or rendered text.
-12. camera uses a static front-facing close-up or head-and-shoulders view with a readable face. lighting is bright, soft and even. Do not request camera movement, a wide shot, dim lighting or heavy facial shadows.
-13. trueEmotionDescription is two to four concise Chinese sentences for a reviewer. Use natural Chinese only. Do not mention schema fields, channels, protocols or labels such as A-VA, A-VT, C-VA or C-VT.
-14. A-VA and A-VT are aligned: the retained modalities carry the same true state. C-VA and C-VT conflict: the selected Vision, Audio or Text direction decides which modality carries the true state and the other modality carries the apparent state.
-15. Follow this category rule: {{ policy.protocol_rule }}
-16. Follow this relation rule: {{ policy.relation_rule }}
-17. Follow this direction rule: {{ direction_rule }}
-18. Follow this component assignment: {{ policy.output_rule }}
+7. Keep every English component a concise physical description. bodyAction describes concrete visible body and facial behavior. vocalDelivery describes only audible delivery. environmentalSound describes non-musical room sound. setting describes only the physical place. camera and lighting describe only their named production component.
+8. Never exceed these separate English word budgets: appearance {{ component_word_limits.appearance }}; bodyAction {{ component_word_limits.body_action }}; vocalDelivery {{ component_word_limits.vocal_delivery }}; environmentalSound {{ component_word_limits.environmental_sound }}; setting {{ component_word_limits.setting }}; camera {{ component_word_limits.camera }}; lighting {{ component_word_limits.lighting }}.
+9. Target 100 to 135 English words in the assembled positive prompt. The hard final limit remains 80 to 150 English words. spokenText and trueEmotionDescription do not count toward any English component budget.
+10. Use present tense only. Never use these certainty modifiers: {{ banned_certainty_modifiers | join(", ") }}. Do not use clearly to make an emotion or psychological judgment or with inference verbs such as indicates or reveals. Clearly may describe a directly observable physical camera or lighting property, such as clearly visible or clearly framed.
+11. Never name an emotion, channel, category, protocol or internal field in a video component. Express affect only through observable action or vocal delivery.
+12. Do not invent music, a score, background speech, voiceover, narration, subtitles, captions or rendered text.
+13. camera uses a static front-facing close-up or head-and-shoulders view with a readable face. lighting is bright, soft and even. Do not request camera movement, a wide shot, dim lighting or heavy facial shadows.
+14. trueEmotionDescription is two to four concise Chinese sentences for a reviewer. Use natural Chinese only. Do not mention schema fields, channels, protocols or labels such as A-VA, A-VT, C-VA or C-VT.
+15. A-VA and A-VT are aligned: the retained modalities carry the same true state. C-VA and C-VT conflict: the selected Vision, Audio or Text direction decides which modality carries the true state and the other modality carries the apparent state.
+16. Follow this category rule: {{ policy.protocol_rule }}
+17. Follow this relation rule: {{ policy.relation_rule }}
+18. Follow this direction rule: {{ direction_rule }}
+19. Follow this component assignment: {{ policy.output_rule }}
 
 Return exactly one JSON object with these keys and no additional keys:
 spokenText, appearance, bodyAction, vocalDelivery, environmentalSound, setting, camera, lighting, trueEmotionDescription
 
 Keys may appear in any order. Return strict JSON only. Do not wrap the object in a code fence or add prose.
+
+Use this complete example for structure, concise physical detail and scale only. Rewrite all content to follow the selected records, category and direction:
+{"spokenText":"我需要一点时间。","appearance":"She wears a plain charcoal jacket, and her dark hair stays tucked behind both ears.","bodyAction":"She sits upright, rests both hands within the portrait frame, presses her lips briefly, raises her chin, and holds a level gaze after speaking.","vocalDelivery":"She uses low volume, measured pacing, steady breath, and firm articulation throughout the line.","environmentalSound":"A soft ventilation hum and the even ticking of a wall clock remain audible.","setting":"The private office has pale walls, a bare wooden table, and one closed window behind the seat.","camera":"The camera holds a static front-facing close-up with the entire face readable.","lighting":"Soft daylight keeps the face bright and evenly lit across the plain jacket fabric.","trueEmotionDescription":"人物的言语和动作共同呈现当前的真实感受。声音与画面保持一致。"}

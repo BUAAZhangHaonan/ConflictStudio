@@ -7,7 +7,24 @@ from dataclasses import dataclass
 from .enums import Category, ConflictDirection
 
 
-POLICY_VERSION = "2026-08-14.2"
+POLICY_VERSION = "2026-08-14.3"
+
+COMPONENT_WORD_LIMITS: Mapping[str, int] = {
+    "appearance": 18,
+    "body_action": 30,
+    "vocal_delivery": 18,
+    "environmental_sound": 17,
+    "setting": 17,
+    "camera": 16,
+    "lighting": 16,
+}
+ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX = 14
+FINAL_POSITIVE_PROMPT_MAX_WORDS = 150
+
+assert (
+    sum(COMPONENT_WORD_LIMITS.values()) + ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX
+    <= FINAL_POSITIVE_PROMPT_MAX_WORDS
+)
 
 
 @dataclass(frozen=True)
@@ -319,6 +336,22 @@ _AUDIBLE_SPEECH_RE = re.compile(
 )
 
 
+def count_english_words(value: str) -> int:
+    return len(_ENGLISH_WORD_RE.findall(value))
+
+
+def validate_component_word_limit(value: str, field_name: str) -> str:
+    max_words = COMPONENT_WORD_LIMITS[field_name]
+    word_count = count_english_words(value)
+    if word_count > max_words:
+        raise PromptPolicyViolation(
+            (
+                f"{field_name} must contain no more than {max_words} English words; found {word_count}",
+            )
+        )
+    return value
+
+
 class PromptPolicyViolation(ValueError):
     def __init__(self, violations: Sequence[str]) -> None:
         self.violations = tuple(violations)
@@ -398,8 +431,8 @@ def validate_final_positive_prompt(
     narrative = (
         prompt.replace(quoted_spoken_text, "", 1) if quoted_spoken_text else prompt
     )
-    word_count = len(_ENGLISH_WORD_RE.findall(narrative))
-    if not 80 <= word_count <= 150:
+    word_count = count_english_words(narrative)
+    if not 80 <= word_count <= FINAL_POSITIVE_PROMPT_MAX_WORDS:
         violations.append(
             f"positivePrompt must contain 80 to 150 English words; found {word_count}"
         )
@@ -494,6 +527,10 @@ def validate_generated_component(value: str, field_name: str) -> str:
         )
     if _CJK_RE.search(value):
         violations.append(f"{field_name} must use English only")
+    try:
+        validate_component_word_limit(value, field_name)
+    except PromptPolicyViolation as error:
+        violations.extend(error.violations)
     for phrases, label in (
         (BANNED_EMOTION_LABELS, "emotion labels"),
         (BANNED_CERTAINTY_MODIFIERS, "certainty claims"),

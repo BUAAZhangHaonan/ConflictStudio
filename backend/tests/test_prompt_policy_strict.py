@@ -17,9 +17,14 @@ from backend.domain.enums import (
 )
 from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
 from backend.domain.prompt_policy import (
+    ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX,
+    COMPONENT_WORD_LIMITS,
+    FINAL_POSITIVE_PROMPT_MAX_WORDS,
     PromptPolicyViolation,
+    count_english_words,
     direction_rule,
     validate_background_policy_text,
+    validate_generated_component,
     validate_final_positive_prompt,
 )
 from backend.services.errors import ServiceError
@@ -93,6 +98,19 @@ def component_json(**overrides: object) -> str:
     values = component_values()
     values.update(overrides)
     return json.dumps(values, ensure_ascii=False)
+
+
+def component_boundary_sentence(field_name: str, word_count: int) -> str:
+    opening = {
+        "appearance": "Fabric",
+        "body_action": "Posture",
+        "vocal_delivery": "Voice",
+        "environmental_sound": "Ventilation",
+        "setting": "Office",
+        "camera": "Lens",
+        "lighting": "Daylight",
+    }[field_name]
+    return f"{opening} {'detail ' * (word_count - 1)}".strip() + "."
 
 
 def prompt_context(
@@ -252,8 +270,91 @@ def test_strict_components_are_assembled_in_verified_order() -> None:
     assert result.final_positive_prompt.count(VA_DIALOGUE) == 1
     assert f"'{VA_DIALOGUE}'" in result.final_positive_prompt
     assert json.loads(result.raw_structured_response) == values
+    for field_name in COMPONENT_WORD_LIMITS:
+        assert result.final_positive_prompt.count(
+            str(values[_component_alias(field_name)])
+        ) == 1
     assert result.final_negative_prompt == "subtitles, captions, distorted face"
     assert "Do not return positivePrompt" in prepared.user_input
+
+
+def _component_alias(field_name: str) -> str:
+    return {
+        "body_action": "bodyAction",
+        "vocal_delivery": "vocalDelivery",
+        "environmental_sound": "environmentalSound",
+    }.get(field_name, field_name)
+
+
+@pytest.mark.parametrize("field_name,max_words", COMPONENT_WORD_LIMITS.items())
+def test_pydantic_enforces_each_component_word_boundary(
+    field_name: str, max_words: int
+) -> None:
+    alias = _component_alias(field_name)
+    values = component_values()
+    boundary = component_boundary_sentence(field_name, max_words)
+    values[alias] = boundary
+
+    output = GeneratedPrompt.model_validate(values)
+
+    assert getattr(output, field_name) == boundary
+    values[alias] = component_boundary_sentence(field_name, max_words + 1)
+    with pytest.raises(ValidationError, match=f"no more than {max_words} English words"):
+        GeneratedPrompt.model_validate(values)
+
+
+@pytest.mark.parametrize("field_name,max_words", COMPONENT_WORD_LIMITS.items())
+def test_domain_validation_enforces_each_component_word_boundary(
+    field_name: str, max_words: int
+) -> None:
+    boundary = component_boundary_sentence(field_name, max_words)
+
+    assert validate_generated_component(boundary, field_name) == boundary
+    with pytest.raises(
+        PromptPolicyViolation,
+        match=f"no more than {max_words} English words",
+    ):
+        validate_generated_component(
+            component_boundary_sentence(field_name, max_words + 1), field_name
+        )
+
+
+def test_component_budgets_bound_theoretical_assembly_without_truncation() -> None:
+    values = component_values()
+    for field_name, max_words in COMPONENT_WORD_LIMITS.items():
+        values[_component_alias(field_name)] = component_boundary_sentence(
+            field_name, max_words
+        )
+
+    result, _ = complete_generated(values)
+
+    assert (
+        sum(COMPONENT_WORD_LIMITS.values())
+        + ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX
+        <= FINAL_POSITIVE_PROMPT_MAX_WORDS
+    )
+    assert count_english_words(result.final_positive_prompt) == 146
+    for field_name in COMPONENT_WORD_LIMITS:
+        assert str(values[_component_alias(field_name)]) in result.final_positive_prompt
+
+
+def test_system_prompt_states_budgets_target_and_complete_valid_json_example() -> None:
+    prepared = PromptService(StaticPromptModel("unused")).prepare(
+        prompt_context(mode=ContentMode.GENERATIVE)
+    )
+
+    assert "Target 100 to 135 English words" in prepared.system_input
+    assert "hard final limit remains 80 to 150 English words" in prepared.system_input
+    for field_name, max_words in COMPONENT_WORD_LIMITS.items():
+        assert f"{_component_alias(field_name)} {max_words}" in prepared.system_input
+    example = prepared.system_input.rsplit("\n", 1)[-1]
+    output = GeneratedPrompt.model_validate_json(example)
+    example_component_words = 0
+    for field_name, max_words in COMPONENT_WORD_LIMITS.items():
+        component_words = count_english_words(getattr(output, field_name))
+        assert component_words <= max_words
+        example_component_words += component_words
+    assert 100 <= example_component_words + ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX <= 135
 
 
 @pytest.mark.parametrize(
@@ -327,6 +428,9 @@ def test_four_categories_use_distinct_components_and_map_spoken_text(
     assert result.vt_text is None if is_va else result.vt_text == values["spokenText"]
     assert str(values["bodyAction"]) in result.final_positive_prompt
     assert str(values["vocalDelivery"]) in result.final_positive_prompt
+    assert 80 <= count_english_words(result.final_positive_prompt) <= 150
+    for field_name in COMPONENT_WORD_LIMITS:
+        assert str(values[_component_alias(field_name)]) in result.final_positive_prompt
     assert direction_rule(category, direction) in prepared.system_input
 
 
@@ -435,6 +539,16 @@ def test_spoken_text_must_be_natural_unquoted_chinese(spoken_text: str) -> None:
     with pytest.raises(ServiceError) as error:
         complete_generated(values)
     assert error.value.code == "invalid_prompt_response"
+
+
+def test_true_emotion_description_keeps_independent_chinese_validation() -> None:
+    values = component_values(true_emotion_description="English reviewer text.")
+
+    with pytest.raises(ServiceError) as error:
+        complete_generated(values)
+
+    assert error.value.code == "invalid_prompt_response"
+    assert "natural Chinese" in error.value.message
 
 
 def test_final_policy_rejects_repeated_or_unquoted_spoken_text() -> None:

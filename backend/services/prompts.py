@@ -6,17 +6,26 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 
 from backend.adapters.llm import PromptAdapterError, PromptModel
 from backend.domain.enums import Category, ContentMode, Ethnicity, Gender
 from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
 from backend.domain.prompt_policy import (
     BANNED_CERTAINTY_MODIFIERS,
+    COMPONENT_WORD_LIMITS,
     POLICY_VERSION,
     POLICIES,
     PromptPolicyViolation,
     direction_rule,
+    validate_component_word_limit,
     validate_final_positive_prompt,
     validate_fixed_positive_prompt,
     validate_generated_component,
@@ -80,6 +89,16 @@ class GeneratedPrompt(BaseModel):
         if not value.strip():
             raise ValueError("The field must not be blank")
         return value
+
+    @field_validator(*COMPONENT_WORD_LIMITS)
+    @classmethod
+    def enforce_english_component_word_limit(
+        cls, value: str, info: ValidationInfo
+    ) -> str:
+        try:
+            return validate_component_word_limit(value, info.field_name)
+        except PromptPolicyViolation as error:
+            raise ValueError(str(error)) from error
 
 
 class FixedPrompt(BaseModel):
@@ -158,6 +177,7 @@ class PromptService:
                     context.content.category, context.content.conflict_direction
                 ),
                 banned_certainty_modifiers=BANNED_CERTAINTY_MODIFIERS,
+                component_word_limits=COMPONENT_WORD_LIMITS,
             ).strip()
             user_input = self.user_template.render(
                 policy=policy,
