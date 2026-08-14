@@ -29,6 +29,7 @@ from .enums import (
     ReviewDecision,
     ResourceStatus,
     TestExecutionMode,
+    relation_for,
     validate_direction,
     validate_model_precision,
 )
@@ -65,14 +66,22 @@ def validate_english_video_prompt(value: str, field_name: str) -> str:
 
 def normalize_emotion(value: object) -> object:
     if isinstance(value, str):
-        return value.strip().casefold()
+        return emotion_key(value)
     return value
+
+
+def emotion_key(value: str) -> str:
+    return value.strip().casefold()
 
 
 EmotionValue = Annotated[
     str,
     BeforeValidator(normalize_emotion),
     StringConstraints(min_length=1, max_length=120),
+]
+EmotionDescription = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=2000),
 ]
 
 
@@ -696,11 +705,20 @@ class ReviewRead(ApiModel):
 class SampleClassificationUpdate(ExpectedRevision):
     target_category: Category
     conflict_direction: ConflictDirection | None = None
+    apparent_emotion: EmotionValue | None = None
+    true_emotion_description: EmotionDescription
 
     @model_validator(mode="after")
-    def validate_target_direction(self) -> Self:
+    def validate_target(self) -> Self:
         if not validate_direction(self.target_category, self.conflict_direction):
             raise ValueError("The conflict direction does not match the target category")
+        if relation_for(self.target_category) is Relation.CONFLICT and self.apparent_emotion is None:
+            raise ValueError("A conflict category requires an apparent emotion")
+        if (
+            relation_for(self.target_category) is Relation.ALIGNED
+            and "apparent_emotion" in self.model_fields_set
+        ):
+            raise ValueError("An aligned category sets the apparent emotion automatically")
         return self
 
 

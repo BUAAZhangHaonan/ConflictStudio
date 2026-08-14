@@ -8,6 +8,7 @@ from backend.domain.enums import (
     GenerationAttemptStatus,
     JobSource,
     JobStatus,
+    Relation,
     ResourceStatus,
     ReviewDecision,
     protocol_for,
@@ -26,6 +27,7 @@ from backend.domain.models import (
     utc_now,
 )
 from backend.domain.schemas import (
+    emotion_key,
     GenerationAttemptRead,
     KeepTestResultRequest,
     SampleRead,
@@ -148,8 +150,19 @@ class SampleService:
                 raise invalid_request("A sample cannot be moved between VA and VT")
             if relation_for(row.category) is relation_for(payload.target_category):
                 raise invalid_request("The target category does not change the sample relation")
+            if (
+                relation_for(payload.target_category) is Relation.CONFLICT
+                and payload.apparent_emotion == emotion_key(row.true_emotion)
+            ):
+                raise invalid_request("The apparent emotion must differ from the true emotion")
             row.category = payload.target_category
             row.conflict_direction = payload.conflict_direction
+            row.apparent_emotion = (
+                payload.apparent_emotion
+                if payload.apparent_emotion is not None
+                else row.true_emotion
+            )
+            row.true_emotion_description = payload.true_emotion_description
             row.review_decision = ReviewDecision.PENDING
             row.revision += 1
             row.updated_at = utc_now()

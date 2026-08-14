@@ -9,7 +9,12 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.domain.enums import Category
 from backend.domain.models import Archive, ArchiveItem, Asset, Sample, VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH
-from backend.tests.test_review_api import create_reviewer, review_payload, sample_app
+from backend.tests.test_review_api import (
+    classification_payload,
+    create_reviewer,
+    review_payload,
+    sample_app,
+)
 
 
 def accept_sample(client: TestClient) -> tuple[dict, dict]:
@@ -88,6 +93,76 @@ def test_manifest_contains_user_fields_and_excludes_runtime_details(tmp_path: Pa
     assert "attempt" not in serialized
     assert str(tmp_path.resolve()).casefold() not in serialized
     assert "sourceasset" not in serialized
+
+
+def test_classification_changes_keep_archive_relation_and_emotions_coherent(tmp_path: Path) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        aligned, reviewer = accept_sample(client)
+        initial_preview = client.post(
+            "/api/archives/preview",
+            json={"datasetId": aligned["datasetId"]},
+        )
+        client.post("/api/archives/sync", json=initial_preview.json())
+
+        conflict = client.patch(
+            f"/api/samples/{aligned['id']}/classification",
+            json=classification_payload(
+                aligned,
+                "C-VA",
+                "The voice carries calm while the face appears tense.",
+                direction="Audio",
+                apparent_emotion="tense",
+            ),
+        )
+        assert conflict.status_code == 200
+        assert conflict.json()["archiveSyncStatus"] == "NeedsUpdate"
+        accepted_conflict = client.post(
+            "/api/reviews",
+            json=review_payload(conflict.json(), reviewer, note="conflict confirmed"),
+        ).json()
+        conflict_preview = client.post(
+            "/api/archives/preview",
+            json={"datasetId": aligned["datasetId"]},
+        )
+        client.post("/api/archives/sync", json=conflict_preview.json())
+        conflict_manifest = json.loads(
+            client.get(f"/api/archives/{aligned['datasetId']}/manifest").text
+        )
+
+        restored = client.patch(
+            f"/api/samples/{aligned['id']}/classification",
+            json=classification_payload(
+                accepted_conflict,
+                "A-VA",
+                "The voice and face now express the same calm emotion.",
+            ),
+        )
+        assert restored.status_code == 200
+        assert restored.json()["archiveSyncStatus"] == "NeedsUpdate"
+        client.post(
+            "/api/reviews",
+            json=review_payload(restored.json(), reviewer, note="alignment confirmed"),
+        )
+        aligned_preview = client.post(
+            "/api/archives/preview",
+            json={"datasetId": aligned["datasetId"]},
+        )
+        client.post("/api/archives/sync", json=aligned_preview.json())
+        aligned_manifest = json.loads(
+            client.get(f"/api/archives/{aligned['datasetId']}/manifest").text
+        )
+
+    assert conflict_manifest["relation"] == "Conflict"
+    assert conflict_manifest["conflictDirection"] == "Audio"
+    assert conflict_manifest["trueEmotion"] == aligned["trueEmotion"]
+    assert conflict_manifest["apparentEmotion"] == "tense"
+    assert conflict_manifest["trueEmotionDescription"] == "The voice carries calm while the face appears tense."
+    assert aligned_manifest["relation"] == "Aligned"
+    assert aligned_manifest["conflictDirection"] is None
+    assert aligned_manifest["trueEmotion"] == aligned["trueEmotion"]
+    assert aligned_manifest["apparentEmotion"] == aligned["trueEmotion"]
+    assert aligned_manifest["trueEmotionDescription"] == "The voice and face now express the same calm emotion."
 
 
 def test_vt_manifest_uses_only_silent_primary_media(tmp_path: Path) -> None:

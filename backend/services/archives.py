@@ -10,6 +10,7 @@ from backend.adapters.database import Database
 from backend.domain.enums import (
     ArchiveSyncStatus,
     Protocol,
+    Relation,
     ReviewDecision,
     archive_status_for,
     protocol_for,
@@ -31,6 +32,7 @@ from backend.domain.schemas import (
     ArchivePreviewRequest,
     ArchiveRead,
     ArchiveSyncRequest,
+    emotion_key,
 )
 
 from .errors import archive_preview_stale, not_found, state_conflict
@@ -217,6 +219,12 @@ class ArchiveService:
         if asset is None:
             raise state_conflict("sample", sample.id, "The primary media does not exist")
         protocol = protocol_for(sample.category)
+        relation = relation_for(sample.category)
+        emotions_match = emotion_key(sample.true_emotion) == emotion_key(sample.apparent_emotion)
+        if relation is Relation.ALIGNED and not emotions_match:
+            raise state_conflict("sample", sample.id, "Aligned samples require matching emotions")
+        if relation is Relation.CONFLICT and emotions_match:
+            raise state_conflict("sample", sample.id, "Conflict samples require different emotions")
         if protocol is Protocol.VA and not asset.has_audio:
             raise state_conflict("sample", sample.id, "VA primary media must contain audio")
         if protocol is Protocol.VT and asset.has_audio:
@@ -233,7 +241,7 @@ class ArchiveService:
             "datasetId": sample.dataset_id,
             "category": sample.category.value,
             "protocol": protocol.value,
-            "relation": relation_for(sample.category).value,
+            "relation": relation.value,
             "conflictDirection": (
                 sample.conflict_direction.value if sample.conflict_direction is not None else None
             ),

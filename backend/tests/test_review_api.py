@@ -36,6 +36,25 @@ def review_payload(sample: dict, reviewer: dict, **changes: object) -> dict:
     return payload
 
 
+def classification_payload(
+    sample: dict,
+    target_category: str,
+    description: str,
+    *,
+    direction: str | None = None,
+    apparent_emotion: str | None = None,
+) -> dict:
+    payload: dict[str, object] = {
+        "expectedRevision": sample["revision"],
+        "targetCategory": target_category,
+        "conflictDirection": direction,
+        "trueEmotionDescription": description,
+    }
+    if apparent_emotion is not None:
+        payload["apparentEmotion"] = apparent_emotion
+    return payload
+
+
 def test_reviewer_create_normalizes_name_and_rename_is_revisioned(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
@@ -164,35 +183,90 @@ def test_review_batch_is_atomic_when_any_item_is_invalid(tmp_path: Path) -> None
     assert unchanged.json()["reviewRevision"] == 0
 
 
-def test_classification_moves_only_between_relations_in_same_protocol(tmp_path: Path) -> None:
+def test_aligned_to_conflict_requires_coherent_emotions_and_preserves_review_history(
+    tmp_path: Path,
+) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
         sample = client.get("/api/samples").json()[0]
         reviewer = create_reviewer(client)
         reviewed = client.post("/api/reviews", json=review_payload(sample, reviewer)).json()
-        moved = client.patch(
+        missing_description = client.patch(
             f"/api/samples/{sample['id']}/classification",
             json={
                 "expectedRevision": reviewed["revision"],
                 "targetCategory": "C-VA",
                 "conflictDirection": "Audio",
+                "apparentEmotion": "tense",
             },
+        )
+        missing_apparent_emotion = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json={
+                "expectedRevision": reviewed["revision"],
+                "targetCategory": "C-VA",
+                "conflictDirection": "Audio",
+                "trueEmotionDescription": "The voice carries the true emotion.",
+            },
+        )
+        matching_emotion = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                reviewed,
+                "C-VA",
+                "The voice carries the true emotion.",
+                direction="Audio",
+                apparent_emotion="  CALM  ",
+            ),
         )
         invalid_direction = client.patch(
             f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                reviewed,
+                "C-VA",
+                "The voice carries the true emotion.",
+                direction="Text",
+                apparent_emotion="tense",
+            ),
+        )
+        true_emotion_override = client.patch(
+            f"/api/samples/{sample['id']}/classification",
             json={
-                "expectedRevision": moved.json()["revision"],
-                "targetCategory": "C-VA",
-                "conflictDirection": "Text",
+                **classification_payload(
+                    reviewed,
+                    "C-VA",
+                    "The voice carries the true emotion.",
+                    direction="Audio",
+                    apparent_emotion="tense",
+                ),
+                "trueEmotion": "joy",
             },
+        )
+        moved = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                reviewed,
+                "C-VA",
+                "  The voice carries the true emotion while the face looks tense.  ",
+                direction="Audio",
+                apparent_emotion="  TENSE  ",
+            ),
         )
         cross_protocol = client.patch(
             f"/api/samples/{sample['id']}/classification",
-            json={
-                "expectedRevision": moved.json()["revision"],
-                "targetCategory": "A-VT",
-                "conflictDirection": None,
-            },
+            json=classification_payload(
+                moved.json(),
+                "A-VT",
+                "The modalities will align.",
+            ),
+        )
+        stale = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                reviewed,
+                "A-VA",
+                "The modalities will align.",
+            ),
         )
         history = client.get("/api/reviews", params={"sampleId": sample["id"]})
         current = client.get(f"/api/samples/{sample['id']}")
@@ -204,15 +278,87 @@ def test_classification_moves_only_between_relations_in_same_protocol(tmp_path: 
     assert moved.status_code == 200
     assert moved.json()["category"] == "C-VA"
     assert moved.json()["conflictDirection"] == "Audio"
+    assert moved.json()["trueEmotion"] == sample["trueEmotion"]
+    assert moved.json()["apparentEmotion"] == "tense"
+    assert moved.json()["trueEmotionDescription"] == "The voice carries the true emotion while the face looks tense."
     assert moved.json()["reviewDecision"] == "Pending"
     assert moved.json()["reviewRevision"] == reviewed["reviewRevision"]
     assert moved.json()["currentReview"] is None
     assert current.json()["currentReview"] is None
     assert len(history.json()) == 1
     assert history.json()[0]["decision"] == "Accepted"
+    assert missing_description.status_code == 422
+    assert missing_apparent_emotion.status_code == 422
+    assert matching_emotion.status_code == 422
     assert invalid_direction.status_code == 422
+    assert true_emotion_override.status_code == 422
     assert cross_protocol.status_code == 422
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "revision_conflict"
     assert removed_endpoint.status_code == 405
+
+
+def test_conflict_to_aligned_uses_preserved_true_emotion_and_clears_direction(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        aligned = client.get("/api/samples").json()[0]
+        conflict = client.patch(
+            f"/api/samples/{aligned['id']}/classification",
+            json=classification_payload(
+                aligned,
+                "C-VA",
+                "The voice carries calm while the face appears tense.",
+                direction="Audio",
+                apparent_emotion="tense",
+            ),
+        ).json()
+        reviewer = create_reviewer(client)
+        reviewed = client.post("/api/reviews", json=review_payload(conflict, reviewer)).json()
+        no_change = client.patch(
+            f"/api/samples/{aligned['id']}/classification",
+            json=classification_payload(
+                reviewed,
+                "C-VA",
+                "The voice still carries calm while the face appears tense.",
+                direction="Vision",
+                apparent_emotion="worried",
+            ),
+        )
+        explicit_apparent_emotion = client.patch(
+            f"/api/samples/{aligned['id']}/classification",
+            json={
+                **classification_payload(
+                    reviewed,
+                    "A-VA",
+                    "The voice and face now express the same calm emotion.",
+                ),
+                "apparentEmotion": None,
+            },
+        )
+        moved = client.patch(
+            f"/api/samples/{aligned['id']}/classification",
+            json=classification_payload(
+                reviewed,
+                "A-VA",
+                "  The voice and face now express the same calm emotion.  ",
+            ),
+        )
+        history = client.get("/api/reviews", params={"sampleId": aligned["id"]})
+
+    assert no_change.status_code == 422
+    assert explicit_apparent_emotion.status_code == 422
+    assert moved.status_code == 200
+    assert moved.json()["category"] == "A-VA"
+    assert moved.json()["conflictDirection"] is None
+    assert moved.json()["trueEmotion"] == aligned["trueEmotion"]
+    assert moved.json()["apparentEmotion"] == aligned["trueEmotion"]
+    assert moved.json()["trueEmotionDescription"] == "The voice and face now express the same calm emotion."
+    assert moved.json()["reviewDecision"] == "Pending"
+    assert moved.json()["reviewRevision"] == reviewed["reviewRevision"]
+    assert moved.json()["currentReview"] is None
+    assert len(history.json()) == 1
 
 
 def test_review_rows_cannot_be_updated_or_deleted_in_sqlite(tmp_path: Path) -> None:
