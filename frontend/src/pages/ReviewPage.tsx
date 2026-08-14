@@ -95,16 +95,19 @@ export function ReviewPage() {
   }, [selected]);
 
   useLayoutEffect(() => {
-    if (selected) {
-      window.scrollTo({ top: 0, behavior: 'auto' });
-      return;
-    }
-    if (!restoreScrollRef.current) return;
-    restoreScrollRef.current = false;
-    window.scrollTo({ top: savedScrollRef.current.page, behavior: 'auto' });
-    if (queueListRef.current) queueListRef.current.scrollTop = savedScrollRef.current.queue;
-    queueRef.current?.focus({ preventScroll: true });
-  }, [selected]);
+    const frame = window.requestAnimationFrame(() => {
+      if (selected) {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        return;
+      }
+      if (!restoreScrollRef.current) return;
+      restoreScrollRef.current = false;
+      if (queueListRef.current) queueListRef.current.scrollTop = savedScrollRef.current.queue;
+      window.scrollTo({ top: savedScrollRef.current.page, left: 0, behavior: 'auto' });
+      queueRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selected?.id]);
 
   const choose = (sample: Sample) => {
     savedScrollRef.current = {

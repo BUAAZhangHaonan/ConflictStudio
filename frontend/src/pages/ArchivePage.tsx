@@ -70,7 +70,8 @@ export function ArchivePage() {
     const needle = search.trim().toLocaleLowerCase(locale);
     return rows.filter(sample => (category === 'All' || sample.category === category) && (!needle || `${sample.displayId} ${sample.category} ${sample.model}`.toLocaleLowerCase(locale).includes(needle))).sort((left, right) => left.id - right.id);
   }, [category, locale, rows, search]);
-  const currentPage = clampPage(page, filteredRows.length);
+  const archiveDataReady = datasetsQuery.isSuccess && samplesQuery.isSuccess && archivesQuery.isSuccess;
+  const currentPage = archiveDataReady ? clampPage(page, filteredRows.length) : page;
   const totalPages = pageCount(filteredRows.length);
   const visibleRows = pageItems(filteredRows, currentPage);
   const returnTo = buildArchiveLocation({ datasetId: dataset?.id ?? null, search, category, page: currentPage });
@@ -78,12 +79,13 @@ export function ArchivePage() {
   const previewRows = preview ? previewSamples(preview, samples) : [];
 
   useEffect(() => {
+    if (!archiveDataReady) return;
     if (page !== currentPage) setPage(currentPage);
-  }, [currentPage, page]);
+  }, [archiveDataReady, currentPage, page]);
   useEffect(() => {
-    if (!datasetsQuery.isSuccess) return;
+    if (!archiveDataReady) return;
     if (`${location.pathname}${location.search}` !== returnTo) navigate(returnTo, { replace: true });
-  }, [datasetsQuery.isSuccess, location.pathname, location.search, navigate, returnTo]);
+  }, [archiveDataReady, location.pathname, location.search, navigate, returnTo]);
 
   const selectDataset = (value: number) => {
     setDatasetId(value);
@@ -118,7 +120,7 @@ export function ArchivePage() {
       <PageHeader title={t('archive.title')} />
       {actionError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(actionError, locale)}</p></section> : null}
       {datasets.length === 0 ? <section className="panel archive-state"><h2>{t('archive.emptyTitle')}</h2><p>{t('workspaceSettingsStatistics.workspace.datasets.emptyBody')}</p></section> : <>
-        <section className="panel archive-toolbar" aria-label={t('archive.aria.toolbar')}><label className="archive-dataset-select"><span>{t('archive.datasetLabel')}</span><select value={dataset?.id ?? ''} onChange={event => selectDataset(Number(event.target.value))}>{datasets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><div className="archive-toolbar__actions"><Button variant="secondary" busy={previewMutation.isPending} onClick={() => dataset && previewMutation.mutate({ datasetId: dataset.id })}>{t('actions.previewSync')}</Button>{archive?.manifestAvailable ? <a className="button button--quiet" href={`/api/archives/${archive.datasetId}/manifest`} download>{t('archive.downloadJsonl')}</a> : null}</div></section>
+        <section className="panel archive-toolbar" aria-label={t('archive.aria.toolbar')}><label className="archive-dataset-select"><span>{t('archive.datasetLabel')}</span><select value={dataset?.id ?? ''} onChange={event => selectDataset(Number(event.target.value))}>{datasets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><div className="archive-toolbar__actions"><Button variant="secondary" busy={previewMutation.isPending} onClick={() => dataset && previewMutation.mutate({ datasetId: dataset.id })}>{t('actions.previewSync')}</Button>{archive?.manifestAvailable ? <a className="button button--quiet" href={`/api/archives/${archive.datasetId}/manifest`} download="manifest.jsonl">{t('archive.downloadJsonl')}</a> : null}</div></section>
         <section className="panel archive-overview" aria-label={t('archive.aria.overview')}><div className="archive-overview__header"><h2>{t('archive.overview')}</h2><span>{archive?.lastSyncedAt ? t('archive.lastSynced', { date: formatDateTime(archive.lastSyncedAt) }) : t('archive.neverSynced')}</span></div><div className="metric-grid archive-metrics"><Metric label={t('archive.current')} value={archive?.currentCount ?? 0} /><Metric label={t('statistics.needsUpdate')} value={archive?.needsUpdateCount ?? 0} /></div></section>
         {preview ? <section className="panel archive-preview" aria-label={t('archive.aria.preview')}><div className="section-header"><h2>{t('archive.previewTitle')}</h2></div><div className="metric-grid archive-metrics"><Metric label={t('archive.toAdd')} value={preview.added.length} /><Metric label={t('archive.toUpdate')} value={preview.updated.length} /><Metric label={t('archive.toRemove')} value={preview.removed.length} /><Metric label={t('archive.unchanged')} value={preview.unchangedCount} /></div>{previewRows.length ? <ul className="archive-preview__list">{previewRows.map(({ sample, change }) => <li key={`${change}-${sample.id}`}><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" /><Link to={reviewLocation(sample.displayId, returnTo)}>{sample.displayId}</Link><StatusBadge label={t(`archive.${change}`)} kind={change === 'removed' ? 'problem' : 'neutral'} /></li>)}</ul> : <p>{t('archive.noChangesBody')}</p>}<Button variant="primary" disabled={previewRows.length === 0} onClick={() => setConfirmOpen(true)}>{t('actions.syncArchive')}</Button></section> : null}
         {rows.length === 0 ? <section className="panel archive-state"><h2>{t('archive.emptyTitle')}</h2><p>{t('archive.emptyBody')}</p><Button variant="primary" onClick={() => navigate(`/review?${new URLSearchParams({ returnTo }).toString()}`)}>{t('actions.openReview')}</Button></section> : <>

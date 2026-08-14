@@ -408,7 +408,10 @@ export function useCreateReviewerMutation() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (input: ReviewerCreate) => apiRequest<Reviewer>('/api/reviewers', { method: 'POST', ...json(input) }),
-    onSuccess: () => invalidateCatalog(client, queryKeys.reviewers),
+    onSuccess: value => {
+      client.setQueryData<Reviewer[]>(queryKeys.reviewers, current => current ? [...current, value] : [value]);
+      return invalidateCatalog(client, queryKeys.reviewers);
+    },
   });
 }
 
