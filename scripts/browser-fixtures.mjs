@@ -105,7 +105,7 @@ export function sampleFixture(id, reviewDecision = 'Pending', category = 'C-VA')
     sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/browser-check.webm',
     dialogue: protocol === 'VA' ? 'I understand.' : null, displayText: protocol === 'VT' ? 'I understand.' : null,
     videoPrompt: 'A fixed camera records a short reply.', negativePrompt: 'No subtitles.',
-    trueEmotionDescription: 'The voice carries sadness while the expression stays calm.', trueEmotion: 'sadness', apparentEmotion: 'neutral',
+    trueEmotionDescription: category.startsWith('A-') ? 'The visible and spoken emotion is sadness.' : 'The voice carries sadness while the expression stays calm.', trueEmotion: 'sadness', apparentEmotion: category.startsWith('A-') ? 'sadness' : 'neutral',
     contentPlanNameZh: '克制回应', contentPlanNameEn: 'Restrained reply', sceneZh: '安静办公室', sceneEn: 'Quiet office',
     triggerEventZh: '收到坏消息', triggerEventEn: 'Bad news arrives', psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
     age: 35, gender: 'Female', ethnicity: 'EastAsian', seed: 424242 + id, revision: 1, createdAt: timestamp, updatedAt: timestamp,
@@ -251,7 +251,23 @@ export function createBrowserApiFixture({ reviewers = [{ id: 1, name: 'Lin', rev
           const id = Number(classificationMatch[1]);
           const index = state.samples.findIndex(sample => sample.id === id);
           const original = state.samples[index];
-          const next = { ...original, category: body.targetCategory, conflictDirection: body.conflictDirection, reviewDecision: 'Pending', currentReview: null, revision: original.revision + 1, archiveSyncStatus: 'NeedsUpdate', updatedAt: timestamp };
+          if (body.expectedRevision !== original.revision) return fulfillJson(route, { error: { code: 'revision_conflict', message: 'The sample changed.', details: null } }, 409);
+          const conflictTarget = body.targetCategory.startsWith('C-');
+          if (!body.trueEmotionDescription?.trim() || (conflictTarget && (!body.apparentEmotion?.trim() || body.apparentEmotion.trim().toLocaleLowerCase('en-US') === original.trueEmotion.trim().toLocaleLowerCase('en-US')))) {
+            return fulfillJson(route, { error: { code: 'validation_error', message: 'The classification fields are invalid.', details: null } }, 422);
+          }
+          const next = {
+            ...original,
+            category: body.targetCategory,
+            conflictDirection: conflictTarget ? body.conflictDirection : null,
+            apparentEmotion: conflictTarget ? body.apparentEmotion.trim().toLocaleLowerCase('en-US') : original.trueEmotion,
+            trueEmotionDescription: body.trueEmotionDescription.trim(),
+            reviewDecision: 'Pending',
+            currentReview: null,
+            revision: original.revision + 1,
+            archiveSyncStatus: 'NeedsUpdate',
+            updatedAt: timestamp,
+          };
           state.samples[index] = next;
           return fulfillJson(route, next);
         }

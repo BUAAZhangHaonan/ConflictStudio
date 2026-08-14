@@ -132,6 +132,27 @@ try {
     for (const label of labels) assert.equal(text.includes(label), true, `${locale} must show ${label}.`);
   }
 
+  for (const [locale, labels] of [
+    ['en-US', { action: 'Change category', title: 'Change sample category', emotion: 'New apparent emotion', description: 'True emotion description after the change' }],
+    ['zh-CN', { action: '修改类别', title: '修改样本类别', emotion: '新的表面情感', description: '修改后的真实情感描述' }],
+  ]) {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await open(page, '/review?sample=CS-000004', locale);
+    await page.getByRole('button', { name: labels.action, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: labels.title });
+    await dialog.waitFor();
+    assert.equal(await dialog.getByLabel(labels.emotion).isVisible(), true, `${locale} must show the apparent emotion field for A to C.`);
+    assert.equal(await dialog.getByLabel(labels.description).isVisible(), true, `${locale} must show the description field for A to C.`);
+    const bounds = await dialog.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: innerWidth, height: innerHeight };
+    });
+    assert.equal(bounds.left >= 0 && bounds.right <= bounds.width && bounds.top >= 0 && bounds.bottom <= bounds.height, true, `${locale} classification dialog must fit the 390px viewport.`);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${locale} classification dialog must not create horizontal overflow.`);
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'hidden' });
+  }
+
   await open(page, `/review?sample=CS-000001&returnTo=${encodeURIComponent('https://example.com/archive')}`, 'en-US');
   assert.equal(await page.getByRole('button', { name: 'Back to previous page', exact: true }).count(), 0, 'Unsafe returnTo must not render a source return action.');
   await page.getByRole('button', { name: 'Back to queue', exact: true }).click();

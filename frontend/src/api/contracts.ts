@@ -432,6 +432,8 @@ export interface SampleClassificationUpdate {
   expectedRevision: number;
   targetCategory: Category;
   conflictDirection: ConflictDirection | null;
+  apparentEmotion?: string;
+  trueEmotionDescription: string;
 }
 
 export interface ReviewerActivity {

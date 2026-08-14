@@ -59,6 +59,10 @@ test('frontend contracts include the exact reviewer, review, statistics, archive
   const sample = contractSource.match(/export interface Sample \{([\s\S]*?)\n\}/u)?.[1] ?? '';
   assert.doesNotMatch(sample, /precision:/u);
   assert.match(sample, /generationRecord: GenerationAttempt;/u);
+  const classification = contractSource.match(/export interface SampleClassificationUpdate \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+  assert.match(classification, /apparentEmotion\?: string;/u);
+  assert.match(classification, /trueEmotionDescription: string;/u);
+  assert.doesNotMatch(classification, /trueEmotion:/u);
 });
 
 test('queries and mutations use only the current backend endpoints', () => {
@@ -70,8 +74,11 @@ test('queries and mutations use only the current backend endpoints', () => {
   assert.match(querySource, /invalidateQueries\(\{ queryKey: queryKeys\.archives/u);
 });
 
-test('review uses persistent reviewers, append-only review calls, atomic batch calls and classification revisions', () => {
-  for (const token of ['useCreateReviewMutation', 'useCreateReviewsBatchMutation', 'useUpdateSampleClassificationMutation', 'currentReviewerId', 'expectedReviewRevision', 'expectedRevision', 'batchConfirmOpen']) assert.match(reviewSource, new RegExp(token));
+test('review uses persistent reviews and a revisioned classification form with coherent emotions', () => {
+  for (const token of ['useCreateReviewMutation', 'useCreateReviewsBatchMutation', 'useUpdateSampleClassificationMutation', 'currentReviewerId', 'expectedReviewRevision', 'expectedRevision', 'batchConfirmOpen', 'classificationOpen', 'targetApparentEmotion', 'targetDescription', 'matchingEmotion']) assert.match(reviewSource, new RegExp(token));
+  assert.match(reviewSource, /conflictTarget \? \{ apparentEmotion:/u);
+  assert.match(reviewSource, /trueEmotionDescription: targetDescription\.trim\(\)/u);
+  assert.match(reviewSource, /preservedTrueEmotion/u);
   assert.match(reviewSource, /window\.scrollY/u);
   assert.match(reviewSource, /queueListRef\.current\?\.scrollTop/u);
   assert.match(reviewSource, /useLayoutEffect/u);

@@ -614,6 +614,59 @@ try {
   equal(await firstReviewerDialog.locator('#first-reviewer-name').isVisible(), true, 'An empty Reviewer API must ask the user to create the first name.');
   await reviewerlessContext.close();
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page, '/review?sample=CS-000001', 'zh-CN');
+  const chineseTransferTrigger = page.getByRole('button', { name: '修改类别', exact: true });
+  await chineseTransferTrigger.click();
+  const chineseTransferDialog = page.getByRole('dialog', { name: '修改样本类别' });
+  await chineseTransferDialog.waitFor();
+  equal((await chineseTransferDialog.textContent()).includes('保留的真实情感'), true, 'The Chinese classification dialog must explain the preserved true emotion.');
+  equal((await chineseTransferDialog.textContent()).includes('修改后的表面情感'), true, 'The Chinese aligned form must show the automatic apparent emotion.');
+  await page.keyboard.press('Tab');
+  equal(await chineseTransferDialog.evaluate(element => element.contains(document.activeElement)), true, 'Tab must remain inside the classification dialog.');
+  await page.keyboard.press('Escape');
+  await chineseTransferDialog.waitFor({ state: 'hidden' });
+  equal(await chineseTransferTrigger.evaluate(element => element === document.activeElement), true, 'Closing the classification dialog must restore focus to its trigger.');
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, '/review?sample=CS-000004', 'en-US');
+  await page.getByRole('button', { name: 'Change category', exact: true }).click();
+  let classificationDialog = page.getByRole('dialog', { name: 'Change sample category' });
+  const apparentEmotionInput = classificationDialog.getByLabel('New apparent emotion');
+  await apparentEmotionInput.fill('sadness');
+  equal(await classificationDialog.getByText('The apparent emotion must differ from the true emotion.').count(), 1, 'Matching emotions must show a field error.');
+  equal(await classificationDialog.getByRole('button', { name: 'Save category change' }).isDisabled(), true, 'Matching emotions must disable classification submission.');
+  await apparentEmotionInput.fill('calm');
+  await classificationDialog.getByLabel('Modality carrying the true emotion').selectOption('Text');
+  await classificationDialog.getByLabel('True emotion description after the change').fill('The text carries sadness while the face appears calm.');
+  await classificationDialog.getByRole('button', { name: 'Save category change' }).click();
+  await classificationDialog.waitFor({ state: 'hidden' });
+  const alignedToConflict = api.state.requests.findLast(request => request.method === 'PATCH' && request.path === '/api/samples/4/classification');
+  assert.deepEqual(alignedToConflict?.body, {
+    expectedRevision: 1,
+    targetCategory: 'C-VT',
+    conflictDirection: 'Text',
+    apparentEmotion: 'calm',
+    trueEmotionDescription: 'The text carries sadness while the face appears calm.',
+  }, 'A to C must send the apparent emotion, description, direction, and current revision.');
+  await page.locator('.review-context').getByText('calm', { exact: true }).waitFor();
+
+  await page.getByRole('button', { name: 'Change category', exact: true }).click();
+  classificationDialog = page.getByRole('dialog', { name: 'Change sample category' });
+  equal(await classificationDialog.getByLabel('New apparent emotion').count(), 0, 'C to A must not offer an editable apparent emotion.');
+  equal((await classificationDialog.textContent()).includes('Apparent emotion after the change'), true, 'C to A must show the automatic aligned emotion.');
+  await classificationDialog.getByLabel('True emotion description after the change').fill('The text and face now carry the same sadness.');
+  await classificationDialog.getByRole('button', { name: 'Save category change' }).click();
+  await classificationDialog.waitFor({ state: 'hidden' });
+  const conflictToAligned = api.state.requests.findLast(request => request.method === 'PATCH' && request.path === '/api/samples/4/classification');
+  assert.deepEqual(conflictToAligned?.body, {
+    expectedRevision: 2,
+    targetCategory: 'A-VT',
+    conflictDirection: null,
+    trueEmotionDescription: 'The text and face now carry the same sadness.',
+  }, 'C to A must omit apparent emotion and let the service align it with the preserved true emotion.');
+  await page.locator('.review-context').getByText('sadness', { exact: true }).first().waitFor();
+
   await resetBrowserSession(page);
   const focusedViewports = [[1440, 900], [1024, 768], [768, 900], [390, 844]];
   for (const locale of ['zh-CN', 'en-US']) {

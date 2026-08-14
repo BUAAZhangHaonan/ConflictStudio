@@ -64,7 +64,10 @@ export function ReviewPage() {
   const [batchNote, setBatchNote] = useState('');
   const [batchDecision, setBatchDecision] = useState<Exclude<ReviewDecision, 'Pending'>>('Accepted');
   const [batchConfirmOpen, setBatchConfirmOpen] = useState(false);
+  const [classificationOpen, setClassificationOpen] = useState(false);
   const [targetDirection, setTargetDirection] = useState<ConflictDirection>('Vision');
+  const [targetApparentEmotion, setTargetApparentEmotion] = useState('');
+  const [targetDescription, setTargetDescription] = useState('');
   const samples = samplesQuery.data ?? [];
   const datasets = datasetsQuery.data ?? [];
   const pendingSamples = useMemo(() => samples.filter(sample => sample.reviewDecision === 'Pending'), [samples]);
@@ -91,7 +94,10 @@ export function ReviewPage() {
     if (selected) {
       const target = oppositeCategory(selected.category);
       setTargetDirection(directionsFor(target)[0] ?? 'Vision');
+      setTargetApparentEmotion('');
+      setTargetDescription(selected.trueEmotionDescription);
     }
+    setClassificationOpen(false);
   }, [selected]);
 
   useLayoutEffect(() => {
@@ -174,14 +180,27 @@ export function ReviewPage() {
   const changeClassification = () => {
     if (!selected) return;
     const targetCategory = oppositeCategory(selected.category);
+    const conflictTarget = targetCategory.startsWith('C-');
     classificationMutation.mutate({
       id: selected.id,
       input: {
         expectedRevision: selected.revision,
         targetCategory,
-        conflictDirection: targetCategory.startsWith('C-') ? targetDirection : null,
+        conflictDirection: conflictTarget ? targetDirection : null,
+        ...(conflictTarget ? { apparentEmotion: targetApparentEmotion.trim() } : {}),
+        trueEmotionDescription: targetDescription.trim(),
       },
-    });
+    }, { onSuccess: () => setClassificationOpen(false) });
+  };
+
+  const openClassification = () => {
+    if (!selected) return;
+    const target = oppositeCategory(selected.category);
+    setTargetDirection(directionsFor(target)[0] ?? 'Vision');
+    setTargetApparentEmotion('');
+    setTargetDescription(selected.trueEmotionDescription);
+    classificationMutation.reset();
+    setClassificationOpen(true);
   };
 
   const clearFilters = () => {
@@ -203,6 +222,25 @@ export function ReviewPage() {
   const mutationError = reviewMutation.error ?? batchMutation.error ?? classificationMutation.error;
   const selectedVisibleCount = visible.filter(sample => selectedIds.has(sample.id)).length;
   const targetCategory = selected ? oppositeCategory(selected.category) : null;
+  const targetIsConflict = targetCategory?.startsWith('C-') ?? false;
+  const apparentEmotionKey = targetApparentEmotion.trim().toLocaleLowerCase('en-US');
+  const trueEmotionKey = selected?.trueEmotion.trim().toLocaleLowerCase('en-US') ?? '';
+  const matchingEmotion = targetIsConflict && apparentEmotionKey !== '' && apparentEmotionKey === trueEmotionKey;
+  const classificationValid = Boolean(
+    selected
+      && targetCategory
+      && targetDescription.trim()
+      && targetDescription.trim().length <= 2000
+      && (
+        !targetIsConflict
+        || (
+          targetApparentEmotion.trim()
+          && targetApparentEmotion.trim().length <= 120
+          && !matchingEmotion
+          && directionsFor(targetCategory).includes(targetDirection)
+        )
+      ),
+  );
   return (
     <section className={`page-stack review-page${mobileDetail ? ' review-page--mobile-detail' : ''}`} aria-label={t('review.aria.page')}>
       <PageHeader title={t('review.title')} actions={<span className="review-page__count">{t('review.queueCount', { visible: visible.length, total: pendingSamples.length })}</span>} />
@@ -230,11 +268,35 @@ export function ReviewPage() {
             <section className="panel review-media" aria-label={t('review.aria.media')}><div className="section-header"><h2>{t('review.media')}</h2><div className="review-media__badges"><StatusBadge label={t(`category.${selected.category}`)} kind={selected.category.startsWith('C-') ? 'problem' : 'complete'} /><StatusBadge label={t(protocolForCategory(selected.category) === 'VA' ? 'review.protocolVA' : 'review.protocolVT')} /></div></div><MediaPanel title={t('review.video')} mediaLabel={t('review.primaryMediaAlt', { id: selected.displayId })} src={selected.primaryAssetUrl} muted={protocolForCategory(selected.category) === 'VT'} /></section>
             <section className="panel review-context" aria-label={t('review.aria.details', { id: selected.displayId })}><h2>{t('review.context')}</h2><dl className="review-context__facts review-context__facts--emotion"><div><dt>{t('review.trueEmotion')}</dt><dd>{selected.trueEmotion}</dd></div><div><dt>{t('review.apparentEmotion')}</dt><dd>{selected.apparentEmotion}</dd></div><div><dt>{t('direction.label')}</dt><dd>{selected.conflictDirection ? t(`direction.${selected.conflictDirection}`) : t('review.directionNotRequired')}</dd></div></dl><div className="review-context__copy review-context__copy--primary"><div className="review-context__copy--description"><h3>{t('review.trueEmotionDescription')}</h3><p>{selected.trueEmotionDescription}</p></div></div>{selected.dialogue ? <div className="review-context__copy"><div><h3>{t('review.dialogue')}</h3><p>{selected.dialogue}</p></div></div> : null}{selected.displayText ? <div className="review-context__copy"><div><h3>{t('review.displayText')}</h3><p>{selected.displayText}</p></div></div> : null}<details className="review-context__details"><summary>{t('review.moreDetails')}</summary><dl><div><dt>{t('review.sampleId')}</dt><dd>{selected.displayId}</dd></div><div><dt>{t('fields.dataset')}</dt><dd>{datasetsById.get(selected.datasetId)?.name ?? selected.datasetId}</dd></div><div><dt>{t('review.contentPlan')}</dt><dd>{localized(selected, locale, 'contentPlanName')}</dd></div><div><dt>{t('review.scenario')}</dt><dd>{localized(selected, locale, 'scene')}</dd></div><div><dt>{t('review.triggerEvent')}</dt><dd>{localized(selected, locale, 'triggerEvent')}</dd></div><div><dt>{t('review.psychologicalBackground')}</dt><dd>{localized(selected, locale, 'psychologicalBackground')}</dd></div><div><dt>{t('review.model')}</dt><dd>{selected.model}</dd></div><div className="review-context__details-wide"><dt>{t('review.positivePrompt')}</dt><dd>{selected.videoPrompt}</dd></div><div className="review-context__details-wide"><dt>{t('review.negativePrompt')}</dt><dd>{selected.negativePrompt}</dd></div></dl></details></section>
             <section className="panel review-generation-record" aria-labelledby="review-generation-record-title"><h2 id="review-generation-record-title">{t('review.generationRecord')}</h2><dl><div><dt>{t('review.model')}</dt><dd>{selected.generationRecord.model}</dd></div><div><dt>{t('review.precision')}</dt><dd>{selected.generationRecord.precision ?? t('review.notApplicable')}</dd></div><div><dt>{t('review.gpu')}</dt><dd>{selected.generationRecord.gpuSlot}</dd></div><div><dt>{t('review.seed')}</dt><dd>{selected.generationRecord.seed}</dd></div><div><dt>{t('review.attemptRevision')}</dt><dd>{selected.generationRecord.attemptNumber}</dd></div></dl></section>
-            <aside className="panel review-decision"><div className="section-header"><h2>{t('review.decision')}</h2><StatusBadge label={t(`status.review.${selected.reviewDecision}`)} kind="neutral" /></div><Field label={t('fields.note')} htmlFor="review-note"><textarea id="review-note" value={note} maxLength={2000} onChange={event => setNote(event.target.value)} placeholder={t('review.notePlaceholder')} /></Field><div className="decision-options" role="group" aria-label={t('review.aria.decision')}><Button variant="primary" busy={reviewMutation.isPending} disabled={preferences.currentReviewerId === null} onClick={() => saveDecision('Accepted')}>{t('status.review.Accepted')}</Button><Button variant="secondary" busy={reviewMutation.isPending} disabled={preferences.currentReviewerId === null} onClick={() => saveDecision('Rejected')}>{t('status.review.Rejected')}</Button></div>{targetCategory ? <details className="review-secondary-action"><summary>{t('review.transfer')}</summary><section className="review-transfer"><dl><div><dt>{t('review.currentCategory')}</dt><dd>{t(`category.${selected.category}`)}</dd></div><div><dt>{t('review.targetCategory')}</dt><dd>{t(`category.${targetCategory}`)}</dd></div></dl>{directionsFor(targetCategory).length ? <Field label={t('review.conflictDirection')} htmlFor="review-target-direction"><select id="review-target-direction" value={targetDirection} onChange={event => setTargetDirection(event.target.value as ConflictDirection)}>{directionsFor(targetCategory).map(direction => <option key={direction} value={direction}>{t(`direction.${direction}`)}</option>)}</select></Field> : null}<p>{t('review.transferHelp')}</p><Button variant="secondary" busy={classificationMutation.isPending} onClick={changeClassification}>{t('review.transferAction')}</Button></section></details> : null}</aside>
+            <aside className="panel review-decision"><div className="section-header"><h2>{t('review.decision')}</h2><StatusBadge label={t(`status.review.${selected.reviewDecision}`)} kind="neutral" /></div><Field label={t('fields.note')} htmlFor="review-note"><textarea id="review-note" value={note} maxLength={2000} onChange={event => setNote(event.target.value)} placeholder={t('review.notePlaceholder')} /></Field><div className="decision-options" role="group" aria-label={t('review.aria.decision')}><Button variant="primary" busy={reviewMutation.isPending} disabled={preferences.currentReviewerId === null} onClick={() => saveDecision('Accepted')}>{t('status.review.Accepted')}</Button><Button variant="secondary" busy={reviewMutation.isPending} disabled={preferences.currentReviewerId === null} onClick={() => saveDecision('Rejected')}>{t('status.review.Rejected')}</Button></div>{targetCategory ? <section className="review-secondary-action"><h3>{t('review.transfer')}</h3><p>{t('review.transferEntryHelp')}</p><Button variant="secondary" onClick={openClassification}>{t('review.transferAction')}</Button></section> : null}</aside>
           </div> : null}
         </div>
       )}
       <ConfirmDialog open={batchConfirmOpen} title={t('review.batchConfirmTitle')} body={<><p>{t('review.batchConfirmBody', { decision: t(`status.review.${batchDecision}`), count: selectedVisibleCount })}</p><p>{t('review.batchConfirmConsequence')}</p></>} confirmLabel={t('review.batchConfirmAction', { decision: t(`status.review.${batchDecision}`) })} cancelLabel={t('actions.cancel')} closeLabel={t('actions.close')} busy={batchMutation.isPending} onClose={() => setBatchConfirmOpen(false)} onConfirm={applyBatch} />
+      <ConfirmDialog
+        open={classificationOpen && selected !== null && targetCategory !== null}
+        title={t('review.transferConfirmTitle')}
+        body={selected && targetCategory ? <section className="review-transfer">
+          <p>{t(targetIsConflict ? 'review.transferConflictHelp' : 'review.transferAlignedHelp')}</p>
+          <dl className="review-transfer__categories"><div><dt>{t('review.currentCategory')}</dt><dd>{t(`category.${selected.category}`)}</dd></div><div><dt>{t('review.targetCategory')}</dt><dd>{t(`category.${targetCategory}`)}</dd></div></dl>
+          <div className="review-transfer__fixed"><span>{t('review.preservedTrueEmotion')}</span><strong>{selected.trueEmotion}</strong><small>{t('review.preservedTrueEmotionHelp')}</small></div>
+          {targetIsConflict ? <>
+            <Field label={t('review.newApparentEmotion')} htmlFor="review-target-apparent-emotion" required error={matchingEmotion ? t('review.emotionMustDiffer') : undefined}><input id="review-target-apparent-emotion" value={targetApparentEmotion} maxLength={120} onChange={event => setTargetApparentEmotion(event.target.value)} /></Field>
+            <Field label={t('review.conflictDirection')} htmlFor="review-target-direction" required hint={t('review.conflictDirectionHelp')}><select id="review-target-direction" value={targetDirection} onChange={event => setTargetDirection(event.target.value as ConflictDirection)}>{directionsFor(targetCategory).map(direction => <option key={direction} value={direction}>{t(`direction.${direction}`)}</option>)}</select></Field>
+          </> : <div className="review-transfer__fixed"><span>{t('review.alignedApparentEmotion')}</span><strong>{selected.trueEmotion}</strong><small>{t('review.alignedApparentEmotionHelp')}</small></div>}
+          <Field label={t('review.descriptionAfterTransfer')} htmlFor="review-target-description" required hint={t('review.descriptionAfterTransferHelp')}><textarea id="review-target-description" value={targetDescription} maxLength={2000} onChange={event => setTargetDescription(event.target.value)} /></Field>
+          <p className="review-transfer__summary">{t(targetIsConflict ? 'review.transferConflictSummary' : 'review.transferAlignedSummary', { emotion: selected.trueEmotion, apparentEmotion: targetApparentEmotion.trim(), direction: targetIsConflict ? t(`direction.${targetDirection}`) : '' })}</p>
+          <p>{t('review.transferConfirmConsequence')}</p>
+          {classificationMutation.error ? <p className="review-transfer__error" role="alert">{apiErrorMessage(classificationMutation.error, locale)}</p> : null}
+        </section> : null}
+        confirmLabel={t('review.transferConfirmAction')}
+        cancelLabel={t('actions.cancel')}
+        closeLabel={t('actions.close')}
+        busy={classificationMutation.isPending}
+        confirmDisabled={!classificationValid}
+        onClose={() => setClassificationOpen(false)}
+        onConfirm={changeClassification}
+      />
     </section>
   );
 }

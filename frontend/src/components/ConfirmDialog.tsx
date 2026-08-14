@@ -12,6 +12,7 @@ interface ConfirmDialogProps {
   onConfirm: () => void;
   onClose: () => void;
   busy?: boolean;
+  confirmDisabled?: boolean;
 }
 
 export function ConfirmDialog({
@@ -24,6 +25,7 @@ export function ConfirmDialog({
   onConfirm,
   onClose,
   busy = false,
+  confirmDisabled = false,
 }: ConfirmDialogProps) {
   return (
     <Dialog
@@ -34,7 +36,7 @@ export function ConfirmDialog({
       footer={
         <>
           <Button autoFocus variant="secondary" onClick={onClose}>{cancelLabel}</Button>
-          <Button variant="primary" busy={busy} onClick={onConfirm}>{confirmLabel}</Button>
+          <Button variant="primary" busy={busy} disabled={confirmDisabled} onClick={onConfirm}>{confirmLabel}</Button>
         </>
       }
     >
