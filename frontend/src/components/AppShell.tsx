@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type PropsWithChildren } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useMockRepository, useRepositorySnapshot } from '../store';
+import { useReviewersQuery } from '../api/queries';
+import { setCurrentReviewer, setPreferredLocale, usePreferences } from '../preferences';
 
 const primaryNavigation = [
   { to: '/workspace', key: 'workspace' },
@@ -41,8 +42,8 @@ function pageTitleKey(pathname: string): string {
 export function AppShell({ children }: PropsWithChildren) {
   const { t, i18n } = useTranslation();
   const location = useLocation();
-  const repository = useMockRepository();
-  const snapshot = useRepositorySnapshot();
+  const preferences = usePreferences();
+  const reviewersQuery = useReviewersQuery();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerRef = useRef<HTMLDialogElement>(null);
   const reviewerMenuRef = useRef<HTMLDetailsElement>(null);
@@ -52,18 +53,26 @@ export function AppShell({ children }: PropsWithChildren) {
   const wasDrawerOpenRef = useRef(false);
   const drawerId = useId();
   const drawerTitleId = useId();
-  const currentReviewer = snapshot.data.reviewers.find(
-    reviewer => reviewer.id === snapshot.preferences.currentReviewerId,
-  );
+  const currentReviewer = reviewersQuery.data?.find(
+    reviewer => reviewer.id === preferences.currentReviewerId,
+  ) ?? null;
 
   useEffect(() => {
     setDrawerOpen(false);
     if (reviewerMenuRef.current) reviewerMenuRef.current.open = false;
   }, [location.pathname]);
   useEffect(() => {
-    document.documentElement.lang = snapshot.preferences.locale;
+    document.documentElement.lang = preferences.locale;
     document.title = t('app.pageTitle', { page: t(pageTitleKey(location.pathname)) });
-  }, [location.pathname, snapshot.preferences.locale, t]);
+  }, [location.pathname, preferences.locale, t]);
+  useEffect(() => {
+    if (!reviewersQuery.isSuccess || preferences.currentReviewerId === null) return;
+    if (currentReviewer === null) {
+      setCurrentReviewer(null);
+      return;
+    }
+    if (preferences.currentReviewerName !== currentReviewer.name) setCurrentReviewer(currentReviewer);
+  }, [currentReviewer, preferences.currentReviewerId, preferences.currentReviewerName, reviewersQuery.isSuccess]);
   useEffect(() => {
     const dialog = drawerRef.current;
     if (!dialog) return;
@@ -135,8 +144,8 @@ export function AppShell({ children }: PropsWithChildren) {
   }, [drawerOpen]);
 
   const toggleLocale = () => {
-    const locale = snapshot.preferences.locale === 'zh-CN' ? 'en-US' : 'zh-CN';
-    repository.setLocale(locale);
+    const locale = preferences.locale === 'zh-CN' ? 'en-US' : 'zh-CN';
+    setPreferredLocale(locale);
     void i18n.changeLanguage(locale);
   };
 

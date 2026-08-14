@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { ExamplePageState } from '../types';
 import { Button } from './Button';
 
+type StateKind = 'loading' | 'empty' | 'filtered' | 'error' | 'conflict';
+
 interface StateViewProps {
-  state: Exclude<ExamplePageState, 'ready'>;
+  state: StateKind;
   action?: { label: ReactNode; onClick: () => void };
 }
 

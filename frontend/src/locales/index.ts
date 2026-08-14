@@ -1,6 +1,6 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
-import { LOCALE_STORAGE_KEY } from '../mock';
+import { LOCALE_STORAGE_KEY } from '../preferences';
 import enUS from './en-US';
 import {
   workspaceSettingsStatisticsEnUS,

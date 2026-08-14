@@ -7,6 +7,10 @@ import {
 } from '@tanstack/react-query';
 import { apiRequest } from './client';
 import type {
+  Archive,
+  ArchivePreview,
+  ArchivePreviewRequest,
+  ArchiveSyncRequest,
   BackgroundPreset,
   BackgroundPresetCreate,
   BackgroundPresetUpdate,
@@ -21,6 +25,7 @@ import type {
   DatasetCreate,
   DatasetUpdate,
   GpuSlot,
+  Health,
   JobDetail,
   JobEvent,
   JobItem,
@@ -31,9 +36,17 @@ import type {
   PromptPresetUpdate,
   PromptPreview,
   PromptPreviewRequest,
+  Review,
+  ReviewBatchCreate,
+  ReviewCreate,
   ReviewDecision,
+  Reviewer,
+  ReviewerCreate,
+  ReviewerRename,
+  ReviewerStatistics,
+  ReviewerStatisticsFilter,
   Sample,
-  SampleReviewUpdate,
+  SampleClassificationUpdate,
   TestRunCreate,
 } from './contracts';
 
@@ -49,6 +62,11 @@ export const queryKeys = {
   jobItems: (id: number) => ['jobs', id, 'items'] as const,
   jobEvents: (id: number) => ['jobs', id, 'events'] as const,
   gpuSlots: ['gpuSlots'] as const,
+  health: ['health'] as const,
+  reviewers: ['reviewers'] as const,
+  reviews: (sampleId: number) => ['reviews', sampleId] as const,
+  reviewerStatistics: (reviewerId: number, filter: ReviewerStatisticsFilter) => ['reviewerStatistics', reviewerId, filter] as const,
+  archives: ['archives'] as const,
   samples: (decision?: ReviewDecision) => ['samples', decision ?? 'All'] as const,
 };
 
@@ -65,9 +83,25 @@ export const generationQueries = {
   gpuSlots: () => queryOptions({
     queryKey: queryKeys.gpuSlots,
     queryFn: () => apiRequest<GpuSlot[]>('/api/gpu-slots'),
-    refetchInterval: 5000,
     refetchOnWindowFocus: true,
   }),
+  health: () => queryOptions({ queryKey: queryKeys.health, queryFn: () => apiRequest<Health>('/api/health') }),
+  reviewers: () => queryOptions({ queryKey: queryKeys.reviewers, queryFn: () => apiRequest<Reviewer[]>('/api/reviewers') }),
+  reviews: (sampleId: number) => queryOptions({
+    queryKey: queryKeys.reviews(sampleId),
+    queryFn: () => apiRequest<Review[]>(`/api/reviews?${new URLSearchParams({ sampleId: String(sampleId) }).toString()}`),
+  }),
+  reviewerStatistics: (reviewerId: number, filter: ReviewerStatisticsFilter) => {
+    const params = new URLSearchParams();
+    if (filter.datasetId !== undefined) params.set('datasetId', String(filter.datasetId));
+    if (filter.startDate !== undefined) params.set('startDate', filter.startDate);
+    if (filter.endDate !== undefined) params.set('endDate', filter.endDate);
+    return queryOptions({
+      queryKey: queryKeys.reviewerStatistics(reviewerId, filter),
+      queryFn: () => apiRequest<ReviewerStatistics>(`/api/reviewers/${reviewerId}/statistics${params.size ? `?${params.toString()}` : ''}`),
+    });
+  },
+  archives: () => queryOptions({ queryKey: queryKeys.archives, queryFn: () => apiRequest<Archive[]>('/api/archives') }),
   samples: (decision?: ReviewDecision) => queryOptions({
     queryKey: queryKeys.samples(decision),
     queryFn: () => apiRequest<Sample[]>(decision
@@ -142,7 +176,21 @@ export function useBackgroundPresetsQuery() { return useQuery(generationQueries.
 export function useBatchDraftsQuery() { return useQuery(generationQueries.batchDrafts()); }
 export function useJobsQuery() { return useQuery(generationQueries.jobs()); }
 export function useGpuSlotsQuery() { return useQuery(generationQueries.gpuSlots()); }
+export function useHealthQuery() { return useQuery(generationQueries.health()); }
+export function useReviewersQuery() { return useQuery(generationQueries.reviewers()); }
+export function useArchivesQuery() { return useQuery(generationQueries.archives()); }
 export function useSamplesQuery(decision?: ReviewDecision) { return useQuery(generationQueries.samples(decision)); }
+
+export function useReviewsQuery(sampleId: number | null) {
+  return useQuery({ ...generationQueries.reviews(sampleId ?? 0), enabled: sampleId !== null });
+}
+
+export function useReviewerStatisticsQuery(reviewerId: number | null, filter: ReviewerStatisticsFilter) {
+  return useQuery({
+    ...generationQueries.reviewerStatistics(reviewerId ?? 0, filter),
+    enabled: reviewerId !== null && filter.startDate !== undefined && filter.endDate !== undefined,
+  });
+}
 
 export function useReleaseGpuMutation() {
   const client = useQueryClient();
@@ -347,14 +395,69 @@ export function useKeepTestResultMutation() {
   });
 }
 
-export function useUpdateSampleReviewMutation() {
+async function invalidateReviewData(client: QueryClient): Promise<void> {
+  await Promise.all([
+    client.invalidateQueries({ queryKey: ['samples'] }),
+    client.invalidateQueries({ queryKey: ['reviews'] }),
+    client.invalidateQueries({ queryKey: ['reviewerStatistics'] }),
+    client.invalidateQueries({ queryKey: queryKeys.archives }),
+  ]);
+}
+
+export function useCreateReviewerMutation() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, input }: { id: number; input: SampleReviewUpdate }) => apiRequest<Sample>(`/api/samples/${id}/review`, {
-      method: 'PATCH',
-      ...json(input),
-    }),
-    onSuccess: () => invalidateCatalog(client, ['samples']),
+    mutationFn: (input: ReviewerCreate) => apiRequest<Reviewer>('/api/reviewers', { method: 'POST', ...json(input) }),
+    onSuccess: () => invalidateCatalog(client, queryKeys.reviewers),
+  });
+}
+
+export function useRenameReviewerMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: number; input: ReviewerRename }) => apiRequest<Reviewer>(`/api/reviewers/${id}`, { method: 'PATCH', ...json(input) }),
+    onSuccess: value => {
+      client.setQueryData<Reviewer[]>(queryKeys.reviewers, current => current?.map(item => item.id === value.id ? value : item) ?? [value]);
+      return invalidateCatalog(client, queryKeys.reviewers);
+    },
+  });
+}
+
+export function useCreateReviewMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReviewCreate) => apiRequest<Sample>('/api/reviews', { method: 'POST', ...json(input) }),
+    onSuccess: () => invalidateReviewData(client),
+  });
+}
+
+export function useCreateReviewsBatchMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReviewBatchCreate) => apiRequest<Sample[]>('/api/reviews/batch', { method: 'POST', ...json(input) }),
+    onSuccess: () => invalidateReviewData(client),
+  });
+}
+
+export function useUpdateSampleClassificationMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: number; input: SampleClassificationUpdate }) => apiRequest<Sample>(`/api/samples/${id}/classification`, { method: 'PATCH', ...json(input) }),
+    onSuccess: () => invalidateReviewData(client),
+  });
+}
+
+export function usePreviewArchiveMutation() {
+  return useMutation({
+    mutationFn: (input: ArchivePreviewRequest) => apiRequest<ArchivePreview>('/api/archives/preview', { method: 'POST', ...json(input) }),
+  });
+}
+
+export function useSyncArchiveMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ArchiveSyncRequest) => apiRequest<Archive>('/api/archives/sync', { method: 'POST', ...json(input) }),
+    onSuccess: () => invalidateReviewData(client),
   });
 }
 

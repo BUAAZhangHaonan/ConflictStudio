@@ -17,6 +17,9 @@ export type Age = 25 | 35 | 45 | 60;
 export type JobStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 export type GenerationAttemptStatus = 'Running' | 'Completed' | 'Failed';
 export type ReviewDecision = 'Pending' | 'Accepted' | 'Rejected';
+export type ArchiveSyncStatus = 'Current' | 'NeedsUpdate';
+export type Protocol = 'VA' | 'VT';
+export type Relation = 'Aligned' | 'Conflict';
 export type TestExecutionMode = 'Parallel' | 'Serial';
 export type JobItemStage =
   | 'PromptQueued'
@@ -384,9 +387,107 @@ export interface KeepTestResultRequest {
   expectedRevision: number;
 }
 
-export interface SampleReviewUpdate {
-  decision: ReviewDecision;
+export interface Reviewer extends RevisionedResource {
+  name: string;
+}
+
+export interface ReviewerCreate {
+  name: string;
+}
+
+export interface ReviewerRename {
+  name: string;
   expectedRevision: number;
+}
+
+export interface ReviewCreate {
+  sampleId: number;
+  reviewerId: number;
+  decision: Exclude<ReviewDecision, 'Pending'>;
+  note: string;
+  expectedRevision: number;
+  expectedReviewRevision: number;
+}
+
+export interface ReviewBatchCreate {
+  items: ReviewCreate[];
+}
+
+export interface Review {
+  id: number;
+  sampleId: number;
+  reviewerId: number;
+  reviewerName: string;
+  datasetId: number;
+  protocol: Protocol;
+  relation: Relation;
+  decision: Exclude<ReviewDecision, 'Pending'>;
+  note: string;
+  sampleRevision: number;
+  revision: number;
+  createdAt: string;
+}
+
+export interface SampleClassificationUpdate {
+  expectedRevision: number;
+  targetCategory: Category;
+  conflictDirection: ConflictDirection | null;
+}
+
+export interface ReviewerActivity {
+  date: string;
+  reviewedCount: number;
+}
+
+export interface ReviewerStatistics {
+  reviewerId: number;
+  datasetId: number | null;
+  startDate: string;
+  endDate: string;
+  uniqueReviewedCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  vaCount: number;
+  vtCount: number;
+  revisedSampleCount: number;
+  archivedCurrentCount: number;
+  needsUpdateCount: number;
+  activity: ReviewerActivity[];
+}
+
+export interface ReviewerStatisticsFilter {
+  datasetId?: number;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface ArchiveChange {
+  sampleId: number;
+  expectedRevision: number;
+}
+
+export interface ArchivePreviewRequest {
+  datasetId: number;
+}
+
+export interface ArchivePreview {
+  datasetId: number;
+  added: ArchiveChange[];
+  updated: ArchiveChange[];
+  removed: ArchiveChange[];
+  unchangedCount: number;
+  expectedArchiveRevision: number;
+}
+
+export type ArchiveSyncRequest = ArchivePreview;
+
+export interface Archive {
+  datasetId: number;
+  revision: number;
+  lastSyncedAt: string | null;
+  manifestAvailable: boolean;
+  currentCount: number;
+  needsUpdateCount: number;
 }
 
 export interface Sample {
@@ -398,6 +499,9 @@ export interface Sample {
   conflictDirection: ConflictDirection | null;
   reviewDecision: ReviewDecision;
   reviewRevision: number;
+  currentReview: Review | null;
+  inArchive: boolean;
+  archiveSyncStatus: ArchiveSyncStatus;
   model: ModelName;
   generationRecord: GenerationAttempt;
   gpuSlot: GpuSlotName;
@@ -478,4 +582,11 @@ export interface GpuSlot {
   revision: number;
   checkedAt: string;
   statusReason: string | null;
+}
+
+export interface Health {
+  ok: boolean;
+  database: string;
+  promptServiceConfigured: boolean;
+  rendererInstallation: 'installed' | 'notInstalled' | 'unknown' | 'notConfigured';
 }

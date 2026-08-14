@@ -4,7 +4,7 @@ import { Button, ConfirmDialog, PageHeader, StatusBadge } from '../../components
 import { apiErrorMessage } from '../../api/client';
 import { useGpuSlotsQuery, useReleaseGpuMutation } from '../../api/queries';
 import { generationText, type GenerationKey } from '../../locales/features/generation';
-import { useRepositorySnapshot } from '../../store';
+import { usePreferences } from '../../preferences';
 import { formatDateTime } from '../../time';
 import type {
   Category,
@@ -23,7 +23,7 @@ export const emotions = ['neutral', 'joy', 'sadness', 'anger', 'fear', 'surprise
 
 const draftPrefix = 'conflictstudio.generation.draft.';
 export function useGenerationCopy() {
-  const locale = useRepositorySnapshot().preferences.locale;
+  const locale = usePreferences().locale;
   return useCallback(
     (key: GenerationKey, values?: Record<string, string | number>) => generationText(locale, key, values),
     [locale],
@@ -31,7 +31,7 @@ export function useGenerationCopy() {
 }
 
 export function useGenerationLocale(): Locale {
-  return useRepositorySnapshot().preferences.locale;
+  return usePreferences().locale;
 }
 
 export function localizedName(
@@ -143,7 +143,7 @@ export function OperationFeedback({
   onDismiss: () => void;
 }) {
   const g = useGenerationCopy();
-  const locale = useRepositorySnapshot().preferences.locale;
+  const locale = usePreferences().locale;
   return (
     <section className="generation-feedback" role="alert">
       <div>
