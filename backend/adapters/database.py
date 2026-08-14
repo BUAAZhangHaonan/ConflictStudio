@@ -199,6 +199,29 @@ class Database:
                 END
                 """
             )
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS require_reviews_sample_snapshot")
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER require_reviews_sample_snapshot
+            BEFORE INSERT ON reviews
+            WHEN NOT EXISTS (
+                SELECT 1 FROM samples
+                WHERE samples.id = NEW.sample_id
+                  AND samples.dataset_id = NEW.dataset_id
+                  AND NEW.protocol = CASE
+                      WHEN samples.category IN ('A-VA', 'C-VA') THEN 'VA'
+                      ELSE 'VT'
+                  END
+                  AND NEW.relation = CASE
+                      WHEN samples.category IN ('A-VA', 'A-VT') THEN 'Aligned'
+                      ELSE 'Conflict'
+                  END
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'review snapshot must match its sample');
+            END
+            """
+        )
         for operation in ("INSERT", "UPDATE"):
             trigger_name = f"require_archive_items_dataset_{operation.casefold()}"
             connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")

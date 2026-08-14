@@ -195,6 +195,7 @@ def test_classification_moves_only_between_relations_in_same_protocol(tmp_path: 
             },
         )
         history = client.get("/api/reviews", params={"sampleId": sample["id"]})
+        current = client.get(f"/api/samples/{sample['id']}")
         removed_endpoint = client.patch(
             f"/api/samples/{sample['id']}/review",
             json={"expectedRevision": moved.json()["revision"], "decision": "Accepted"},
@@ -205,7 +206,10 @@ def test_classification_moves_only_between_relations_in_same_protocol(tmp_path: 
     assert moved.json()["conflictDirection"] == "Audio"
     assert moved.json()["reviewDecision"] == "Pending"
     assert moved.json()["reviewRevision"] == reviewed["reviewRevision"]
+    assert moved.json()["currentReview"] is None
+    assert current.json()["currentReview"] is None
     assert len(history.json()) == 1
+    assert history.json()[0]["decision"] == "Accepted"
     assert invalid_direction.status_code == 422
     assert cross_protocol.status_code == 422
     assert removed_endpoint.status_code == 405
@@ -226,3 +230,57 @@ def test_review_rows_cannot_be_updated_or_deleted_in_sqlite(tmp_path: Path) -> N
             connection.execute("DELETE FROM reviews WHERE sample_id = ?", (sample["id"],))
     finally:
         connection.close()
+
+
+def test_review_snapshot_must_match_current_sample_in_sqlite(tmp_path: Path) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()[0]
+        reviewer = create_reviewer(client)
+        other_dataset = client.post(
+            "/api/datasets",
+            json={"name": "Other", "purpose": "Validation", "note": ""},
+        ).json()
+
+    statement = (
+        "INSERT INTO reviews "
+        "(sample_id, reviewer_id, dataset_id, protocol, relation, decision, note, "
+        "sample_revision, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    valid = (
+        sample["id"], reviewer["id"], sample["datasetId"], "VA", "Aligned",
+        "Accepted", "", sample["revision"], 1, "2026-08-14T00:00:00Z",
+    )
+    connection = sqlite3.connect(app.state.database.database_path)
+    try:
+        connection.execute("PRAGMA foreign_keys=ON")
+        mismatches = (
+            (*valid[:2], other_dataset["id"], *valid[3:]),
+            (*valid[:3], "VT", *valid[4:]),
+            (*valid[:4], "Conflict", *valid[5:]),
+        )
+        for values in mismatches:
+            with pytest.raises(sqlite3.IntegrityError, match="review snapshot must match its sample"):
+                connection.execute(statement, values)
+        assert connection.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_initialize_installs_review_snapshot_trigger_on_existing_database(tmp_path: Path) -> None:
+    app = sample_app(tmp_path)
+    database = app.state.database
+    with database.engine.begin() as connection:
+        connection.exec_driver_sql("DROP TRIGGER require_reviews_sample_snapshot")
+        assert connection.exec_driver_sql(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+            "AND name = 'require_reviews_sample_snapshot'"
+        ).scalar_one() == 0
+
+    database.initialize()
+
+    with database.engine.connect() as connection:
+        assert connection.exec_driver_sql(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' "
+            "AND name = 'require_reviews_sample_snapshot'"
+        ).scalar_one() == 1

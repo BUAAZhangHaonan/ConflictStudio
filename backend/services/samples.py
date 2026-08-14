@@ -175,7 +175,7 @@ class SampleService:
         ).first()
         if attempt is None:
             raise state_conflict("sample", row.id, "The sample has no current successful generation attempt")
-        current = latest_review(session, row.id)
+        current = None if row.review_decision is ReviewDecision.PENDING else latest_review(session, row.id)
         archive_item = session.get(ArchiveItem, (row.dataset_id, row.id))
         archive_sync_status = archive_status_for(
             row.review_decision,
