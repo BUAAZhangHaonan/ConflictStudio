@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
 from threading import Lock
 from typing import Iterator
 
@@ -17,12 +18,15 @@ from backend.adapters.renderer import (
     RendererGatewayError,
 )
 from backend.domain.enums import (
+    Category,
     GenerationAttemptStatus,
     GpuAvailability,
     GpuSlotName,
     JobItemStage,
     JobSource,
     JobStatus,
+    ModelName,
+    Precision,
 )
 from backend.domain.models import (
     BatchVideoInputSnapshot,
@@ -42,6 +46,24 @@ from .samples import create_sample_for_completed_item
 
 
 TERMINAL_STATUSES = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
+
+
+@dataclass(frozen=True)
+class _ItemExecution:
+    sequence: int
+    gpu_slot: GpuSlotName
+    model: ModelName
+    precision: Precision | None
+    category: Category
+    confirm_model_switch: bool
+    seed: int
+    width: int
+    height: int
+    fps: int
+    frame_count: int
+    source_has_audio: bool
+    derive_silent_primary: bool
+    prepared_prompt: PreparedPrompt
 
 
 class JobExecutor:
@@ -233,28 +255,34 @@ class JobExecutor:
         self.notify()
 
     def _claim_queued_jobs(self) -> list[int]:
-        claimed: list[int] = []
+        with self.database.read_session() as session:
+            job_ids = session.exec(
+                select(Job.id).where(Job.status == JobStatus.QUEUED).order_by(Job.id)
+            ).all()
+        return [job_id for job_id in job_ids if self._claim_queued_job(job_id)]
+
+    def _claim_queued_job(self, job_id: int) -> bool:
         with self._event_session() as session:
-            jobs = session.exec(select(Job).where(Job.status == JobStatus.QUEUED).order_by(Job.id)).all()
-            for job in jobs:
-                if not self._reservations_match(session, job):
-                    self._fail_queued_reservation(session, job)
-                    continue
-                timestamp = utc_now()
-                job.status = JobStatus.RUNNING
-                job.started_at = timestamp
-                job.updated_at = timestamp
-                job.revision += 1
-                for slot in self._job_slots(session, job.id):
-                    row = session.get(GpuSlot, slot)
-                    if row is None:
-                        raise RuntimeError(f"Missing GPU slot {slot.value}")
-                    row.availability = GpuAvailability.BUSY
-                    row.revision += 1
-                    row.checked_at = timestamp
-                self._append_event(session, job, "JobStarted")
-                claimed.append(job.id)
-        return claimed
+            job = session.get(Job, job_id)
+            if job is None or job.status is not JobStatus.QUEUED:
+                return False
+            if not self._reservations_match(session, job):
+                self._fail_queued_reservation(session, job)
+                return False
+            timestamp = utc_now()
+            job.status = JobStatus.RUNNING
+            job.started_at = timestamp
+            job.updated_at = timestamp
+            job.revision += 1
+            for slot in self._job_slots(session, job.id):
+                row = session.get(GpuSlot, slot)
+                if row is None:
+                    raise RuntimeError(f"Missing GPU slot {slot.value}")
+                row.availability = GpuAvailability.BUSY
+                row.revision += 1
+                row.checked_at = timestamp
+            self._append_event(session, job, "JobStarted")
+            return True
 
     async def _run_job(self, job_id: int) -> None:
         try:
@@ -286,37 +314,36 @@ class JobExecutor:
         prompt_id: str | None = None
         gpu_slot: GpuSlotName | None = None
         try:
-            job, item, snapshot = self._begin_item(job_id, item_id)
-            gpu_slot = item.gpu_slot
-            prepared = self._prepared_prompt(snapshot)
-            result = await self.prompts.complete(prepared, snapshot.category)
+            execution = self._begin_item(job_id, item_id)
+            gpu_slot = execution.gpu_slot
+            result = await self.prompts.complete(execution.prepared_prompt, execution.category)
             self._store_prompt_result(job_id, item_id, result)
 
             request = RenderRequest(
                 job_id=job_id,
                 job_item_id=item_id,
-                item_sequence=item.sequence,
-                gpu_slot=item.gpu_slot,
-                model=snapshot.model,
-                precision=snapshot.precision,
-                category=snapshot.category,
-                confirm_model_switch=job.confirm_model_switch,
-                seed=snapshot.seed,
-                width=snapshot.width,
-                height=snapshot.height,
-                fps=snapshot.fps,
-                frame_count=snapshot.frame_count,
+                item_sequence=execution.sequence,
+                gpu_slot=execution.gpu_slot,
+                model=execution.model,
+                precision=execution.precision,
+                category=execution.category,
+                confirm_model_switch=execution.confirm_model_switch,
+                seed=execution.seed,
+                width=execution.width,
+                height=execution.height,
+                fps=execution.fps,
+                frame_count=execution.frame_count,
                 positive_prompt=result.final_positive_prompt,
                 negative_prompt=result.final_negative_prompt,
                 dialogue=result.dialogue,
                 vt_text=result.vt_text,
-                source_has_audio=snapshot.source_has_audio,
-                derive_silent_primary=snapshot.derive_silent_primary,
+                source_has_audio=execution.source_has_audio,
+                derive_silent_primary=execution.derive_silent_primary,
             )
             prompt_id = await self.renderer.submit(request)
             if not getattr(self.renderer, "persists_render_state", False):
                 self._record_rendering(job_id, item_id, prompt_id)
-            await self.renderer.wait(item.gpu_slot, prompt_id)
+            await self.renderer.wait(execution.gpu_slot, prompt_id)
             self._complete_item(job_id, item_id)
         except asyncio.CancelledError:
             cancel_outcome: CancelOutcome | None = None
@@ -340,7 +367,7 @@ class JobExecutor:
         self,
         job_id: int,
         item_id: int,
-    ) -> tuple[Job, JobItem, BatchVideoInputSnapshot]:
+    ) -> _ItemExecution:
         with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
@@ -362,7 +389,22 @@ class JobExecutor:
             item.revision += 1
             self._append_event(session, job, "ItemPromptStarted", item=item)
             session.flush()
-            return job, item, snapshot
+            return _ItemExecution(
+                sequence=item.sequence,
+                gpu_slot=item.gpu_slot,
+                model=snapshot.model,
+                precision=snapshot.precision,
+                category=snapshot.category,
+                confirm_model_switch=job.confirm_model_switch,
+                seed=snapshot.seed,
+                width=snapshot.width,
+                height=snapshot.height,
+                fps=snapshot.fps,
+                frame_count=snapshot.frame_count,
+                source_has_audio=snapshot.source_has_audio,
+                derive_silent_primary=snapshot.derive_silent_primary,
+                prepared_prompt=self._prepared_prompt(snapshot),
+            )
 
     @staticmethod
     def _prepared_prompt(snapshot: BatchVideoInputSnapshot) -> PreparedPrompt:

@@ -87,6 +87,22 @@ class RecordingPromptModel:
         return None
 
 
+class BlockingPromptModel(RecordingPromptModel):
+    def __init__(self, expected_calls: int) -> None:
+        super().__init__()
+        self.expected_calls = expected_calls
+        self.entered_calls = 0
+        self.all_started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def generate(self, system_input: str, user_input: str) -> str:
+        self.entered_calls += 1
+        if self.entered_calls == self.expected_calls:
+            self.all_started.set()
+        await self.release.wait()
+        return await super().generate(system_input, user_input)
+
+
 class FakeRenderer:
     configured = True
 
@@ -375,6 +391,60 @@ def test_two_single_gpu_jobs_with_different_models_run_concurrently(tmp_path: Pa
             await wait_for_status(batches, h3_job.id, {JobStatus.COMPLETED})
         finally:
             await executor.stop()
+
+    asyncio.run(scenario())
+
+
+def test_concurrent_prompt_generation_releases_database_transactions(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        model = BlockingPromptModel(expected_calls=2)
+        renderer = FakeRenderer()
+        prompts = PromptService(model)
+        batches = BatchService(database, prompts, renderer)
+        catalog = CatalogService(database)
+        first_draft = create_draft(
+            batches,
+            create_resources(database, "concurrent first"),
+            [GpuSlotName.GPU0],
+            model=ModelName.LTX,
+        )
+        second_draft = create_draft(
+            batches,
+            create_resources(database, "concurrent second"),
+            [GpuSlotName.GPU1],
+            model=ModelName.H3,
+        )
+        make_available(database, [GpuSlotName.GPU0, GpuSlotName.GPU1])
+        first_job = await enqueue(batches, first_draft)
+        second_job = await enqueue(batches, second_draft)
+        executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
+        await executor.start()
+        try:
+            await asyncio.wait_for(model.all_started.wait(), timeout=2)
+            created = catalog.create_dataset(
+                DatasetCreate(
+                    name="Catalog write during prompt generation",
+                    purpose=DatasetPurpose.PRODUCTION,
+                    note="",
+                )
+            )
+            assert created.name == "Catalog write during prompt generation"
+            assert len(catalog.list_content_plans()) == 2
+            model.release.set()
+            completed = await asyncio.gather(
+                wait_for_status(batches, first_job.id, {JobStatus.COMPLETED}),
+                wait_for_status(batches, second_job.id, {JobStatus.COMPLETED}),
+            )
+        finally:
+            model.release.set()
+            await executor.stop()
+
+        assert model.calls == 2
+        assert all(job.failed_count == 0 for job in completed)
 
     asyncio.run(scenario())
 
