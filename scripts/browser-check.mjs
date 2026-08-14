@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { createServer } from '../frontend/node_modules/vite/dist/node/index.js';
+import {
+  createBrowserApiFixture,
+  gpuSlotsFixture,
+  installPreferences,
+  preferenceKeys,
+} from './browser-fixtures.mjs';
 
 const playwrightModule = process.env.CONFLICTSTUDIO_PLAYWRIGHT_MODULE;
 if (!playwrightModule) throw new Error('CONFLICTSTUDIO_PLAYWRIGHT_MODULE is required.');
@@ -11,39 +17,8 @@ const { chromium } = await import(pathToFileURL(playwrightModule).href);
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = resolve(projectRoot, 'frontend');
 const baseUrl = 'http://127.0.0.1:4173';
-const dataKey = 'conflictstudio.prototype.data.v10';
-const mockMediaSource = readFileSync(resolve(frontendRoot, 'src/mockMedia.ts'), 'utf8');
-const voicedVideoDataUrl = mockMediaSource.match(/voicedVideoDataUrl = '([^']+)'/u)?.[1];
-const silentVideoDataUrl = mockMediaSource.match(/silentVideoDataUrl = '([^']+)'/u)?.[1];
-if (!voicedVideoDataUrl || !silentVideoDataUrl) throw new Error('Mock review media fixtures are required.');
-const gpuSlotsFixture = [
-  {
-    slot: 'GPU0',
-    availability: 'Available',
-    loadedModel: 'LTX-2.5',
-    loadedPrecision: 'INT8',
-    serviceStatus: 'running',
-    gpuName: 'NVIDIA RTX PRO 6000 Blackwell',
-    memory: { usedMiB: 8192, totalMiB: 97887 },
-    activeJobId: null,
-    revision: 2,
-    checkedAt: '2026-08-14T08:00:00.000Z',
-    statusReason: null,
-  },
-  {
-    slot: 'GPU1',
-    availability: 'Available',
-    loadedModel: null,
-    loadedPrecision: null,
-    serviceStatus: 'stopped',
-    gpuName: 'NVIDIA RTX PRO 6000 Blackwell',
-    memory: { usedMiB: 16, totalMiB: 97887 },
-    activeJobId: null,
-    revision: 3,
-    checkedAt: '2026-08-14T08:00:00.000Z',
-    statusReason: null,
-  },
-];
+const artifactRoot = process.env.CONFLICTSTUDIO_BROWSER_ARTIFACT_DIR;
+if (artifactRoot) mkdirSync(artifactRoot, { recursive: true });
 const gpuSlotContractKeys = [
   'activeJobId', 'availability', 'checkedAt', 'gpuName', 'loadedModel',
   'loadedPrecision', 'memory', 'revision', 'serviceStatus', 'slot', 'statusReason',
@@ -52,85 +27,13 @@ for (const slot of gpuSlotsFixture) {
   assert.deepEqual(Object.keys(slot).sort(), gpuSlotContractKeys, `${slot.slot} fixture must match the current GPU slot response contract.`);
   assert.deepEqual(Object.keys(slot.memory).sort(), ['totalMiB', 'usedMiB'], `${slot.slot} memory fixture must match the current GPU memory response contract.`);
 }
-const resourceTimestamp = '2026-08-14T08:00:00.000Z';
-const datasetsFixture = [{ id: 1, name: 'Formal samples', purpose: 'Production', note: '', status: 'Active', revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp }];
-const contentPlansFixture = [{
-  id: 1, nameZh: '克制回应', nameEn: 'Restrained reply', category: 'A-VA', conflictDirection: null,
-  mode: 'Fixed', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'sadness',
-  sceneZh: '安静办公室', sceneEn: 'Quiet office', triggerEventZh: '收到坏消息', triggerEventEn: 'Bad news arrives',
-  psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
-  dialogue: 'I understand.', displayText: null, trueEmotionDescription: 'The voice and expression carry sadness.',
-  baseVideoPrompt: 'A fixed camera records a short reply.', contentRequirementsZh: '自然回应', contentRequirementsEn: 'Natural reply',
-  sceneSupplementZh: '稳定镜头', sceneSupplementEn: 'Stable camera', revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
-}];
-const promptPresetsFixture = [{
-  id: 1, name: 'Natural conversation', category: 'A-VA', styleGuidance: 'Natural restrained acting.', sceneSupplement: 'Stable camera.',
-  positiveExamples: ['A natural reply.'], negativeExamples: ['Exaggerated acting.'], finalRenderNegativeConstraints: 'No subtitles.',
-  status: 'Active', revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
-}];
-const backgroundsFixture = [{
-  id: 1, nameZh: '安静办公室', nameEn: 'Quiet office', sceneZh: '安静办公室', sceneEn: 'Quiet office',
-  ambientSoundZh: '轻微空调声', ambientSoundEn: 'Low air conditioner hum', participantRelationshipZh: '同事', participantRelationshipEn: 'Colleagues',
-  lightingZh: '柔和室内光', lightingEn: 'Soft indoor light', framingZh: '中景', framingEn: 'Medium shot', status: 'Active',
-  revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
-}];
-const jobFixture = {
-  id: 1, displayName: 'Dual GPU history', source: 'Production', datasetId: 1, batchDraftId: 1,
-  category: 'A-VA', conflictDirection: null, model: 'LTX-2.5', precision: 'INT8', status: 'Completed',
-  totalCount: 128, preparedCount: 128, completedCount: 128, failedCount: 0, confirmModelSwitch: false,
-  cancelRequestedAt: null, failureCode: null, failureReason: null, startedAt: resourceTimestamp, finishedAt: resourceTimestamp,
-  revision: 2, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
-};
-function jobItemFixture(id, sequence, gpuSlot) {
-  return {
-    id, sequence, gpuSlot, stage: 'Completed', status: 'Completed', failureCode: null, failureReason: null,
-    rendererPromptId: `prompt-${id}`, sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id,
-    primaryAssetUrl: '/media/review-sample.mp4', revision: 2, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
-    input: {
-      id, sequence, datasetId: 1, datasetRevision: 1, contentPlanId: 1, contentPlanRevision: 1,
-      promptPresetId: 1, promptPresetRevision: 1, backgroundPresetId: 1, backgroundPresetRevision: 1,
-      policyVersion: 'prompt-policy-v1', category: 'A-VA', conflictDirection: null, age: 25, gender: 'Female', ethnicity: 'EastAsian',
-      model: 'LTX-2.5', precision: 'INT8', seed: 3200 + sequence, width: 1344, height: 768, fps: 25, frameCount: 121,
-      rendererProfileVersion: 'ltx25-v1', promptModel: 'DeepSeek-V4-Flash', sourceHasAudio: true, deriveSilentPrimary: false,
-      systemInput: 'Return valid JSON.', userInput: 'Generate a natural reply.', finalNegativePrompt: 'No subtitles.',
-      fixedPositivePrompt: 'A fixed camera records a short reply.', fixedDialogue: 'I understand.', fixedVtText: null,
-      fixedTrueEmotionDescription: 'The voice and expression carry sadness.', trueEmotion: 'sadness', apparentEmotion: 'sadness', createdAt: resourceTimestamp,
-    },
-    promptResult: null,
-    attempts: [{
-      id, attemptNumber: 1, model: 'LTX-2.5', precision: 'INT8', gpuSlot, seed: 3200 + sequence,
-      sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/review-sample.mp4',
-      rendererPromptId: `prompt-${id}`, status: 'Completed', failureReason: null, startedAt: resourceTimestamp, finishedAt: resourceTimestamp,
-    }],
-    sampleId: id,
-  };
-}
-const jobItemsFixture = [jobItemFixture(1, 1, 'GPU0'), jobItemFixture(2, 2, 'GPU1')];
-function sampleFixture(id, reviewDecision, category = 'A-VA') {
-  const videoAudio = category.endsWith('-VA');
-  return {
-    id, displayId: `CS-${String(id).padStart(6, '0')}`, jobItemId: id, datasetId: 1, category, conflictDirection: null,
-    reviewDecision, reviewRevision: reviewDecision === 'Pending' ? 0 : 1, model: 'LTX-2.5',
-    generationRecord: jobItemsFixture[(id - 1) % jobItemsFixture.length].attempts[0], gpuSlot: id % 2 ? 'GPU0' : 'GPU1',
-    contentPlanId: 1, contentPlanRevision: 1, promptPresetId: 1, sourceAssetId: null, sourceAssetUrl: null,
-    primaryAssetId: id, primaryAssetUrl: videoAudio ? voicedVideoDataUrl : silentVideoDataUrl, dialogue: videoAudio ? 'I understand.' : null, displayText: videoAudio ? null : 'I understand.',
-    videoPrompt: 'A fixed camera records a short reply.', negativePrompt: 'No subtitles.',
-    trueEmotionDescription: 'The voice and expression carry sadness.', trueEmotion: 'sadness', apparentEmotion: 'sadness',
-    contentPlanNameZh: '克制回应', contentPlanNameEn: 'Restrained reply', sceneZh: '安静办公室', sceneEn: 'Quiet office',
-    triggerEventZh: '收到坏消息', triggerEventEn: 'Bad news arrives', psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
-    age: 25, gender: 'Female', ethnicity: 'EastAsian', seed: 3200 + id, revision: 1, createdAt: resourceTimestamp, updatedAt: resourceTimestamp,
-  };
-}
-const pendingSamplesFixture = Array.from({ length: 30 }, (_, index) => sampleFixture(index + 1, 'Pending', index === 3 ? 'A-VT' : 'A-VA'));
-const acceptedSamplesFixture = Array.from({ length: 25 }, (_, index) => sampleFixture(index + 31, 'Accepted'));
-const samplesFixture = [...pendingSamplesFixture, ...acceptedSamplesFixture];
 
 function equal(actual, expected, message) {
   assert.equal(actual, expected, message);
 }
 
 async function setLocale(page, locale) {
-  await page.evaluate(value => localStorage.setItem('conflictstudio.prototype.locale', value), locale);
+  await page.evaluate(({ key, value }) => localStorage.setItem(key, value), { key: preferenceKeys.locale, value: locale });
 }
 
 async function open(page, route, locale = 'en-US') {
@@ -237,11 +140,10 @@ async function expectFocus(page, locator, message) {
   equal(await locator.evaluate(element => element === document.activeElement), true, message);
 }
 
-async function resetPrototypeState(page) {
-  await page.evaluate(key => {
-    localStorage.removeItem(key);
+async function resetBrowserSession(page) {
+  await page.evaluate(() => {
     sessionStorage.clear();
-  }, dataKey);
+  });
   await page.reload({ waitUntil: 'networkidle' });
 }
 
@@ -271,60 +173,20 @@ const server = await createServer({
 });
 
 let browser;
+let context;
+let tracingStarted = false;
 try {
   await server.listen();
   browser = await chromium.launch({ channel: 'chrome', headless: true });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
-  await context.addInitScript(() => {
-    if (!localStorage.getItem('conflictstudio.prototype.reviewer.v2')) {
-      localStorage.setItem('conflictstudio.prototype.reviewer.v2', 'reviewer-lin');
-    }
-    if (!localStorage.getItem('conflictstudio.prototype.locale')) {
-      localStorage.setItem('conflictstudio.prototype.locale', 'en-US');
-    }
-  });
+  context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+  await installPreferences(context);
+  if (artifactRoot) {
+    await context.tracing.start({ screenshots: true, snapshots: true });
+    tracingStarted = true;
+  }
   const page = await context.newPage();
-  let batchDraftsFixture = [];
-  await page.route('**/api/gpu-slots', route => route.fulfill({ json: gpuSlotsFixture }));
-  await page.route('**/api/datasets', route => route.fulfill({ json: datasetsFixture }));
-  await page.route('**/api/content-plans', route => route.fulfill({ json: contentPlansFixture }));
-  await page.route('**/api/prompt-presets', route => route.fulfill({ json: promptPresetsFixture }));
-  await page.route('**/api/video-background-presets', route => route.fulfill({ json: backgroundsFixture }));
-  await page.route('**/api/batch-drafts', async route => {
-    if (route.request().method() === 'GET') return route.fulfill({ json: batchDraftsFixture });
-    const input = route.request().postDataJSON();
-    const draft = {
-      id: 1,
-      datasetId: input.datasetId,
-      datasetRevision: 1,
-      category: input.category,
-      conflictDirection: input.conflictDirection,
-      model: input.model,
-      precision: input.precision,
-      quantity: input.quantity,
-      seed: input.seed ?? 3200,
-      status: 'Draft',
-      contentPlans: input.contentPlans.map(item => ({ ...item, nameZh: contentPlansFixture.find(value => value.id === item.id)?.nameZh ?? '', nameEn: contentPlansFixture.find(value => value.id === item.id)?.nameEn ?? '' })),
-      promptPresets: input.promptPresets.map(item => ({ ...item, name: promptPresetsFixture.find(value => value.id === item.id)?.name ?? '' })),
-      backgroundPresets: input.backgroundPresets.map(item => ({ ...item, nameZh: backgroundsFixture.find(value => value.id === item.id)?.nameZh ?? '', nameEn: backgroundsFixture.find(value => value.id === item.id)?.nameEn ?? '' })),
-      demographics: input.demographics,
-      gpuSlots: input.gpuSlots,
-      revision: 1,
-      createdAt: resourceTimestamp,
-      updatedAt: resourceTimestamp,
-    };
-    batchDraftsFixture = [draft];
-    return route.fulfill({ status: 201, json: draft });
-  });
-  await page.route('**/api/jobs', route => route.fulfill({ json: [jobFixture] }));
-  await page.route('**/api/jobs/1', route => route.fulfill({ json: { ...jobFixture, items: jobItemsFixture, events: [] } }));
-  await page.route('**/api/jobs/1/items*', route => route.fulfill({ json: jobItemsFixture }));
-  await page.route('**/api/jobs/1/events*', route => route.fulfill({ json: [] }));
-  await page.route('**/api/samples*', route => {
-    const decision = new URL(route.request().url()).searchParams.get('decision');
-    route.fulfill({ json: decision ? samplesFixture.filter(sample => sample.reviewDecision === decision) : samplesFixture });
-  });
-  await page.route('**/media/review-sample.mp4', route => route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
+  const api = createBrowserApiFixture();
+  await api.install(page);
   const pageErrors = [];
   const consoleErrors = [];
   const routerWarnings = [];
@@ -340,13 +202,13 @@ try {
   });
 
   await open(page, '/workspace');
-  equal(await page.evaluate(key => Boolean(localStorage.getItem(key)), dataKey), true, 'Prototype data must initialize.');
+  equal(await page.evaluate(key => localStorage.getItem(key), preferenceKeys.reviewerId), '1', 'The current reviewer must come from browser preferences.');
 
   await open(page, '/generate/batches');
   const gpuFieldset = page.getByRole('group', { name: 'GPU', exact: true });
   const gpuChecks = gpuFieldset.locator('input[type="checkbox"]');
   equal(await gpuChecks.count(), 2, 'The production batch must show two GPUs.');
-  equal(await gpuChecks.evaluateAll(nodes => nodes.every(node => !node.disabled)), true, 'Both example GPUs must be selectable.');
+  equal(await gpuChecks.evaluateAll(nodes => nodes.every(node => !node.disabled)), true, 'Both available GPUs must be selectable.');
   const gpuCards = page.locator('.generation-gpu-card');
   equal(await gpuCards.count(), 2, 'The live GPU panel must show both API slots.');
   equal((await gpuCards.nth(0).innerText()).includes('Loaded model: LTX-2.5 INT8'), true, 'GPU0 must show the API model and precision.');
@@ -445,10 +307,19 @@ try {
   const categoryFit = await page.locator('#test-category').evaluate(element => element.scrollWidth <= element.clientWidth);
   equal(categoryFit, true, 'The test category must be fully visible at 1024 pixels.');
 
-  await page.setViewportSize({ width: 768, height: 900 });
-  await open(page, '/workspace');
-  equal(await page.locator('.workspace-datasets .table-shell table').evaluate(element => getComputedStyle(element).display), 'block', 'The 768 pixel workspace must use the compact dataset layout.');
-  await expectContained(page.locator('.workspace-datasets .table-shell'), 'The compact dataset layout must not require horizontal scrolling.');
+  for (const [width, height] of [[1024, 768], [768, 900]]) {
+    await page.setViewportSize({ width, height });
+    await open(page, '/workspace');
+    equal(await page.locator('.workspace-datasets .table-shell table').evaluate(element => getComputedStyle(element).display), 'block', `The ${width} pixel workspace must use the compact dataset layout.`);
+    await expectContained(page.locator('.workspace-datasets .table-shell'), `The ${width} pixel dataset layout must not require horizontal scrolling.`);
+    const actionBounds = await page.locator('.workspace-datasets__actions .button').evaluateAll(elements => elements.map(element => {
+      const bounds = element.getBoundingClientRect();
+      const panel = element.closest('.workspace-datasets')?.getBoundingClientRect();
+      return { left: bounds.left, right: bounds.right, panelLeft: panel?.left ?? 0, panelRight: panel?.right ?? 0 };
+    }));
+    equal(actionBounds.every(bounds => bounds.left >= bounds.panelLeft && bounds.right <= bounds.panelRight), true, `Dataset actions must remain visible at ${width} pixels.`);
+    if (artifactRoot && width === 1024) await page.screenshot({ path: join(artifactRoot, 'workspace-1024.png'), fullPage: true });
+  }
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, '/review?sample=CS-000001');
@@ -493,9 +364,9 @@ try {
 
   const sampleContext = await page.locator('.review-context').textContent();
   equal(sampleContext.includes('LTX-2.5'), true, 'Sample context must retain the sample model.');
-  for (const value of ['INT8', 'GPU0', '3201']) equal(sampleContext.includes(value), false, `Sample context must exclude generation value ${value}.`);
+  for (const value of ['BF16', 'GPU0', '424243', '9001']) equal(sampleContext.includes(value), false, `Sample context must exclude generation value ${value}.`);
   const generationRecord = await page.locator('.review-generation-record').textContent();
-  for (const value of ['LTX-2.5', 'INT8', 'GPU0', '3201', '1']) equal(generationRecord.includes(value), true, `Generation record must contain ${value}.`);
+  for (const value of ['LTX-2.5', 'BF16', 'GPU0', '424243', '3']) equal(generationRecord.includes(value), true, `Generation record must contain ${value}.`);
   equal(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth), true, 'The 390 pixel review detail must not overflow horizontally.');
   equal(await page.locator('.review-queue').isVisible(), false, 'The 390 pixel selected view must hide the queue.');
   await page.getByRole('button', { name: 'Back to queue', exact: true }).click();
@@ -512,15 +383,23 @@ try {
   await page.keyboard.press('Escape');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await open(page, '/archive?dataset=1&category=A-VA&page=2');
+  await open(page, '/archive?dataset=1&search=CS-&category=C-VA&page=2');
   const archivedSample = 'CS-000051';
   await page.getByRole('link', { name: archivedSample, exact: true }).click();
   equal(new URL(page.url()).pathname, '/review', 'An archive sample must open in review.');
   equal(new URL(page.url()).searchParams.get('sample'), archivedSample, 'Review must open the selected archive sample.');
-  equal(new URL(page.url()).searchParams.get('returnTo'), '/archive?dataset=1&category=A-VA&page=2', 'Archive links must preserve a safe in-app source route.');
+  equal(new URL(page.url()).searchParams.get('returnTo'), '/archive?dataset=1&search=CS-&category=C-VA&page=2', 'Archive links must preserve the exact source filters and page.');
+  await page.evaluate(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('unrelatedHistory', '1');
+    history.pushState({}, '', url);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
   await page.getByRole('button', { name: 'Back to previous page', exact: true }).click();
   equal(new URL(page.url()).pathname, '/archive', 'The mobile return action must return to archive.');
   equal(new URL(page.url()).searchParams.get('page'), '2', 'The mobile return action must restore archive page two.');
+  equal(new URL(page.url()).searchParams.get('search'), 'CS-', 'The mobile return action must restore the archive search filter.');
+  equal(new URL(page.url()).searchParams.get('category'), 'C-VA', 'The mobile return action must restore the archive category filter.');
 
   await open(page, '/generate/content');
   equal(await page.locator('.generation-list').isVisible(), true, 'Mobile content must open on the list.');
@@ -560,37 +439,82 @@ try {
   equal(await page.locator('.generation-current-input').count(), 2, 'The API job detail must expose both completed item inputs.');
 
   await open(page, '/settings');
-  await page.getByRole('button', { name: 'Recheck example status' }).click();
-  await page.locator('#settings-example-status p').getByText(/Example status refreshed at/u).waitFor();
-  equal(await page.locator('#settings-example-status').getAttribute('aria-live'), 'polite', 'The success status must use a polite live region.');
+  equal((await page.locator('.settings-service-list').innerText()).includes('2 datasets'), true, 'Settings must show the datasets API response.');
+  equal((await page.locator('.settings-service-list').innerText()).includes('Installed'), true, 'Settings must show the health API renderer state.');
+  equal(await page.locator('.settings-gpu-row').count(), 2, 'Settings must show both GPU API records.');
+  await page.getByRole('button', { name: 'Check again' }).click();
+  await page.locator('.settings-services__recheck').getByText('Current status is shown below.').waitFor();
+  equal(await page.locator('.settings-services__recheck').getAttribute('aria-live'), 'polite', 'The service recheck result must use a polite live region.');
+
+  await page.locator('#new-reviewer-name').fill('Avery');
+  await page.getByRole('button', { name: 'Add name' }).click();
+  await page.locator('.settings-reviewer-list').getByText('Avery', { exact: true }).waitFor();
+  const reviewerCreate = api.state.requests.findLast(request => request.method === 'POST' && request.path === '/api/reviewers');
+  assert.deepEqual(reviewerCreate?.body, { name: 'Avery' }, 'Reviewer creation must use the current Reviewer contract.');
+  await page.getByRole('button', { name: 'Rename current name' }).click();
+  const renameDialog = page.getByRole('dialog', { name: 'Rename current name' });
+  await renameDialog.locator('#rename-reviewer-name').fill('Alex');
+  await renameDialog.getByRole('button', { name: 'Save name' }).click();
+  await page.locator('.settings-reviewer-list').getByText('Alex', { exact: true }).waitFor();
+  const reviewerRename = api.state.requests.findLast(request => request.method === 'PATCH' && request.path === '/api/reviewers/2');
+  assert.deepEqual(reviewerRename?.body, { name: 'Alex', expectedRevision: 1 }, 'Reviewer rename must send its expected revision.');
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, '/review?sample=CS-000001');
+  await page.getByRole('button', { name: 'Accepted', exact: true }).click();
+  await page.waitForFunction(() => new URL(window.location.href).searchParams.get('sample') === 'CS-000002');
+  const singleReview = api.state.requests.findLast(request => request.method === 'POST' && request.path === '/api/reviews');
+  assert.deepEqual(singleReview?.body, { sampleId: 1, reviewerId: 2, decision: 'Accepted', note: '', expectedRevision: 1, expectedReviewRevision: 0 }, 'Single review must send the complete revision-aware contract.');
+  await page.getByRole('button', { name: 'Back to queue', exact: true }).click();
+  const queueChecks = page.locator('.review-queue__check input');
+  await queueChecks.nth(0).check();
+  await queueChecks.nth(1).check();
+  await page.getByRole('button', { name: 'Apply to selected samples' }).click();
+  const batchDialog = page.getByRole('dialog');
+  await batchDialog.getByRole('button', { name: 'Apply Accepted' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.review-queue__check input:checked').length === 0);
+  const batchReview = api.state.requests.findLast(request => request.method === 'POST' && request.path === '/api/reviews/batch');
+  equal(batchReview?.body.items.length, 2, 'Batch review must include every selected sample.');
+  equal(batchReview?.body.items.every(item => item.reviewerId === 2 && item.expectedRevision === 1 && item.expectedReviewRevision === 0), true, 'Batch review items must use the current reviewer and both revision fields.');
+
+  await open(page, '/archive');
+  await page.getByRole('button', { name: 'Preview sync' }).click();
+  await page.getByRole('heading', { name: 'Sync preview' }).waitFor();
+  const archivePreview = api.state.requests.findLast(request => request.method === 'POST' && request.path === '/api/archives/preview');
+  assert.deepEqual(archivePreview?.body, { datasetId: 1 }, 'Archive preview must use the selected dataset.');
+  await page.getByRole('button', { name: 'Sync archive' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Sync archive' }).click();
+  await page.waitForFunction(() => !document.querySelector('dialog[open]'));
+  const archiveSync = api.state.requests.findLast(request => request.method === 'POST' && request.path === '/api/archives/sync');
+  assert.deepEqual(Object.keys(archiveSync?.body ?? {}).sort(), ['added', 'datasetId', 'expectedArchiveRevision', 'removed', 'unchangedCount', 'updated'], 'Archive sync must send the complete preview contract.');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Download JSONL' }).click();
+  const manifestDownload = await downloadPromise;
+  equal(manifestDownload.suggestedFilename(), 'manifest.jsonl', 'Archive manifest must download as JSONL.');
 
   await open(page, '/me/statistics');
   await expectNamedControls(page, '.app-shell', 'Global navigation and statistics controls must have accessible names');
   await page.setViewportSize({ width: 390, height: 844 });
   await open(page, '/me/statistics');
-  equal(await page.locator('.statistics-chart').getAttribute('aria-hidden'), 'true', 'The visual trend chart must be hidden from screen readers.');
+  equal(await page.locator('.statistics-chart').getAttribute('role'), 'img', 'The visual trend chart must have an accessible image role.');
   equal(await page.getByRole('table').count(), 1, 'The trend must expose one table alternative to screen readers.');
-  const statisticsTableAlternative = await page.locator('.statistics-activity__table-alternative').evaluate(element => ({
-    position: getComputedStyle(element).position,
-    width: element.getBoundingClientRect().width,
-    height: element.getBoundingClientRect().height,
-  }));
-  equal(statisticsTableAlternative.position, 'absolute', 'The table alternative must not occupy the visual layout.');
-  equal(statisticsTableAlternative.width <= 1 && statisticsTableAlternative.height <= 1, true, 'The table alternative must use standard visual hiding.');
   const statisticsHeight = await page.evaluate(() => document.documentElement.scrollHeight);
   equal(statisticsHeight < 2200, true, `The mobile statistics page must stay compact. Height: ${statisticsHeight}`);
-  await page.locator('#statistics-start-date').fill('2020-01-01');
-  await page.locator('#statistics-end-date').fill('2020-01-30');
+  equal((await page.locator('.statistics-metrics').innerText()).includes('4'), true, 'The statistics page must render a nonzero API response.');
+  await page.locator('#statistics-start').fill('2020-01-01');
+  await page.locator('#statistics-end').fill('2020-01-30');
   await page.getByRole('heading', { name: 'No matching records' }).waitFor();
-  await page.locator('.state-view').getByRole('button', { name: 'Reset filters' }).click();
+  const zeroStatisticsRequest = api.state.requests.findLast(request => request.method === 'GET' && request.path.endsWith('/statistics') && request.query.endDate === '2020-01-30');
+  equal(Boolean(zeroStatisticsRequest), true, 'The statistics page must request the zero-result date range from the API.');
+  await page.locator('.state-view').getByRole('button', { name: 'Clear filters' }).click();
   await page.locator('.statistics-metrics').waitFor();
-  await page.locator('#statistics-start-date').fill('2026-08-11');
-  await page.locator('#statistics-end-date').fill('2026-08-01');
-  equal(await page.locator('#statistics-date-error').getAttribute('role'), 'alert', 'Invalid statistic dates must be announced as an alert.');
-
-  await open(page, '/settings?state=error');
-  equal(await page.locator('.state-view').getAttribute('aria-live'), 'assertive', 'Failure state must be announced immediately.');
-  equal(await page.getByRole('button', { name: 'Reload' }).count(), 1, 'Failure state must provide one clear action.');
+  await page.locator('#statistics-start').fill('2026-08-11');
+  await page.locator('#statistics-end').fill('2026-08-01');
+  const statisticsStart = page.locator('#statistics-start');
+  equal(await statisticsStart.getAttribute('aria-invalid'), 'true', 'An invalid statistics range must mark the start date as invalid.');
+  const statisticsErrorId = await statisticsStart.getAttribute('aria-describedby');
+  equal(Boolean(statisticsErrorId), true, 'An invalid statistics range must connect the start date to its error message.');
+  equal(await page.locator(`[id=${JSON.stringify(statisticsErrorId)}]`).getAttribute('role'), 'alert', 'Invalid statistic dates must be announced as an alert.');
 
   await open(page, '/settings');
   await page.locator('body').press('Tab');
@@ -600,13 +524,14 @@ try {
 
   const reviewerlessContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const reviewerlessPage = await reviewerlessContext.newPage();
+  await createBrowserApiFixture().install(reviewerlessPage);
   await reviewerlessPage.goto(`${baseUrl}/workspace`, { waitUntil: 'networkidle' });
   const firstReviewerDialog = reviewerlessPage.locator('dialog[open]');
   await firstReviewerDialog.waitFor();
   await expectDialogBasics(reviewerlessPage, 'The first name dialog', false);
   await reviewerlessContext.close();
 
-  await resetPrototypeState(page);
+  await resetBrowserSession(page);
   const focusedViewports = [[1440, 900], [1024, 768], [768, 900], [390, 844]];
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of focusedViewports) {
@@ -652,22 +577,26 @@ try {
 
   for (const [width, height] of [[1440, 900], [1024, 768], [390, 844]]) {
     await page.setViewportSize({ width, height });
-    for (const route of ['/settings', '/me/statistics']) {
-      for (const state of ['loading', 'empty', 'filtered', 'error', 'conflict']) {
-        await expectNoOverflow(page, `${route}?state=${state}`, 'en-US', width, height);
-      }
-    }
+    for (const route of ['/settings', '/me/statistics']) await expectNoOverflow(page, route, 'en-US', width, height);
     await open(page, '/settings');
-    await page.getByRole('button', { name: 'Recheck example status' }).click();
-    await page.locator('#settings-example-status p').getByText(/Example status refreshed at/u).waitFor();
+    await page.getByRole('button', { name: 'Check again' }).click();
+    await page.locator('.settings-services__recheck').getByText('Current status is shown below.').waitFor();
     await expectContained(page.locator('.settings-page'), `Settings success state must fit at ${width} pixels.`);
   }
+
+  equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/health'), true, 'Settings must read health from the API.');
+  equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/datasets'), true, 'Settings and filters must read datasets from the API.');
+  equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/gpu-slots'), true, 'Settings and generation must read GPU status from the API.');
+  equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/archives'), true, 'Archive must read its status from the API.');
+  equal(api.state.mediaRequests > 0, true, 'Review and archive media must use the network media route.');
+  if (artifactRoot) await page.screenshot({ path: join(artifactRoot, 'browser-check-final-390.png'), fullPage: true });
 
   equal(routerWarnings.length, 0, `React Router warnings: ${routerWarnings.join(' | ')}`);
   equal(consoleErrors.length, 0, `Browser console errors: ${consoleErrors.join(' | ')}`);
   equal(pageErrors.length, 0, `Browser page errors: ${pageErrors.join(' | ')}`);
   console.log('Browser checks passed: core interactions, dialogs, states, and bilingual viewport checks.');
 } finally {
+  if (context && tracingStarted && artifactRoot) await context.tracing.stop({ path: join(artifactRoot, 'browser-check-trace.zip') });
   if (browser) await browser.close();
   await server.close();
 }
