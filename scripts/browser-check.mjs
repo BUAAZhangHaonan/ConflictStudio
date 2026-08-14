@@ -61,6 +61,37 @@ async function expectContained(locator, message) {
   equal(dimensions.scrollWidth <= dimensions.clientWidth, true, `${message} ${JSON.stringify(dimensions)}`);
 }
 
+async function expectJobPromptLayout(page, locale, width, height) {
+  await page.setViewportSize({ width, height });
+  await open(page, '/generate/jobs?job=1', locale);
+  const detail = page.locator('.generation-job-detail');
+  await detail.waitFor();
+  equal(await detail.isVisible(), true, `${locale} job detail must be visible at ${width} pixels.`);
+  const card = page.locator('.generation-result-card').first();
+  const blocks = card.locator('.generation-current-input__prompt');
+  equal(await blocks.count(), 2, `${locale} job result must show separate positive and negative prompt blocks at ${width} pixels.`);
+  const layout = await blocks.evaluateAll(elements => elements.map(element => {
+    const bounds = element.getBoundingClientRect();
+    const cardBounds = element.closest('.generation-result-card')?.getBoundingClientRect();
+    const pre = element.querySelector('pre');
+    return {
+      top: bounds.top,
+      bottom: bounds.bottom,
+      left: bounds.left,
+      right: bounds.right,
+      cardLeft: cardBounds?.left ?? 0,
+      cardRight: cardBounds?.right ?? 0,
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+      whiteSpace: pre ? getComputedStyle(pre).whiteSpace : '',
+    };
+  }));
+  equal(layout[1].top >= layout[0].bottom + 6, true, `${locale} prompt blocks must not overlap at ${width} pixels.`);
+  equal(layout.every(item => item.left >= item.cardLeft && item.right <= item.cardRight), true, `${locale} prompt blocks must stay inside the result card at ${width} pixels.`);
+  equal(layout.every(item => item.scrollWidth <= item.clientWidth), true, `${locale} prompt blocks must wrap long text at ${width} pixels.`);
+  equal(layout.every(item => item.whiteSpace === 'pre-wrap'), true, `${locale} prompt blocks must preserve line breaks at ${width} pixels.`);
+}
+
 async function expectReviewMediaFit(page, sampleId, locale, width, height, expectedMuted) {
   await page.setViewportSize({ width, height });
   await open(page, `/review?sample=${sampleId}`, locale);
@@ -203,6 +234,16 @@ try {
 
   await open(page, '/workspace');
   equal(await page.evaluate(key => localStorage.getItem(key), preferenceKeys.reviewerId), '1', 'The current reviewer must come from browser preferences.');
+  equal(await page.getByRole('columnheader', { name: 'Purpose', exact: true }).count(), 1, 'The dataset purpose column must use the translated user-facing label.');
+  equal((await page.locator('.workspace-datasets').innerText()).includes('workspaceSettingsStatistics.workspace.datasets.purposeLabel'), false, 'The workspace must not expose an internal translation key.');
+  const datasetNameLayout = await page.locator('.workspace-dataset-name').evaluateAll(elements => elements.map(element => {
+    const titleElement = element.querySelector('.workspace-dataset-name__title');
+    const noteElement = element.querySelector('.workspace-dataset-name__note');
+    const title = titleElement?.getBoundingClientRect();
+    const note = noteElement?.getBoundingClientRect();
+    return { titleBottom: title?.bottom ?? 0, noteTop: note?.top ?? 0, noteFontSize: noteElement ? Number.parseFloat(getComputedStyle(noteElement).fontSize) : 0, titleFontSize: titleElement ? Number.parseFloat(getComputedStyle(titleElement).fontSize) : 0 };
+  }));
+  equal(datasetNameLayout.every(item => item.noteTop >= item.titleBottom && item.noteFontSize < item.titleFontSize), true, 'Dataset notes must appear as a smaller second line below the name.');
 
   await open(page, '/generate/batches');
   const gpuFieldset = page.getByRole('group', { name: 'GPU', exact: true });
@@ -224,8 +265,19 @@ try {
   const contentChecks = contentFieldset.locator('input[type="checkbox"]');
   await contentChecks.first().check();
   equal(await contentChecks.count(), await contentChecks.evaluateAll(nodes => nodes.filter(node => node.checked).length), 'Select all must cover the enabled content shown for the batch.');
-  await page.getByRole('group', { name: 'Prompt presets', exact: true }).locator('input[type="checkbox"]').first().check();
-  await page.getByRole('group', { name: 'Background presets', exact: true }).locator('input[type="checkbox"]').first().check();
+  const promptPresetChecks = page.getByRole('group', { name: 'Prompt presets', exact: true }).locator('input[type="checkbox"]');
+  await promptPresetChecks.first().check();
+  const contentSelectionBeforeScenes = await contentChecks.evaluateAll(nodes => nodes.map(node => node.checked));
+  const promptSelectionBeforeScenes = await promptPresetChecks.evaluateAll(nodes => nodes.map(node => node.checked));
+  const sceneFieldset = page.getByRole('group', { name: 'Scene presets', exact: true });
+  const sceneChecks = sceneFieldset.locator('input[type="checkbox"]');
+  equal(await sceneChecks.count(), 2, 'Only active scene presets must be available to the batch.');
+  const selectAllScenes = sceneFieldset.getByRole('button', { name: 'Select all scene presets', exact: true });
+  await selectAllScenes.click();
+  equal(await sceneChecks.evaluateAll(nodes => nodes.filter(node => node.checked).length), 2, 'Select all scene presets must select every active scene preset.');
+  assert.deepEqual(await contentChecks.evaluateAll(nodes => nodes.map(node => node.checked)), contentSelectionBeforeScenes, 'Selecting scene presets must not change content items.');
+  assert.deepEqual(await promptPresetChecks.evaluateAll(nodes => nodes.map(node => node.checked)), promptSelectionBeforeScenes, 'Selecting scene presets must not change prompt presets.');
+  equal(await selectAllScenes.isDisabled(), true, 'Select all scene presets must become disabled after every available scene is selected.');
 
   await page.locator('#batch-quantity').fill('9');
   const leaveTrigger = page.locator('.app-shell__sidebar .primary-nav__link[href="/workspace"]');
@@ -238,6 +290,8 @@ try {
   equal(new URL(page.url()).pathname, '/generate/batches', 'Cancelling the dialog must keep the batch page open.');
   await expectFocus(page, leaveTrigger, 'Escape from the unsaved dialog must restore the navigation trigger focus.');
   await page.getByRole('button', { name: 'Save batch draft' }).click();
+  await page.waitForFunction(() => document.querySelector('#batch-saved-draft')?.value !== 'new');
+  assert.deepEqual(api.state.batchDrafts[0].backgroundPresets.map(item => item.id), [1, 2], 'The saved batch must persist every selected active scene preset.');
 
   await page.locator('.app-shell__sidebar .primary-nav__link[href="/workspace"]').click();
   await page.locator('.app-shell__sidebar .primary-nav__link[href="/generate/batches"]').click();
@@ -273,6 +327,12 @@ try {
     await page.getByText('128/128', { exact: true }).first().waitFor();
     const assignedGpus = await page.locator('.generation-result-card__header p').allTextContents();
     equal(assignedGpus.some(value => value.includes('GPU0')) && assignedGpus.some(value => value.includes('GPU1')), true, 'Historical dual GPU items must preserve both GPU assignments.');
+  }
+
+  for (const locale of ['zh-CN', 'en-US']) {
+    for (const [width, height] of [[1440, 900], [1024, 768], [768, 900], [390, 844]]) {
+      await expectJobPromptLayout(page, locale, width, height);
+    }
   }
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -545,11 +605,13 @@ try {
 
   const reviewerlessContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const reviewerlessPage = await reviewerlessContext.newPage();
-  await createBrowserApiFixture().install(reviewerlessPage);
+  await createBrowserApiFixture({ reviewers: [] }).install(reviewerlessPage);
   await reviewerlessPage.goto(`${baseUrl}/workspace`, { waitUntil: 'networkidle' });
   const firstReviewerDialog = reviewerlessPage.locator('dialog[open]');
   await firstReviewerDialog.waitFor();
   await expectDialogBasics(reviewerlessPage, 'The first name dialog', false);
+  equal(await firstReviewerDialog.locator('input[type="radio"]').count(), 0, 'An empty Reviewer API must not show preset names.');
+  equal(await firstReviewerDialog.locator('#first-reviewer-name').isVisible(), true, 'An empty Reviewer API must ask the user to create the first name.');
   await reviewerlessContext.close();
 
   await resetBrowserSession(page);

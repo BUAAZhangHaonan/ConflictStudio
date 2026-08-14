@@ -35,12 +35,26 @@ export const promptPresetsFixture = [{
   status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }];
 
-export const backgroundsFixture = [{
-  id: 1, nameZh: '安静办公室', nameEn: 'Quiet office', sceneZh: '安静办公室', sceneEn: 'Quiet office',
-  ambientSoundZh: '轻微空调声', ambientSoundEn: 'Low air conditioner hum', participantRelationshipZh: '同事', participantRelationshipEn: 'Colleagues',
-  lightingZh: '柔和室内光', lightingEn: 'Soft indoor light', framingZh: '中景', framingEn: 'Medium shot', status: 'Active',
-  revision: 1, createdAt: timestamp, updatedAt: timestamp,
-}];
+export const backgroundsFixture = [
+  {
+    id: 1, nameZh: '安静办公室', nameEn: 'Quiet office', sceneZh: '安静办公室', sceneEn: 'Quiet office',
+    ambientSoundZh: '轻微空调声', ambientSoundEn: 'Low air conditioner hum', participantRelationshipZh: '同事', participantRelationshipEn: 'Colleagues',
+    lightingZh: '柔和室内光', lightingEn: 'Soft indoor light', framingZh: '中景', framingEn: 'Medium shot', status: 'Active',
+    revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  },
+  {
+    id: 2, nameZh: '安静客厅', nameEn: 'Quiet living room', sceneZh: '安静客厅', sceneEn: 'Quiet living room',
+    ambientSoundZh: '轻微室内底噪', ambientSoundEn: 'Low room tone', participantRelationshipZh: '独处', participantRelationshipEn: 'Alone',
+    lightingZh: '柔和窗光', lightingEn: 'Soft window light', framingZh: '中近景', framingEn: 'Medium close-up', status: 'Active',
+    revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  },
+  {
+    id: 3, nameZh: '停用场景', nameEn: 'Disabled scene', sceneZh: '停用场景', sceneEn: 'Disabled scene',
+    ambientSoundZh: '无', ambientSoundEn: 'None', participantRelationshipZh: '独处', participantRelationshipEn: 'Alone',
+    lightingZh: '自然光', lightingEn: 'Natural light', framingZh: '中景', framingEn: 'Medium shot', status: 'Disabled',
+    revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  },
+];
 
 export const jobFixture = {
   id: 1, displayName: 'A-VA-20260814160000', source: 'Production', datasetId: 1, batchDraftId: 1,
@@ -61,8 +75,8 @@ function jobItem(id, sequence, gpuSlot) {
       policyVersion: 'prompt-policy-v1', category: 'A-VA', conflictDirection: null, age: 25, gender: 'Female', ethnicity: 'EastAsian',
       model: 'LTX-2.5', precision: 'INT8', seed: 3200 + sequence, width: 1344, height: 768, fps: 24, frameCount: 121,
       rendererProfileVersion: 'ltx25-v1', promptModel: 'deepseek-v4-flash', sourceHasAudio: true, deriveSilentPrimary: false,
-      systemInput: 'Return valid JSON.', userInput: 'Generate a natural reply.', finalNegativePrompt: 'No subtitles.',
-      fixedPositivePrompt: 'A fixed camera records a short reply.', fixedDialogue: 'I understand.', fixedVtText: null,
+      systemInput: 'Return valid JSON.', userInput: 'Generate a natural reply.', finalNegativePrompt: 'No subtitles, no captions, no logos, no extra people, no distorted hands, no abrupt camera movement, and no unreadable background text.',
+      fixedPositivePrompt: 'A fixed camera records one person in a quiet office. The person faces forward, speaks a short restrained reply, keeps natural eye movement, and shows a clear but controlled emotional expression. Soft light keeps the full face visible while the background remains simple and still.', fixedDialogue: 'I understand.', fixedVtText: null,
       fixedTrueEmotionDescription: 'The voice and expression carry sadness.', trueEmotion: 'sadness', apparentEmotion: 'sadness', createdAt: timestamp,
     },
     promptResult: null,
@@ -114,9 +128,9 @@ export function installPreferences(context, locale = 'en-US') {
   }, { keys: preferenceKeys, selectedLocale: locale });
 }
 
-export function createBrowserApiFixture() {
+export function createBrowserApiFixture({ reviewers = [{ id: 1, name: 'Lin', revision: 1, createdAt: timestamp, updatedAt: timestamp }] } = {}) {
   const state = {
-    reviewers: [{ id: 1, name: 'Lin', revision: 1, createdAt: timestamp, updatedAt: timestamp }],
+    reviewers: reviewers.map(reviewer => ({ ...reviewer })),
     samples: [
       ...Array.from({ length: 30 }, (_, index) => sampleFixture(index + 1, 'Pending', index === 3 ? 'A-VT' : 'C-VA')),
       ...Array.from({ length: 25 }, (_, index) => sampleFixture(index + 31, 'Accepted', 'C-VA')),
@@ -202,7 +216,7 @@ export function createBrowserApiFixture() {
         if (method === 'GET' && path === '/api/video-background-presets') return fulfillJson(route, backgroundsFixture);
         if (method === 'GET' && path === '/api/batch-drafts') return fulfillJson(route, state.batchDrafts);
         if (method === 'POST' && path === '/api/batch-drafts') {
-          const draft = { id: 1, ...body, datasetRevision: 1, seed: body.seed ?? 3200, status: 'Draft', contentPlans: body.contentPlans.map(item => ({ ...item, nameZh: contentPlansFixture[0].nameZh, nameEn: contentPlansFixture[0].nameEn })), promptPresets: body.promptPresets.map(item => ({ ...item, name: promptPresetsFixture[0].name })), backgroundPresets: body.backgroundPresets.map(item => ({ ...item, nameZh: backgroundsFixture[0].nameZh, nameEn: backgroundsFixture[0].nameEn })), revision: 1, createdAt: timestamp, updatedAt: timestamp };
+          const draft = { id: 1, ...body, datasetRevision: 1, seed: body.seed ?? 3200, status: 'Draft', contentPlans: body.contentPlans.map(item => ({ ...item, nameZh: contentPlansFixture[0].nameZh, nameEn: contentPlansFixture[0].nameEn })), promptPresets: body.promptPresets.map(item => ({ ...item, name: promptPresetsFixture[0].name })), backgroundPresets: body.backgroundPresets.map(item => { const background = backgroundsFixture.find(value => value.id === item.id); return { ...item, nameZh: background?.nameZh ?? '', nameEn: background?.nameEn ?? '' }; }), revision: 1, createdAt: timestamp, updatedAt: timestamp };
           state.batchDrafts = [draft];
           return fulfillJson(route, draft, 201);
         }

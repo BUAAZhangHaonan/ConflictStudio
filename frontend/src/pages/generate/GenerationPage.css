@@ -127,7 +127,28 @@
 .generation-job-meta > div, .generation-current-input > div { min-width: 0; }
 .generation-job-meta dt, .generation-current-input dt { color: var(--color-text-muted); font-size: 12px; }
 .generation-job-meta dd, .generation-current-input dd { margin: 3px 0 0; overflow-wrap: anywhere; }
-.generation-current-input__prompt { white-space: pre-wrap; }
+.generation-current-input__prompt {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+}
+.generation-current-input__prompt dd { min-width: 0; margin: 0; }
+.generation-current-input__prompt pre {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  overflow: visible;
+  font: inherit;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .generation-test-confirm-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .generation-test-confirm-summary > div:nth-child(2) { grid-column: span 2; }
 .generation-test-confirm-summary dd { overflow-wrap: break-word; word-break: normal; }

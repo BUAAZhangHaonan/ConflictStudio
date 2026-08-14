@@ -17,11 +17,16 @@ const settingsSource = read('../frontend/src/pages/SettingsPage.tsx');
 const statisticsSource = read('../frontend/src/pages/StatisticsPage.tsx');
 const workspaceSource = read('../frontend/src/pages/WorkspacePage.tsx');
 const workspaceCss = read('../frontend/src/pages/WorkspacePage.css');
+const batchesSource = read('../frontend/src/pages/generate/BatchesPage.tsx');
 const jobsSource = read('../frontend/src/pages/generate/JobsPage.tsx');
+const generationCss = read('../frontend/src/pages/generate/GenerationPage.css');
 const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
 const gpuStatusSource = read('../frontend/src/gpuStatus.ts');
 const archiveHelpers = read('../frontend/src/reviewArchive.ts');
 const mainSource = read('../frontend/src/main.tsx');
+const preferencesSource = read('../frontend/src/preferences.ts');
+const appShellSource = read('../frontend/src/components/AppShell.tsx');
+const firstReviewerSource = read('../frontend/src/app/FirstReviewerDialog.tsx');
 const localeSource = `${read('../frontend/src/locales/features/reviewArchive.ts')}\n${read('../frontend/src/locales/features/workspaceSettingsStatistics.ts')}\n${read('../frontend/src/locales/features/generation.ts')}`;
 
 function loadClient(fetchMock) {
@@ -104,8 +109,29 @@ test('archive uses preview, sync, manifest download and canonical return locatio
 test('workspace is a card list through 1024px and keeps every action visible', () => {
   assert.match(workspaceCss, /@media \(max-width: 1200px\) \{[\s\S]*\.workspace-datasets \.table-shell tbody tr[\s\S]*display: grid/u);
   assert.match(workspaceSource, /data-label=\{t\(`\$\{copyKey\}\.workspace\.datasets\.actions`\)\}/u);
+  assert.match(workspaceSource, /workspace-dataset-name__title/u);
+  assert.match(workspaceSource, /dataset\.note \? <span className="workspace-dataset-name__note"/u);
+  assert.match(workspaceCss, /\.workspace-dataset-name \{[\s\S]*display: grid/u);
   assert.match(localeSource, /purposeLabel: 'Purpose'/u);
   assert.match(localeSource, /purposeLabel: '用途'/u);
+});
+
+test('batch scene selection and result prompts use explicit independent controls', () => {
+  assert.match(batchesSource, /backgroundPresetIds: activeBackgrounds\.map\(item => item\.id\)/u);
+  assert.match(batchesSource, /batches\.selectAllBackgrounds/u);
+  assert.match(localeSource, /'batches\.selectAllBackgrounds': 'Select all scene presets'/u);
+  assert.match(localeSource, /'batches\.selectAllBackgrounds': '全选场景预设'/u);
+  assert.equal((jobsSource.match(/className="generation-current-input__prompt"/gu) ?? []).length, 2);
+  assert.match(generationCss, /\.generation-current-input__prompt \{[\s\S]*grid-column: 1 \/ -1/u);
+  assert.match(generationCss, /\.generation-current-input__prompt pre \{[\s\S]*white-space: pre-wrap/u);
+});
+
+test('production reviewer identity comes only from the Reviewer API and user selection', () => {
+  const sources = `${settingsSource}\n${preferencesSource}\n${appShellSource}\n${firstReviewerSource}`;
+  assert.doesNotMatch(sources, /林然|陈宁|Lin Ran|Chen Ning/u);
+  assert.doesNotMatch(sources, /DEFAULT_REVIEWER|presetReviewer|mockReviewer/u);
+  assert.match(appShellSource, /reviewersQuery\.data\?\.find/u);
+  assert.match(firstReviewerSource, /reviewers\.length === 0/u);
 });
 
 test('GPU and task failures are localized from stable fields instead of raw backend text', () => {
