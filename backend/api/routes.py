@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
+from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, Query, Request, Response, WebSocket, WebSocketDisconnect, status
@@ -11,6 +12,10 @@ from starlette.background import BackgroundTask
 from backend.adapters.renderer import RendererInstallationStatus
 from backend.domain.enums import GpuSlotName, ReviewDecision
 from backend.domain.schemas import (
+    ArchivePreviewRead,
+    ArchivePreviewRequest,
+    ArchiveRead,
+    ArchiveSyncRequest,
     BatchDraftCreate,
     BatchDraftRead,
     BatchDraftUpdate,
@@ -40,6 +45,7 @@ from backend.domain.schemas import (
     ReviewerCreate,
     ReviewerRead,
     ReviewerRename,
+    ReviewerStatisticsRead,
     ReviewRead,
     SampleClassificationUpdate,
     SampleRead,
@@ -50,6 +56,7 @@ from backend.domain.schemas import (
 )
 from backend.api.gpu_contracts import GpuMemoryRead, GpuReleaseRequest, GpuSlotRead
 from backend.services.assets import AssetService
+from backend.services.archives import ArchiveService
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.gpu_slots import GpuSlotSnapshot
@@ -57,6 +64,7 @@ from backend.services.job_executor import JobExecutor
 from backend.services.samples import SampleService
 from backend.services.reviewers import ReviewerService
 from backend.services.reviews import ReviewService
+from backend.services.statistics import StatisticsService
 
 
 router = APIRouter(prefix="/api")
@@ -93,6 +101,14 @@ def reviewers(request: Request) -> ReviewerService:
 
 def reviews(request: Request) -> ReviewService:
     return request.app.state.review_service
+
+
+def archives(request: Request) -> ArchiveService:
+    return request.app.state.archive_service
+
+
+def statistics(request: Request) -> StatisticsService:
+    return request.app.state.statistics_service
 
 
 async def notify_executor(job_executor: JobExecutor) -> None:
@@ -375,6 +391,47 @@ def create_review(payload: ReviewCreate, request: Request) -> SampleRead:
 @router.post("/reviews/batch", response_model=list[SampleRead], status_code=status.HTTP_201_CREATED)
 def create_reviews_batch(payload: ReviewBatchCreate, request: Request) -> list[SampleRead]:
     return reviews(request).create_batch(payload)
+
+
+@router.get("/reviewers/{reviewer_id}/statistics", response_model=ReviewerStatisticsRead)
+def reviewer_statistics(
+    reviewer_id: int,
+    request: Request,
+    dataset_id: int | None = Query(default=None, alias="datasetId", gt=0),
+    start_date: date | None = Query(default=None, alias="startDate"),
+    end_date: date | None = Query(default=None, alias="endDate"),
+) -> ReviewerStatisticsRead:
+    return statistics(request).reviewer_statistics(
+        reviewer_id,
+        dataset_id,
+        start_date,
+        end_date,
+    )
+
+
+@router.get("/archives", response_model=list[ArchiveRead])
+def list_archives(request: Request) -> list[ArchiveRead]:
+    return archives(request).list_archives()
+
+
+@router.post("/archives/preview", response_model=ArchivePreviewRead)
+def preview_archive(payload: ArchivePreviewRequest, request: Request) -> ArchivePreviewRead:
+    return archives(request).preview(payload)
+
+
+@router.post("/archives/sync", response_model=ArchiveRead)
+def sync_archive(payload: ArchiveSyncRequest, request: Request) -> ArchiveRead:
+    return archives(request).sync(payload)
+
+
+@router.get("/archives/{dataset_id}/manifest", response_class=Response)
+def download_archive_manifest(dataset_id: int, request: Request) -> Response:
+    path = archives(request).manifest_path(dataset_id)
+    return Response(
+        path.read_bytes(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="dataset-{dataset_id}-manifest.jsonl"'},
+    )
 
 
 @router.get(

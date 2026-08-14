@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, field_validator, model_validator
 
 from .enums import (
     AGES,
+    ArchiveSyncStatus,
     BatchDraftStatus,
     Category,
     ConflictDirection,
@@ -702,6 +704,63 @@ class SampleClassificationUpdate(ExpectedRevision):
         return self
 
 
+class ReviewerActivityRead(ApiModel):
+    date: date
+    reviewed_count: int = Field(ge=0)
+
+
+class ReviewerStatisticsRead(ApiModel):
+    reviewer_id: int
+    dataset_id: int | None
+    start_date: date
+    end_date: date
+    unique_reviewed_count: int = Field(ge=0)
+    accepted_count: int = Field(ge=0)
+    rejected_count: int = Field(ge=0)
+    va_count: int = Field(ge=0)
+    vt_count: int = Field(ge=0)
+    revised_sample_count: int = Field(ge=0)
+    archived_current_count: int = Field(ge=0)
+    needs_update_count: int = Field(ge=0)
+    activity: list[ReviewerActivityRead]
+
+
+class ArchiveChangeRead(ApiModel):
+    sample_id: int
+    expected_revision: int = Field(ge=1)
+
+
+class ArchivePreviewRequest(ApiModel):
+    dataset_id: int = Field(gt=0)
+
+
+class ArchivePreviewRead(ApiModel):
+    dataset_id: int
+    added: list[ArchiveChangeRead]
+    updated: list[ArchiveChangeRead]
+    removed: list[ArchiveChangeRead]
+    unchanged_count: int = Field(ge=0)
+    expected_archive_revision: int = Field(ge=0)
+
+
+class ArchiveSyncRequest(ArchivePreviewRead):
+    @model_validator(mode="after")
+    def reject_duplicate_samples(self) -> Self:
+        sample_ids = [item.sample_id for item in self.added + self.updated + self.removed]
+        if len(sample_ids) != len(set(sample_ids)):
+            raise ValueError("An archive preview cannot contain the same sample more than once")
+        return self
+
+
+class ArchiveRead(ApiModel):
+    dataset_id: int
+    revision: int = Field(ge=0)
+    last_synced_at: str | None
+    manifest_available: bool
+    current_count: int = Field(ge=0)
+    needs_update_count: int = Field(ge=0)
+
+
 class SampleRead(ApiModel):
     id: int
     display_id: str
@@ -712,6 +771,8 @@ class SampleRead(ApiModel):
     review_decision: ReviewDecision
     review_revision: int
     current_review: ReviewRead | None
+    in_archive: bool
+    archive_sync_status: ArchiveSyncStatus
     model: ModelName
     generation_record: GenerationAttemptRead
     gpu_slot: GpuSlotName

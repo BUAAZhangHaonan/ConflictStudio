@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 
 from backend.adapters.database import Database
 from backend.domain.enums import (
+    archive_status_for,
     GenerationAttemptStatus,
     JobSource,
     JobStatus,
@@ -13,6 +14,7 @@ from backend.domain.enums import (
     relation_for,
 )
 from backend.domain.models import (
+    ArchiveItem,
     BatchVideoInputSnapshot,
     ContentPlan,
     Dataset,
@@ -174,6 +176,12 @@ class SampleService:
         if attempt is None:
             raise state_conflict("sample", row.id, "The sample has no current successful generation attempt")
         current = latest_review(session, row.id)
+        archive_item = session.get(ArchiveItem, (row.dataset_id, row.id))
+        archive_sync_status = archive_status_for(
+            row.review_decision,
+            row.revision,
+            archive_item.sample_revision if archive_item is not None else None,
+        )
         return SampleRead(
             **row.model_dump(),
             display_id=f"CS-{row.id:06d}",
@@ -185,6 +193,8 @@ class SampleService:
                 primary_asset_url=asset_content_url(attempt.primary_asset_id),
             ),
             current_review=review_read(session, current) if current is not None else None,
+            in_archive=archive_item is not None,
+            archive_sync_status=archive_sync_status,
         )
 
     _read = read_in_session

@@ -186,9 +186,28 @@ def test_gpu_contract_rejects_unsupported_service_status() -> None:
                 "statusReason": None,
             }
         )
-
     assert error.value.errors()[0]["loc"] == ("serviceStatus",)
     assert error.value.errors()[0]["type"] == "literal_error"
+
+
+def test_openapi_contains_review_statistics_and_archive_contracts(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        paths = client.get("/openapi.json").json()["paths"]
+
+    expected = {
+        "/api/reviewers",
+        "/api/reviewers/{reviewer_id}",
+        "/api/reviewers/{reviewer_id}/statistics",
+        "/api/reviews",
+        "/api/reviews/batch",
+        "/api/samples/{sample_id}/classification",
+        "/api/archives",
+        "/api/archives/preview",
+        "/api/archives/sync",
+        "/api/archives/{dataset_id}/manifest",
+    }
+    assert expected <= set(paths)
+    assert "/api/samples/{sample_id}/review" not in paths
 
 
 def test_dataset_crud_uses_camel_case_and_stable_conflict(tmp_path: Path) -> None:

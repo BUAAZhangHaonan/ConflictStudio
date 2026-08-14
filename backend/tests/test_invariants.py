@@ -11,6 +11,7 @@ from backend.adapters.config import Settings
 from backend.adapters.database import SQLITE_BUSY_TIMEOUT_MS, Database
 from backend.adapters.llm import UnconfiguredPromptModel
 from backend.app import create_app
+from backend.tests.test_review_api import sample_app
 
 
 def client_for(tmp_path: Path) -> TestClient:
@@ -198,6 +199,7 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "job_items": ("gpu_slot", "stage", "status"),
         "generation_attempts": ("model", "precision", "gpu_slot", "status"),
         "samples": ("category", "conflict_direction", "review_decision", "model", "gpu_slot", "gender", "ethnicity"),
+        "reviews": ("protocol", "relation", "decision"),
         "gpu_slots": ("slot", "availability", "loaded_model", "loaded_precision"),
     }
     for table_name, columns in enum_columns.items():
@@ -234,6 +236,10 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "job_items": ("ck_job_items_sequence", "ck_job_items_revision"),
         "generation_attempts": ("ck_generation_attempts_model_precision",),
         "samples": ("ck_samples_content_revision", "ck_samples_seed", "ck_samples_review_revision", "ck_samples_revision"),
+        "reviewers": ("ck_reviewers_revision",),
+        "reviews": ("ck_reviews_sample_revision", "ck_reviews_revision", "ck_reviews_decision"),
+        "archives": ("ck_archives_revision",),
+        "archive_items": ("ck_archive_items_sample_revision",),
         "gpu_slots": ("ck_gpu_slots_revision", "ck_gpu_slots_loaded_model_precision"),
     }
     for table_name, names in numeric_constraints.items():
@@ -249,6 +255,28 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         assert ("gpu_slots", "gpu_slot", "slot") in {
             (row[2], row[3], row[4]) for row in foreign_keys
         }
+
+
+def test_archive_item_database_trigger_requires_matching_sample_dataset(tmp_path: Path) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()[0]
+        other = client.post(
+            "/api/datasets",
+            json={"name": "Other", "purpose": "Validation", "note": ""},
+        ).json()
+
+    connection = sqlite3.connect(app.state.database.database_path)
+    try:
+        connection.execute("PRAGMA foreign_keys=ON")
+        with pytest.raises(sqlite3.IntegrityError, match="archive item dataset"):
+            connection.execute(
+                "INSERT INTO archive_items (dataset_id, sample_id, sample_revision, synced_at) "
+                "VALUES (?, ?, ?, ?)",
+                (other["id"], sample["id"], sample["revision"], "2026-08-14T00:00:00Z"),
+            )
+    finally:
+        connection.close()
 
 
 def test_write_lock_returns_stable_409_and_releases_connection(tmp_path: Path) -> None:

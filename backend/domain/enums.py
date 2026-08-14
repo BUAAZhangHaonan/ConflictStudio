@@ -112,6 +112,11 @@ class Relation(ValueEnum):
     CONFLICT = "Conflict"
 
 
+class ArchiveSyncStatus(ValueEnum):
+    CURRENT = "Current"
+    NEEDS_UPDATE = "NeedsUpdate"
+
+
 class GpuSlotName(ValueEnum):
     GPU0 = "GPU0"
     GPU1 = "GPU1"
@@ -161,3 +166,21 @@ def protocol_for(category: Category) -> Protocol:
 
 def relation_for(category: Category) -> Relation:
     return Relation.ALIGNED if category in {Category.A_VA, Category.A_VT} else Relation.CONFLICT
+
+
+def archive_status_for(
+    decision: ReviewDecision,
+    sample_revision: int,
+    archived_revision: int | None,
+) -> ArchiveSyncStatus:
+    if decision is ReviewDecision.ACCEPTED:
+        return (
+            ArchiveSyncStatus.CURRENT
+            if archived_revision == sample_revision
+            else ArchiveSyncStatus.NEEDS_UPDATE
+        )
+    return (
+        ArchiveSyncStatus.NEEDS_UPDATE
+        if archived_revision is not None
+        else ArchiveSyncStatus.CURRENT
+    )

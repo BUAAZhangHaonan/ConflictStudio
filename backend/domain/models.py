@@ -770,6 +770,48 @@ class Review(SQLModel, table=True):
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
+class Archive(SQLModel, table=True):
+    __tablename__ = "archives"
+    __table_args__ = (CheckConstraint("revision >= 1", name="ck_archives_revision"),)
+
+    dataset_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("datasets.id", ondelete="RESTRICT"),
+            primary_key=True,
+            nullable=False,
+        )
+    )
+    revision: int = Field(default=1, ge=1)
+    last_synced_at: str = Field(sa_column=Column(String(32), nullable=False))
+    created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+    updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
+class ArchiveItem(SQLModel, table=True):
+    __tablename__ = "archive_items"
+    __table_args__ = (CheckConstraint("sample_revision >= 1", name="ck_archive_items_sample_revision"),)
+
+    dataset_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("datasets.id", ondelete="RESTRICT"),
+            primary_key=True,
+            nullable=False,
+        )
+    )
+    sample_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("samples.id", ondelete="RESTRICT"),
+            primary_key=True,
+            nullable=False,
+        )
+    )
+    sample_revision: int = Field(ge=1)
+    synced_at: str = Field(sa_column=Column(String(32), nullable=False))
+
+
 class JobEvent(SQLModel, table=True):
     __tablename__ = "job_events"
     __table_args__ = (CheckConstraint("length(event_type) > 0", name="ck_job_events_type"),)

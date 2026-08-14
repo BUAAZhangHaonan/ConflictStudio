@@ -15,6 +15,7 @@ from backend.adapters.production_renderer import ProductionRendererGateway
 from backend.adapters.renderer import RendererGateway, UnconfiguredRendererGateway
 from backend.api.routes import router
 from backend.services.assets import AssetService
+from backend.services.archives import ArchiveService
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.errors import ServiceError
@@ -23,6 +24,7 @@ from backend.services.prompts import PromptService
 from backend.services.reviewers import ReviewerService
 from backend.services.reviews import ReviewService
 from backend.services.samples import SampleService
+from backend.services.statistics import StatisticsService
 
 
 def create_app(
@@ -72,6 +74,8 @@ def create_app(
     app.state.sample_service = sample_service
     app.state.reviewer_service = ReviewerService(database)
     app.state.review_service = ReviewService(database, sample_service)
+    app.state.archive_service = ArchiveService(database)
+    app.state.statistics_service = StatisticsService(database)
     app.state.job_executor = job_executor
 
     @app.exception_handler(ServiceError)

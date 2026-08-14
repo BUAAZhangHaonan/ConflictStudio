@@ -71,12 +71,18 @@ class Database:
             "job_item_prompt_results",
             "generation_attempts",
             "samples",
+            "reviews",
+            "archives",
+            "archive_items",
             "job_events",
             "job_items",
             "jobs",
             "assets",
         )
         drop_order = (
+            "archive_items",
+            "reviews",
+            "archives",
             "samples",
             "generation_attempts",
             "jobs",
@@ -87,12 +93,16 @@ class Database:
         )
         create_order = (
             "datasets",
+            "reviewers",
             "batch_drafts",
             "batch_video_input_snapshots",
             "jobs",
             "gpu_slots",
             "generation_attempts",
             "samples",
+            "reviews",
+            "archives",
+            "archive_items",
         )
 
         connection = self.engine.connect()
@@ -129,7 +139,7 @@ class Database:
                 if table_name in existing_tables:
                     SQLModel.metadata.tables[table_name].drop(connection)
             for table_name in create_order:
-                SQLModel.metadata.tables[table_name].create(connection)
+                SQLModel.metadata.tables[table_name].create(connection, checkfirst=True)
 
             with Session(bind=connection, expire_on_commit=False) as session:
                 self._initialize_gpu_slots(session)
@@ -186,6 +196,23 @@ class Database:
                 BEFORE DELETE ON {table_name}
                 BEGIN
                     SELECT RAISE(ABORT, '{message}');
+                END
+                """
+            )
+        for operation in ("INSERT", "UPDATE"):
+            trigger_name = f"require_archive_items_dataset_{operation.casefold()}"
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {operation} ON archive_items
+                WHEN NOT EXISTS (
+                    SELECT 1 FROM samples
+                    WHERE samples.id = NEW.sample_id
+                      AND samples.dataset_id = NEW.dataset_id
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'archive item dataset must match its sample');
                 END
                 """
             )

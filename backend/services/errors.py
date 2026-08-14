@@ -54,6 +54,15 @@ def reviewer_name_conflict(name: str) -> ServiceError:
     )
 
 
+def archive_preview_stale(dataset_id: int) -> ServiceError:
+    return ServiceError(
+        409,
+        "archive_preview_stale",
+        "The archive contents changed after the preview was created",
+        {"resource": "archive", "id": dataset_id},
+    )
+
+
 def invalid_request(message: str, details: dict[str, Any] | None = None) -> ServiceError:
     return ServiceError(422, "validation_error", message, details)
 
