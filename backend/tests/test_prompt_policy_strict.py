@@ -319,6 +319,19 @@ def test_domain_validation_enforces_each_component_word_boundary(
         )
 
 
+def test_setting_accepts_18_words_and_rejects_19_words() -> None:
+    setting_at_limit = component_boundary_sentence("setting", 18)
+
+    assert validate_generated_component(setting_at_limit, "setting") == setting_at_limit
+    with pytest.raises(
+        PromptPolicyViolation,
+        match="setting must contain no more than 18 English words; found 19",
+    ):
+        validate_generated_component(
+            component_boundary_sentence("setting", 19), "setting"
+        )
+
+
 def test_component_budgets_bound_theoretical_assembly_without_truncation() -> None:
     values = component_values()
     for field_name, max_words in COMPONENT_WORD_LIMITS.items():
@@ -333,7 +346,7 @@ def test_component_budgets_bound_theoretical_assembly_without_truncation() -> No
         + ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX
         <= FINAL_POSITIVE_PROMPT_MAX_WORDS
     )
-    assert count_english_words(result.final_positive_prompt) == 146
+    assert count_english_words(result.final_positive_prompt) == 147
     for field_name in COMPONENT_WORD_LIMITS:
         assert str(values[_component_alias(field_name)]) in result.final_positive_prompt
 
