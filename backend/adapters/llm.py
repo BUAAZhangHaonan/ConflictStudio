@@ -71,13 +71,51 @@ class OpenAICompatiblePromptModel:
                     "temperature": 0.2,
                 },
             )
-            response.raise_for_status()
+        except httpx.TimeoutException:
+            raise PromptAdapterError(
+                "prompt_service_timeout",
+                "The prompt service request timed out",
+            ) from None
+        except httpx.NetworkError:
+            raise PromptAdapterError(
+                "prompt_connection_failed",
+                "The application could not connect to the prompt service",
+            ) from None
+        except httpx.RequestError:
+            raise PromptAdapterError(
+                "prompt_service_failed",
+                "The prompt service request failed",
+            ) from None
+
+        if response.status_code in {401, 403}:
+            raise PromptAdapterError(
+                "prompt_authentication_failed",
+                "The prompt service rejected the configured credentials",
+            )
+        if response.status_code == 429:
+            raise PromptAdapterError(
+                "prompt_rate_limited",
+                "The prompt service rate limit was reached",
+            )
+        if not response.is_success:
+            raise PromptAdapterError(
+                "prompt_service_failed",
+                f"The prompt service returned an unsuccessful response (HTTP {response.status_code})",
+            )
+
+        try:
             body = response.json()
             content = body["choices"][0]["message"]["content"]
-        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
-            raise PromptAdapterError("prompt_service_failed", "The prompt service request failed") from error
+        except (KeyError, IndexError, TypeError, ValueError):
+            raise PromptAdapterError(
+                "invalid_prompt_response",
+                "The prompt service returned data that does not match the required structure",
+            ) from None
         if not isinstance(content, str) or not content.strip():
-            raise PromptAdapterError("prompt_service_failed", "The prompt service returned an empty response")
+            raise PromptAdapterError(
+                "invalid_prompt_response",
+                "The prompt service returned data that does not match the required structure",
+            )
         return content
 
     async def close(self) -> None:
