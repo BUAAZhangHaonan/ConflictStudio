@@ -102,6 +102,16 @@ class ReviewDecision(ValueEnum):
     REJECTED = "Rejected"
 
 
+class Protocol(ValueEnum):
+    VA = "VA"
+    VT = "VT"
+
+
+class Relation(ValueEnum):
+    ALIGNED = "Aligned"
+    CONFLICT = "Conflict"
+
+
 class GpuSlotName(ValueEnum):
     GPU0 = "GPU0"
     GPU1 = "GPU1"
@@ -145,5 +155,9 @@ def validate_model_precision(model: ModelName, precision: Precision | None) -> b
     return precision is None
 
 
-def protocol_for(category: Category) -> str:
-    return "VA" if category in {Category.A_VA, Category.C_VA} else "VT"
+def protocol_for(category: Category) -> Protocol:
+    return Protocol.VA if category in {Category.A_VA, Category.C_VA} else Protocol.VT
+
+
+def relation_for(category: Category) -> Relation:
+    return Relation.ALIGNED if category in {Category.A_VA, Category.A_VT} else Relation.CONFLICT

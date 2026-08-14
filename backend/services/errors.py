@@ -31,6 +31,32 @@ def revision_conflict(resource: str, identifier: int, expected: int, actual: int
     )
 
 
+def review_revision_conflict(sample_id: int, expected: int, actual: int) -> ServiceError:
+    return ServiceError(
+        409,
+        "review_revision_conflict",
+        "The review history has been changed by another operation",
+        {
+            "resource": "sample",
+            "id": sample_id,
+            "expectedReviewRevision": expected,
+            "actualReviewRevision": actual,
+        },
+    )
+
+
+def reviewer_name_conflict(name: str) -> ServiceError:
+    return ServiceError(
+        409,
+        "reviewer_name_conflict",
+        "A reviewer with this name already exists",
+        {"name": name},
+    )
+
+
+def invalid_request(message: str, details: dict[str, Any] | None = None) -> ServiceError:
+    return ServiceError(422, "validation_error", message, details)
+
+
 def state_conflict(resource: str, identifier: int | str, message: str) -> ServiceError:
     return ServiceError(409, "state_conflict", message, {"resource": resource, "id": identifier})
-

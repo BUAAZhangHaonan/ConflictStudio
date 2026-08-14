@@ -156,6 +156,7 @@ class Database:
             ("job_events", "job events are immutable"),
             ("job_item_prompt_results", "job item prompt results are immutable"),
             ("assets", "assets are immutable"),
+            ("reviews", "reviews are immutable"),
         )
         quoted_root = str(self.data_root).replace("'", "''")
         connection.exec_driver_sql("DROP TRIGGER IF EXISTS require_assets_storage_root")

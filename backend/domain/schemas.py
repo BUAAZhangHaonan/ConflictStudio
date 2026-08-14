@@ -22,6 +22,8 @@ from .enums import (
     JobStatus,
     ModelName,
     Precision,
+    Protocol,
+    Relation,
     ReviewDecision,
     ResourceStatus,
     TestExecutionMode,
@@ -46,8 +48,10 @@ class ApiModel(BaseModel):
 
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
+ReviewerName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 TextValue = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 OptionalTextValue = Annotated[str, StringConstraints(strip_whitespace=True)]
+ReviewNote = Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)]
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 
 
@@ -636,8 +640,66 @@ class KeepTestResultRequest(ExpectedRevision):
     dataset_id: int = Field(gt=0)
 
 
-class SampleReviewUpdate(ExpectedRevision):
+class ReviewerCreate(ApiModel):
+    name: ReviewerName
+
+
+class ReviewerRename(ExpectedRevision):
+    name: ReviewerName
+
+
+class ReviewerRead(ApiModel):
+    id: int
+    name: str
+    revision: int
+    created_at: str
+    updated_at: str
+
+
+class ReviewCreate(ApiModel):
+    sample_id: int = Field(gt=0)
+    reviewer_id: int = Field(gt=0)
+    decision: Literal[ReviewDecision.ACCEPTED, ReviewDecision.REJECTED]
+    note: ReviewNote = ""
+    expected_revision: int = Field(ge=1)
+    expected_review_revision: int = Field(ge=0)
+
+
+class ReviewBatchCreate(ApiModel):
+    items: list[ReviewCreate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def reject_duplicate_samples(self) -> Self:
+        sample_ids = [item.sample_id for item in self.items]
+        if len(sample_ids) != len(set(sample_ids)):
+            raise ValueError("A batch cannot contain the same sample more than once")
+        return self
+
+
+class ReviewRead(ApiModel):
+    id: int
+    sample_id: int
+    reviewer_id: int
+    reviewer_name: str
+    dataset_id: int
+    protocol: Protocol
+    relation: Relation
     decision: ReviewDecision
+    note: str
+    sample_revision: int
+    revision: int
+    created_at: str
+
+
+class SampleClassificationUpdate(ExpectedRevision):
+    target_category: Category
+    conflict_direction: ConflictDirection | None = None
+
+    @model_validator(mode="after")
+    def validate_target_direction(self) -> Self:
+        if not validate_direction(self.target_category, self.conflict_direction):
+            raise ValueError("The conflict direction does not match the target category")
+        return self
 
 
 class SampleRead(ApiModel):
@@ -649,6 +711,7 @@ class SampleRead(ApiModel):
     conflict_direction: ConflictDirection | None
     review_decision: ReviewDecision
     review_revision: int
+    current_review: ReviewRead | None
     model: ModelName
     generation_record: GenerationAttemptRead
     gpu_slot: GpuSlotName

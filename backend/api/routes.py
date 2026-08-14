@@ -35,8 +35,14 @@ from backend.domain.schemas import (
     PromptPresetUpdate,
     PromptPreviewRead,
     PromptPreviewRequest,
+    ReviewBatchCreate,
+    ReviewCreate,
+    ReviewerCreate,
+    ReviewerRead,
+    ReviewerRename,
+    ReviewRead,
+    SampleClassificationUpdate,
     SampleRead,
-    SampleReviewUpdate,
     TestRunCreate,
     VideoBackgroundPresetCreate,
     VideoBackgroundPresetRead,
@@ -49,6 +55,8 @@ from backend.services.catalog import CatalogService
 from backend.services.gpu_slots import GpuSlotSnapshot
 from backend.services.job_executor import JobExecutor
 from backend.services.samples import SampleService
+from backend.services.reviewers import ReviewerService
+from backend.services.reviews import ReviewService
 
 
 router = APIRouter(prefix="/api")
@@ -77,6 +85,14 @@ def executor(request: Request) -> JobExecutor:
 
 def samples(request: Request) -> SampleService:
     return request.app.state.sample_service
+
+
+def reviewers(request: Request) -> ReviewerService:
+    return request.app.state.reviewer_service
+
+
+def reviews(request: Request) -> ReviewService:
+    return request.app.state.review_service
 
 
 async def notify_executor(job_executor: JobExecutor) -> None:
@@ -315,13 +331,50 @@ def get_sample(sample_id: int, request: Request) -> SampleRead:
     return samples(request).get_sample(sample_id)
 
 
-@router.patch("/samples/{sample_id}/review", response_model=SampleRead)
-def update_sample_review(
+@router.patch("/samples/{sample_id}/classification", response_model=SampleRead)
+def update_sample_classification(
     sample_id: int,
-    payload: SampleReviewUpdate,
+    payload: SampleClassificationUpdate,
     request: Request,
 ) -> SampleRead:
-    return samples(request).update_review(sample_id, payload)
+    return samples(request).update_classification(sample_id, payload)
+
+
+@router.get("/reviewers", response_model=list[ReviewerRead])
+def list_reviewers(request: Request) -> list[ReviewerRead]:
+    return reviewers(request).list_reviewers()
+
+
+@router.post("/reviewers", response_model=ReviewerRead, status_code=status.HTTP_201_CREATED)
+def create_reviewer(payload: ReviewerCreate, request: Request) -> ReviewerRead:
+    return reviewers(request).create(payload)
+
+
+@router.patch("/reviewers/{reviewer_id}", response_model=ReviewerRead)
+def rename_reviewer(
+    reviewer_id: int,
+    payload: ReviewerRename,
+    request: Request,
+) -> ReviewerRead:
+    return reviewers(request).rename(reviewer_id, payload)
+
+
+@router.get("/reviews", response_model=list[ReviewRead])
+def list_reviews(
+    request: Request,
+    sample_id: int = Query(alias="sampleId", gt=0),
+) -> list[ReviewRead]:
+    return reviews(request).list_for_sample(sample_id)
+
+
+@router.post("/reviews", response_model=SampleRead, status_code=status.HTTP_201_CREATED)
+def create_review(payload: ReviewCreate, request: Request) -> SampleRead:
+    return reviews(request).create(payload)
+
+
+@router.post("/reviews/batch", response_model=list[SampleRead], status_code=status.HTTP_201_CREATED)
+def create_reviews_batch(payload: ReviewBatchCreate, request: Request) -> list[SampleRead]:
+    return reviews(request).create_batch(payload)
 
 
 @router.get(

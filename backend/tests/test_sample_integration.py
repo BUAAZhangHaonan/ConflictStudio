@@ -517,7 +517,7 @@ def test_sample_api_reads_precision_only_from_current_successful_attempt(
     assert sample["generationRecord"]["id"] > 0
 
 
-def test_test_result_keep_reuses_assets_and_review_decision_is_revisioned(
+def test_test_result_keep_reuses_assets_and_review_history_is_revisioned(
     tmp_path: Path,
 ) -> None:
     app = make_app(tmp_path)
@@ -530,9 +530,17 @@ def test_test_result_keep_reuses_assets_and_review_decision_is_revisioned(
             f"/api/job-items/{item_id}/keep",
             json={"datasetId": dataset_id, "expectedRevision": item["revision"]},
         )
-        reviewed = client.patch(
-            f"/api/samples/{kept.json()['id']}/review",
-            json={"expectedRevision": kept.json()["revision"], "decision": "Accepted"},
+        reviewer = client.post("/api/reviewers", json={"name": "Reviewer One"})
+        reviewed = client.post(
+            "/api/reviews",
+            json={
+                "sampleId": kept.json()["id"],
+                "reviewerId": reviewer.json()["id"],
+                "expectedRevision": kept.json()["revision"],
+                "expectedReviewRevision": kept.json()["reviewRevision"],
+                "decision": "Accepted",
+                "note": "",
+            },
         )
 
     assert kept.status_code == 201
@@ -541,7 +549,8 @@ def test_test_result_keep_reuses_assets_and_review_decision_is_revisioned(
     assert item["attempts"][0]["primaryAssetUrl"] == item["primaryAssetUrl"]
     assert kept.json()["primaryAssetId"] == item["primaryAssetId"]
     assert kept.json()["sourceAssetId"] == item["sourceAssetId"]
-    assert reviewed.status_code == 200
+    assert reviewer.status_code == 201
+    assert reviewed.status_code == 201
     assert reviewed.json()["reviewDecision"] == "Accepted"
     assert reviewed.json()["reviewRevision"] == 1
     with app.state.database.read_session() as session:

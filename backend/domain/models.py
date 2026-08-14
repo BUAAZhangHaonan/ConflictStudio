@@ -25,6 +25,8 @@ from .enums import (
     JobStatus,
     ModelName,
     Precision,
+    Protocol,
+    Relation,
     ReviewDecision,
     ResourceStatus,
 )
@@ -720,6 +722,52 @@ class Sample(SQLModel, table=True):
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
+class Reviewer(SQLModel, table=True):
+    __tablename__ = "reviewers"
+    __table_args__ = (
+        UniqueConstraint("name_key", name="uq_reviewers_name_key"),
+        CheckConstraint("length(trim(name)) > 0 AND length(name) <= 80", name="ck_reviewers_name"),
+        CheckConstraint("length(trim(name_key)) > 0 AND length(name_key) <= 80", name="ck_reviewers_name_key"),
+        CheckConstraint("revision >= 1", name="ck_reviewers_revision"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(sa_column=Column(String(80), nullable=False))
+    name_key: str = Field(sa_column=Column(String(80), nullable=False))
+    revision: int = Field(default=1, ge=1)
+    created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+    updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
+class Review(SQLModel, table=True):
+    __tablename__ = "reviews"
+    __table_args__ = (
+        UniqueConstraint("sample_id", "revision", name="uq_reviews_sample_revision"),
+        CheckConstraint("decision IN ('Accepted', 'Rejected')", name="ck_reviews_decision"),
+        CheckConstraint("length(note) <= 2000", name="ck_reviews_note"),
+        CheckConstraint("sample_revision >= 1", name="ck_reviews_sample_revision"),
+        CheckConstraint("revision >= 1", name="ck_reviews_revision"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    sample_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("samples.id", ondelete="RESTRICT"), nullable=False)
+    )
+    reviewer_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("reviewers.id", ondelete="RESTRICT"), nullable=False)
+    )
+    dataset_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False)
+    )
+    protocol: Protocol = Field(sa_column=enum_column(Protocol))
+    relation: Relation = Field(sa_column=enum_column(Relation))
+    decision: ReviewDecision = Field(sa_column=enum_column(ReviewDecision))
+    note: str = Field(default="", sa_column=Column(Text, nullable=False))
+    sample_revision: int = Field(ge=1)
+    revision: int = Field(ge=1)
+    created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
 class JobEvent(SQLModel, table=True):

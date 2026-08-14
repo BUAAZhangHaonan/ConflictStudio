@@ -9,6 +9,8 @@ from backend.domain.enums import (
     JobStatus,
     ResourceStatus,
     ReviewDecision,
+    protocol_for,
+    relation_for,
 )
 from backend.domain.models import (
     BatchVideoInputSnapshot,
@@ -25,11 +27,12 @@ from backend.domain.schemas import (
     GenerationAttemptRead,
     KeepTestResultRequest,
     SampleRead,
-    SampleReviewUpdate,
+    SampleClassificationUpdate,
 )
 
 from .assets import asset_content_url
-from .errors import not_found, revision_conflict, state_conflict
+from .errors import invalid_request, not_found, revision_conflict, state_conflict
+from .reviews import latest_review, review_read
 
 
 def create_sample_for_completed_item(
@@ -128,22 +131,31 @@ class SampleService:
                 raise state_conflict("jobItem", item.id, "The test result is already a formal sample")
             return self._read(session, create_sample_for_completed_item(session, job, item, dataset.id))
 
-    def update_review(self, sample_id: int, payload: SampleReviewUpdate) -> SampleRead:
+    def update_classification(
+        self,
+        sample_id: int,
+        payload: SampleClassificationUpdate,
+    ) -> SampleRead:
         with self.database.immediate_session() as session:
             row = session.get(Sample, sample_id)
             if row is None:
                 raise not_found("sample", sample_id)
             if row.revision != payload.expected_revision:
                 raise revision_conflict("sample", sample_id, payload.expected_revision, row.revision)
-            row.review_decision = payload.decision
-            row.review_revision += 1
+            if protocol_for(row.category) is not protocol_for(payload.target_category):
+                raise invalid_request("A sample cannot be moved between VA and VT")
+            if relation_for(row.category) is relation_for(payload.target_category):
+                raise invalid_request("The target category does not change the sample relation")
+            row.category = payload.target_category
+            row.conflict_direction = payload.conflict_direction
+            row.review_decision = ReviewDecision.PENDING
             row.revision += 1
             row.updated_at = utc_now()
             session.flush()
-            return self._read(session, row)
+            return self.read_in_session(session, row)
 
     @staticmethod
-    def _read(session: Session, row: Sample) -> SampleRead:
+    def read_in_session(session: Session, row: Sample) -> SampleRead:
         if row.id is None:
             raise RuntimeError("A persisted sample must have an id")
         item = session.get(JobItem, row.job_item_id)
@@ -161,6 +173,7 @@ class SampleService:
         ).first()
         if attempt is None:
             raise state_conflict("sample", row.id, "The sample has no current successful generation attempt")
+        current = latest_review(session, row.id)
         return SampleRead(
             **row.model_dump(),
             display_id=f"CS-{row.id:06d}",
@@ -171,4 +184,7 @@ class SampleService:
                 source_asset_url=asset_content_url(attempt.source_asset_id),
                 primary_asset_url=asset_content_url(attempt.primary_asset_id),
             ),
+            current_review=review_read(session, current) if current is not None else None,
         )
+
+    _read = read_in_session
