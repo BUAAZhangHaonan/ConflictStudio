@@ -278,6 +278,29 @@ try {
   assert.deepEqual(await contentChecks.evaluateAll(nodes => nodes.map(node => node.checked)), contentSelectionBeforeScenes, 'Selecting scene presets must not change content items.');
   assert.deepEqual(await promptPresetChecks.evaluateAll(nodes => nodes.map(node => node.checked)), promptSelectionBeforeScenes, 'Selecting scene presets must not change prompt presets.');
   equal(await selectAllScenes.isDisabled(), true, 'Select all scene presets must become disabled after every available scene is selected.');
+  const unsavedBatchStatus = page.locator('.generation-unsaved-status');
+  equal(await unsavedBatchStatus.textContent(), 'Unsaved changes', 'Selecting all scene presets must show the unsaved batch status.');
+  equal(await unsavedBatchStatus.getAttribute('role'), 'status', 'The unsaved batch status must be exposed to assistive technology.');
+  equal(await page.getByRole('button', { name: 'Save batch draft' }).isEnabled(), true, 'Selecting all scene presets must enable saving the batch.');
+  if (artifactRoot) {
+    await page.waitForFunction(() => sessionStorage.getItem('conflictstudio.generation.draft.batch-form-v2') !== null);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: join(artifactRoot, 'batch-unsaved-390-en.png'), fullPage: true });
+    const storedBatchDraft = await page.evaluate(() => sessionStorage.getItem('conflictstudio.generation.draft.batch-form-v2'));
+    const screenshotPage = await context.newPage();
+    await api.install(screenshotPage);
+    await screenshotPage.goto(baseUrl, { waitUntil: 'networkidle' });
+    await screenshotPage.evaluate(({ localeKey, draftKey, draft }) => {
+      localStorage.setItem(localeKey, 'zh-CN');
+      sessionStorage.setItem(draftKey, draft);
+    }, { localeKey: preferenceKeys.locale, draftKey: 'conflictstudio.generation.draft.batch-form-v2', draft: storedBatchDraft });
+    await screenshotPage.setViewportSize({ width: 1440, height: 900 });
+    await screenshotPage.goto(`${baseUrl}/generate/batches`, { waitUntil: 'networkidle' });
+    await screenshotPage.locator('.generation-unsaved-status').filter({ hasText: '有未保存的更改' }).waitFor();
+    await screenshotPage.screenshot({ path: join(artifactRoot, 'batch-unsaved-1440-zh.png'), fullPage: true });
+    await screenshotPage.close();
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
 
   await page.locator('#batch-quantity').fill('9');
   const leaveTrigger = page.locator('.app-shell__sidebar .primary-nav__link[href="/workspace"]');
@@ -291,6 +314,8 @@ try {
   await expectFocus(page, leaveTrigger, 'Escape from the unsaved dialog must restore the navigation trigger focus.');
   await page.getByRole('button', { name: 'Save batch draft' }).click();
   await page.waitForFunction(() => document.querySelector('#batch-saved-draft')?.value !== 'new');
+  await page.waitForFunction(() => document.querySelector('.generation-unsaved-status')?.textContent === '');
+  equal(await unsavedBatchStatus.textContent(), '', 'The unsaved batch status must clear after the save succeeds.');
   assert.deepEqual(api.state.batchDrafts[0].backgroundPresets.map(item => item.id), [1, 2], 'The saved batch must persist every selected active scene preset.');
 
   await page.locator('.app-shell__sidebar .primary-nav__link[href="/workspace"]').click();

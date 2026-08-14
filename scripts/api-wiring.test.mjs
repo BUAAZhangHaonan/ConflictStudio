@@ -126,7 +126,10 @@ test('workspace is a card list through 1024px and keeps every action visible', (
 test('batch scene selection and result prompts use explicit independent controls', () => {
   assert.match(batchesSource, /backgroundPresetIds: activeBackgrounds\.map\(item => item\.id\)/u);
   assert.match(batchesSource, /batches\.selectAllBackgrounds/u);
+  assert.match(batchesSource, /role="status" aria-live="polite" aria-atomic="true">\{dirty \? g\('batches\.unsavedStatus'\) : ''\}/u);
   assert.match(localeSource, /'batches\.selectAllBackgrounds': 'Select all scene presets'/u);
+  assert.match(localeSource, /'batches\.unsavedStatus': 'Unsaved changes'/u);
+  assert.match(localeSource, /'batches\.unsavedStatus': '有未保存的更改'/u);
   assert.match(localeSource, /'batches\.selectAllBackgrounds': '全选场景预设'/u);
   assert.equal((jobsSource.match(/className="generation-current-input__prompt"/gu) ?? []).length, 2);
   assert.match(generationCss, /\.generation-current-input__prompt \{[\s\S]*grid-column: 1 \/ -1/u);

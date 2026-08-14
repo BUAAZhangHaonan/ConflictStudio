@@ -29,6 +29,8 @@
 .generation-language-panel legend { padding: 0 4px; font-weight: 600; }
 .generation-language-panel textarea { min-height: 84px; }
 .generation-form__actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; border-top: 1px solid var(--color-border); }
+.generation-form__actions--with-status { align-items: center; }
+.generation-unsaved-status { margin: 0 auto 0 0; color: var(--color-text-muted); font-size: 13px; font-weight: 600; }
 .button--danger:not(:disabled) { border-color: #c65353; color: #a53232; }
 .generation-form input, .generation-form select, .generation-form textarea,
 .generation-filters input, .generation-filters select { width: 100%; }
@@ -262,6 +264,7 @@
   .generation-choice-grid, .generation-choice-grid--compact, .generation-assignment { grid-template-columns: 1fr; }
   .generation-assignment h3 { grid-column: auto; }
   .generation-form__actions { align-items: stretch; flex-direction: column; }
+  .generation-form__actions--with-status .generation-unsaved-status { margin-right: 0; }
   .generation-feedback { align-items: flex-start; flex-direction: column; }
   .generation-list__row-button { padding: 2px 0; }
   .generation-step-list li, .generation-log-list li, .generation-result-list li { align-items: flex-start; flex-direction: column; }
