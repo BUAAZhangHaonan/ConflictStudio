@@ -3,18 +3,30 @@ from __future__ import annotations
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
-from backend.domain.enums import JobSource, JobStatus, ResourceStatus, ReviewDecision
+from backend.domain.enums import (
+    GenerationAttemptStatus,
+    JobSource,
+    JobStatus,
+    ResourceStatus,
+    ReviewDecision,
+)
 from backend.domain.models import (
     BatchVideoInputSnapshot,
     ContentPlan,
     Dataset,
+    GenerationAttempt,
     Job,
     JobItem,
     JobItemPromptResult,
     Sample,
     utc_now,
 )
-from backend.domain.schemas import KeepTestResultRequest, SampleRead, SampleReviewUpdate
+from backend.domain.schemas import (
+    GenerationAttemptRead,
+    KeepTestResultRequest,
+    SampleRead,
+    SampleReviewUpdate,
+)
 
 from .assets import asset_content_url
 from .errors import not_found, revision_conflict, state_conflict
@@ -45,7 +57,6 @@ def create_sample_for_completed_item(
         category=snapshot.category,
         conflict_direction=snapshot.conflict_direction,
         model=snapshot.model,
-        precision=snapshot.precision,
         gpu_slot=item.gpu_slot,
         content_plan_id=snapshot.content_plan_id,
         content_plan_revision=snapshot.content_plan_revision,
@@ -89,14 +100,14 @@ class SampleService:
             if decision is not None:
                 statement = statement.where(Sample.review_decision == decision)
             rows = session.exec(statement.order_by(Sample.created_at, Sample.id)).all()
-            return [self._read(row) for row in rows]
+            return [self._read(session, row) for row in rows]
 
     def get_sample(self, sample_id: int) -> SampleRead:
         with self.database.read_session() as session:
             row = session.get(Sample, sample_id)
             if row is None:
                 raise not_found("sample", sample_id)
-            return self._read(row)
+            return self._read(session, row)
 
     def keep_test_result(self, item_id: int, payload: KeepTestResultRequest) -> SampleRead:
         with self.database.immediate_session() as session:
@@ -115,7 +126,7 @@ class SampleService:
                 raise state_conflict("dataset", dataset.id, "The destination dataset is not active")
             if session.exec(select(Sample).where(Sample.job_item_id == item.id)).one_or_none() is not None:
                 raise state_conflict("jobItem", item.id, "The test result is already a formal sample")
-            return self._read(create_sample_for_completed_item(session, job, item, dataset.id))
+            return self._read(session, create_sample_for_completed_item(session, job, item, dataset.id))
 
     def update_review(self, sample_id: int, payload: SampleReviewUpdate) -> SampleRead:
         with self.database.immediate_session() as session:
@@ -129,15 +140,35 @@ class SampleService:
             row.revision += 1
             row.updated_at = utc_now()
             session.flush()
-            return self._read(row)
+            return self._read(session, row)
 
     @staticmethod
-    def _read(row: Sample) -> SampleRead:
+    def _read(session: Session, row: Sample) -> SampleRead:
         if row.id is None:
             raise RuntimeError("A persisted sample must have an id")
+        item = session.get(JobItem, row.job_item_id)
+        if item is None:
+            raise state_conflict("sample", row.id, "The sample job item does not exist")
+        attempt = session.exec(
+            select(GenerationAttempt)
+            .where(
+                GenerationAttempt.job_item_id == item.id,
+                GenerationAttempt.status == GenerationAttemptStatus.COMPLETED,
+                GenerationAttempt.primary_asset_id == item.primary_asset_id,
+                GenerationAttempt.renderer_prompt_id == item.renderer_prompt_id,
+            )
+            .order_by(GenerationAttempt.attempt_number.desc())
+        ).first()
+        if attempt is None:
+            raise state_conflict("sample", row.id, "The sample has no current successful generation attempt")
         return SampleRead(
             **row.model_dump(),
             display_id=f"CS-{row.id:06d}",
             source_asset_url=asset_content_url(row.source_asset_id),
             primary_asset_url=asset_content_url(row.primary_asset_id),
+            generation_record=GenerationAttemptRead(
+                **attempt.model_dump(exclude={"job_item_id"}),
+                source_asset_url=asset_content_url(attempt.source_asset_id),
+                primary_asset_url=asset_content_url(attempt.primary_asset_id),
+            ),
         )

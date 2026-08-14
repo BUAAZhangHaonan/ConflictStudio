@@ -39,6 +39,8 @@ function makeSample(category: Category, index: number, sampleIndex: number): Sam
   const conflictDirection = directionBySample[`${category}-${index}`] ?? null;
   const trueEmotion = category.startsWith('C-') ? '悲伤' : index === 1 ? '悲伤' : '平静';
   const apparentEmotion = category.startsWith('C-') ? '平静' : trueEmotion;
+  const model = sampleIndex % 3 === 0 ? 'LTX-2.5' : sampleIndex % 3 === 1 ? 'LTX-2.3' : 'MiniMax H3';
+  const gpu = sampleIndex % 2 === 0 ? 'GPU0' : 'GPU1';
   const trueEmotionDescription = category === 'C-VA'
     ? conflictDirection === 'Vision'
       ? '人物的表情和动作表现出悲伤，声音保持平静。真实情绪主要由视觉信息表达。'
@@ -58,9 +60,15 @@ function makeSample(category: Category, index: number, sampleIndex: number): Sam
     conflictDirection,
     reviewDecision: decision,
     reviewRevision: decision === 'Pending' ? 0 : 1,
-    model: sampleIndex % 3 === 0 ? 'LTX-2.5' : sampleIndex % 3 === 1 ? 'LTX-2.3' : 'MiniMax H3',
-    precision: sampleIndex % 3 === 0 ? 'INT8' : null,
-    gpu: sampleIndex % 2 === 0 ? 'GPU0' : 'GPU1',
+    model,
+    generationRecord: {
+      id: `attempt-${id}`,
+      model,
+      precision: model === 'LTX-2.5' ? 'INT8' : null,
+      gpu,
+      seed: 3200 + sampleIndex,
+    },
+    gpu,
     contentItemId: `content-${category.toLowerCase()}`,
     presetId: `preset-${category.toLowerCase()}`,
     primaryAssetId: `asset-video-${String(sampleIndex + 1).padStart(4, '0')}`,

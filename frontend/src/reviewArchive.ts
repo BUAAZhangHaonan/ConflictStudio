@@ -38,6 +38,7 @@ function readableEthnicity(value: Sample['ethnicity']): string {
 
 export function archiveJsonl(datasetName: string, samples: readonly Sample[]): string {
   return `${samples.map(sample => {
+    if (!sample.model) throw new Error(`Sample ${sample.displayId} has no model`);
     const protocol = sample.category.endsWith('-VA') ? 'VA' : 'VT';
     return JSON.stringify({
       sample_id: sample.displayId,

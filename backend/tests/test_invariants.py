@@ -197,6 +197,7 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "jobs": ("source", "category", "conflict_direction", "model", "precision", "status"),
         "job_items": ("gpu_slot", "stage", "status"),
         "generation_attempts": ("model", "precision", "gpu_slot", "status"),
+        "samples": ("category", "conflict_direction", "review_decision", "model", "gpu_slot", "gender", "ethnicity"),
         "gpu_slots": ("slot", "availability", "loaded_model", "loaded_precision"),
     }
     for table_name, columns in enum_columns.items():
@@ -232,12 +233,15 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "jobs": ("ck_jobs_revision", "ck_jobs_model_precision"),
         "job_items": ("ck_job_items_sequence", "ck_job_items_revision"),
         "generation_attempts": ("ck_generation_attempts_model_precision",),
+        "samples": ("ck_samples_content_revision", "ck_samples_seed", "ck_samples_review_revision", "ck_samples_revision"),
         "gpu_slots": ("ck_gpu_slots_revision", "ck_gpu_slots_loaded_model_precision"),
     }
     for table_name, names in numeric_constraints.items():
         ddl = normalized_table_sql(database, table_name)
         for name in names:
             assert f"CONSTRAINT {name} CHECK" in ddl
+
+    assert "precision" not in normalized_table_sql(database, "samples")
 
     for table_name in ("batch_draft_gpu_slots", "job_items"):
         with database.engine.connect() as connection:

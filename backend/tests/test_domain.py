@@ -19,7 +19,7 @@ from backend.domain.enums import (
     ModelName,
     Precision,
 )
-from backend.domain.models import BatchDraft, ContentPlan, Dataset, GpuSlot
+from backend.domain.models import BatchDraft, ContentPlan, Dataset, GpuSlot, Sample
 from backend.domain.schemas import (
     BatchDraftCreate,
     ContentPlanCreate,
@@ -165,7 +165,17 @@ def test_clean_database_initializes_precision_schema(tmp_path: Path) -> None:
             row[1]
             for row in connection.exec_driver_sql('PRAGMA table_info("gpu_slots")')
         }
+        sample_columns = {
+            row[1]
+            for row in connection.exec_driver_sql('PRAGMA table_info("samples")')
+        }
+        sample_ddl = connection.exec_driver_sql(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'samples'"
+        ).scalar_one()
     assert "loaded_precision" in gpu_columns
+    assert "precision" not in sample_columns
+    assert "ck_samples_model_precision" not in sample_ddl
+    assert "precision" not in Sample.model_fields
 
 
 @pytest.mark.parametrize(

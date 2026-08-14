@@ -650,7 +650,7 @@ class SampleRead(ApiModel):
     review_decision: ReviewDecision
     review_revision: int
     model: ModelName
-    precision: Precision | None
+    generation_record: GenerationAttemptRead
     gpu_slot: GpuSlotName
     content_plan_id: int
     content_plan_revision: int

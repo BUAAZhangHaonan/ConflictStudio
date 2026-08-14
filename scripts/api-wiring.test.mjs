@@ -112,6 +112,13 @@ test('the visible review queue reads pending current Sample records', () => {
   assert.match(querySource, /\/api\/samples\/\$\{id\}\/review/u);
   assert.match(reviewPageSource, /useSamplesQuery\('Pending'\)/u);
   assert.match(reviewPageSource, /sample\.reviewDecision === 'Pending'/u);
+  const sampleContract = contractSource.match(/export interface Sample \{([\s\S]*?)\n\}/u)?.[1];
+  assert.ok(sampleContract);
+  assert.match(sampleContract, /model: ModelName;/u);
+  assert.match(sampleContract, /generationRecord: GenerationAttempt;/u);
+  assert.doesNotMatch(sampleContract, /precision:/u);
+  assert.match(reviewPageSource, /selected\.generationRecord\.precision/u);
+  assert.doesNotMatch(reviewPageSource, /selected\.precision/u);
   assert.doesNotMatch(reviewPageSource, /useMockRepository|useRepositorySnapshot/u);
 });
 
@@ -131,6 +138,8 @@ test('workspace, jobs, review, and archive read operational data only from API q
   assert.match(reviewPageSource, /useSamplesQuery\('Pending'\)/u);
   assert.match(archivePageSource, /useDatasetsQuery\(\)/u);
   assert.match(archivePageSource, /useSamplesQuery\('Accepted'\)/u);
+  assert.match(archivePageSource, /<td>\{sample\.model\}<\/td>/u);
+  assert.doesNotMatch(archivePageSource, /sample\.precision|generationRecord\.precision/u);
 });
 
 test('empty API arrays drive truthful empty states on all four operational pages', () => {

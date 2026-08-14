@@ -56,6 +56,7 @@ test('exports stable delivery fields without internal ids or embedded media', ()
     trueEmotion: 'sadness', apparentEmotion: 'neutral', trueEmotionDescription: 'The text carries the intended emotion.',
     dialogue: null, displayText: 'I am not doing well.', videoPrompt: 'Stable camera.', negativePrompt: 'No subtitles.',
     contentPlanName: 'Quiet denial', model: 'LTX-2.3', seed: 42, age: 35, gender: 'Female', ethnicity: 'EastAsian',
+    generationRecord: { id: 'attempt-101', model: 'LTX-2.3', precision: null, gpu: 'GPU0', seed: 42 },
     primaryAssetId: 'asset-video-0101', sourceAssetId: 'asset-source-0101', thumbnailAssetId: 'asset-thumb-0101',
     updatedAt: '2026-08-11T08:00:00.000Z',
   } as Sample;
@@ -65,6 +66,7 @@ test('exports stable delivery fields without internal ids or embedded media', ()
   assert.equal(record.sample_id, 'CS-0101');
   assert.equal(record.dataset_name, '正式生成集');
   assert.equal(record.media.primary_asset_id, sample.primaryAssetId);
+  assert.equal(record.model, 'LTX-2.3');
   assert.equal('source_asset_id' in record.media, false);
   assert.equal('thumbnail_asset_id' in record.media, false);
   assert.equal(record.sample_id.includes('archive-sample'), false);
@@ -72,5 +74,18 @@ test('exports stable delivery fields without internal ids or embedded media', ()
   assert.equal(line.includes('dataset-main'), false);
   assert.equal(line.includes('Accepted'), false);
   assert.equal(line.includes('Aligned'), false);
+  const containsPrecision = (value: unknown): boolean => value !== null && typeof value === 'object'
+    && Object.entries(value).some(([key, child]) => key === 'precision' || containsPrecision(child));
+  assert.equal(containsPrecision(record), false);
   assert.equal(archiveFileName('正式生成集'), '正式生成集.jsonl');
+});
+
+test('rejects an archive manifest row without a model', () => {
+  const sample = {
+    displayId: 'CS-0102',
+    category: 'A-VA',
+    model: '',
+  } as Sample;
+
+  assert.throws(() => archiveJsonl('Formal', [sample]), /has no model/u);
 });

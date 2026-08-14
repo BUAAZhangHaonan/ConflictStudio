@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import select
 
@@ -27,6 +28,7 @@ from backend.domain.enums import (
     JobSource,
     JobStatus,
     ModelName,
+    Precision,
     ResourceStatus,
 )
 from backend.domain.models import (
@@ -281,8 +283,14 @@ def test_invalid_generative_prompt_creates_no_job_or_generation_records(
         assert session.exec(select(Sample)).all() == []
 
 
-def add_completed_result(app, source: JobSource) -> tuple[int, int, int]:  # type: ignore[no-untyped-def]
+def add_completed_result(
+    app,
+    source: JobSource,
+    model: ModelName = ModelName.LTX,
+    precision: Precision | None = None,
+) -> tuple[int, int, int]:  # type: ignore[no-untyped-def]
     timestamp = utc_now()
+    frame_count = 124 if model is ModelName.H3 else 121
     with app.state.database.immediate_session() as session:
         dataset = Dataset(
             name="Formal",
@@ -332,7 +340,8 @@ def add_completed_result(app, source: JobSource) -> tuple[int, int, int]:  # typ
                 dataset_id=dataset.id,
                 dataset_revision=dataset.revision,
                 category=Category.A_VA,
-                model=ModelName.LTX,
+                model=model,
+                precision=precision,
                 quantity=1,
                 seed_base=77,
                 status=BatchDraftStatus.SUBMITTED,
@@ -355,12 +364,13 @@ def add_completed_result(app, source: JobSource) -> tuple[int, int, int]:  # typ
             age=25,
             gender=Gender.FEMALE,
             ethnicity="EastAsian",
-            model=ModelName.LTX,
+            model=model,
+            precision=precision,
             seed=77,
             width=VIDEO_WIDTH,
             height=VIDEO_HEIGHT,
             fps=VIDEO_FPS,
-            frame_count=121,
+            frame_count=frame_count,
             renderer_profile_version=RENDERER_PROFILE_VERSION,
             prompt_model="test",
             source_has_audio=True,
@@ -382,7 +392,8 @@ def add_completed_result(app, source: JobSource) -> tuple[int, int, int]:  # typ
             dataset_id=dataset.id if draft else None,
             batch_draft_id=draft.id if draft else None,
             category=Category.A_VA,
-            model=ModelName.LTX if draft else None,
+            model=model if draft else None,
+            precision=precision if draft else None,
             status=JobStatus.RUNNING,
             total_count=1,
             prepared_count=1,
@@ -403,8 +414,8 @@ def add_completed_result(app, source: JobSource) -> tuple[int, int, int]:  # typ
             width=VIDEO_WIDTH,
             height=VIDEO_HEIGHT,
             fps=VIDEO_FPS,
-            frame_count=121,
-            duration_seconds=121 / VIDEO_FPS,
+            frame_count=frame_count,
+            duration_seconds=frame_count / VIDEO_FPS,
             has_audio=True,
         )
         session.add(asset)
@@ -439,7 +450,8 @@ def add_completed_result(app, source: JobSource) -> tuple[int, int, int]:  # typ
             GenerationAttempt(
                 job_item_id=item.id,
                 attempt_number=1,
-                model=ModelName.LTX,
+                model=model,
+                precision=precision,
                 gpu_slot=GpuSlotName.GPU0,
                 seed=77,
                 source_asset_id=asset.id,
@@ -472,6 +484,37 @@ def test_completed_production_result_enters_pending_review_queue(
     assert sample["reviewDecision"] == "Pending"
     assert sample["primaryAssetId"] == item["primaryAssetId"]
     assert item["sampleId"] == sample["id"]
+
+
+@pytest.mark.parametrize(
+    ("model", "precision"),
+    [
+        (ModelName.LTX_25, Precision.INT8),
+        (ModelName.LTX, None),
+        (ModelName.H3, None),
+    ],
+)
+def test_sample_api_reads_precision_only_from_current_successful_attempt(
+    tmp_path: Path,
+    model: ModelName,
+    precision: Precision | None,
+) -> None:
+    app = make_app(tmp_path)
+    job_id, item_id, _ = add_completed_result(app, JobSource.PRODUCTION, model, precision)
+    app.state.job_executor._complete_item(job_id, item_id)
+
+    with TestClient(app) as client:
+        response = client.get("/api/samples", params={"decision": "Pending"})
+
+    assert response.status_code == 200
+    sample = response.json()[0]
+    assert sample["model"] == model.value
+    assert "precision" not in sample
+    assert sample["generationRecord"]["model"] == model.value
+    assert sample["generationRecord"]["precision"] == (precision.value if precision else None)
+    assert sample["generationRecord"]["gpuSlot"] == "GPU0"
+    assert sample["generationRecord"]["seed"] == 77
+    assert sample["generationRecord"]["id"] > 0
 
 
 def test_test_result_keep_reuses_assets_and_review_decision_is_revisioned(

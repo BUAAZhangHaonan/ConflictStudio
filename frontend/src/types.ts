@@ -54,6 +54,14 @@ export interface GpuState {
   checkedAt: string;
 }
 
+export interface SampleGenerationRecord {
+  id: string;
+  model: ModelName;
+  precision: ModelPrecision | null;
+  gpu: GpuSlot;
+  seed: number;
+}
+
 export interface Sample extends Revisioned {
   id: string;
   displayId: string;
@@ -63,7 +71,7 @@ export interface Sample extends Revisioned {
   reviewDecision: ReviewDecision;
   reviewRevision: number;
   model: ModelName;
-  precision: ModelPrecision | null;
+  generationRecord: SampleGenerationRecord;
   gpu: GpuSlot;
   contentItemId: string | null;
   presetId: string | null;

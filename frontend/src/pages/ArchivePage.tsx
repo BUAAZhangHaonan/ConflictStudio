@@ -214,6 +214,7 @@ export function ArchivePage() {
                           <th scope="col">{t('archive.thumbnail')}</th>
                           <th scope="col" aria-sort={sortKey === 'id' ? sortDirection : 'none'}><button type="button" onClick={() => requestSort('id')}>{t('archive.sampleId')}</button></th>
                           <th scope="col" aria-sort={sortKey === 'category' ? sortDirection : 'none'}><button type="button" onClick={() => requestSort('category')}>{t('archive.category')}</button></th>
+                          <th scope="col">{t('review.model')}</th>
                           <th scope="col" aria-sort={sortKey === 'updatedAt' ? sortDirection : 'none'}><button type="button" onClick={() => requestSort('updatedAt')}>{t('fields.updatedAt')}</button></th>
                         </tr></thead>
                         <tbody>{visibleRows.map(sample => (
@@ -221,6 +222,7 @@ export function ArchivePage() {
                             <td><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /></td>
                             <th scope="row"><strong>{sample.displayId}</strong><span className="archive-sample-meta">{t(`category.${sample.category}`)}<br />{formatDateTime(sample.updatedAt)}</span></th>
                             <td>{t(`category.${sample.category}`)}</td>
+                            <td>{sample.model}</td>
                             <td>{formatDateTime(sample.updatedAt)}</td>
                           </tr>
                         ))}</tbody>

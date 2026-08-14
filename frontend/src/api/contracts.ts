@@ -399,7 +399,7 @@ export interface Sample {
   reviewDecision: ReviewDecision;
   reviewRevision: number;
   model: ModelName;
-  precision: ModelPrecision | null;
+  generationRecord: GenerationAttempt;
   gpuSlot: GpuSlotName;
   contentPlanId: number;
   contentPlanRevision: number;

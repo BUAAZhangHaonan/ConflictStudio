@@ -656,7 +656,6 @@ class Sample(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("job_item_id", name="uq_samples_job_item"),
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_samples_direction"),
-        CheckConstraint(MODEL_PRECISION_CHECK, name="ck_samples_model_precision"),
         CheckConstraint(f"age IN {AGES}", name="ck_samples_age"),
         CheckConstraint("content_plan_revision >= 1", name="ck_samples_content_revision"),
         CheckConstraint("seed >= 0 AND seed < 2147483648", name="ck_samples_seed"),
@@ -682,7 +681,6 @@ class Sample(SQLModel, table=True):
     )
     review_revision: int = Field(default=0, ge=0)
     model: ModelName = Field(sa_column=enum_column(ModelName))
-    precision: Precision | None = Field(default=None, sa_column=enum_column(Precision, nullable=True))
     gpu_slot: GpuSlotName = Field(
         sa_column=enum_column(GpuSlotName, foreign_key="gpu_slots.slot", ondelete="RESTRICT")
     )
