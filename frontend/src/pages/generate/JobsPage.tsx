@@ -14,6 +14,7 @@ import {
 } from '../../api/queries';
 import { useJobEventReplay } from '../../api/jobEvents';
 import type { JobItem, JobStatus } from '../../api/contracts';
+import { finalJobItemPrompts } from '../../jobPrompts';
 import { formatDateTime } from '../../time';
 import {
   categoryLabel,
@@ -181,7 +182,7 @@ export function JobsPage() {
                 <div className="generation-result-card__header"><div><h3>{item.sequence}/{selected.totalCount}</h3><p>{item.input.model}{item.input.precision ? ` ${item.input.precision}` : ''} / {item.gpuSlot}</p></div><StatusBadge label={g(`jobs.status.${item.status}`)} kind={jobStatusKind(item.status)} /></div>
                 <div className="generation-result-card__asset">{item.primaryAssetUrl ? <video controls muted={item.input.deriveSilentPrimary} src={item.primaryAssetUrl}>{g('test.videoUnsupported')}</video> : <span>{g('test.mediaPlaceholder')}</span>}</div>
                 {item.sourceAssetUrl ? <a href={item.sourceAssetUrl}>{g('jobs.audio')}</a> : null}
-                <dl className="generation-current-input"><div><dt>{g('jobs.person')}</dt><dd>{g(`demographic.age.${item.input.age}`)} / {g(`demographic.gender.${item.input.gender}`)} / {g(`demographic.ethnicity.${item.input.ethnicity}`)}</dd></div><div><dt>{g('jobs.seed')}</dt><dd>{item.input.seed}</dd></div>{item.failureCode ? <div><dt>{g('jobs.failureTitle')}</dt><dd>{jobFailureMessage(item.failureCode, g)}</dd></div> : null}<div className="generation-current-input__prompt"><dt>{g('promptPreview.positive')}</dt><dd><pre>{item.promptResult?.finalPositivePrompt ?? item.input.fixedPositivePrompt ?? item.input.userInput}</pre></dd></div><div className="generation-current-input__prompt"><dt>{g('promptPreview.negative')}</dt><dd><pre>{item.promptResult?.finalNegativePrompt ?? item.input.finalNegativePrompt}</pre></dd></div></dl>
+                <dl className="generation-current-input"><div><dt>{g('jobs.person')}</dt><dd>{g(`demographic.age.${item.input.age}`)} / {g(`demographic.gender.${item.input.gender}`)} / {g(`demographic.ethnicity.${item.input.ethnicity}`)}</dd></div><div><dt>{g('jobs.seed')}</dt><dd>{item.input.seed}</dd></div>{item.failureCode ? <div><dt>{g('jobs.failureTitle')}</dt><dd>{jobFailureMessage(item.failureCode, g)}</dd></div> : null}{(() => { const prompts = finalJobItemPrompts(item); return prompts ? <><div className="generation-current-input__prompt"><dt>{g('promptPreview.positive')}</dt><dd><pre>{prompts.positive}</pre></dd></div><div className="generation-current-input__prompt"><dt>{g('promptPreview.negative')}</dt><dd><pre>{prompts.negative}</pre></dd></div></> : <div className="generation-current-input__prompt-status"><dt>{g('jobs.prompt')}</dt><dd role="status">{g('jobs.promptNotGenerated')}</dd></div>; })()}</dl>
                 {item.attemptCount > 0 ? <Button variant="quiet" onClick={() => { setAttemptItemId(item.id); setAttemptPage(1); }}>{g('jobs.attemptHistory')} ({item.attemptCount})</Button> : null}
                 {selected.source === 'Test' && item.status === 'Completed' && item.primaryAssetId !== null ? <div className="generation-result-card__actions"><Button variant="primary" disabled={item.sampleId !== null || productionDatasets.length === 0} onClick={() => openKeep(item)}>{item.sampleId === null ? g('jobs.keep') : g('jobs.kept')}</Button></div> : null}
               </article>)}</div>}
