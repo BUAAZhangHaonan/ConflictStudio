@@ -306,9 +306,13 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
         if ((method === 'POST' && path === '/api/batch-drafts') || (method === 'PUT' && /^\/api\/batch-drafts\/\d+$/u.test(path))) {
           const contentSelections = body.contentSelections.map(selection => {
             const content = state.contentPlans.find(item => item.id === selection.contentPlanId);
+            const compatibleIds = state.contentRelations.get(content.id) ?? [];
+            const selectedIds = content.mode === 'Fixed' ? compatibleIds : selection.backgroundPresetIds;
             return {
               contentPlan: { id: content.id, nameZh: content.nameZh, nameEn: content.nameEn, revision: content.revision },
-              backgroundPresets: state.backgrounds.filter(item => selection.backgroundPresetIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
+              mode: content.mode,
+              backgroundPresets: state.backgrounds.filter(item => selectedIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
+              compatibleBackgrounds: state.backgrounds.filter(item => compatibleIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
             };
           });
           const promptPreset = state.promptPresets.find(item => item.id === body.promptPresetId);

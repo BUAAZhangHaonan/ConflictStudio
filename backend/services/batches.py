@@ -92,6 +92,7 @@ from .pagination import PAGE_SIZE, paginate
 class DraftContentSelection:
     content: ContentPlan
     backgrounds: list[VideoBackgroundPreset]
+    compatible_backgrounds: list[VideoBackgroundPreset]
     content_revision: int
     background_revisions: dict[int, int]
 
@@ -767,6 +768,15 @@ class BatchService:
                 .order_by(ContentPlanBackground.position)
             ).all()
             mapped_ids = [mapping.background_preset_id for mapping in mappings]
+            compatible_backgrounds = [
+                self._required(
+                    session,
+                    VideoBackgroundPreset,
+                    background_id,
+                    "videoBackgroundPreset",
+                )
+                for background_id in mapped_ids
+            ]
             if content.mode is ContentMode.FIXED:
                 if requested.background_preset_ids:
                     raise ServiceError(
@@ -817,6 +827,7 @@ class BatchService:
                 DraftContentSelection(
                     content=content,
                     backgrounds=backgrounds,
+                    compatible_backgrounds=compatible_backgrounds,
                     content_revision=content.revision,
                     background_revisions={
                         background.id: background.revision for background in backgrounds
@@ -946,10 +957,32 @@ class BatchService:
                 )
                 for link in selected_links
             ]
+            compatible_links = session.exec(
+                select(ContentPlanBackground)
+                .where(ContentPlanBackground.content_plan_id == content.id)
+                .order_by(ContentPlanBackground.position)
+            ).all()
+            compatible_backgrounds = [
+                self._required(
+                    session,
+                    VideoBackgroundPreset,
+                    link.background_preset_id,
+                    "videoBackgroundPreset",
+                )
+                for link in compatible_links
+            ]
+            compatible_ids = {background.id for background in compatible_backgrounds}
+            if any(background.id not in compatible_ids for background in backgrounds):
+                raise state_conflict(
+                    "batchDraft",
+                    draft_id,
+                    "A saved content and scene selection is no longer compatible",
+                )
             selections.append(
                 DraftContentSelection(
                     content=content,
                     backgrounds=backgrounds,
+                    compatible_backgrounds=compatible_backgrounds,
                     content_revision=content_link.source_revision,
                     background_revisions={
                         link.background_preset_id: link.source_revision
@@ -1171,6 +1204,7 @@ class BatchService:
                         name_en=selection.content.name_en,
                         revision=selection.content_revision,
                     ),
+                    mode=selection.content.mode,
                     background_presets=[
                         BilingualSelectionRead(
                             id=background.id,
@@ -1179,6 +1213,15 @@ class BatchService:
                             revision=selection.background_revisions[background.id],
                         )
                         for background in selection.backgrounds
+                    ],
+                    compatible_backgrounds=[
+                        BilingualSelectionRead(
+                            id=background.id,
+                            name_zh=background.name_zh,
+                            name_en=background.name_en,
+                            revision=background.revision,
+                        )
+                        for background in selection.compatible_backgrounds
                     ],
                 )
                 for selection in aggregate.selections

@@ -61,7 +61,11 @@ function formFromDraft(value: BatchDraft): BatchForm {
     precision: precisionForModel(value.model, value.precision),
     quantity: value.quantity,
     seed: String(value.seed),
-    contentSelections: [],
+    contentSelections: value.contentSelections.map(selection => ({
+      contentPlan: { ...selection.contentPlan, mode: selection.mode },
+      availableBackgrounds: selection.compatibleBackgrounds,
+      backgroundPresetIds: selection.backgroundPresets.map(background => background.id),
+    })),
     promptPresetId: value.promptPreset.id,
     selectedAges: [...new Set(value.demographics.map(item => item.age))],
     selectedGenders: [...new Set(value.demographics.map(item => item.gender))],
@@ -223,7 +227,10 @@ export function BatchesPage() {
       ...profile,
       quantity: form.quantity,
       seed: parseSeed(form.seed),
-      contentSelections: form.contentSelections.map(item => ({ contentPlanId: item.contentPlan.id, backgroundPresetIds: item.backgroundPresetIds })),
+      contentSelections: form.contentSelections.map(item => ({
+        contentPlanId: item.contentPlan.id,
+        backgroundPresetIds: item.contentPlan.mode === 'Fixed' ? [] : item.backgroundPresetIds,
+      })),
       promptPresetId: form.promptPresetId,
       demographics: demographicCombinations(form.selectedAges, form.selectedGenders, form.selectedEthnicities),
       gpuSlots: form.gpuSlots,
@@ -236,8 +243,10 @@ export function BatchesPage() {
     setValidation(false);
     try {
       const saved = await saveMutation.mutateAsync({ id: savedDraft?.id ?? null, input: savedDraft ? { ...value, expectedRevision: savedDraft.revision } : value });
+      const canonical = formFromDraft(saved);
       setSelectedId(saved.id);
-      setBaseline(form);
+      setForm(canonical);
+      setBaseline(canonical);
       setPreview(null);
       showToast(g('batches.draftSaved'));
     } catch { /* The shared error panel renders the safe message. */ }

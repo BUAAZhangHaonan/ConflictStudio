@@ -473,7 +473,9 @@ class ContentPlanBackgroundRead(ApiModel):
 
 class BatchContentSelectionRead(ApiModel):
     content_plan: BilingualSelectionRead
+    mode: ContentMode
     background_presets: list[BilingualSelectionRead]
+    compatible_backgrounds: list[BilingualSelectionRead]
 
 
 class BatchDraftRead(ApiModel):

@@ -459,5 +459,7 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
         body = saved.json()
         assert body["datasetRevision"] == 1
         assert body["contentSelections"][0]["contentPlan"]["revision"] == 2
+        assert body["contentSelections"][0]["mode"] == "Generative"
         assert body["promptPreset"]["revision"] == 1
         assert body["contentSelections"][0]["backgroundPresets"][0]["revision"] == 1
+        assert body["contentSelections"][0]["compatibleBackgrounds"][0]["id"] == records["background"]["id"]

@@ -200,9 +200,19 @@ try {
   await page.waitForFunction(() => document.querySelector('.generation-unsaved-status')?.textContent === '');
   const batchRequest = api.state.requests.findLast(request => request.method === 'POST' && request.path === '/api/batch-drafts');
   assert.deepEqual(batchRequest?.body.contentSelections, [
-    { contentPlanId: 1, backgroundPresetIds: [1] },
+    { contentPlanId: 1, backgroundPresetIds: [] },
     { contentPlanId: 2, backgroundPresetIds: [1] },
   ]);
+  await page.getByLabel('Saved draft').selectOption('new');
+  await page.getByLabel('Saved draft').selectOption('1');
+  assert.equal(await page.locator('input[name="target-dataset"]:checked').count(), 1, 'Saved target dataset must be restored.');
+  assert.equal(await contentSection.locator(':scope > .generation-choice-grid input[type="checkbox"]:checked').count(), 2, 'Saved content selections must be restored.');
+  assert.equal(await generatedScenes.locator('input[type="checkbox"]:checked').count(), 1, 'Saved scene selections must be restored.');
+  assert.equal(await promptSection.locator('input[type="radio"]:checked').count(), 1, 'Saved prompt preset must be restored.');
+  assert.equal(await page.locator('#batch-model').inputValue(), 'LTX-2.5');
+  assert.equal(await page.locator('#batch-precision').inputValue(), 'INT8');
+  await page.getByRole('button', { name: 'Save batch draft' }).click();
+  await page.waitForFunction(() => document.querySelector('.generation-unsaved-status')?.textContent === '');
   assert.equal('backgroundPresets' in batchRequest.body, false, 'The removed global scene contract must not be sent.');
 
   await open(page, '/generate/content');

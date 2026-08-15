@@ -145,7 +145,9 @@ export interface BatchContentSelectionInput {
 
 export interface BatchContentSelection {
   contentPlan: BilingualSelection;
+  mode: 'Fixed' | 'Generative';
   backgroundPresets: BilingualSelection[];
+  compatibleBackgrounds: BilingualSelection[];
 }
 
 export interface Selection {
