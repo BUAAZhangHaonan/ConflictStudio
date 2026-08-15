@@ -235,8 +235,9 @@ try {
   assert.equal(await page.locator('.generation-selection-list > li').count(), 3);
   await page.locator('.generation-selection-card').filter({ hasText: /^Restrained reply/u }).click();
   const fixedEditor = page.locator('.generation-compatible-scenes');
-  assert.equal(await fixedEditor.locator('input[type="radio"]').count(), 3, 'Fixed content must expose one source-scene choice.');
-  assert.equal(await fixedEditor.locator('input[type="radio"]:checked').count(), 1, 'Fixed content must keep exactly one source scene selected.');
+  await fixedEditor.getByText('Quiet office', { exact: true }).waitFor();
+  assert.equal(await fixedEditor.locator('input').count(), 0, 'Fixed content must expose its source scene without radio or checkbox controls.');
+  assert.equal(await fixedEditor.getByRole('button', { name: /scene/u }).count(), 0, 'Fixed content must not expose scene mutation actions.');
   await page.locator('.generation-selection-card').filter({ hasText: 'Unexpected call' }).click();
   const compatibilityChecks = page.locator('.generation-compatible-scenes input[type="checkbox"]');
   await page.waitForFunction(() => {
