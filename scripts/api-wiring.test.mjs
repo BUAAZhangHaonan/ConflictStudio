@@ -56,7 +56,7 @@ test('frontend contracts include the exact reviewer, review, statistics, archive
     assert.match(contractSource, new RegExp(`export (?:interface|type) ${name}\\b`));
   }
   for (const field of ['reviewerId', 'note', 'expectedRevision', 'expectedReviewRevision']) assert.match(contractSource, new RegExp(`${field}:`));
-  for (const field of ['currentReview', 'inArchive', 'archiveSyncStatus']) assert.match(contractSource, new RegExp(`${field}:`));
+  for (const field of ['currentReview', 'inArchive', 'archiveSyncStatus', 'actualContentSummary', 'actualSceneSummary', 'generationCompatibility']) assert.match(contractSource, new RegExp(`${field}:`));
   const sample = contractSource.match(/export interface Sample \{([\s\S]*?)\n\}/u)?.[1] ?? '';
   assert.doesNotMatch(sample, /precision:/u);
   assert.match(sample, /generationRecord: GenerationAttempt;/u);
@@ -86,6 +86,12 @@ test('review uses persistent reviews and a revisioned classification form with c
   assert.match(reviewSource, /focus\(\{ preventScroll: true \}\)/u);
   assert.match(reviewSource, /navigate\(returnTarget, \{ replace: true \}\)/u);
   assert.doesNotMatch(reviewSource, /navigate\(-1\)|useMockRepository|useRepositorySnapshot/u);
+  assert.match(reviewSource, /selected\.generationCompatibility === 'NeedsRegeneration'/u);
+  assert.match(reviewSource, /selected\.actualContentSummary\.nameZh/u);
+  assert.match(reviewSource, /selected\.actualSceneSummary\.nameZh/u);
+  assert.match(reviewSource, /disabled=\{preferences\.currentReviewerId === null \|\| selectedNeedsRegeneration\}/u);
+  assert.match(localeSource, /actualVideoScene: 'Actual video scene'/u);
+  assert.match(localeSource, /actualVideoScene: '实际视频场景'/u);
 });
 
 test('statistics reads one real reviewer statistics response and renders only eight metrics plus activity', () => {
@@ -137,6 +143,15 @@ test('batch scene selection and result prompts use explicit independent controls
   assert.match(localeSource, /'batches\.unsavedStatus': 'Unsaved changes'/u);
   assert.match(localeSource, /'batches\.unsavedStatus': '有未保存的更改'/u);
   assert.match(localeSource, /'batches\.selectCompatibleScenes': '全选可用场景'/u);
+  assert.match(reviewSource, /navigate\('\/generate\/batches', \{ state \}\)/u);
+  assert.match(batchesSource, /readCorrectedSampleBatchPrefill\(location\.state\)/u);
+  assert.match(batchesSource, /targetDatasetId: null/u);
+  assert.match(batchesSource, /quantity: 1/u);
+  assert.match(batchesSource, /dirty && prefill === null/u);
+  assert.match(localeSource, /regenerateAction: 'Regenerate with the registered scene'/u);
+  assert.match(localeSource, /regenerateAction: '使用已登记场景重新生成'/u);
+  assert.match(localeSource, /'batches\.correctedPrefill': '\{\{sample\}\} has been copied into a new unsaved batch/u);
+  assert.match(localeSource, /'batches\.correctedPrefill': '已将 \{\{sample\}\} 和登记场景预填/u);
   assert.equal((jobsSource.match(/className="generation-current-input__prompt"/gu) ?? []).length, 2);
   assert.match(generationCss, /\.generation-current-input__prompt \{[\s\S]*grid-column: 1 \/ -1/u);
   assert.match(generationCss, /\.generation-current-input__prompt pre \{[\s\S]*white-space: pre-wrap/u);

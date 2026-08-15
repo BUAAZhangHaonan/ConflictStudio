@@ -232,14 +232,17 @@ try {
   assert.equal('backgroundPresets' in batchRequest.body, false, 'The removed global scene contract must not be sent.');
 
   await open(page, '/generate/content');
-  assert.equal(await page.locator('.generation-selection-list > li').count(), 2);
-  await page.locator('.generation-selection-card').filter({ hasText: 'Restrained reply' }).click();
+  assert.equal(await page.locator('.generation-selection-list > li').count(), 3);
+  await page.locator('.generation-selection-card').filter({ hasText: /^Restrained reply/u }).click();
   const fixedEditor = page.locator('.generation-compatible-scenes');
-  assert.equal(await fixedEditor.locator('input[type="radio"]').count(), 2, 'Fixed content must expose one source-scene choice.');
+  assert.equal(await fixedEditor.locator('input[type="radio"]').count(), 3, 'Fixed content must expose one source-scene choice.');
   assert.equal(await fixedEditor.locator('input[type="radio"]:checked').count(), 1, 'Fixed content must keep exactly one source scene selected.');
   await page.locator('.generation-selection-card').filter({ hasText: 'Unexpected call' }).click();
   const compatibilityChecks = page.locator('.generation-compatible-scenes input[type="checkbox"]');
-  await page.waitForFunction(() => [...document.querySelectorAll('.generation-compatible-scenes input[type="checkbox"]')].length === 2 && [...document.querySelectorAll('.generation-compatible-scenes input[type="checkbox"]')].every(input => input.checked));
+  await page.waitForFunction(() => {
+    const inputs = [...document.querySelectorAll('.generation-compatible-scenes input[type="checkbox"]')];
+    return inputs.length === 3 && inputs.filter(input => input.checked).length === 2;
+  });
   await compatibilityChecks.nth(1).uncheck();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.getByText('Content item saved.').waitFor();

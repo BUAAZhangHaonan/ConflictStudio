@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 import { apiErrorMessage, isModelSwitchConfirmationRequired } from '../../api/client';
 import { generationQueries, useBatchDraftsQuery, useContentPlansQuery, useCreateDatasetMutation, useDatasetsQuery, useGpuSlotsQuery, usePreviewBatchMutation, usePromptPresetsQuery, useSaveBatchDraftMutation, useSubmitBatchMutation } from '../../api/queries';
 import type { Age, BatchDraft, BatchDraftCreate, BatchPreview, BilingualSelection, Demographic, Ethnicity, Gender, GpuSlotName } from '../../api/contracts';
 import { buildGenerationProfile, ltx25Precisions, precisionForModel } from '../../generationProfile';
+import { readCorrectedSampleBatchPrefill, type CorrectedSampleBatchPrefill } from '../../generationPrefill';
 import { allowedDirections, type Category, type ConflictDirection, type ModelName, type ModelPrecision } from '../../types';
 import { Button, ConfirmDialog, Dialog, Field, Pagination, TableShell, useToast } from '../../components';
 import { ages, categories, categoryLabel, directionLabel, ethnicities, genders, GenerationScaffold, GpuPanel, localizedName, modelSpecLabel, models, OperationFeedback, parseSeed, readGenerationDraft, toggleArrayValue, useGenerationCopy, useGenerationDraft, useGenerationLocale, useUnsavedChanges } from './shared';
@@ -74,6 +76,28 @@ function formFromDraft(value: BatchDraft): BatchForm {
   };
 }
 
+export function batchFormFromPrefill(value: CorrectedSampleBatchPrefill): BatchForm {
+  return {
+    targetDatasetId: null,
+    category: value.category,
+    conflictDirection: value.conflictDirection,
+    model: value.model,
+    precision: precisionForModel(value.model, value.precision),
+    quantity: 1,
+    seed: '',
+    contentSelections: [{
+      contentPlan: value.contentPlan,
+      availableBackgrounds: [value.backgroundPreset],
+      backgroundPresetIds: [value.backgroundPreset.id],
+    }],
+    promptPresetId: value.promptPresetId,
+    selectedAges: [value.demographic.age],
+    selectedGenders: [value.demographic.gender],
+    selectedEthnicities: [value.demographic.ethnicity],
+    gpuSlots: [],
+  };
+}
+
 export function batchFormIsValid(form: BatchForm): boolean {
   const seed = parseSeed(form.seed);
   return Boolean(
@@ -98,6 +122,8 @@ export function BatchesPage() {
   const locale = useGenerationLocale();
   const client = useQueryClient();
   const { showToast } = useToast();
+  const location = useLocation();
+  const prefill = useState(() => readCorrectedSampleBatchPrefill(location.state))[0];
   const [datasetPage, setDatasetPage] = useState(1);
   const [contentPage, setContentPage] = useState(1);
   const [presetPage, setPresetPage] = useState(1);
@@ -111,9 +137,9 @@ export function BatchesPage() {
   const saveMutation = useSaveBatchDraftMutation();
   const previewMutation = usePreviewBatchMutation();
   const submitMutation = useSubmitBatchMutation();
-  const stored = useState(() => readGenerationDraft<{ selectedId: number | null; form: BatchForm }>('batch-form-v3'))[0];
+  const stored = useState(() => prefill ? null : readGenerationDraft<{ selectedId: number | null; form: BatchForm }>('batch-form-v3'))[0];
   const [selectedId, setSelectedId] = useState<number | null>(stored?.selectedId ?? null);
-  const [form, setForm] = useState<BatchForm>(stored?.form ?? emptyBatchForm());
+  const [form, setForm] = useState<BatchForm>(prefill ? batchFormFromPrefill(prefill) : stored?.form ?? emptyBatchForm());
   const [baseline, setBaseline] = useState<BatchForm | null>(null);
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const [previewPage, setPreviewPage] = useState(1);
@@ -127,7 +153,8 @@ export function BatchesPage() {
   const [datasetNote, setDatasetNote] = useState('');
   const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
-  const batchDefaultsInitialized = useRef(stored !== null);
+  const batchDefaultsInitialized = useRef(stored !== null || prefill !== null);
+  const prefillGpuInitialized = useRef(prefill === null);
   const draftItems = draftsQuery.data?.items ?? [];
   const savedDraft = draftItems.find(item => item.id === selectedId) ?? null;
   const queries = [datasetsQuery, contentQuery, presetsQuery, draftsQuery, gpuQuery];
@@ -143,6 +170,15 @@ export function BatchesPage() {
     setForm(defaults);
     setBaseline(defaults);
   }, [datasetsQuery.data, gpuQuery.data]);
+
+  useEffect(() => {
+    if (prefillGpuInitialized.current || gpuQuery.isPending) return;
+    prefillGpuInitialized.current = true;
+    setForm(current => ({
+      ...current,
+      gpuSlots: (gpuQuery.data ?? []).filter(item => item.availability === 'Available').slice(0, 1).map(item => item.slot),
+    }));
+  }, [gpuQuery.data, gpuQuery.isPending]);
 
   const matchingContent = useMemo(() => (contentQuery.data?.items ?? []).filter(item => item.status === 'Active' && item.category === form.category && item.conflictDirection === form.conflictDirection), [contentQuery.data, form.category, form.conflictDirection]);
   const matchingPresets = useMemo(() => (presetsQuery.data?.items ?? []).filter(item => item.status === 'Active' && item.category === form.category), [form.category, presetsQuery.data]);
@@ -286,7 +322,7 @@ export function BatchesPage() {
     }
   };
 
-  useGenerationDraft('batch-form-v3', { selectedId, form }, dirty);
+  useGenerationDraft('batch-form-v3', { selectedId, form }, dirty && prefill === null);
   const unsavedDialog = useUnsavedChanges(dirty);
 
   if (queries.some(query => query.isPending)) return <GenerationScaffold title="batches.title" subtitle="batches.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
@@ -295,6 +331,7 @@ export function BatchesPage() {
   const directions = allowedDirections(form.category);
   return (
     <GenerationScaffold title="batches.title" subtitle="batches.subtitle">
+      {prefill ? <section className="generation-feedback" role="status"><p>{g('batches.correctedPrefill', { sample: prefill.sourceDisplayId })}</p></section> : null}
       {mutationError && !switchConfirmOpen ? <OperationFeedback error={mutationError} onDismiss={() => { setContentLoadError(null); createDatasetMutation.reset(); saveMutation.reset(); previewMutation.reset(); submitMutation.reset(); }} /> : null}
       <div className="generation-layout">
         <section className="panel generation-form generation-batch-workflow" aria-label={g('batches.formRegion')}>

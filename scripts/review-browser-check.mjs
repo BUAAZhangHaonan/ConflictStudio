@@ -148,6 +148,70 @@ try {
     for (const label of labels) assert.equal(text.includes(label), true, `${locale} must show ${label}.`);
   }
 
+  const prefillPage = await context.newPage();
+  await api.install(prefillPage);
+  await open(prefillPage, '/review?sampleId=1', 'en-US');
+  const generationFacts = await prefillPage.locator('.review-context__facts--generation').innerText();
+  for (const value of ['Content plan', 'Corrected restrained reply', 'Actual video scene', 'Quiet office']) {
+    assert.equal(generationFacts.includes(value), true, `Review must show ${value}.`);
+  }
+  const compatibilityWarning = prefillPage.locator('.review-compatibility-warning');
+  assert.match(await compatibilityWarning.innerText(), /must be regenerated.*no longer compatible/su);
+  assert.equal(await prefillPage.getByRole('button', { name: 'Accepted', exact: true }).isDisabled(), true, 'An incompatible video cannot be accepted.');
+  assert.equal(await prefillPage.getByRole('button', { name: 'Rejected', exact: true }).isEnabled(), true, 'An incompatible video can still be rejected.');
+  const batchWritesBefore = api.state.requests.filter(request => ['POST', 'PUT', 'PATCH'].includes(request.method) && request.path.startsWith('/api/batch-drafts')).length;
+  await prefillPage.getByRole('button', { name: 'Regenerate with the registered scene', exact: true }).click();
+  await prefillPage.waitForURL(`${baseUrl}/generate/batches`);
+  const navigationPrefill = await prefillPage.evaluate(() => history.state?.usr?.correctedSampleBatch ?? null);
+  assert.deepEqual(navigationPrefill, {
+    sourceDisplayId: 'CS-000001',
+    category: 'C-VA',
+    conflictDirection: 'Audio',
+    contentPlan: { id: 22, nameZh: '修正后的克制回应', nameEn: 'Corrected restrained reply', revision: 1, mode: 'Fixed' },
+    backgroundPreset: { id: 22, nameZh: '安静会客室', nameEn: 'Quiet reception room', revision: 1 },
+    promptPresetId: 22,
+    model: 'LTX-2.5',
+    precision: 'BF16',
+    demographic: { age: 35, gender: 'Female', ethnicity: 'EastAsian' },
+  });
+  await prefillPage.getByText('CS-000001 has been copied into a new unsaved batch with the registered scene.').waitFor();
+  assert.equal(await prefillPage.locator('input[name="target-dataset"]:checked').count(), 0, 'The destination dataset must remain unselected.');
+  assert.equal(await prefillPage.locator('#batch-category').inputValue(), 'C-VA');
+  assert.equal(await prefillPage.locator('#batch-direction').inputValue(), 'Audio');
+  assert.equal(await prefillPage.locator('#batch-model').inputValue(), 'LTX-2.5');
+  assert.equal(await prefillPage.locator('#batch-precision').inputValue(), 'BF16');
+  assert.equal(await prefillPage.locator('#batch-quantity').inputValue(), '1');
+  const correctedContent = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '2. Content plans and video scenes' }) });
+  assert.equal(await correctedContent.locator(':scope > .generation-choice-grid label').filter({ hasText: 'Corrected restrained reply' }).locator('input').isChecked(), true);
+  assert.match(await correctedContent.locator('.generation-content-scene').innerText(), /Corrected restrained reply.*Quiet reception room/su);
+  const correctedPrompt = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '3. Prompt preset' }) });
+  assert.equal(await correctedPrompt.locator('label').filter({ hasText: 'Restrained conflict' }).locator('input').isChecked(), true);
+  const correctedPeople = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '4. Person attributes' }) });
+  const checkedPeople = await correctedPeople.locator('label:has(input:checked)').allTextContents();
+  for (const value of ['35', 'Woman', 'East Asian']) assert.equal(checkedPeople.some(text => text.includes(value)), true, `The prefill must keep ${value}.`);
+  assert.equal(await prefillPage.evaluate(() => sessionStorage.getItem('conflictstudio.generation.draft.batch-form-v3')), null, 'Navigation prefill must not be persisted as a browser draft.');
+  const batchWritesAfter = api.state.requests.filter(request => ['POST', 'PUT', 'PATCH'].includes(request.method) && request.path.startsWith('/api/batch-drafts')).length;
+  assert.equal(batchWritesAfter, batchWritesBefore, 'Opening a corrected batch must not save or submit it.');
+  await prefillPage.close();
+
+  const noScenePage = await context.newPage();
+  await api.install(noScenePage);
+  api.state.contentRelations.set(22, []);
+  await open(noScenePage, '/review?sampleId=1', 'en-US');
+  assert.match(await noScenePage.locator('.review-compatibility-warning').innerText(), /no registered compatible video scene.*Register one/su);
+  assert.equal(await noScenePage.getByRole('button', { name: 'Regenerate with the registered scene', exact: true }).count(), 0, 'No regeneration shortcut is available before a scene is registered.');
+  api.state.contentRelations.set(22, [22]);
+  await noScenePage.close();
+
+  const chineseCompatibilityPage = await context.newPage();
+  await api.install(chineseCompatibilityPage);
+  await open(chineseCompatibilityPage, '/review?sampleId=1', 'zh-CN');
+  const chineseCompatibilityText = await chineseCompatibilityPage.locator('.review-detail').innerText();
+  for (const value of ['内容方案', '修正后的克制回应', '实际视频场景', '安静办公室', '这个视频需要重新生成', '使用已登记场景重新生成']) {
+    assert.equal(chineseCompatibilityText.includes(value), true, `Chinese review must show ${value}.`);
+  }
+  await chineseCompatibilityPage.close();
+
   for (const [locale, labels] of [
     ['en-US', { action: 'Change category', title: 'Change sample category', emotion: 'New apparent emotion', description: 'True emotion description after the change' }],
     ['zh-CN', { action: '修改类别', title: '修改样本类别', emotion: '新的表面情感', description: '修改后的真实情感描述' }],
