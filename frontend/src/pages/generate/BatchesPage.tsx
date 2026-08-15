@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 import { apiErrorMessage, isModelSwitchConfirmationRequired } from '../../api/client';
 import { generationQueries, useBatchDraftsQuery, useContentPlansQuery, useCreateDatasetMutation, useDatasetsQuery, useGpuSlotsQuery, usePreviewBatchMutation, usePromptPresetsQuery, useSaveBatchDraftMutation, useSubmitBatchMutation } from '../../api/queries';
@@ -140,6 +140,9 @@ export function BatchesPage() {
   const stored = useState(() => prefill ? null : readGenerationDraft<{ selectedId: number | null; form: BatchForm }>('batch-form-v3'))[0];
   const [selectedId, setSelectedId] = useState<number | null>(stored?.selectedId ?? null);
   const [form, setForm] = useState<BatchForm>(prefill ? batchFormFromPrefill(prefill) : stored?.form ?? emptyBatchForm());
+  const currentContentIds = new Set((contentQuery.data?.items ?? []).map(item => item.id));
+  const selectedContentDetailIds = [...new Set(form.contentSelections.map(selection => selection.contentPlan.id).filter(id => !currentContentIds.has(id)))];
+  const selectedContentQueries = useQueries({ queries: selectedContentDetailIds.map(id => generationQueries.contentPlan(id)) });
   const [baseline, setBaseline] = useState<BatchForm | null>(null);
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const [previewPage, setPreviewPage] = useState(1);
@@ -158,7 +161,7 @@ export function BatchesPage() {
   const draftItems = draftsQuery.data?.items ?? [];
   const savedDraft = draftItems.find(item => item.id === selectedId) ?? null;
   const queries = [datasetsQuery, contentQuery, presetsQuery, draftsQuery, gpuQuery];
-  const queryError = queries.find(query => query.isError)?.error ?? null;
+  const queryError = queries.find(query => query.isError)?.error ?? selectedContentQueries.find(query => query.isError)?.error ?? null;
   const mutationError = contentLoadError ?? createDatasetMutation.error ?? saveMutation.error ?? previewMutation.error ?? submitMutation.error ?? null;
 
   useEffect(() => {
@@ -181,6 +184,9 @@ export function BatchesPage() {
   }, [gpuQuery.data, gpuQuery.isPending]);
 
   const matchingContent = useMemo(() => (contentQuery.data?.items ?? []).filter(item => item.status === 'Active' && item.category === form.category && item.conflictDirection === form.conflictDirection), [contentQuery.data, form.category, form.conflictDirection]);
+  const selectedContentDetails = selectedContentQueries.flatMap(query => query.data ? [query.data] : []);
+  const selectedContentIds = new Set(selectedContentDetails.map(item => item.id));
+  const contentChoices = [...selectedContentDetails, ...matchingContent.filter(item => !selectedContentIds.has(item.id))];
   const matchingPresets = useMemo(() => (presetsQuery.data?.items ?? []).filter(item => item.status === 'Active' && item.category === form.category), [form.category, presetsQuery.data]);
   const targetDatasets = (datasetsQuery.data?.items ?? []).filter(item => item.status === 'Active' && item.purpose === 'Formal');
   const dirty = baseline === null || JSON.stringify(form) !== JSON.stringify(baseline);
@@ -325,8 +331,8 @@ export function BatchesPage() {
   useGenerationDraft('batch-form-v3', { selectedId, form }, dirty && prefill === null);
   const unsavedDialog = useUnsavedChanges(dirty);
 
-  if (queries.some(query => query.isPending)) return <GenerationScaffold title="batches.title" subtitle="batches.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
-  if (queryError) return <GenerationScaffold title="batches.title" subtitle="batches.subtitle"><OperationFeedback error={queryError} onDismiss={() => void Promise.all(queries.map(query => query.refetch()))} /></GenerationScaffold>;
+  if (queries.some(query => query.isPending) || selectedContentQueries.some(query => query.isPending)) return <GenerationScaffold title="batches.title" subtitle="batches.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
+  if (queryError) return <GenerationScaffold title="batches.title" subtitle="batches.subtitle"><OperationFeedback error={queryError} onDismiss={() => void Promise.all([...queries, ...selectedContentQueries].map(query => query.refetch()))} /></GenerationScaffold>;
 
   const directions = allowedDirections(form.category);
   return (
@@ -353,7 +359,8 @@ export function BatchesPage() {
               <Field label={g('batches.category')} htmlFor="batch-category" required><select id="batch-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
               <Field label={g('batches.direction')} htmlFor="batch-direction" required={directions.length > 0}><select id="batch-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentSelections: [] }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
             </div>
-            {matchingContent.length === 0 ? <p className="generation-empty-note">{g('batches.noContent')}</p> : <div className="generation-choice-grid">{matchingContent.map(item => <label key={item.id}><input type="checkbox" disabled={loadingContentId === item.id} checked={form.contentSelections.some(value => value.contentPlan.id === item.id)} onChange={() => void toggleContent(item.id)} /><span>{localizedName(locale, item)}<small>{g(`content.mode.${item.mode}`)}</small></span></label>)}</div>}
+            {contentChoices.length > 0 ? <div className="generation-choice-grid">{contentChoices.map(item => <label key={item.id}><input type="checkbox" disabled={loadingContentId === item.id} checked={form.contentSelections.some(value => value.contentPlan.id === item.id)} onChange={() => void toggleContent(item.id)} /><span>{localizedName(locale, item)}<small>{g(`content.mode.${item.mode}`)}</small></span></label>)}</div> : null}
+            {matchingContent.length === 0 ? <p className="generation-empty-note">{g('batches.noContentOnPage')}</p> : null}
             <Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} />
             <div className="generation-content-scenes">
               {form.contentSelections.map(selection => {
