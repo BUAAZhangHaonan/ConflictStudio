@@ -28,6 +28,7 @@ const mainSource = read('../frontend/src/main.tsx');
 const preferencesSource = read('../frontend/src/preferences.ts');
 const appShellSource = read('../frontend/src/components/AppShell.tsx');
 const firstReviewerSource = read('../frontend/src/app/FirstReviewerDialog.tsx');
+const prefillSource = read('../frontend/src/generationPrefill.ts');
 const localeSource = `${read('../frontend/src/locales/features/reviewArchive.ts')}\n${read('../frontend/src/locales/features/workspaceSettingsStatistics.ts')}\n${read('../frontend/src/locales/features/generation.ts')}`;
 
 function loadClient(fetchMock) {
@@ -90,6 +91,8 @@ test('review uses persistent reviews and a revisioned classification form with c
   assert.match(reviewSource, /selected\.actualContentSummary\.nameZh/u);
   assert.match(reviewSource, /selected\.actualSceneSummary\.nameZh/u);
   assert.match(reviewSource, /disabled=\{preferences\.currentReviewerId === null \|\| selectedNeedsRegeneration\}/u);
+  assert.match(reviewSource, /disabled=\{preferences\.currentReviewerId === null \|\| batchAcceptBlocked\}/u);
+  assert.match(reviewSource, /reviewer\.readOnlyHint/u);
   assert.match(localeSource, /actualVideoScene: 'Actual video scene'/u);
   assert.match(localeSource, /actualVideoScene: '实际视频场景'/u);
 });
@@ -106,6 +109,10 @@ test('settings uses real health, dataset, GPU and reviewer queries with explicit
   for (const hook of ['useHealthQuery', 'useDatasetsQuery', 'useGpuSlotsQuery', 'useReviewersQuery', 'useCreateReviewerMutation', 'useRenameReviewerMutation']) assert.match(settingsSource, new RegExp(hook));
   assert.match(settingsSource, /healthQuery\.refetch\(\)/u);
   assert.match(settingsSource, /gpuQuery\.refetch\(\)/u);
+  assert.match(settingsSource, /const reviewerPending = reviewersQuery\.isPending \|\| \(preferences\.currentReviewerId !== null && currentReviewerQuery\.isPending\)/u);
+  assert.match(settingsSource, /const servicesPending = healthQuery\.isPending \|\| datasetsQuery\.isPending \|\| gpuQuery\.isPending/u);
+  assert.match(settingsSource, /preferences\.currentReviewerId === null \? \[\] : \[currentReviewerQuery\.refetch\(\)\]/u);
+  assert.doesNotMatch(settingsSource, /if \(reviewersQuery\.isPending|const queryError =/u);
   assert.doesNotMatch(settingsSource, /setTimeout|700|statusReason|useMockRepository|Repository/u);
   assert.doesNotMatch(mainSource, /RepositoryProvider/u);
 });
@@ -144,6 +151,8 @@ test('batch scene selection and result prompts use explicit independent controls
   assert.match(localeSource, /'batches\.unsavedStatus': '有未保存的更改'/u);
   assert.match(localeSource, /'batches\.selectCompatibleScenes': '全选可用场景'/u);
   assert.match(reviewSource, /navigate\('\/generate\/batches', \{ state \}\)/u);
+  assert.match(reviewSource, /buildCorrectedSampleBatchPrefill\(selected/u);
+  assert.match(prefillSource, /sourceDisplayId: sample\.displayId/u);
   assert.match(batchesSource, /readCorrectedSampleBatchPrefill\(location\.state\)/u);
   assert.match(batchesSource, /targetDatasetId: null/u);
   assert.match(batchesSource, /quantity: 1/u);
@@ -161,6 +170,9 @@ test('content plans save fields and compatible scenes in one request', () => {
   assert.doesNotMatch(contentSource, /useReplaceContentBackgroundsMutation|\/backgrounds.*method: 'PUT'/u);
   assert.match(contentSource, /backgroundPresetIds: \[\]/u);
   assert.match(contentSource, /await updateMutation\.mutateAsync/u);
+  assert.match(contentSource, /draft\.mode === 'Fixed' && !creating \? \(/u);
+  assert.match(contentSource, /className="generation-fixed-scene"/u);
+  assert.match(contentSource, /useContentBackgroundsQuery\(!creating && draft\.mode === 'Fixed'/u);
 });
 
 test('production reviewer identity comes only from the Reviewer API and user selection', () => {
@@ -170,6 +182,9 @@ test('production reviewer identity comes only from the Reviewer API and user sel
   assert.match(appShellSource, /preferences\.currentReviewerName/u);
   assert.match(firstReviewerSource, /useReviewersQuery\(reviewerPage\)/u);
   assert.match(firstReviewerSource, /reviewers\.length === 0/u);
+  assert.match(firstReviewerSource, /const \[dismissed, setDismissed\] = useState\(false\)/u);
+  assert.match(firstReviewerSource, /reviewer\.continueReadOnly/u);
+  assert.doesNotMatch(firstReviewerSource, /dismissible=\{false\}|onClose=\{\(\) => undefined\}/u);
 });
 
 test('GPU and task failures are localized from stable fields instead of raw backend text', () => {

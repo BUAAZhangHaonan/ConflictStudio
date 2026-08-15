@@ -78,7 +78,7 @@ const zhCN = {
     Text: '文本',
   },
   status: {
-    dataset: { Active: '已启用', Disabled: '已停用' },
+    dataset: { Active: '已启用', Disabled: '已禁用', Inactive: '已停用' },
     review: reviewArchiveZhCN.status.review,
     job: {
       Queued: '等待开始',
@@ -112,6 +112,8 @@ const zhCN = {
     nameRequired: '请输入姓名。',
     nameInvalid: '姓名不能为空，也不能与现有姓名重复。',
     noCurrent: '未选择姓名',
+    continueReadOnly: '不填写，进入只读',
+    readOnlyHint: '当前未选择审核人。请先在设置中选择姓名，审核操作才可使用。',
   },
   workspace: {
     title: '工作台',

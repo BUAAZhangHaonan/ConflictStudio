@@ -16,7 +16,7 @@ import {
 } from '../api/queries';
 import { Button, ConfirmDialog, Field, MediaPanel, PageHeader, Pagination, StatusBadge } from '../components';
 import { usePreferences } from '../preferences';
-import type { CorrectedSampleBatchNavigationState } from '../generationPrefill';
+import { buildCorrectedSampleBatchPrefill, type CorrectedSampleBatchNavigationState } from '../generationPrefill';
 import { safeReviewReturnTarget } from '../reviewArchive';
 import { protocolForCategory, type Category, type ConflictDirection } from '../types';
 import { OperationFeedback } from './generate/shared';
@@ -232,27 +232,13 @@ export function ReviewPage() {
     const scene = compatibilityQuery.data?.backgrounds[0];
     if (!selected || !content || !scene || compatibilityQuery.data?.backgrounds.length !== 1) return;
     const state: CorrectedSampleBatchNavigationState = {
-      correctedSampleBatch: {
-        sourceDisplayId: selected.displayId,
-        category: selected.category,
-        conflictDirection: selected.conflictDirection,
-        contentPlan: {
-          id: content.id,
-          nameZh: content.nameZh,
-          nameEn: content.nameEn,
-          revision: content.revision,
-          mode: content.mode,
-        },
-        backgroundPreset: scene,
-        promptPresetId: selected.promptPresetId,
-        model: selected.generationRecord.model,
-        precision: selected.generationRecord.precision,
-        demographic: {
-          age: selected.age,
-          gender: selected.gender,
-          ethnicity: selected.ethnicity,
-        },
-      },
+      correctedSampleBatch: buildCorrectedSampleBatchPrefill(selected, {
+        id: content.id,
+        nameZh: content.nameZh,
+        nameEn: content.nameEn,
+        revision: content.revision,
+        mode: content.mode,
+      }, scene),
     };
     navigate('/generate/batches', { state });
   };
@@ -307,6 +293,7 @@ export function ReviewPage() {
     <section className={`page-stack review-page${mobileDetail ? ' review-page--mobile-detail' : ''}`} aria-label={t('review.aria.page')}>
       <PageHeader title={t('review.title')} actions={<span className="review-page__count">{t('review.queueCount', { visible: visible.length, total: samplesQuery.data?.total ?? 0 })}</span>} />
       <p className="review-page__subtitle">{t('review.subtitle')}</p>
+      {preferences.currentReviewerId === null ? <section className="generation-feedback" role="status"><p>{t('reviewer.readOnlyHint')}</p></section> : null}
       {mutationError ? <OperationFeedback error={mutationError} onDismiss={() => { reviewMutation.reset(); batchMutation.reset(); classificationMutation.reset(); }} /> : null}
       <section className="panel review-filters" aria-label={t('review.aria.filters')}>
         <div className="section-header"><h2>{t('review.filters')}</h2><Button variant="quiet" onClick={clearFilters}>{t('actions.clearFilters')}</Button></div>
@@ -328,14 +315,14 @@ export function ReviewPage() {
             <div className="review-queue__selection"><label><input type="checkbox" checked={visible.length > 0 && selectedVisibleCount === visible.length} onChange={event => setSelectedIds(event.target.checked ? new Set(visible.map(sample => sample.id)) : new Set())} />{t('review.selectAllVisible')}</label>{selectedVisibleCount ? <Button variant="quiet" onClick={() => setSelectedIds(new Set())}>{t('review.clearSelection')}</Button> : null}</div>
             <ul ref={queueListRef} className="review-queue__list">{visible.map(sample => <li key={sample.id} className={sample.id === selected?.id ? 'is-active' : undefined} data-sample-id={sample.displayId}><label className="review-queue__check"><input type="checkbox" checked={selectedIds.has(sample.id)} aria-label={t('review.aria.queueItem', { id: sample.displayId, category: sample.category, decision: t(`status.review.${sample.reviewDecision}`) })} onChange={event => setSelectedIds(current => { const next = new Set(current); if (event.target.checked) next.add(sample.id); else next.delete(sample.id); return next; })} /></label><button type="button" className="review-queue__item" onClick={() => choose(sample)} aria-current={sample.id === selected?.id ? 'true' : undefined}><span className="review-queue__item-main"><strong>{sample.displayId}</strong><span>{sample.category}</span></span><span className="review-queue__dataset">{sample.datasetName}</span><StatusBadge label={t('status.review.Pending')} kind="neutral" /></button></li>)}</ul>
             <Pagination page={samplesQuery.data?.page ?? 1} totalPages={samplesQuery.data?.totalPages ?? 0} total={samplesQuery.data?.total ?? 0} onPageChange={page => { setSamplePage(page); setSelectedIds(new Set()); }} />
-            {selectedVisibleCount ? <section className="review-batch" aria-label={t('review.aria.batch')}><h3>{t('review.batch')}</h3><Field label={t('review.batchDecision')} htmlFor="review-batch-decision"><select id="review-batch-decision" value={batchDecision} onChange={event => setBatchDecision(event.target.value as Exclude<ReviewDecision, 'Pending'>)}><option value="Accepted">{t('status.review.Accepted')}</option><option value="Rejected">{t('status.review.Rejected')}</option></select></Field>{batchAcceptBlocked ? <p className="field__error" role="alert">{t('review.batchIncompatible')}</p> : null}<Field label={t('fields.note')} htmlFor="review-batch-note"><textarea id="review-batch-note" value={batchNote} maxLength={2000} onChange={event => setBatchNote(event.target.value)} placeholder={t('review.batchNotePlaceholder')} /></Field><Button variant="secondary" disabled={batchAcceptBlocked} onClick={() => setBatchConfirmOpen(true)}>{t('review.applyBatch')}</Button></section> : null}
+            {selectedVisibleCount ? <section className="review-batch" aria-label={t('review.aria.batch')}><h3>{t('review.batch')}</h3><Field label={t('review.batchDecision')} htmlFor="review-batch-decision"><select id="review-batch-decision" value={batchDecision} onChange={event => setBatchDecision(event.target.value as Exclude<ReviewDecision, 'Pending'>)}><option value="Accepted">{t('status.review.Accepted')}</option><option value="Rejected">{t('status.review.Rejected')}</option></select></Field>{batchAcceptBlocked ? <p className="field__error" role="alert">{t('review.batchIncompatible')}</p> : null}<Field label={t('fields.note')} htmlFor="review-batch-note"><textarea id="review-batch-note" value={batchNote} maxLength={2000} onChange={event => setBatchNote(event.target.value)} placeholder={t('review.batchNotePlaceholder')} /></Field><Button variant="secondary" disabled={preferences.currentReviewerId === null || batchAcceptBlocked} onClick={() => setBatchConfirmOpen(true)}>{t('review.applyBatch')}</Button></section> : null}
           </section>
           {selected ? <div className="review-detail">
             <nav className="panel review-detail__navigation" aria-label={t('review.aria.detailNavigation')}><Button variant="quiet" onClick={backToQueue}>{t('review.backToQueue')}</Button>{returnTarget ? <Button variant="quiet" onClick={returnToSource}>{t('review.returnToSource')}</Button> : null}</nav>
             <section className="panel review-media" aria-label={t('review.aria.media')}><div className="section-header"><h2>{t('review.media')}</h2><div className="review-media__badges"><StatusBadge label={t(`category.${selected.category}`)} kind={selected.category.startsWith('C-') ? 'problem' : 'complete'} /><StatusBadge label={t(protocolForCategory(selected.category) === 'VA' ? 'review.protocolVA' : 'review.protocolVT')} /></div></div><MediaPanel title={t('review.video')} mediaLabel={t('review.primaryMediaAlt', { id: selected.displayId })} src={selected.primaryAssetUrl} muted={protocolForCategory(selected.category) === 'VT'} /></section>
             <section className="panel review-context" aria-label={t('review.aria.details', { id: selected.displayId })}><h2>{t('review.context')}</h2><dl className="review-context__facts review-context__facts--emotion"><div><dt>{t('review.trueEmotion')}</dt><dd>{selected.trueEmotion}</dd></div><div><dt>{t('review.apparentEmotion')}</dt><dd>{selected.apparentEmotion}</dd></div><div><dt>{t('direction.label')}</dt><dd>{selected.conflictDirection ? t(`direction.${selected.conflictDirection}`) : t('review.directionNotRequired')}</dd></div></dl><dl className="review-context__facts review-context__facts--generation"><div><dt>{t('review.contentPlan')}</dt><dd>{locale === 'zh-CN' ? selected.actualContentSummary.nameZh : selected.actualContentSummary.nameEn}</dd></div><div><dt>{t('review.actualVideoScene')}</dt><dd>{locale === 'zh-CN' ? selected.actualSceneSummary.nameZh : selected.actualSceneSummary.nameEn}</dd></div></dl><div className="review-context__copy review-context__copy--primary"><div className="review-context__copy--description"><h3>{t('review.trueEmotionDescription')}</h3><p>{selected.trueEmotionDescription}</p></div></div>{selected.dialogue ? <div className="review-context__copy"><div><h3>{t('review.dialogue')}</h3><p>{selected.dialogue}</p></div></div> : null}{selected.displayText ? <div className="review-context__copy"><div><h3>{t('review.displayText')}</h3><p>{selected.displayText}</p></div></div> : null}<details className="review-context__details"><summary>{t('review.moreDetails')}</summary><dl><div><dt>{t('review.sampleId')}</dt><dd>{selected.displayId}</dd></div><div><dt>{t('fields.dataset')}</dt><dd>{selected.datasetName}</dd></div><div><dt>{t('review.triggerEvent')}</dt><dd>{localized(selected, locale, 'triggerEvent')}</dd></div><div><dt>{t('review.psychologicalBackground')}</dt><dd>{localized(selected, locale, 'psychologicalBackground')}</dd></div><div><dt>{t('review.model')}</dt><dd>{selected.model}</dd></div><div className="review-context__details-wide"><dt>{t('review.positivePrompt')}</dt><dd>{selected.videoPrompt}</dd></div><div className="review-context__details-wide"><dt>{t('review.negativePrompt')}</dt><dd>{selected.negativePrompt}</dd></div></dl></details></section>
             <section className="panel review-generation-record" aria-labelledby="review-generation-record-title"><h2 id="review-generation-record-title">{t('review.generationRecord')}</h2><dl><div><dt>{t('review.model')}</dt><dd>{selected.generationRecord.model}</dd></div><div><dt>{t('review.precision')}</dt><dd>{selected.generationRecord.precision ?? t('review.notApplicable')}</dd></div><div><dt>{t('review.gpu')}</dt><dd>{selected.generationRecord.gpuSlot}</dd></div><div><dt>{t('review.seed')}</dt><dd>{selected.generationRecord.seed}</dd></div><div><dt>{t('review.attemptRevision')}</dt><dd>{selected.generationRecord.attemptNumber}</dd></div></dl></section>
-            <aside className="panel review-decision"><div className="section-header"><h2>{t('review.decision')}</h2><StatusBadge label={t(`status.review.${selected.reviewDecision}`)} kind="neutral" /></div>{selectedNeedsRegeneration ? <section className="review-compatibility-warning" role="alert"><h3>{t('review.incompatibleTitle')}</h3><p>{compatibleSceneCount === undefined ? t('review.incompatibleChecking') : compatibleSceneCount === 0 ? t('review.incompatibleNoScene') : compatibleSceneCount === 1 ? t('review.incompatibleOneScene') : t('review.incompatibleMultipleScenes')}</p>{compatibleSceneCount === 1 ? <Button variant="secondary" disabled={!compatibleContentQuery.data} onClick={regenerateWithCompatibleScene}>{t('review.regenerateAction')}</Button> : null}</section> : null}<Field label={t('fields.note')} htmlFor="review-note"><textarea id="review-note" value={note} maxLength={2000} onChange={event => setNote(event.target.value)} placeholder={t('review.notePlaceholder')} /></Field><div className="decision-options" role="group" aria-label={t('review.aria.decision')}><Button variant="primary" busy={reviewMutation.isPending} disabled={preferences.currentReviewerId === null || selectedNeedsRegeneration} onClick={() => saveDecision('Accepted')}>{t('status.review.Accepted')}</Button><Button variant="secondary" busy={reviewMutation.isPending} disabled={preferences.currentReviewerId === null} onClick={() => saveDecision('Rejected')}>{t('status.review.Rejected')}</Button></div>{targetCategory ? <section className="review-secondary-action"><h3>{t('review.transfer')}</h3><p>{t('review.transferEntryHelp')}</p><Button variant="secondary" onClick={openClassification}>{t('review.transferAction')}</Button></section> : null}</aside>
+            <aside className="panel review-decision"><div className="section-header"><h2>{t('review.decision')}</h2><StatusBadge label={t(`status.review.${selected.reviewDecision}`)} kind="neutral" /></div>{selectedNeedsRegeneration ? <section className="review-compatibility-warning" role="alert"><h3>{t('review.incompatibleTitle')}</h3><p>{compatibleSceneCount === undefined ? t('review.incompatibleChecking') : compatibleSceneCount === 0 ? t('review.incompatibleNoScene') : compatibleSceneCount === 1 ? t('review.incompatibleOneScene') : t('review.incompatibleMultipleScenes')}</p>{compatibleSceneCount === 1 ? <Button variant="secondary" disabled={!compatibleContentQuery.data} onClick={regenerateWithCompatibleScene}>{t('review.regenerateAction')}</Button> : null}</section> : null}<Field label={t('fields.note')} htmlFor="review-note"><textarea id="review-note" value={note} maxLength={2000} onChange={event => setNote(event.target.value)} placeholder={t('review.notePlaceholder')} /></Field><div className="decision-options" role="group" aria-label={t('review.aria.decision')}><Button variant="primary" busy={reviewMutation.isPending} disabled={preferences.currentReviewerId === null || selectedNeedsRegeneration} onClick={() => saveDecision('Accepted')}>{t('status.review.Accepted')}</Button><Button variant="secondary" busy={reviewMutation.isPending} disabled={preferences.currentReviewerId === null} onClick={() => saveDecision('Rejected')}>{t('status.review.Rejected')}</Button></div>{targetCategory ? <section className="review-secondary-action"><h3>{t('review.transfer')}</h3><p>{t('review.transferEntryHelp')}</p><Button variant="secondary" disabled={preferences.currentReviewerId === null} onClick={openClassification}>{t('review.transferAction')}</Button></section> : null}</aside>
           </div> : null}
         </div>
       )}
@@ -360,7 +347,7 @@ export function ReviewPage() {
         cancelLabel={t('actions.cancel')}
         closeLabel={t('actions.close')}
         busy={classificationMutation.isPending}
-        confirmDisabled={!classificationValid}
+        confirmDisabled={preferences.currentReviewerId === null || !classificationValid}
         onClose={() => setClassificationOpen(false)}
         onConfirm={changeClassification}
       />

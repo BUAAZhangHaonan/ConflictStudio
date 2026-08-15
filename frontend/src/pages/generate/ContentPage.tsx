@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button, ConfirmDialog, Field, Pagination, StatusBadge, useToast } from '../../components';
 import {
   useBackgroundPresetsQuery,
+  useContentBackgroundsQuery,
   useContentPlansQuery,
   useCreateContentPlanMutation,
   useDeleteContentPlanMutation,
@@ -126,6 +127,7 @@ export function ContentPage() {
   const [pendingSelection, setPendingSelection] = useState<number | 'new' | null>(null);
   const items = contentQuery.data?.items ?? [];
   const selected = items.find(item => item.id === selectedId) ?? null;
+  const fixedBackgroundsQuery = useContentBackgroundsQuery(!creating && draft.mode === 'Fixed' ? selectedId : null);
   const error = createMutation.error ?? updateMutation.error ?? deleteMutation.error ?? null;
 
   useEffect(() => {
@@ -234,11 +236,13 @@ export function ContentPage() {
   const unsavedDialog = useUnsavedChanges(dirty);
   useCommandEnter(() => void save(), !createMutation.isPending && !updateMutation.isPending);
 
-  if (contentQuery.isPending || backgroundsQuery.isPending) {
+  const fixedBackgroundsPending = !creating && draft.mode === 'Fixed' && fixedBackgroundsQuery.isPending;
+  const fixedBackgroundsError = !creating && draft.mode === 'Fixed' ? fixedBackgroundsQuery.error : null;
+  if (contentQuery.isPending || backgroundsQuery.isPending || fixedBackgroundsPending) {
     return <GenerationScaffold title="content.title" subtitle="content.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
   }
-  if (contentQuery.isError || backgroundsQuery.isError) {
-    return <GenerationScaffold title="content.title" subtitle="content.subtitle"><OperationFeedback error={contentQuery.error ?? backgroundsQuery.error} onDismiss={() => void Promise.all([contentQuery.refetch(), backgroundsQuery.refetch()])} /></GenerationScaffold>;
+  if (contentQuery.isError || backgroundsQuery.isError || fixedBackgroundsError) {
+    return <GenerationScaffold title="content.title" subtitle="content.subtitle"><OperationFeedback error={contentQuery.error ?? backgroundsQuery.error ?? fixedBackgroundsError} onDismiss={() => void Promise.all([contentQuery.refetch(), backgroundsQuery.refetch(), ...(!creating && draft.mode === 'Fixed' ? [fixedBackgroundsQuery.refetch()] : [])])} /></GenerationScaffold>;
   }
 
   const directions = allowedDirections(draft.category);
@@ -305,12 +309,16 @@ export function ContentPage() {
               </div>
               {draft.mode === 'Generative' ? <div className="generation-fieldset__toolbar"><Button type="button" variant="quiet" onClick={() => setDraft(current => ({ ...current, backgroundPresetIds: [...new Set([...current.backgroundPresetIds, ...(backgroundsQuery.data?.items ?? []).filter(item => item.status === 'Active').map(item => item.id)])] }))}>{g('content.selectShownScenes')}</Button><Button type="button" variant="quiet" disabled={draft.backgroundPresetIds.length === 0} onClick={() => setDraft(current => ({ ...current, backgroundPresetIds: [] }))}>{g('content.clearScenes')}</Button></div> : null}
             </div>
-            <div className="generation-choice-grid">
-              {(backgroundsQuery.data?.items ?? []).filter(item => item.status === 'Active').map(item => <label key={item.id}><input type={draft.mode === 'Fixed' ? 'radio' : 'checkbox'} name={draft.mode === 'Fixed' ? 'fixed-source-scene' : undefined} checked={draft.backgroundPresetIds.includes(item.id)} onChange={() => setDraft(current => ({ ...current, backgroundPresetIds: draft.mode === 'Fixed' ? [item.id] : toggleArrayValue(current.backgroundPresetIds, item.id) }))} /><span>{localizedName(locale, item)}</span></label>)}
-            </div>
+            {draft.mode === 'Fixed' && !creating ? (
+              <p className="generation-fixed-scene">{fixedBackgroundsQuery.data?.backgrounds.map(item => localizedName(locale, item)).join(', ') || g('content.sceneMissing')}</p>
+            ) : (
+              <div className="generation-choice-grid">
+                {(backgroundsQuery.data?.items ?? []).filter(item => item.status === 'Active').map(item => <label key={item.id}><input type={draft.mode === 'Fixed' ? 'radio' : 'checkbox'} name={draft.mode === 'Fixed' ? 'fixed-source-scene' : undefined} checked={draft.backgroundPresetIds.includes(item.id)} onChange={() => setDraft(current => ({ ...current, backgroundPresetIds: draft.mode === 'Fixed' ? [item.id] : toggleArrayValue(current.backgroundPresetIds, item.id) }))} /><span>{localizedName(locale, item)}</span></label>)}
+              </div>
+            )}
             {draft.backgroundPresetIds.length === 0 ? <p className="field__error" role="status">{g('content.sceneRequired')}</p> : null}
             {draft.mode === 'Fixed' && draft.backgroundPresetIds.length > 1 ? <p className="field__error" role="alert">{g('content.fixedSceneOnly')}</p> : null}
-            <Pagination page={backgroundsQuery.data?.page ?? backgroundPage} totalPages={backgroundsQuery.data?.totalPages ?? 0} total={backgroundsQuery.data?.total ?? 0} onPageChange={setBackgroundPage} />
+            {(draft.mode === 'Generative' || creating) ? <Pagination page={backgroundsQuery.data?.page ?? backgroundPage} totalPages={backgroundsQuery.data?.totalPages ?? 0} total={backgroundsQuery.data?.total ?? 0} onPageChange={setBackgroundPage} /> : null}
           </section>
           {validation ? <p className="field__error" role="alert">{g('content.validation')}</p> : null}
           <div className="generation-form__actions">

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -10,6 +10,9 @@ const validTimeSource = [
   'const full = parts => `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;',
   'const short = parts => `${parts.hour}:${parts.minute}:${parts.second}`;',
 ].join('\n');
+const enUSSource = readFileSync(new URL('../frontend/src/locales/en-US.ts', import.meta.url), 'utf8');
+const zhCNSource = readFileSync(new URL('../frontend/src/locales/zh-CN.ts', import.meta.url), 'utf8');
+const workspaceLocaleSource = readFileSync(new URL('../frontend/src/locales/features/workspaceSettingsStatistics.ts', import.meta.url), 'utf8');
 
 function fixture(files) {
   const root = mkdtempSync(join(tmpdir(), 'conflictstudio-copy-check-'));
@@ -93,4 +96,15 @@ test('keeps blocked, mixed-language, and local-time checks active', () => {
     assert.equal(failures.some(value => value.includes('local time formatting bypass')), true);
     assert.equal(failures.filter(value => value.includes('mixed language')).length, 2);
   });
+});
+
+test('dataset states and reviewer read-only guidance have complete English and Chinese copy', () => {
+  assert.match(enUSSource, /dataset: \{ Active: 'Active', Disabled: 'Disabled', Inactive: 'Inactive' \}/u);
+  assert.match(zhCNSource, /dataset: \{ Active: '已启用', Disabled: '已禁用', Inactive: '已停用' \}/u);
+  for (const key of ['continueReadOnly', 'readOnlyHint']) {
+    assert.match(enUSSource, new RegExp(`${key}:`));
+    assert.match(zhCNSource, new RegExp(`${key}:`));
+  }
+  assert.match(workspaceLocaleSource, /Disabled: 'Disabled',[\s\S]*?Inactive: 'Inactive'/u);
+  assert.match(workspaceLocaleSource, /Disabled: '已禁用',[\s\S]*?Inactive: '已停用'/u);
 });

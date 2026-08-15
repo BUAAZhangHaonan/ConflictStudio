@@ -40,7 +40,7 @@ export function SettingsPage() {
   const [renameValue, setRenameValue] = useState('');
   const [recheckState, setRecheckState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const reviewers = reviewersQuery.data?.items ?? [];
-  const currentReviewer = currentReviewerQuery.data ?? null;
+  const currentReviewer = preferences.currentReviewerId === null ? null : currentReviewerQuery.data ?? null;
   const locale = preferences.locale;
   const copyKey = 'workspaceSettingsStatistics.settings';
 
@@ -82,39 +82,42 @@ export function SettingsPage() {
       healthQuery.refetch(),
       datasetsQuery.refetch(),
       gpuQuery.refetch(),
-      reviewersQuery.refetch(),
-      currentReviewerQuery.refetch(),
     ]);
     setRecheckState(results.some(result => result.error) ? 'error' : 'success');
   };
 
-  const queryError = reviewersQuery.error ?? currentReviewerQuery.error ?? healthQuery.error ?? datasetsQuery.error ?? gpuQuery.error;
-  if (reviewersQuery.isPending || currentReviewerQuery.isPending || healthQuery.isPending || datasetsQuery.isPending || gpuQuery.isPending) {
-    return <div className="page-stack settings-page"><PageHeader title={t('settings.title')} /><StateView state="loading" /></div>;
-  }
-  if (queryError) {
-    return <div className="page-stack settings-page"><PageHeader title={t('settings.title')} /><section className="state-view" role="alert"><h2>{t('state.error.title')}</h2><p>{apiErrorMessage(queryError, locale)}</p><Button variant="secondary" onClick={() => void recheck()}>{t('actions.retry')}</Button></section></div>;
-  }
+  const retryReviewers = () => Promise.all([
+    reviewersQuery.refetch(),
+    ...(preferences.currentReviewerId === null ? [] : [currentReviewerQuery.refetch()]),
+  ]);
 
   const health = healthQuery.data;
   const datasets = datasetsQuery.data?.items ?? [];
   const gpuSlots = gpuQuery.data ?? [];
   const mutationError = createMutation.error ?? renameMutation.error;
+  const reviewerPending = reviewersQuery.isPending || (preferences.currentReviewerId !== null && currentReviewerQuery.isPending);
+  const reviewerError = reviewersQuery.error ?? (preferences.currentReviewerId === null ? null : currentReviewerQuery.error);
+  const servicesPending = healthQuery.isPending || datasetsQuery.isPending || gpuQuery.isPending;
+  const servicesError = healthQuery.error ?? datasetsQuery.error ?? gpuQuery.error;
   return (
     <div className="page-stack settings-page">
       <PageHeader title={t('settings.title')} />
-      {mutationError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(mutationError, locale)}</p></section> : null}
       <section className="panel settings-section settings-reviewers">
         <div className="section-header"><h2>{t(`${copyKey}.reviewers.title`)}</h2></div>
-        {currentReviewer ? <div className="settings-current-reviewer"><span>{t(`${copyKey}.reviewers.currentLegend`)}</span><strong>{currentReviewer.name}</strong><Button type="button" variant="quiet" onClick={() => { setRenameTarget(currentReviewer); setRenameValue(currentReviewer.name); renameMutation.reset(); }}>{t(`${copyKey}.reviewers.renameCurrent`)}</Button></div> : null}
-        {reviewers.length === 0 ? <StateView state="empty" /> : (
-          <fieldset className="settings-reviewer-list"><legend>{t(`${copyKey}.reviewers.availableLegend`)}</legend>{reviewers.map(reviewer => <label className="settings-reviewer-choice" key={reviewer.id}><input type="radio" name="current-reviewer" checked={reviewer.id === preferences.currentReviewerId} onChange={() => setCurrentReviewer(reviewer)} /><span>{reviewer.name}</span></label>)}</fieldset>
-        )}
-        <Pagination page={reviewersQuery.data?.page ?? 1} totalPages={reviewersQuery.data?.totalPages ?? 0} total={reviewersQuery.data?.total ?? 0} onPageChange={setReviewerPage} />
-        <form className="inline-form settings-reviewer-create" onSubmit={createReviewer}>
-          <Field label={t(`${copyKey}.reviewers.newLabel`)} htmlFor="new-reviewer-name"><input id="new-reviewer-name" required value={newName} maxLength={80} onChange={event => { setNewName(event.target.value); createMutation.reset(); }} placeholder={t(`${copyKey}.reviewers.newPlaceholder`)} autoComplete="name" /></Field>
-          <Button type="submit" variant="secondary" busy={createMutation.isPending}>{t(`${copyKey}.reviewers.add`)}</Button>
-        </form>
+        {reviewerPending ? <StateView state="loading" /> : reviewerError ? (
+          <section className="state-view" role="alert"><h2>{t('state.error.title')}</h2><p>{apiErrorMessage(reviewerError, locale)}</p><Button variant="secondary" onClick={() => void retryReviewers()}>{t('actions.retry')}</Button></section>
+        ) : <>
+          {mutationError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(mutationError, locale)}</p></section> : null}
+          {currentReviewer ? <div className="settings-current-reviewer"><span>{t(`${copyKey}.reviewers.currentLegend`)}</span><strong>{currentReviewer.name}</strong><Button type="button" variant="quiet" onClick={() => { setRenameTarget(currentReviewer); setRenameValue(currentReviewer.name); renameMutation.reset(); }}>{t(`${copyKey}.reviewers.renameCurrent`)}</Button></div> : <p>{t(`${copyKey}.reviewers.noCurrent`)}</p>}
+          {reviewers.length === 0 ? <StateView state="empty" /> : (
+            <fieldset className="settings-reviewer-list"><legend>{t(`${copyKey}.reviewers.availableLegend`)}</legend>{reviewers.map(reviewer => <label className="settings-reviewer-choice" key={reviewer.id}><input type="radio" name="current-reviewer" checked={reviewer.id === preferences.currentReviewerId} onChange={() => setCurrentReviewer(reviewer)} /><span>{reviewer.name}</span></label>)}</fieldset>
+          )}
+          <Pagination page={reviewersQuery.data?.page ?? 1} totalPages={reviewersQuery.data?.totalPages ?? 0} total={reviewersQuery.data?.total ?? 0} onPageChange={setReviewerPage} />
+          <form className="inline-form settings-reviewer-create" onSubmit={createReviewer}>
+            <Field label={t(`${copyKey}.reviewers.newLabel`)} htmlFor="new-reviewer-name"><input id="new-reviewer-name" required value={newName} maxLength={80} onChange={event => { setNewName(event.target.value); createMutation.reset(); }} placeholder={t(`${copyKey}.reviewers.newPlaceholder`)} autoComplete="name" /></Field>
+            <Button type="submit" variant="secondary" busy={createMutation.isPending}>{t(`${copyKey}.reviewers.add`)}</Button>
+          </form>
+        </>}
       </section>
       <section className="panel settings-section settings-language">
         <div className="section-header"><h2>{t(`${copyKey}.language.title`)}</h2></div>
@@ -124,13 +127,15 @@ export function SettingsPage() {
         <div className="section-header"><h2>{t(`${copyKey}.services.title`)}</h2></div>
         <p>{t(`${copyKey}.services.readOnlyNotice`)}</p>
         <div className={`settings-services__recheck settings-services__recheck--${recheckState}`} aria-live="polite"><div className="settings-services__recheck-state"><strong>{t(`${copyKey}.services.recheckRegion`)}</strong><p>{t(`${copyKey}.services.recheck.${recheckState}`)}</p></div><Button variant="secondary" onClick={() => void recheck()} busy={recheckState === 'loading'}>{t(`${copyKey}.services.recheckAction`)}</Button></div>
-        <dl className="status-list settings-service-list">
-          <div><dt>{t(`${copyKey}.services.application`)}</dt><dd><StatusBadge label={t(`${copyKey}.services.applicationStatus.${health?.ok ? 'available' : 'unavailable'}`)} kind={health?.ok ? 'active' : 'problem'} /></dd></div>
-          <div><dt>{t(`${copyKey}.services.data`)}</dt><dd>{t(`${copyKey}.services.datasetCount`, { count: datasetsQuery.data?.total ?? datasets.length })}</dd></div>
-          <div><dt>{t(`${copyKey}.services.prompt`)}</dt><dd>{t(`${copyKey}.services.promptStatus.${health?.promptServiceConfigured ? 'available' : 'unavailable'}`)}</dd></div>
-          <div><dt>{t(`${copyKey}.services.renderer`)}</dt><dd>{t(`${copyKey}.services.rendererStatus.${health?.rendererInstallation ?? 'unknown'}`)}</dd></div>
-          {gpuSlots.map(gpu => <div className="settings-gpu-row" key={gpu.slot}><dt><strong>{gpu.slot}</strong><span>{t(`${copyKey}.services.checkedAt`, { value: formatDateTime(gpu.checkedAt) })}</span></dt><dd><StatusBadge label={t(`status.gpu.${gpu.availability}`)} kind={gpuKind(gpu.availability)} /><span>{t(`${copyKey}.services.gpuReason.${gpuStatusReason(gpu)}`, { model: gpu.loadedModel ?? '', precision: gpu.loadedPrecision ?? '' })}</span></dd></div>)}
-        </dl>
+        {servicesPending ? <StateView state="loading" /> : servicesError ? (
+          <section className="state-view" role="alert"><h2>{t('state.error.title')}</h2><p>{apiErrorMessage(servicesError, locale)}</p><Button variant="secondary" onClick={() => void recheck()}>{t('actions.retry')}</Button></section>
+        ) : <dl className="status-list settings-service-list">
+            <div><dt>{t(`${copyKey}.services.application`)}</dt><dd><StatusBadge label={t(`${copyKey}.services.applicationStatus.${health?.ok ? 'available' : 'unavailable'}`)} kind={health?.ok ? 'active' : 'problem'} /></dd></div>
+            <div><dt>{t(`${copyKey}.services.data`)}</dt><dd>{t(`${copyKey}.services.datasetCount`, { count: datasetsQuery.data?.total ?? datasets.length })}</dd></div>
+            <div><dt>{t(`${copyKey}.services.prompt`)}</dt><dd>{t(`${copyKey}.services.promptStatus.${health?.promptServiceConfigured ? 'available' : 'unavailable'}`)}</dd></div>
+            <div><dt>{t(`${copyKey}.services.renderer`)}</dt><dd>{t(`${copyKey}.services.rendererStatus.${health?.rendererInstallation ?? 'unknown'}`)}</dd></div>
+            {gpuSlots.map(gpu => <div className="settings-gpu-row" key={gpu.slot}><dt><strong>{gpu.slot}</strong><span>{t(`${copyKey}.services.checkedAt`, { value: formatDateTime(gpu.checkedAt) })}</span></dt><dd><StatusBadge label={t(`status.gpu.${gpu.availability}`)} kind={gpuKind(gpu.availability)} /><span>{t(`${copyKey}.services.gpuReason.${gpuStatusReason(gpu)}`, { model: gpu.loadedModel ?? '', precision: gpu.loadedPrecision ?? '' })}</span></dd></div>)}
+          </dl>}
       </section>
       <Dialog open={renameTarget !== null} title={t(`${copyKey}.renameDialog.title`)} closeLabel={t(`${copyKey}.renameDialog.closeLabel`)} onClose={() => setRenameTarget(null)} footer={<><Button variant="secondary" onClick={() => setRenameTarget(null)}>{t(`${copyKey}.renameDialog.cancel`)}</Button><Button type="submit" form="rename-reviewer-form" variant="primary" busy={renameMutation.isPending}>{t(`${copyKey}.renameDialog.save`)}</Button></>}><form id="rename-reviewer-form" onSubmit={renameReviewer}><Field label={t(`${copyKey}.renameDialog.nameLabel`)} htmlFor="rename-reviewer-name"><input id="rename-reviewer-name" required autoFocus maxLength={80} value={renameValue} onChange={event => { setRenameValue(event.target.value); renameMutation.reset(); }} /></Field></form></Dialog>
     </div>

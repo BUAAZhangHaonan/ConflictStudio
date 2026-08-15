@@ -34,6 +34,7 @@ export const workspaceSettingsStatisticsEnUS = {
   status: {
     dataset: {
       Active: 'Active',
+      Disabled: 'Disabled',
       Inactive: 'Inactive',
     },
     review: {
@@ -329,6 +330,7 @@ export const workspaceSettingsStatisticsZhCN = {
   status: {
     dataset: {
       Active: '已启用',
+      Disabled: '已禁用',
       Inactive: '已停用',
     },
     review: {

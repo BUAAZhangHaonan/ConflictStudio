@@ -15,11 +15,12 @@ export function FirstReviewerDialog() {
   const [name, setName] = useState('');
   const [mode, setMode] = useState<'existing' | 'new'>('new');
   const [selectedReviewerId, setSelectedReviewerId] = useState<number | null>(null);
+  const [dismissed, setDismissed] = useState(false);
   const currentReviewer = useMemo(() => preferences.currentReviewerId === null ? null : {
     id: preferences.currentReviewerId,
     name: preferences.currentReviewerName ?? '',
   }, [preferences.currentReviewerId, preferences.currentReviewerName]);
-  const open = reviewersQuery.isSuccess && currentReviewer === null;
+  const open = reviewersQuery.isSuccess && currentReviewer === null && !dismissed;
 
   useEffect(() => {
     if (reviewers.length === 0) {
@@ -55,12 +56,14 @@ export function FirstReviewerDialog() {
       open={open}
       title={reviewers.length > 0 ? t('app.currentReviewer') : t('reviewer.firstTitle')}
       closeLabel={t('actions.close')}
-      onClose={() => undefined}
-      dismissible={false}
+      onClose={() => setDismissed(true)}
       footer={
-        <Button type="submit" form="first-reviewer-form" variant="primary" busy={createMutation.isPending}>
-          {t('actions.confirmName')}
-        </Button>
+        <>
+          <Button variant="secondary" onClick={() => setDismissed(true)}>{t('reviewer.continueReadOnly')}</Button>
+          <Button type="submit" form="first-reviewer-form" variant="primary" busy={createMutation.isPending}>
+            {t('actions.confirmName')}
+          </Button>
+        </>
       }
     >
       <form id="first-reviewer-form" onSubmit={submit}>
