@@ -48,6 +48,12 @@ const zhCN = {
     viewStatistics: '我的统计',
     goWorkspace: '返回工作台',
   },
+  pagination: {
+    label: '分页',
+    summary: '第 {{page}} 页，共 {{totalPages}} 页，{{total}} 条',
+    previous: '上一页',
+    next: '下一页',
+  },
   fields: {
     name: '姓名',
     dataset: '数据集',

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, ConfirmDialog, Field, StatusBadge, useToast } from '../../components';
+import { Button, ConfirmDialog, Field, Pagination, StatusBadge, useToast } from '../../components';
 import {
   useBackgroundPresetsQuery,
   useCreateBackgroundPresetMutation,
@@ -53,7 +53,8 @@ export function BackgroundsPage() {
   const g = useGenerationCopy();
   const locale = useGenerationLocale();
   const { showToast } = useToast();
-  const query = useBackgroundPresetsQuery();
+  const [page, setPage] = useState(1);
+  const query = useBackgroundPresetsQuery(page);
   const createMutation = useCreateBackgroundPresetMutation();
   const updateMutation = useUpdateBackgroundPresetMutation();
   const deleteMutation = useDeleteBackgroundPresetMutation();
@@ -66,7 +67,7 @@ export function BackgroundsPage() {
   const [mobileEditor, setMobileEditor] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<number | 'new' | null>(null);
-  const items = query.data ?? [];
+  const items = query.data?.items ?? [];
   const selected = items.find(item => item.id === selectedId) ?? null;
   const error = createMutation.error ?? updateMutation.error ?? deleteMutation.error ?? null;
 
@@ -157,6 +158,7 @@ export function BackgroundsPage() {
           <div className="section-header"><h2 id="background-list-title">{g('backgrounds.list')}</h2></div>
           <Field label={g('common.search')} htmlFor="background-search"><input id="background-search" type="search" value={search} onChange={event => setSearch(event.target.value)} /></Field>
           {filtered.length === 0 ? <p className="generation-empty-note">{g(items.length === 0 ? 'backgrounds.empty' : 'backgrounds.filtered')}</p> : <ul className="generation-selection-list" aria-label={g('backgrounds.list')}>{filtered.map(item => <li key={item.id}><button type="button" className={!creating && item.id === selectedId ? 'generation-selection-card is-selected' : 'generation-selection-card'} aria-pressed={!creating && item.id === selectedId} onClick={() => requestSelection(item.id)}><span className="generation-selection-card__title"><strong>{localizedName(locale, item)}</strong><StatusBadge label={g(item.status === 'Active' ? 'content.status.Active' : 'content.status.Disabled')} kind={item.status === 'Active' ? 'complete' : 'problem'} /></span><span>{locale === 'zh-CN' ? item.sceneZh : item.sceneEn}</span><time dateTime={item.updatedAt}>{formatDateTime(item.updatedAt)}</time></button></li>)}</ul>}
+          <Pagination page={query.data?.page ?? page} totalPages={query.data?.totalPages ?? 0} total={query.data?.total ?? 0} onPageChange={setPage} />
         </section>
         <section className="panel generation-form generation-editor" aria-label={g('backgrounds.editor')}>
           <div className="section-header generation-editor__heading"><Button className="generation-editor-back" variant="quiet" onClick={() => setMobileEditor(false)}>{g('common.backToList')}</Button><h2>{g(creating ? 'backgrounds.createTitle' : 'backgrounds.editor')}</h2></div>

@@ -8,7 +8,8 @@ import type {
 } from '../types';
 
 export type ResourceStatus = 'Active' | 'Disabled';
-export type DatasetPurpose = 'Production' | 'Validation';
+export type DatasetStatus = 'Active' | 'Inactive';
+export type DatasetPurpose = 'Formal' | 'Production' | 'Validation';
 export type GpuSlotName = 'GPU0' | 'GPU1';
 export type GpuAvailability = 'Available' | 'Reserved' | 'Busy' | 'ExternalOccupied' | 'Unknown';
 export type Gender = 'Male' | 'Female';
@@ -36,25 +37,31 @@ export interface RevisionedResource {
   updatedAt: string;
 }
 
+export interface Page<T> {
+  items: T[];
+  page: number;
+  pageSize: 20;
+  total: number;
+  totalPages: number;
+}
+
 export interface Dataset extends RevisionedResource {
   name: string;
   purpose: DatasetPurpose;
   note: string;
-  status: ResourceStatus;
+  status: DatasetStatus;
 }
 
 export interface DatasetCreate {
   name: string;
-  purpose: DatasetPurpose;
   note: string;
 }
 
 export interface DatasetUpdate {
   expectedRevision: number;
   name?: string;
-  purpose?: DatasetPurpose;
   note?: string;
-  status?: ResourceStatus;
+  status?: DatasetStatus;
 }
 
 export interface ContentPlanFields {
@@ -90,7 +97,6 @@ export interface PromptPresetFields {
   name: string;
   category: Category;
   styleGuidance: string;
-  sceneSupplement: string;
   positiveExamples: string[];
   negativeExamples: string[];
   finalRenderNegativeConstraints: string;
@@ -126,6 +132,22 @@ export interface SourceSelection {
   expectedRevision: number;
 }
 
+export interface ContentPlanBackgrounds {
+  contentPlanId: number;
+  contentPlanRevision: number;
+  backgrounds: BilingualSelection[];
+}
+
+export interface BatchContentSelectionInput {
+  contentPlanId: number;
+  backgroundPresetIds: number[];
+}
+
+export interface BatchContentSelection {
+  contentPlan: BilingualSelection;
+  backgroundPresets: BilingualSelection[];
+}
+
 export interface Selection {
   id: number;
   name: string;
@@ -146,16 +168,15 @@ export interface Demographic {
 }
 
 export interface BatchDraftFields {
-  datasetId: number;
+  targetDatasetId: number;
   category: Category;
   conflictDirection: ConflictDirection | null;
   model: ModelName;
   precision: ModelPrecision | null;
   quantity: number;
   seed: number | null;
-  contentPlans: SourceSelection[];
-  promptPresets: SourceSelection[];
-  backgroundPresets: SourceSelection[];
+  contentSelections: BatchContentSelectionInput[];
+  promptPresetId: number;
   demographics: Demographic[];
   gpuSlots: GpuSlotName[];
 }
@@ -164,7 +185,7 @@ export type BatchDraftCreate = BatchDraftFields;
 export type BatchDraftUpdate = BatchDraftFields & { expectedRevision: number };
 
 export interface BatchDraft extends RevisionedResource {
-  datasetId: number;
+  targetDatasetId: number;
   datasetRevision: number;
   category: Category;
   conflictDirection: ConflictDirection | null;
@@ -173,9 +194,8 @@ export interface BatchDraft extends RevisionedResource {
   quantity: number;
   seed: number;
   status: 'Draft' | 'Submitted';
-  contentPlans: BilingualSelection[];
-  promptPresets: Selection[];
-  backgroundPresets: BilingualSelection[];
+  contentSelections: BatchContentSelection[];
+  promptPreset: Selection;
   demographics: Demographic[];
   gpuSlots: GpuSlotName[];
 }
@@ -378,7 +398,8 @@ export interface JobItem {
   updatedAt: string;
   input: Snapshot;
   promptResult: JobItemPromptResult | null;
-  attempts: GenerationAttempt[];
+  latestAttempt: GenerationAttempt | null;
+  attemptCount: number;
   sampleId: number | null;
 }
 
@@ -564,10 +585,7 @@ export interface JobSummary {
   updatedAt: string;
 }
 
-export interface JobDetail extends JobSummary {
-  items: JobItem[];
-  events: JobEvent[];
-}
+export type JobDetail = JobSummary;
 
 export interface GpuSlot {
   slot: GpuSlotName;

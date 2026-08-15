@@ -43,6 +43,12 @@ const enUS = {
     viewStatistics: 'My statistics',
     goWorkspace: 'Back to workspace',
   },
+  pagination: {
+    label: 'Pagination',
+    summary: 'Page {{page}} of {{totalPages}}, {{total}} records',
+    previous: 'Previous',
+    next: 'Next',
+  },
   fields: {
     name: 'Name',
     dataset: 'Dataset',

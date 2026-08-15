@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, ConfirmDialog, Field, StatusBadge, useToast } from '../../components';
+import { Button, ConfirmDialog, Field, Pagination, StatusBadge, useToast } from '../../components';
 import {
   useCreatePromptPresetMutation,
   useDeletePromptPresetMutation,
@@ -29,7 +29,6 @@ export function emptyPromptPreset(): PromptPresetCreate {
     name: '',
     category: 'A-VA',
     styleGuidance: '',
-    sceneSupplement: '',
     positiveExamples: [],
     negativeExamples: [],
     finalRenderNegativeConstraints: '',
@@ -55,7 +54,8 @@ interface StoredPresetDraft {
 export function PresetsPage() {
   const g = useGenerationCopy();
   const { showToast } = useToast();
-  const query = usePromptPresetsQuery();
+  const [page, setPage] = useState(1);
+  const query = usePromptPresetsQuery(page);
   const createMutation = useCreatePromptPresetMutation();
   const updateMutation = useUpdatePromptPresetMutation();
   const deleteMutation = useDeletePromptPresetMutation();
@@ -68,7 +68,7 @@ export function PresetsPage() {
   const [validation, setValidation] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<number | 'new' | null>(null);
-  const items = query.data ?? [];
+  const items = query.data?.items ?? [];
   const selected = items.find(item => item.id === selectedId) ?? null;
   const error = createMutation.error ?? updateMutation.error ?? deleteMutation.error ?? null;
 
@@ -126,7 +126,6 @@ export function PresetsPage() {
               expectedRevision: selected.revision,
               name: draft.name,
               styleGuidance: draft.styleGuidance,
-              sceneSupplement: draft.sceneSupplement,
               positiveExamples: draft.positiveExamples,
               negativeExamples: draft.negativeExamples,
               finalRenderNegativeConstraints: draft.finalRenderNegativeConstraints,
@@ -173,6 +172,7 @@ export function PresetsPage() {
             <Field label={g('presets.categoryFilter')} htmlFor="preset-category-filter"><select id="preset-category-filter" value={categoryFilter} onChange={event => setCategoryFilter(event.target.value as Category | 'All')}><option value="All">{g('common.all')}</option>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
           </div>
           {filtered.length === 0 ? <p className="generation-empty-note">{g(items.length === 0 ? 'presets.empty' : 'presets.filtered')}</p> : <ul className="generation-selection-list" aria-label={g('presets.tableCaption')}>{filtered.map(item => <li key={item.id}><button type="button" className={!creating && item.id === selectedId ? 'generation-selection-card generation-selection-card--preset is-selected' : 'generation-selection-card generation-selection-card--preset'} aria-pressed={!creating && item.id === selectedId} onClick={() => requestSelection(item.id)}><span className="generation-selection-card__title"><strong>{item.name}</strong><StatusBadge label={g(item.status === 'Active' ? 'content.status.Active' : 'content.status.Disabled')} kind={item.status === 'Active' ? 'complete' : 'problem'} /></span><span>{categoryLabel(g, item.category)}</span><time dateTime={item.updatedAt}>{formatDateTime(item.updatedAt)}</time></button></li>)}</ul>}
+          <Pagination page={query.data?.page ?? page} totalPages={query.data?.totalPages ?? 0} total={query.data?.total ?? 0} onPageChange={setPage} />
         </section>
         <section className="panel generation-form generation-editor" aria-label={g('presets.editorRegion')}>
           <div className="section-header"><h2>{g(creating ? 'presets.createTitle' : 'presets.editor')}</h2></div>
@@ -182,7 +182,6 @@ export function PresetsPage() {
             <Field label={g('presets.category')} htmlFor="preset-category" required><select id="preset-category" value={draft.category} disabled={!creating} onChange={event => setDraft(current => ({ ...current, category: event.target.value as Category }))}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
             <div className="generation-form__wide"><strong>{g('presets.fixedRules')}</strong><ol className="generation-editor__rules">{fixedStructureRules.map(rule => <li key={rule}>{g(rule)}</li>)}</ol></div>
             <Field className="generation-form__wide" label={g('presets.style')} htmlFor="preset-style"><textarea id="preset-style" value={draft.styleGuidance} onChange={event => setDraft(current => ({ ...current, styleGuidance: event.target.value }))} /></Field>
-            <Field className="generation-form__wide" label={g('presets.sceneSupplement')} htmlFor="preset-scene"><textarea id="preset-scene" value={draft.sceneSupplement} onChange={event => setDraft(current => ({ ...current, sceneSupplement: event.target.value }))} /></Field>
             <Field className="generation-form__wide" label={g('presets.positive')} htmlFor="preset-positive"><textarea id="preset-positive" value={draft.positiveExamples.join('\n')} onChange={event => setDraft(current => ({ ...current, positiveExamples: lines(event.target.value) }))} /></Field>
             <Field className="generation-form__wide" label={g('presets.negative')} htmlFor="preset-negative"><textarea id="preset-negative" value={draft.negativeExamples.join('\n')} onChange={event => setDraft(current => ({ ...current, negativeExamples: lines(event.target.value) }))} /></Field>
             <Field className="generation-form__wide" label={g('presets.constraints')} htmlFor="preset-constraints" required><textarea id="preset-constraints" value={draft.finalRenderNegativeConstraints} onChange={event => setDraft(current => ({ ...current, finalRenderNegativeConstraints: event.target.value }))} /></Field>

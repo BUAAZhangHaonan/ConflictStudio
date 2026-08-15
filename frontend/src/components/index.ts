@@ -5,6 +5,7 @@ export * from './Field';
 export * from './MediaPanel';
 export * from './Metric';
 export * from './PageHeader';
+export * from './Pagination';
 export * from './StateView';
 export * from './StatusBadge';
 export * from './TableShell';

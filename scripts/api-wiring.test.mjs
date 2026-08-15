@@ -71,7 +71,7 @@ test('queries and mutations use only the current backend endpoints', () => {
   }
   assert.doesNotMatch(querySource, /\/api\/samples\/\$\{id\}\/review/u);
   assert.match(querySource, /invalidateQueries\(\{ queryKey: \['reviewerStatistics'\]/u);
-  assert.match(querySource, /invalidateQueries\(\{ queryKey: queryKeys\.archives/u);
+  assert.match(querySource, /client\.invalidateQueries\(\{ queryKey: roots\.archives \}\)/u);
 });
 
 test('review uses persistent reviews and a revisioned classification form with coherent emotions', () => {
@@ -106,9 +106,9 @@ test('settings uses real health, dataset, GPU and reviewer queries with explicit
 test('archive uses preview, sync, manifest download and canonical return locations', () => {
   for (const hook of ['useArchivesQuery', 'usePreviewArchiveMutation', 'useSyncArchiveMutation']) assert.match(archiveSource, new RegExp(hook));
   assert.match(archiveSource, /\/api\/archives\/\$\{archive\.datasetId\}\/manifest/u);
-  assert.match(archiveSource, /ARCHIVE_PAGE_SIZE/u);
+  assert.match(archiveSource, /<Pagination page=\{samplesQuery\.data\?\.page/u);
   assert.match(archiveSource, /buildArchiveLocation/u);
-  assert.match(archiveSource, /reviewLocation\(sample\.displayId, returnTo\)/u);
+  assert.match(archiveSource, /reviewLocation\(sample\.id, returnTo\)/u);
   assert.match(archiveHelpers, /if \(state\.page > 1\) params\.set\('page'/u);
   assert.doesNotMatch(archiveSource, /archiveJsonl|Blob|URL\.createObjectURL|navigate\(-1\)/u);
 });
@@ -124,13 +124,15 @@ test('workspace is a card list through 1024px and keeps every action visible', (
 });
 
 test('batch scene selection and result prompts use explicit independent controls', () => {
-  assert.match(batchesSource, /backgroundPresetIds: activeBackgrounds\.map\(item => item\.id\)/u);
-  assert.match(batchesSource, /batches\.selectAllBackgrounds/u);
-  assert.match(batchesSource, /role="status" aria-live="polite" aria-atomic="true">\{dirty \? g\('batches\.unsavedStatus'\) : ''\}/u);
-  assert.match(localeSource, /'batches\.selectAllBackgrounds': 'Select all scene presets'/u);
+  assert.match(batchesSource, /contentSelections: form\.contentSelections\.map/u);
+  assert.match(batchesSource, /selection\.contentPlan\.mode === 'Generative'/u);
+  assert.match(batchesSource, /batches\.selectCompatibleScenes/u);
+  assert.match(batchesSource, /batches\.clearCompatibleScenes/u);
+  assert.match(batchesSource, /role="status" aria-live="polite">\{dirty \? g\('batches\.unsavedStatus'\) : ''\}/u);
+  assert.match(localeSource, /'batches\.selectCompatibleScenes': 'Select all available scenes'/u);
   assert.match(localeSource, /'batches\.unsavedStatus': 'Unsaved changes'/u);
   assert.match(localeSource, /'batches\.unsavedStatus': '有未保存的更改'/u);
-  assert.match(localeSource, /'batches\.selectAllBackgrounds': '全选场景预设'/u);
+  assert.match(localeSource, /'batches\.selectCompatibleScenes': '全选可用场景'/u);
   assert.equal((jobsSource.match(/className="generation-current-input__prompt"/gu) ?? []).length, 2);
   assert.match(generationCss, /\.generation-current-input__prompt \{[\s\S]*grid-column: 1 \/ -1/u);
   assert.match(generationCss, /\.generation-current-input__prompt pre \{[\s\S]*white-space: pre-wrap/u);
@@ -140,7 +142,8 @@ test('production reviewer identity comes only from the Reviewer API and user sel
   const sources = `${settingsSource}\n${preferencesSource}\n${appShellSource}\n${firstReviewerSource}`;
   assert.doesNotMatch(sources, /林然|陈宁|Lin Ran|Chen Ning/u);
   assert.doesNotMatch(sources, /DEFAULT_REVIEWER|presetReviewer|mockReviewer/u);
-  assert.match(appShellSource, /reviewersQuery\.data\?\.find/u);
+  assert.match(appShellSource, /preferences\.currentReviewerName/u);
+  assert.match(firstReviewerSource, /useReviewersQuery\(reviewerPage\)/u);
   assert.match(firstReviewerSource, /reviewers\.length === 0/u);
 });
 

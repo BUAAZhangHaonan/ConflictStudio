@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, ConfirmDialog, Field, StatusBadge, useToast } from '../../components';
+import { Button, ConfirmDialog, Field, Pagination, StatusBadge, useToast } from '../../components';
 import {
+  useBackgroundPresetsQuery,
+  useContentBackgroundsQuery,
   useContentPlansQuery,
   useCreateContentPlanMutation,
   useDeleteContentPlanMutation,
+  useReplaceContentBackgroundsMutation,
   useUpdateContentPlanMutation,
 } from '../../api/queries';
 import type { ContentPlan, ContentPlanCreate } from '../../api/contracts';
@@ -22,6 +25,7 @@ import {
   useGenerationDraft,
   useGenerationLocale,
   useUnsavedChanges,
+  toggleArrayValue,
 } from './shared';
 
 const contentStatuses: ContentStatus[] = ['Draft', 'Active', 'Disabled'];
@@ -103,10 +107,14 @@ export function ContentPage() {
   const g = useGenerationCopy();
   const locale = useGenerationLocale();
   const { showToast } = useToast();
-  const contentQuery = useContentPlansQuery();
+  const [page, setPage] = useState(1);
+  const [backgroundPage, setBackgroundPage] = useState(1);
+  const contentQuery = useContentPlansQuery(page);
+  const backgroundsQuery = useBackgroundPresetsQuery(backgroundPage);
   const createMutation = useCreateContentPlanMutation();
   const updateMutation = useUpdateContentPlanMutation();
   const deleteMutation = useDeleteContentPlanMutation();
+  const replaceBackgroundsMutation = useReplaceContentBackgroundsMutation();
   const stored = useState(() => readGenerationDraft<StoredContentDraft>('content-editor-bilingual'))[0];
   const [selectedId, setSelectedId] = useState<number | null>(stored?.selectedId ?? null);
   const [creating, setCreating] = useState(stored?.creating ?? false);
@@ -118,9 +126,12 @@ export function ContentPage() {
   const [mobileEditor, setMobileEditor] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<number | 'new' | null>(null);
-  const items = contentQuery.data ?? [];
+  const [backgroundPresetIds, setBackgroundPresetIds] = useState<number[]>([]);
+  const [backgroundBaseline, setBackgroundBaseline] = useState<number[]>([]);
+  const items = contentQuery.data?.items ?? [];
   const selected = items.find(item => item.id === selectedId) ?? null;
-  const error = createMutation.error ?? updateMutation.error ?? deleteMutation.error ?? null;
+  const contentBackgroundsQuery = useContentBackgroundsQuery(creating ? null : selectedId);
+  const error = createMutation.error ?? updateMutation.error ?? deleteMutation.error ?? replaceBackgroundsMutation.error ?? null;
 
   useEffect(() => {
     if (creating || items.length === 0) return;
@@ -128,6 +139,13 @@ export function ContentPage() {
     setSelectedId(next.id);
     setDraft(contentInput(next));
   }, [creating, items, selected]);
+
+  useEffect(() => {
+    if (creating || !contentBackgroundsQuery.data) return;
+    const ids = contentBackgroundsQuery.data.backgrounds.map(item => item.id);
+    setBackgroundPresetIds(ids);
+    setBackgroundBaseline(ids);
+  }, [contentBackgroundsQuery.data, creating, selectedId]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -143,27 +161,34 @@ export function ContentPage() {
     );
   }, [categoryFilter, items, search, statusFilter]);
 
-  const dirty = creating
+  const contentDirty = creating
     ? JSON.stringify(draft) !== JSON.stringify(emptyContentPlan())
     : selected !== null && JSON.stringify(draft) !== JSON.stringify(contentInput(selected));
+  const backgroundDirty = JSON.stringify(backgroundPresetIds) !== JSON.stringify(backgroundBaseline);
+  const dirty = contentDirty || backgroundDirty;
 
   const applySelection = (next: number | 'new') => {
     if (next === 'new') {
       setCreating(true);
       setSelectedId(null);
       setDraft(emptyContentPlan());
+      setBackgroundPresetIds([]);
+      setBackgroundBaseline([]);
     } else {
       const item = items.find(value => value.id === next);
       if (!item) return;
       setCreating(false);
       setSelectedId(item.id);
       setDraft(contentInput(item));
+      setBackgroundPresetIds([]);
+      setBackgroundBaseline([]);
     }
     setValidation(false);
     setMobileEditor(true);
     createMutation.reset();
     updateMutation.reset();
     deleteMutation.reset();
+    replaceBackgroundsMutation.reset();
   };
 
   const requestSelection = (next: number | 'new') => {
@@ -183,7 +208,10 @@ export function ContentPage() {
   };
 
   const save = async () => {
-    if (!contentPlanPayloadIsValid(draft)) {
+    const backgroundSelectionValid = draft.mode === 'Fixed'
+      ? backgroundPresetIds.length === 1
+      : backgroundPresetIds.length > 0;
+    if (!contentPlanPayloadIsValid(draft) || !backgroundSelectionValid) {
       setValidation(true);
       return;
     }
@@ -195,9 +223,17 @@ export function ContentPage() {
             id: selected.id,
             input: (({ category: _category, ...changes }) => ({ ...changes, expectedRevision: selected.revision }))(draft),
           });
+      const relation = await replaceBackgroundsMutation.mutateAsync({
+        id: value.id,
+        expectedRevision: value.revision,
+        backgroundPresetIds,
+      });
       setCreating(false);
       setSelectedId(value.id);
-      setDraft(contentInput(value));
+      setBackgroundBaseline([...backgroundPresetIds]);
+      const refreshed = await contentQuery.refetch();
+      const current = refreshed.data?.items.find(item => item.id === value.id);
+      setDraft(contentInput(current ?? { ...value, revision: relation.contentPlanRevision }));
       showToast(g('content.saved'));
     } catch {
       // The shared safe error panel renders mutation errors.
@@ -222,11 +258,11 @@ export function ContentPage() {
   const unsavedDialog = useUnsavedChanges(dirty);
   useCommandEnter(() => void save(), !createMutation.isPending && !updateMutation.isPending);
 
-  if (contentQuery.isPending) {
+  if (contentQuery.isPending || backgroundsQuery.isPending || (!creating && contentBackgroundsQuery.isPending)) {
     return <GenerationScaffold title="content.title" subtitle="content.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
   }
-  if (contentQuery.isError) {
-    return <GenerationScaffold title="content.title" subtitle="content.subtitle"><OperationFeedback error={contentQuery.error} onDismiss={() => void contentQuery.refetch()} /></GenerationScaffold>;
+  if (contentQuery.isError || backgroundsQuery.isError || contentBackgroundsQuery.isError) {
+    return <GenerationScaffold title="content.title" subtitle="content.subtitle"><OperationFeedback error={contentQuery.error ?? backgroundsQuery.error ?? contentBackgroundsQuery.error} onDismiss={() => void Promise.all([contentQuery.refetch(), backgroundsQuery.refetch(), contentBackgroundsQuery.refetch()])} /></GenerationScaffold>;
   }
 
   const directions = allowedDirections(draft.category);
@@ -236,7 +272,7 @@ export function ContentPage() {
       subtitle="content.subtitle"
       action={<Button variant="primary" onClick={() => requestSelection('new')}>{g('content.new')}</Button>}
     >
-      {error ? <OperationFeedback error={error} onDismiss={() => { createMutation.reset(); updateMutation.reset(); deleteMutation.reset(); }} /> : null}
+      {error ? <OperationFeedback error={error} onDismiss={() => { createMutation.reset(); updateMutation.reset(); deleteMutation.reset(); replaceBackgroundsMutation.reset(); }} /> : null}
       <div className={`generation-layout generation-layout--editor${mobileEditor ? ' generation-layout--mobile-editor' : ''}`}>
         <section className="panel generation-list" aria-labelledby="content-list-title">
           <div className="section-header"><h2 id="content-list-title">{g('content.list')}</h2></div>
@@ -250,6 +286,7 @@ export function ContentPage() {
               {filtered.map(item => <li key={item.id}><button type="button" className={!creating && item.id === selectedId ? 'generation-selection-card is-selected' : 'generation-selection-card'} aria-pressed={!creating && item.id === selectedId} onClick={() => requestSelection(item.id)}><span className="generation-selection-card__title"><strong>{localizedName(locale, item)}</strong><StatusBadge label={g(`content.status.${item.status}`)} kind={statusKind(item.status)} /></span><span>{categoryLabel(g, item.category)}</span><time dateTime={item.updatedAt}>{formatDateTime(item.updatedAt)}</time></button></li>)}
             </ul>
           )}
+          <Pagination page={contentQuery.data?.page ?? page} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setPage} />
         </section>
         <section className="panel generation-form generation-editor" aria-label={g('content.editorRegion')}>
           <div className="section-header generation-editor__heading"><Button className="generation-editor-back" variant="quiet" onClick={() => setMobileEditor(false)}>{g('common.backToList')}</Button><h2>{g(creating ? 'content.createTitle' : 'content.editor')}</h2></div>
@@ -284,6 +321,25 @@ export function ContentPage() {
               <Field label={g('content.sceneSupplement')} htmlFor="content-scene-supplement-en"><textarea id="content-scene-supplement-en" value={draft.sceneSupplementEn} onChange={event => setDraft(current => ({ ...current, sceneSupplementEn: event.target.value }))} /></Field>
             </fieldset>
           </div>
+          <section className="generation-compatible-scenes" aria-labelledby="content-compatible-scenes-title">
+            <div className="section-header">
+              <div>
+                <h3 id="content-compatible-scenes-title">{g('content.compatibleScenes')}</h3>
+                <p className="generation-section-note">{g(draft.mode === 'Fixed' ? 'content.fixedSceneHelp' : 'content.generativeSceneHelp')}</p>
+              </div>
+              {draft.mode === 'Generative' ? <div className="generation-fieldset__toolbar"><Button type="button" variant="quiet" onClick={() => setBackgroundPresetIds(current => [...new Set([...current, ...(backgroundsQuery.data?.items ?? []).filter(item => item.status === 'Active').map(item => item.id)])])}>{g('content.selectShownScenes')}</Button><Button type="button" variant="quiet" disabled={backgroundPresetIds.length === 0} onClick={() => setBackgroundPresetIds([])}>{g('content.clearScenes')}</Button></div> : null}
+            </div>
+            {draft.mode === 'Fixed' && !creating ? (
+              <p className="generation-fixed-scene">{contentBackgroundsQuery.data?.backgrounds.map(item => localizedName(locale, item)).join(', ') || g('content.sceneMissing')}</p>
+            ) : (
+              <div className="generation-choice-grid">
+                {(backgroundsQuery.data?.items ?? []).filter(item => item.status === 'Active').map(item => <label key={item.id}><input type={draft.mode === 'Fixed' ? 'radio' : 'checkbox'} name={draft.mode === 'Fixed' ? 'fixed-source-scene' : undefined} checked={backgroundPresetIds.includes(item.id)} onChange={() => setBackgroundPresetIds(draft.mode === 'Fixed' ? [item.id] : toggleArrayValue(backgroundPresetIds, item.id))} /><span>{localizedName(locale, item)}</span></label>)}
+              </div>
+            )}
+            {backgroundPresetIds.length === 0 ? <p className="field__error" role="status">{g('content.sceneRequired')}</p> : null}
+            {draft.mode === 'Fixed' && backgroundPresetIds.length > 1 ? <p className="field__error" role="alert">{g('content.fixedSceneOnly')}</p> : null}
+            {(draft.mode === 'Generative' || creating) ? <Pagination page={backgroundsQuery.data?.page ?? backgroundPage} totalPages={backgroundsQuery.data?.totalPages ?? 0} total={backgroundsQuery.data?.total ?? 0} onPageChange={setBackgroundPage} /> : null}
+          </section>
           {validation ? <p className="field__error" role="alert">{g('content.validation')}</p> : null}
           <div className="generation-form__actions">
             {!creating ? <Button className="button--danger" onClick={() => setDeleteOpen(true)}>{g('content.delete')}</Button> : null}
