@@ -24,7 +24,6 @@ from backend.domain.schemas import (
     BatchSubmitRequest,
     ContentPlanCreate,
     ContentPlanBackgroundRead,
-    ContentPlanBackgroundReplace,
     ContentPlanRead,
     ContentPlanUpdate,
     DatasetCreate,
@@ -196,18 +195,6 @@ def get_content_backgrounds(
     request: Request,
 ) -> ContentPlanBackgroundRead:
     return catalog(request).get_content_backgrounds(content_id)
-
-
-@router.put(
-    "/content-plans/{content_id}/backgrounds",
-    response_model=ContentPlanBackgroundRead,
-)
-def replace_content_backgrounds(
-    content_id: int,
-    payload: ContentPlanBackgroundReplace,
-    request: Request,
-) -> ContentPlanBackgroundRead:
-    return catalog(request).replace_content_backgrounds(content_id, payload)
 
 
 @router.delete("/content-plans/{content_id}", status_code=status.HTTP_204_NO_CONTENT)

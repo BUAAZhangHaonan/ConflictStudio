@@ -96,6 +96,17 @@ EmotionDescription = Annotated[
 ]
 
 
+def validate_content_background_ids(values: list[int], mode: ContentMode) -> None:
+    if len(values) != len(set(values)):
+        raise ValueError("A background preset can be registered only once")
+    if any(identifier <= 0 for identifier in values):
+        raise ValueError("Background preset ids must be positive")
+    if mode is ContentMode.FIXED and len(values) != 1:
+        raise ValueError("Fixed content requires exactly one source background")
+    if mode is ContentMode.GENERATIVE and not values:
+        raise ValueError("Generative content requires at least one compatible background")
+
+
 class ErrorValue(ApiModel):
     code: str
     message: str
@@ -216,10 +227,16 @@ class ContentPlanFields(ApiModel):
 
 
 class ContentPlanCreate(ContentPlanFields):
-    pass
+    background_preset_ids: list[int] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_backgrounds(self) -> Self:
+        validate_content_background_ids(self.background_preset_ids, self.mode)
+        return self
 
 
 class ContentPlanUpdate(UpdateWithChanges):
+    background_preset_ids: list[int] = Field(min_length=1)
     name_zh: Name | None = None
     name_en: Name | None = None
     conflict_direction: ConflictDirection | None = None
@@ -244,7 +261,12 @@ class ContentPlanUpdate(UpdateWithChanges):
 
     @model_validator(mode="after")
     def reject_null_fields(self) -> Self:
-        return self.reject_explicit_nulls(frozenset({"conflict_direction", "dialogue", "display_text"}))
+        self.reject_explicit_nulls(frozenset({"conflict_direction", "dialogue", "display_text"}))
+        if len(self.background_preset_ids) != len(set(self.background_preset_ids)):
+            raise ValueError("A background preset can be registered only once")
+        if any(identifier <= 0 for identifier in self.background_preset_ids):
+            raise ValueError("Background preset ids must be positive")
+        return self
 
     @field_validator("base_video_prompt")
     @classmethod
@@ -256,6 +278,7 @@ class ContentPlanUpdate(UpdateWithChanges):
 
 class ContentPlanRead(ContentPlanFields):
     id: int
+    background_preset_ids: list[int]
     revision: int
     created_at: str
     updated_at: str
@@ -369,18 +392,6 @@ class VideoBackgroundPresetRead(VideoBackgroundPresetFields):
 class SourceSelection(ApiModel):
     id: int = Field(gt=0)
     expected_revision: int = Field(ge=1)
-
-
-class ContentPlanBackgroundReplace(ExpectedRevision):
-    background_preset_ids: list[int] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def reject_duplicate_backgrounds(self) -> Self:
-        if len(self.background_preset_ids) != len(set(self.background_preset_ids)):
-            raise ValueError("A background preset can be registered only once")
-        if any(identifier <= 0 for identifier in self.background_preset_ids):
-            raise ValueError("Background preset ids must be positive")
-        return self
 
 
 class DemographicInput(ApiModel):

@@ -140,6 +140,23 @@ def make_app(tmp_path: Path, prompt_model=None):  # type: ignore[no-untyped-def]
 def create_api_sources(
     client: TestClient,
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    background = client.post(
+        "/api/video-background-presets",
+        json={
+            "nameZh": "私人办公室",
+            "nameEn": "Private office",
+            "sceneZh": "一间只有桌椅的私人办公室。",
+            "sceneEn": "A private office containing one desk and one chair.",
+            "ambientSoundZh": "稳定的通风声。",
+            "ambientSoundEn": "A steady ventilation hum remains audible.",
+            "participantRelationshipZh": "画面中只有被摄者。",
+            "participantRelationshipEn": "The subject is the only occupant in view.",
+            "lightingZh": "柔和的日光。",
+            "lightingEn": "Soft daylight enters through one window.",
+            "framingZh": "静止中景。",
+            "framingEn": "Use a static eye-level medium shot.",
+        },
+    ).json()
     content = client.post(
         "/api/content-plans",
         json={
@@ -160,6 +177,7 @@ def create_api_sources(
             "contentRequirementsEn": "One adult responds calmly to the current event.",
             "sceneSupplementZh": "",
             "sceneSupplementEn": "",
+            "backgroundPresetIds": [background["id"]],
         },
     ).json()
     prompt = client.post(
@@ -171,32 +189,6 @@ def create_api_sources(
             "finalRenderNegativeConstraints": "subtitles, captions, distortion",
         },
     ).json()
-    background = client.post(
-        "/api/video-background-presets",
-        json={
-            "nameZh": "私人办公室",
-            "nameEn": "Private office",
-            "sceneZh": "一间只有桌椅的私人办公室。",
-            "sceneEn": "A private office containing one desk and one chair.",
-            "ambientSoundZh": "稳定的通风声。",
-            "ambientSoundEn": "A steady ventilation hum remains audible.",
-            "participantRelationshipZh": "画面中只有被摄者。",
-            "participantRelationshipEn": "The subject is the only occupant in view.",
-            "lightingZh": "柔和的日光。",
-            "lightingEn": "Soft daylight enters through one window.",
-            "framingZh": "静止中景。",
-            "framingEn": "Use a static eye-level medium shot.",
-        },
-    ).json()
-    mapping = client.put(
-        f"/api/content-plans/{content['id']}/backgrounds",
-        json={
-            "expectedRevision": content["revision"],
-            "backgroundPresetIds": [background["id"]],
-        },
-    )
-    assert mapping.status_code == 200
-    content = client.get(f"/api/content-plans/{content['id']}").json()
     return content, prompt, background
 
 

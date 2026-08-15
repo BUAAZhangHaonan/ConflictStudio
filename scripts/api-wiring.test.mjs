@@ -18,6 +18,7 @@ const statisticsSource = read('../frontend/src/pages/StatisticsPage.tsx');
 const workspaceSource = read('../frontend/src/pages/WorkspacePage.tsx');
 const workspaceCss = read('../frontend/src/pages/WorkspacePage.css');
 const batchesSource = read('../frontend/src/pages/generate/BatchesPage.tsx');
+const contentSource = read('../frontend/src/pages/generate/ContentPage.tsx');
 const jobsSource = read('../frontend/src/pages/generate/JobsPage.tsx');
 const generationCss = read('../frontend/src/pages/generate/GenerationPage.css');
 const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
@@ -136,6 +137,12 @@ test('batch scene selection and result prompts use explicit independent controls
   assert.equal((jobsSource.match(/className="generation-current-input__prompt"/gu) ?? []).length, 2);
   assert.match(generationCss, /\.generation-current-input__prompt \{[\s\S]*grid-column: 1 \/ -1/u);
   assert.match(generationCss, /\.generation-current-input__prompt pre \{[\s\S]*white-space: pre-wrap/u);
+});
+
+test('content plans save fields and compatible scenes in one request', () => {
+  assert.doesNotMatch(contentSource, /useReplaceContentBackgroundsMutation|\/backgrounds.*method: 'PUT'/u);
+  assert.match(contentSource, /backgroundPresetIds: \[\]/u);
+  assert.match(contentSource, /await updateMutation\.mutateAsync/u);
 });
 
 test('production reviewer identity comes only from the Reviewer API and user selection', () => {

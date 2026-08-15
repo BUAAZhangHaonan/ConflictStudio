@@ -146,10 +146,6 @@ export function useUpdateContentPlanMutation() {
   const client = useQueryClient();
   return useMutation({ mutationFn: ({ id, input }: { id: number; input: ContentPlanUpdate }) => apiRequest<ContentPlan>(`/api/content-plans/${id}`, { method: 'PATCH', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.contentPlans) });
 }
-export function useReplaceContentBackgroundsMutation() {
-  const client = useQueryClient();
-  return useMutation({ mutationFn: ({ id, expectedRevision, backgroundPresetIds }: { id: number; expectedRevision: number; backgroundPresetIds: number[] }) => apiRequest<ContentPlanBackgrounds>(`/api/content-plans/${id}/backgrounds`, { method: 'PUT', ...json({ expectedRevision, backgroundPresetIds }) }), onSuccess: async value => { await Promise.all([client.invalidateQueries({ queryKey: queryKeys.contentBackgrounds(value.contentPlanId) }), client.invalidateQueries({ queryKey: roots.contentPlans })]); } });
-}
 export function useDeleteContentPlanMutation() {
   const client = useQueryClient();
   return useMutation({ mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<void>(`/api/content-plans/${id}?expectedRevision=${expectedRevision}`, { method: 'DELETE' }), onSuccess: () => invalidateCatalog(client, roots.contentPlans) });

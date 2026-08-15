@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from backend.adapters.database import Database
@@ -11,8 +12,8 @@ from backend.domain.models import ContentPlanBackground, Dataset
 from backend.domain.schemas import (
     BatchContentSelectionInput,
     BatchDraftCreate,
-    ContentPlanBackgroundReplace,
     ContentPlanCreate,
+    ContentPlanUpdate,
     DemographicInput,
     DatasetUpdate,
     VideoBackgroundPresetCreate,
@@ -23,7 +24,7 @@ from backend.services.prompts import PromptService
 from backend.tests.test_generation_services import _ConfiguredRendererGateway, fixed_resources
 
 
-def _generative_content(catalog) -> object:  # type: ignore[no-untyped-def]
+def _generative_content(catalog, background_ids: list[int]) -> object:  # type: ignore[no-untyped-def]
     return catalog.create_content_plan(
         ContentPlanCreate(
             nameZh="生成式回应",
@@ -43,19 +44,20 @@ def _generative_content(catalog) -> object:  # type: ignore[no-untyped-def]
             contentRequirementsEn="Describe one adult giving a brief response.",
             sceneSupplementZh="",
             sceneSupplementEn="",
+            backgroundPresetIds=background_ids,
         )
     )
 
 
-def test_mapping_replace_is_revisioned_atomic_and_database_constrained(tmp_path: Path) -> None:
+def test_content_and_mapping_update_is_revisioned_atomic_and_database_constrained(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
     catalog, _, content, _, background = fixed_resources(database)
 
     with pytest.raises(ServiceError) as missing:
-        catalog.replace_content_backgrounds(
+        catalog.update_content_plan(
             content.id,
-            ContentPlanBackgroundReplace(
+            ContentPlanUpdate(
                 expectedRevision=content.revision,
                 backgroundPresetIds=[99999],
             ),
@@ -65,21 +67,19 @@ def test_mapping_replace_is_revisioned_atomic_and_database_constrained(tmp_path:
     assert current.content_plan_revision == content.revision
     assert [row.id for row in current.backgrounds] == [background.id]
 
-    with pytest.raises(ServiceError) as fixed_many:
-        catalog.replace_content_backgrounds(
-            content.id,
-            ContentPlanBackgroundReplace(
-                expectedRevision=content.revision,
-                backgroundPresetIds=[background.id, 99999],
-            ),
+    with pytest.raises(ValidationError):
+        ContentPlanCreate(
+            **{
+                **content.model_dump(exclude={"id", "revision", "created_at", "updated_at", "background_preset_ids"}),
+                "backgroundPresetIds": [background.id, 99999],
+            }
         )
-    assert fixed_many.value.status_code == 422
 
     with pytest.raises(ServiceError) as stale:
-        catalog.replace_content_backgrounds(
+        catalog.update_content_plan(
             content.id,
-            ContentPlanBackgroundReplace(
-                expectedRevision=1,
+            ContentPlanUpdate(
+                expectedRevision=content.revision + 1,
                 backgroundPresetIds=[background.id],
             ),
         )
@@ -127,16 +127,8 @@ def test_fixed_background_is_automatic_and_generative_uses_only_registered_choic
             framingEn="A static medium shot.",
         )
     )
-    content = _generative_content(catalog)
-    mapped = catalog.replace_content_backgrounds(
-        content.id,
-        ContentPlanBackgroundReplace(
-            expectedRevision=content.revision,
-            backgroundPresetIds=[first.id, second.id],
-        ),
-    )
-    content = catalog.get_content_plan(content.id)
-    assert [row.id for row in mapped.backgrounds] == [first.id, second.id]
+    content = _generative_content(catalog, [first.id, second.id])
+    assert content.background_preset_ids == [first.id, second.id]
 
     service = BatchService(
         database,
@@ -238,6 +230,72 @@ def test_fixed_background_is_automatic_and_generative_uses_only_registered_choic
             )
         )
     assert incompatible.value.status_code == 422
+
+
+def test_mode_switch_and_background_mapping_commit_together(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    catalog, _, _, _, first = fixed_resources(database)
+    second = catalog.create_background_preset(
+        VideoBackgroundPresetCreate(
+            nameZh="第二场景",
+            nameEn="Second scene",
+            sceneZh="一间安静的候车室。",
+            sceneEn="A quiet waiting room.",
+            ambientSoundZh="",
+            ambientSoundEn="",
+            participantRelationshipZh="",
+            participantRelationshipEn="",
+            lightingZh="",
+            lightingEn="",
+            framingZh="",
+            framingEn="",
+        )
+    )
+    content = _generative_content(catalog, [first.id, second.id])
+
+    with pytest.raises(ServiceError) as invalid:
+        catalog.update_content_plan(
+            content.id,
+            ContentPlanUpdate(
+                expectedRevision=content.revision,
+                mode=ContentMode.FIXED,
+                baseVideoPrompt="An adult answers in a quiet room.",
+                dialogue="我知道了。",
+                trueEmotionDescription="说话内容和可见表现保持一致。",
+                backgroundPresetIds=[first.id, second.id],
+            ),
+        )
+    assert invalid.value.status_code == 422
+    unchanged = catalog.get_content_plan(content.id)
+    assert unchanged.mode is ContentMode.GENERATIVE
+    assert unchanged.revision == content.revision
+    assert unchanged.background_preset_ids == [first.id, second.id]
+
+    fixed = catalog.update_content_plan(
+        content.id,
+        ContentPlanUpdate(
+            expectedRevision=content.revision,
+            mode=ContentMode.FIXED,
+            baseVideoPrompt="An adult answers in a quiet room.",
+            dialogue="我知道了。",
+            trueEmotionDescription="说话内容和可见表现保持一致。",
+            backgroundPresetIds=[first.id],
+        ),
+    )
+    assert fixed.mode is ContentMode.FIXED
+    assert fixed.background_preset_ids == [first.id]
+
+    generative = catalog.update_content_plan(
+        content.id,
+        ContentPlanUpdate(
+            expectedRevision=fixed.revision,
+            mode=ContentMode.GENERATIVE,
+            backgroundPresetIds=[first.id, second.id],
+        ),
+    )
+    assert generative.mode is ContentMode.GENERATIVE
+    assert generative.background_preset_ids == [first.id, second.id]
 
 
 def test_formal_batch_rejects_inactive_and_nonformal_datasets(tmp_path: Path) -> None:

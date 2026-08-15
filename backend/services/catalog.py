@@ -30,8 +30,8 @@ from backend.domain.models import (
 from backend.domain.schemas import (
     BilingualSelectionRead,
     ContentPlanBackgroundRead,
-    ContentPlanBackgroundReplace,
     ContentPlanCreate,
+    ContentPlanFields,
     ContentPlanRead,
     ContentPlanUpdate,
     DatasetCreate,
@@ -44,6 +44,7 @@ from backend.domain.schemas import (
     VideoBackgroundPresetCreate,
     VideoBackgroundPresetRead,
     VideoBackgroundPresetUpdate,
+    validate_content_background_ids,
 )
 
 from .errors import ServiceError, not_found, revision_conflict, state_conflict
@@ -132,12 +133,15 @@ class CatalogService:
                     ContentPlan.id,
                 ),
                 page,
-                ContentPlanRead.model_validate,
+                lambda row: self._content_plan_read(session, row),
             )
 
     def get_content_plan(self, content_id: int) -> ContentPlanRead:
         with self.database.read_session() as session:
-            return ContentPlanRead.model_validate(self._get(session, ContentPlan, content_id, "contentPlan"))
+            return self._content_plan_read(
+                session,
+                self._get(session, ContentPlan, content_id, "contentPlan"),
+            )
 
     def create_content_plan(self, payload: ContentPlanCreate) -> ContentPlanRead:
         with self.database.immediate_session() as session:
@@ -147,23 +151,32 @@ class CatalogService:
                 payload.name_zh,
                 payload.name_en,
             )
+            backgrounds = self._content_background_rows(
+                session,
+                payload.background_preset_ids,
+                payload.mode,
+            )
             row = ContentPlan(
-                **payload.model_dump(),
+                **payload.model_dump(exclude={"background_preset_ids"}),
                 name_zh_key=name_key(payload.name_zh),
                 name_en_key=name_key(payload.name_en),
             )
             session.add(row)
             session.flush()
-            return ContentPlanRead.model_validate(row)
+            self._replace_content_background_links(session, row.id, backgrounds)
+            return self._content_plan_read(session, row)
 
     def update_content_plan(self, content_id: int, payload: ContentPlanUpdate) -> ContentPlanRead:
         with self.database.immediate_session() as session:
             row = self._get(session, ContentPlan, content_id, "contentPlan")
             self._check_revision(row, payload.expected_revision, "contentPlan")
-            values = payload.model_dump(exclude_unset=True, exclude={"expected_revision"})
+            values = payload.model_dump(
+                exclude_unset=True,
+                exclude={"expected_revision", "background_preset_ids"},
+            )
             try:
-                candidate = ContentPlanCreate.model_validate(
-                    {**ContentPlanCreate.model_validate(row).model_dump(), **values}
+                candidate = ContentPlanFields.model_validate(
+                    {**ContentPlanFields.model_validate(row).model_dump(), **values}
                 )
             except ValidationError as error:
                 raise ServiceError(422, "validation_error", "The content plan is not valid") from error
@@ -174,11 +187,17 @@ class CatalogService:
                 candidate.name_en,
                 content_id,
             )
+            backgrounds = self._content_background_rows(
+                session,
+                payload.background_preset_ids,
+                candidate.mode,
+            )
             values = candidate.model_dump()
             values["name_zh_key"] = name_key(candidate.name_zh)
             values["name_en_key"] = name_key(candidate.name_en)
             self._apply_update(row, values)
-            return ContentPlanRead.model_validate(row)
+            self._replace_content_background_links(session, row.id, backgrounds)
+            return self._content_plan_read(session, row)
 
     def delete_content_plan(self, content_id: int, expected_revision: int) -> None:
         with self.database.immediate_session() as session:
@@ -193,52 +212,6 @@ class CatalogService:
     def get_content_backgrounds(self, content_id: int) -> ContentPlanBackgroundRead:
         with self.database.read_session() as session:
             content = self._get(session, ContentPlan, content_id, "contentPlan")
-            return self._content_background_read(session, content)
-
-    def replace_content_backgrounds(
-        self,
-        content_id: int,
-        payload: ContentPlanBackgroundReplace,
-    ) -> ContentPlanBackgroundRead:
-        with self.database.immediate_session() as session:
-            content = self._get(session, ContentPlan, content_id, "contentPlan")
-            self._check_revision(
-                content,
-                payload.expected_revision,
-                "contentPlan",
-            )
-            if content.mode is ContentMode.FIXED and len(payload.background_preset_ids) != 1:
-                raise ServiceError(
-                    422,
-                    "validation_error",
-                    "Fixed content requires exactly one source background",
-                )
-            backgrounds = [
-                self._get(
-                    session,
-                    VideoBackgroundPreset,
-                    background_id,
-                    "videoBackgroundPreset",
-                )
-                for background_id in payload.background_preset_ids
-            ]
-            session.exec(
-                delete(ContentPlanBackground).where(
-                    ContentPlanBackground.content_plan_id == content_id
-                )
-            )
-            session.flush()
-            for position, background in enumerate(backgrounds):
-                session.add(
-                    ContentPlanBackground(
-                        content_plan_id=content_id,
-                        background_preset_id=background.id,
-                        position=position,
-                    )
-                )
-            content.revision += 1
-            content.updated_at = utc_now()
-            session.flush()
             return self._content_background_read(session, content)
 
     def list_prompt_presets(self, page: int) -> PageRead[PromptPresetRead]:
@@ -505,6 +478,63 @@ class CatalogService:
             "negative_examples": [entry.text for entry in examples if entry.kind is ExampleKind.NEGATIVE],
         }
         return PromptPresetRead.model_validate(values)
+
+    @staticmethod
+    def _content_background_rows(
+        session: Session,
+        background_ids: list[int],
+        mode: ContentMode,
+    ) -> list[VideoBackgroundPreset]:
+        validate_content_background_ids(background_ids, mode)
+        return [
+            CatalogService._get(
+                session,
+                VideoBackgroundPreset,
+                background_id,
+                "videoBackgroundPreset",
+            )
+            for background_id in background_ids
+        ]
+
+    @staticmethod
+    def _replace_content_background_links(
+        session: Session,
+        content_id: int,
+        backgrounds: list[VideoBackgroundPreset],
+    ) -> None:
+        session.exec(
+            delete(ContentPlanBackground).where(
+                ContentPlanBackground.content_plan_id == content_id
+            )
+        )
+        session.flush()
+        session.add_all(
+            [
+                ContentPlanBackground(
+                    content_plan_id=content_id,
+                    background_preset_id=background.id,
+                    position=position,
+                )
+                for position, background in enumerate(backgrounds)
+            ]
+        )
+        session.flush()
+
+    @staticmethod
+    def _content_plan_read(session: Session, content: ContentPlan) -> ContentPlanRead:
+        links = session.exec(
+            select(ContentPlanBackground)
+            .where(ContentPlanBackground.content_plan_id == content.id)
+            .order_by(ContentPlanBackground.position)
+        ).all()
+        return ContentPlanRead(
+            **ContentPlanFields.model_validate(content).model_dump(),
+            id=content.id,
+            revision=content.revision,
+            created_at=content.created_at,
+            updated_at=content.updated_at,
+            background_preset_ids=[link.background_preset_id for link in links],
+        )
 
     @staticmethod
     def _content_background_read(

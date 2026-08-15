@@ -43,7 +43,6 @@ from backend.domain.models import Asset, BatchVideoInputSnapshot, GenerationAtte
 from backend.domain.schemas import (
     BatchDraftCreate,
     BatchContentSelectionInput,
-    ContentPlanBackgroundReplace,
     BatchSubmitRequest,
     ContentPlanCreate,
     DatasetCreate,
@@ -190,6 +189,22 @@ async def create_running_request(
     dataset = catalog.create_dataset(
         DatasetCreate(name="Renderer gateway", note="")
     )
+    background = catalog.create_background_preset(
+        VideoBackgroundPresetCreate(
+            nameZh="私人办公室",
+            nameEn="Private office",
+            sceneZh="一间有一把椅子和一张书桌的私人办公室。",
+            sceneEn="A private office containing one chair and one desk.",
+            ambientSoundZh="能听到稳定的通风声。",
+            ambientSoundEn="A steady ventilation hum remains audible.",
+            participantRelationshipZh="画面中只有被摄者。",
+            participantRelationshipEn="The subject remains the only occupant in view.",
+            lightingZh="柔和的日光从一扇窗户照进来。",
+            lightingEn="Soft daylight enters through one window.",
+            framingZh="使用静止的平视中景。",
+            framingEn="Use a static eye-level medium shot.",
+        )
+    )
     content = catalog.create_content_plan(
         ContentPlanCreate(
             nameZh="单人",
@@ -209,6 +224,7 @@ async def create_running_request(
             contentRequirementsEn="Describe one adult responding alone in the room.",
             sceneSupplementZh="",
             sceneSupplementEn="",
+            backgroundPresetIds=[background.id],
         )
     )
     preset = catalog.create_prompt_preset(
@@ -218,30 +234,6 @@ async def create_running_request(
             styleGuidance="Use a static eye-level medium shot.",
             finalRenderNegativeConstraints="subtitles, captions, distortion",
         )
-    )
-    background = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
-            nameZh="私人办公室",
-            nameEn="Private office",
-            sceneZh="一间有一把椅子和一张书桌的私人办公室。",
-            sceneEn="A private office containing one chair and one desk.",
-            ambientSoundZh="能听到稳定的通风声。",
-            ambientSoundEn="A steady ventilation hum remains audible.",
-            participantRelationshipZh="画面中只有被摄者。",
-            participantRelationshipEn="The subject remains the only occupant in view.",
-            lightingZh="柔和的日光从一扇窗户照进来。",
-            lightingEn="Soft daylight enters through one window.",
-            framingZh="使用静止的平视中景。",
-            framingEn="Use a static eye-level medium shot.",
-        )
-    )
-    content = catalog.get_content_plan(content.id)
-    catalog.replace_content_backgrounds(
-        content.id,
-        ContentPlanBackgroundReplace(
-            expectedRevision=content.revision,
-            backgroundPresetIds=[background.id],
-        ),
     )
     content = catalog.get_content_plan(content.id)
     prompts = PromptService(UnconfiguredPromptModel())

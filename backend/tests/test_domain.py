@@ -95,6 +95,7 @@ def content_plan_payload(**overrides: object) -> dict[str, object]:
         "contentRequirementsEn": "Describe one adult responding in the room.",
         "sceneSupplementZh": "保持办公室环境清楚可见。",
         "sceneSupplementEn": "Keep the office setting clearly visible.",
+        "backgroundPresetIds": [1],
     }
     values.update(overrides)
     return values
@@ -331,13 +332,16 @@ def test_content_plan_rejects_removed_single_language_fields() -> None:
 def test_catalog_updates_reject_explicit_null_for_non_nullable_fields(
     schema: type[BaseModel], field: str
 ) -> None:
+    payload = {"expectedRevision": 1, field: None}
+    if schema is ContentPlanUpdate:
+        payload["backgroundPresetIds"] = [1]
     with pytest.raises(ValidationError, match="cannot be null"):
-        schema.model_validate({"expectedRevision": 1, field: None})
+        schema.model_validate(payload)
 
 
 def test_content_plan_update_allows_clearing_nullable_fields() -> None:
     update = ContentPlanUpdate.model_validate(
-        {"expectedRevision": 1, "conflictDirection": None, "dialogue": None, "displayText": None}
+        {"expectedRevision": 1, "backgroundPresetIds": [1], "conflictDirection": None, "dialogue": None, "displayText": None}
     )
     assert update.conflict_direction is None
 

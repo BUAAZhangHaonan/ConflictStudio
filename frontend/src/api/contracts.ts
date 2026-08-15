@@ -89,9 +89,11 @@ export interface ContentPlanFields {
   sceneSupplementEn: string;
 }
 
-export interface ContentPlan extends RevisionedResource, ContentPlanFields {}
-export type ContentPlanCreate = ContentPlanFields;
-export type ContentPlanUpdate = Partial<Omit<ContentPlanFields, 'category'>> & { expectedRevision: number };
+export interface ContentPlan extends RevisionedResource, ContentPlanFields {
+  backgroundPresetIds: number[];
+}
+export type ContentPlanCreate = ContentPlanFields & { backgroundPresetIds: number[] };
+export type ContentPlanUpdate = Partial<Omit<ContentPlanFields, 'category'>> & { backgroundPresetIds: number[]; expectedRevision: number };
 
 export interface PromptPresetFields {
   name: string;

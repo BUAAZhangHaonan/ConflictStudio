@@ -42,7 +42,6 @@ from backend.domain.schemas import (
     BatchDraftCreate,
     BatchSubmitRequest,
     BatchContentSelectionInput,
-    ContentPlanBackgroundReplace,
     ContentPlanCreate,
     DatasetCreate,
     DatasetUpdate,
@@ -161,6 +160,22 @@ def fixed_resources(
     dataset = catalog.create_dataset(
         DatasetCreate(name="正式生成集", note="第一批真实生成")
     )
+    background = catalog.create_background_preset(
+        VideoBackgroundPresetCreate(
+            nameZh="安静办公室",
+            nameEn="Quiet office",
+            sceneZh="一间有书桌和中性墙面的小型私人办公室。",
+            sceneEn="A small private office with a desk and neutral walls.",
+            ambientSoundZh="低沉的室内底噪和远处的通风声。",
+            ambientSoundEn="Low room tone and distant ventilation.",
+            participantRelationshipZh="画面中只有被摄者。",
+            participantRelationshipEn="The subject remains the only occupant in view.",
+            lightingZh="柔和的日光从一侧照入。",
+            lightingEn="Soft daylight from one side.",
+            framingZh="静止的平视中景。",
+            framingEn="Static eye-level medium shot.",
+        )
+    )
     content = catalog.create_content_plan(
         ContentPlanCreate(
             nameZh="克制回应",
@@ -187,6 +202,7 @@ def fixed_resources(
             contentRequirementsEn="",
             sceneSupplementZh="",
             sceneSupplementEn="",
+            backgroundPresetIds=[background.id],
         )
     )
     preset = catalog.create_prompt_preset(
@@ -201,31 +217,6 @@ def fixed_resources(
             finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
         )
     )
-    background = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
-            nameZh="安静办公室",
-            nameEn="Quiet office",
-            sceneZh="一间有书桌和中性墙面的小型私人办公室。",
-            sceneEn="A small private office with a desk and neutral walls.",
-            ambientSoundZh="低沉的室内底噪和远处的通风声。",
-            ambientSoundEn="Low room tone and distant ventilation.",
-            participantRelationshipZh="画面中只有被摄者。",
-            participantRelationshipEn="The subject remains the only occupant in view.",
-            lightingZh="柔和的日光从一侧照入。",
-            lightingEn="Soft daylight from one side.",
-            framingZh="静止的平视中景。",
-            framingEn="Static eye-level medium shot.",
-        )
-    )
-    content = catalog.get_content_plan(content.id)
-    catalog.replace_content_backgrounds(
-        content.id,
-        ContentPlanBackgroundReplace(
-            expectedRevision=content.revision,
-            backgroundPresetIds=[background.id],
-        ),
-    )
-    content = catalog.get_content_plan(content.id)
     return catalog, dataset, content, preset, background
 
 
@@ -687,6 +678,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
             contentRequirementsEn="Create subtle conflicting visual and vocal evidence.",
             sceneSupplementZh="",
             sceneSupplementEn="",
+            backgroundPresetIds=[background_read.id],
         )
     )
     preset_read = catalog.create_prompt_preset(
@@ -1166,6 +1158,22 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
     catalog, dataset, content_one, preset_one, background_one = fixed_resources(
         database
     )
+    background_two = catalog.create_background_preset(
+        VideoBackgroundPresetCreate(
+            nameZh="安静办公室二",
+            nameEn="Quiet office two",
+            sceneZh="一间有书桌和中性墙面的紧凑私人办公室。",
+            sceneEn="A compact private office with a desk and neutral walls.",
+            ambientSoundZh="低沉的室内底噪和远处的通风声。",
+            ambientSoundEn="Low room tone and distant ventilation.",
+            participantRelationshipZh="画面中只有被摄者。",
+            participantRelationshipEn="The subject remains the only occupant in view.",
+            lightingZh="柔和的日光从一侧照入。",
+            lightingEn="Soft daylight from one side.",
+            framingZh="静止的平视中景。",
+            framingEn="Static eye-level medium shot.",
+        )
+    )
     content_two = catalog.create_content_plan(
         ContentPlanCreate(
             nameZh="一致回应二",
@@ -1190,33 +1198,9 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             contentRequirementsEn="",
             sceneSupplementZh="",
             sceneSupplementEn="",
-        )
-    )
-    background_two = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
-            nameZh="安静办公室二",
-            nameEn="Quiet office two",
-            sceneZh="一间有书桌和中性墙面的紧凑私人办公室。",
-            sceneEn="A compact private office with a desk and neutral walls.",
-            ambientSoundZh="低沉的室内底噪和远处的通风声。",
-            ambientSoundEn="Low room tone and distant ventilation.",
-            participantRelationshipZh="画面中只有被摄者。",
-            participantRelationshipEn="The subject remains the only occupant in view.",
-            lightingZh="柔和的日光从一侧照入。",
-            lightingEn="Soft daylight from one side.",
-            framingZh="静止的平视中景。",
-            framingEn="Static eye-level medium shot.",
-        )
-    )
-    content_two = catalog.get_content_plan(content_two.id)
-    catalog.replace_content_backgrounds(
-        content_two.id,
-        ContentPlanBackgroundReplace(
-            expectedRevision=content_two.revision,
             backgroundPresetIds=[background_two.id],
-        ),
+        )
     )
-    content_two = catalog.get_content_plan(content_two.id)
     batches = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("test")),
@@ -1368,6 +1352,7 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             contentRequirementsEn="",
             sceneSupplementZh="",
             sceneSupplementEn="",
+            backgroundPresetIds=[background.id],
         )
     )
     preset = catalog.create_prompt_preset(
@@ -1378,15 +1363,6 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
         )
     )
-    content = catalog.get_content_plan(content.id)
-    catalog.replace_content_backgrounds(
-        content.id,
-        ContentPlanBackgroundReplace(
-            expectedRevision=content.revision,
-            backgroundPresetIds=[background.id],
-        ),
-    )
-    content = catalog.get_content_plan(content.id)
     batches = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("test")),

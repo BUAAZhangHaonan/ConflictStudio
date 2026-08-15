@@ -226,8 +226,8 @@ try {
   await compatibilityChecks.nth(1).uncheck();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.getByText('Content item saved.').waitFor();
-  const relationRequest = api.state.requests.findLast(request => request.method === 'PUT' && request.path === '/api/content-plans/2/backgrounds');
-  assert.deepEqual(relationRequest?.body, { expectedRevision: 2, backgroundPresetIds: [1] });
+  const contentUpdateRequest = api.state.requests.findLast(request => request.method === 'PATCH' && request.path === '/api/content-plans/2');
+  assert.deepEqual(contentUpdateRequest?.body.backgroundPresetIds, [1]);
 
   await open(page, '/generate/presets');
   assert.equal(await page.locator('body').innerText().then(text => text.includes('Scene supplement')), false, 'Prompt presets must not show the removed scene supplement.');

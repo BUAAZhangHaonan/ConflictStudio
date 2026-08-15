@@ -21,6 +21,23 @@ def client_for(tmp_path: Path) -> TestClient:
 
 
 def create_catalog_records(client: TestClient) -> dict[str, dict]:
+    background = client.post(
+        "/api/video-background-presets",
+        json={
+            "nameZh": "私人书房",
+            "nameEn": "Private study",
+            "sceneZh": "一间有一把椅子和一张书桌的私人书房。",
+            "sceneEn": "A private study containing one chair and one desk.",
+            "ambientSoundZh": "能听到安静的通风声。",
+            "ambientSoundEn": "A quiet ventilation hum is audible.",
+            "participantRelationshipZh": "",
+            "participantRelationshipEn": "",
+            "lightingZh": "柔和的日光从一扇窗户照进来。",
+            "lightingEn": "Soft daylight enters through one window.",
+            "framingZh": "使用静止的平视中景。",
+            "framingEn": "Use a static eye-level medium shot.",
+        },
+    )
     records = {
         "dataset": client.post(
             "/api/datasets",
@@ -46,6 +63,7 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
                 "contentRequirementsEn": "Describe one adult responding in the room.",
                 "sceneSupplementZh": "",
                 "sceneSupplementEn": "",
+                "backgroundPresetIds": [background.json()["id"]],
             },
         ),
         "prompt": client.post(
@@ -57,37 +75,10 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
                 "finalRenderNegativeConstraints": "subtitles, captions, camera shake",
             },
         ),
-        "background": client.post(
-            "/api/video-background-presets",
-            json={
-                "nameZh": "私人书房",
-                "nameEn": "Private study",
-                "sceneZh": "一间有一把椅子和一张书桌的私人书房。",
-                "sceneEn": "A private study containing one chair and one desk.",
-                "ambientSoundZh": "能听到安静的通风声。",
-                "ambientSoundEn": "A quiet ventilation hum is audible.",
-                "participantRelationshipZh": "",
-                "participantRelationshipEn": "",
-                "lightingZh": "柔和的日光从一扇窗户照进来。",
-                "lightingEn": "Soft daylight enters through one window.",
-                "framingZh": "使用静止的平视中景。",
-                "framingEn": "Use a static eye-level medium shot.",
-            },
-        ),
+        "background": background,
     }
     assert all(response.status_code == 201 for response in records.values())
     values = {name: response.json() for name, response in records.items()}
-    mapping = client.put(
-        f"/api/content-plans/{values['content']['id']}/backgrounds",
-        json={
-            "expectedRevision": values["content"]["revision"],
-            "backgroundPresetIds": [values["background"]["id"]],
-        },
-    )
-    assert mapping.status_code == 200
-    values["content"] = client.get(
-        f"/api/content-plans/{values['content']['id']}"
-    ).json()
     return values
 
 
@@ -438,7 +429,11 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
             (f"/api/datasets/{records['dataset']['id']}", {"expectedRevision": 1, "note": "Changed"}),
             (
                 f"/api/content-plans/{records['content']['id']}",
-                {"expectedRevision": 2, "sceneEn": "A changed private study."},
+                {
+                    "expectedRevision": 1,
+                    "sceneEn": "A changed private study.",
+                    "backgroundPresetIds": [records["background"]["id"]],
+                },
             ),
             (
                 f"/api/prompt-presets/{records['prompt']['id']}",
@@ -458,7 +453,7 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
         assert saved.status_code == 200
         body = saved.json()
         assert body["datasetRevision"] == 1
-        assert body["contentSelections"][0]["contentPlan"]["revision"] == 2
+        assert body["contentSelections"][0]["contentPlan"]["revision"] == 1
         assert body["contentSelections"][0]["mode"] == "Generative"
         assert body["promptPreset"]["revision"] == 1
         assert body["contentSelections"][0]["backgroundPresets"][0]["revision"] == 1

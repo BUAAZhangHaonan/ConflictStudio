@@ -271,7 +271,7 @@ def test_invalid_direction_returns_stable_422(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "validation_error"
 
 
-def content_plan_request(**overrides: object) -> dict[str, object]:
+def content_plan_request(background_preset_ids: list[int], **overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "nameZh": "一致回应",
         "nameEn": "Aligned response",
@@ -290,6 +290,7 @@ def content_plan_request(**overrides: object) -> dict[str, object]:
         "contentRequirementsEn": "Describe one adult responding in the room.",
         "sceneSupplementZh": "",
         "sceneSupplementEn": "",
+        "backgroundPresetIds": background_preset_ids,
     }
     values.update(overrides)
     return values
@@ -297,14 +298,15 @@ def content_plan_request(**overrides: object) -> dict[str, object]:
 
 def test_content_plan_create_and_update_enforce_emotion_relation(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
+        background = client.post("/api/video-background-presets", json=background_request()).json()
         invalid_create = client.post(
             "/api/content-plans",
-            json=content_plan_request(apparentEmotion="tense"),
+            json=content_plan_request([background["id"]], apparentEmotion="tense"),
         )
-        created = client.post("/api/content-plans", json=content_plan_request())
+        created = client.post("/api/content-plans", json=content_plan_request([background["id"]]))
         invalid_update = client.patch(
             f"/api/content-plans/{created.json()['id']}",
-            json={"expectedRevision": created.json()["revision"], "apparentEmotion": "tense"},
+            json={"expectedRevision": created.json()["revision"], "apparentEmotion": "tense", "backgroundPresetIds": [background["id"]]},
         )
 
     assert invalid_create.status_code == 422
@@ -443,9 +445,13 @@ def test_frontend_deep_links_use_index_and_api_paths_stay_on_api(tmp_path: Path)
 
 def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
+        background = client.post(
+            "/api/video-background-presets",
+            json=background_request(),
+        )
         content = client.post(
             "/api/content-plans",
-            json=content_plan_request(),
+            json=content_plan_request([background.json()["id"]]),
         )
         prompt = client.post(
             "/api/prompt-presets",
@@ -456,19 +462,6 @@ def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) ->
                 "finalRenderNegativeConstraints": "subtitles, captions, distortion",
             },
         )
-        background = client.post(
-            "/api/video-background-presets",
-            json=background_request(),
-        )
-        mapping = client.put(
-            f"/api/content-plans/{content.json()['id']}/backgrounds",
-            json={
-                "expectedRevision": content.json()["revision"],
-                "backgroundPresetIds": [background.json()["id"]],
-            },
-        )
-        assert mapping.status_code == 200
-        content = client.get(f"/api/content-plans/{content.json()['id']}")
         response = client.post(
             "/api/prompt-preview",
             json={
@@ -493,9 +486,13 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
             "/api/datasets",
             json={"name": "Production", "note": ""},
         )
+        background = client.post(
+            "/api/video-background-presets",
+            json=background_request(nameZh="私人书房", nameEn="Private study"),
+        )
         content = client.post(
             "/api/content-plans",
-            json=content_plan_request(),
+            json=content_plan_request([background.json()["id"]]),
         )
         prompt = client.post(
             "/api/prompt-presets",
@@ -506,18 +503,6 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
                 "finalRenderNegativeConstraints": "subtitles, captions, distortion",
             },
         )
-        background = client.post(
-            "/api/video-background-presets",
-            json=background_request(nameZh="私人书房", nameEn="Private study"),
-        )
-        mapping = client.put(
-            f"/api/content-plans/{content.json()['id']}/backgrounds",
-            json={
-                "expectedRevision": content.json()["revision"],
-                "backgroundPresetIds": [background.json()["id"]],
-            },
-        )
-        assert mapping.status_code == 200
         draft = client.post(
             "/api/batch-drafts",
             json={

@@ -36,14 +36,14 @@ export const contentPlansFixture = [{
   psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
   dialogue: 'I understand.', displayText: null, trueEmotionDescription: 'The voice and expression carry sadness.',
   baseVideoPrompt: 'A fixed camera records a short reply.', contentRequirementsZh: '自然回应', contentRequirementsEn: 'Natural reply',
-  sceneSupplementZh: '稳定镜头', sceneSupplementEn: 'Stable camera', revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  sceneSupplementZh: '稳定镜头', sceneSupplementEn: 'Stable camera', backgroundPresetIds: [1], revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }, {
   id: 2, nameZh: '临时来电', nameEn: 'Unexpected call', category: 'A-VA', conflictDirection: null,
   mode: 'Generative', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'sadness',
   sceneZh: '接听电话', sceneEn: 'Answering a call', triggerEventZh: '收到消息', triggerEventEn: 'A message arrives',
   psychologicalBackgroundZh: '人物保持克制', psychologicalBackgroundEn: 'The person remains restrained',
   dialogue: '', displayText: null, trueEmotionDescription: '', baseVideoPrompt: '', contentRequirementsZh: '生成自然对白', contentRequirementsEn: 'Write natural dialogue',
-  sceneSupplementZh: '', sceneSupplementEn: '', revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  sceneSupplementZh: '', sceneSupplementEn: '', backgroundPresetIds: [1, 2], revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }];
 
 export const promptPresetsFixture = [{
@@ -274,7 +274,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
         if (method === 'POST' && path === '/api/content-plans') {
           const content = { id: Math.max(0, ...state.contentPlans.map(item => item.id)) + 1, ...body, revision: 1, createdAt: timestamp, updatedAt: timestamp };
           state.contentPlans.push(content);
-          state.contentRelations.set(content.id, []);
+          state.contentRelations.set(content.id, [...body.backgroundPresetIds]);
           return fulfillJson(route, content, 201);
         }
         const contentMatch = /^\/api\/content-plans\/(\d+)$/u.exec(path);
@@ -283,20 +283,13 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           const index = state.contentPlans.findIndex(item => item.id === id);
           const content = { ...state.contentPlans[index], ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'expectedRevision')), revision: state.contentPlans[index].revision + 1, updatedAt: timestamp };
           state.contentPlans[index] = content;
+          state.contentRelations.set(id, [...body.backgroundPresetIds]);
           return fulfillJson(route, content);
         }
         const relationMatch = /^\/api\/content-plans\/(\d+)\/backgrounds$/u.exec(path);
         if (method === 'GET' && relationMatch) {
           const id = Number(relationMatch[1]);
           const content = state.contentPlans.find(item => item.id === id);
-          const backgroundIds = state.contentRelations.get(id) ?? [];
-          return fulfillJson(route, { contentPlanId: id, contentPlanRevision: content?.revision ?? 1, backgrounds: state.backgrounds.filter(item => backgroundIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })) });
-        }
-        if (method === 'PUT' && relationMatch) {
-          const id = Number(relationMatch[1]);
-          state.contentRelations.set(id, [...body.backgroundPresetIds]);
-          const content = state.contentPlans.find(item => item.id === id);
-          if (content) content.revision += 1;
           const backgroundIds = state.contentRelations.get(id) ?? [];
           return fulfillJson(route, { contentPlanId: id, contentPlanRevision: content?.revision ?? 1, backgrounds: state.backgrounds.filter(item => backgroundIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })) });
         }

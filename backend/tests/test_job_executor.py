@@ -41,7 +41,6 @@ from backend.domain.models import (
 from backend.domain.schemas import (
     BatchDraftCreate,
     BatchContentSelectionInput,
-    ContentPlanBackgroundReplace,
     BatchSubmitRequest,
     ContentPlanCreate,
     DatasetCreate,
@@ -191,6 +190,22 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
     dataset = catalog.create_dataset(
         DatasetCreate(name=f"Production {suffix}", note="")
     )
+    background = catalog.create_background_preset(
+        VideoBackgroundPresetCreate(
+            nameZh=f"背景 {suffix}",
+            nameEn=f"Background {suffix}",
+            sceneZh="一间有一把椅子和一张书桌的私人办公室。",
+            sceneEn="A private office containing one chair and one desk.",
+            ambientSoundZh="能听到稳定的通风声。",
+            ambientSoundEn="A steady ventilation hum remains audible.",
+            participantRelationshipZh="画面中只有被摄者。",
+            participantRelationshipEn="The subject remains the only occupant in view.",
+            lightingZh="柔和的日光从一扇窗户照进来。",
+            lightingEn="Soft daylight enters through one window.",
+            framingZh="使用静止的平视中景。",
+            framingEn="Use a static eye-level medium shot.",
+        )
+    )
     content = catalog.create_content_plan(
         ContentPlanCreate(
             nameZh=f"内容 {suffix}",
@@ -210,6 +225,7 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
             contentRequirementsEn="Describe one adult answering a short question in the room.",
             sceneSupplementZh="",
             sceneSupplementEn="",
+            backgroundPresetIds=[background.id],
         )
     )
     preset = catalog.create_prompt_preset(
@@ -220,31 +236,6 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
             finalRenderNegativeConstraints="subtitles, captions, distortion, exaggerated movement",
         )
     )
-    background = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
-            nameZh=f"背景 {suffix}",
-            nameEn=f"Background {suffix}",
-            sceneZh="一间有一把椅子和一张书桌的私人办公室。",
-            sceneEn="A private office containing one chair and one desk.",
-            ambientSoundZh="能听到稳定的通风声。",
-            ambientSoundEn="A steady ventilation hum remains audible.",
-            participantRelationshipZh="画面中只有被摄者。",
-            participantRelationshipEn="The subject remains the only occupant in view.",
-            lightingZh="柔和的日光从一扇窗户照进来。",
-            lightingEn="Soft daylight enters through one window.",
-            framingZh="使用静止的平视中景。",
-            framingEn="Use a static eye-level medium shot.",
-        )
-    )
-    content = catalog.get_content_plan(content.id)
-    catalog.replace_content_backgrounds(
-        content.id,
-        ContentPlanBackgroundReplace(
-            expectedRevision=content.revision,
-            backgroundPresetIds=[background.id],
-        ),
-    )
-    content = catalog.get_content_plan(content.id)
     return dataset, content, preset, background
 
 
