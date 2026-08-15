@@ -29,7 +29,7 @@ export function ArchivePage() {
   const initial = new URLSearchParams(location.search);
   const requestedPage = Number(initial.get('page'));
   const [page, setPage] = useState(Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1);
-  const samplesQuery = useSamplesQuery(undefined, page);
+  const samplesQuery = useSamplesQuery({}, page);
   const archivesQuery = useArchivesQuery();
   const previewMutation = usePreviewArchiveMutation();
   const syncMutation = useSyncArchiveMutation();

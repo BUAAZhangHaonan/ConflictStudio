@@ -12,6 +12,24 @@ import type {
   ReviewerRename, ReviewerStatistics, ReviewerStatisticsFilter, Sample,
   SampleClassificationUpdate, TestRunCreate,
 } from './contracts';
+import type { Category } from '../types';
+
+export interface DatasetQueryFilter {
+  search?: string;
+  status?: Dataset['status'];
+}
+
+export interface JobQueryFilter {
+  statuses?: JobSummary['status'][];
+}
+
+export interface SampleQueryFilter {
+  decision?: ReviewDecision;
+  datasetId?: number;
+  protocol?: 'VA' | 'VT';
+  category?: Category;
+  search?: string;
+}
 
 const roots = {
   datasets: ['datasets'] as const,
@@ -28,26 +46,28 @@ const roots = {
 
 export const queryKeys = {
   ...roots,
-  datasetsPage: (page: number) => [...roots.datasets, page] as const,
+  datasetsPage: (filter: DatasetQueryFilter, page: number) => [...roots.datasets, filter, page] as const,
+  dataset: (id: number) => [...roots.datasets, 'detail', id] as const,
   contentPlansPage: (page: number) => [...roots.contentPlans, page] as const,
   contentBackgrounds: (id: number) => [...roots.contentPlans, id, 'backgrounds'] as const,
   promptPresetsPage: (page: number) => [...roots.promptPresets, page] as const,
   backgroundPresetsPage: (page: number) => [...roots.backgroundPresets, page] as const,
   batchDraftsPage: (page: number) => [...roots.batchDrafts, page] as const,
   batchDraft: (id: number) => [...roots.batchDrafts, id] as const,
-  jobsPage: (page: number) => [...roots.jobs, 'page', page] as const,
+  jobsPage: (filter: JobQueryFilter, page: number) => [...roots.jobs, 'page', filter, page] as const,
   job: (id: number) => [...roots.jobs, 'detail', id] as const,
   jobItems: (id: number, page: number) => [...roots.jobs, 'detail', id, 'items', page] as const,
   jobAttempts: (itemId: number, page: number) => ['jobItems', itemId, 'attempts', page] as const,
   jobEvents: (id: number, page: number) => [...roots.jobs, 'detail', id, 'events', page] as const,
   gpuSlots: ['gpuSlots'] as const,
   health: ['health'] as const,
-  reviewersPage: (page: number) => [...roots.reviewers, page] as const,
+  reviewersPage: (page: number) => [...roots.reviewers, 'page', page] as const,
+  reviewer: (id: number) => [...roots.reviewers, 'detail', id] as const,
   reviewsPage: (sampleId: number, page: number) => [...roots.reviews, sampleId, page] as const,
   reviewerStatistics: (reviewerId: number, filter: ReviewerStatisticsFilter) => ['reviewerStatistics', reviewerId, filter] as const,
   archivesPage: (page: number) => [...roots.archives, page] as const,
   sample: (id: number) => [...roots.samples, 'detail', id] as const,
-  samplesPage: (decision: ReviewDecision | undefined, page: number) => [...roots.samples, decision ?? 'All', page] as const,
+  samplesPage: (filter: SampleQueryFilter, page: number) => [...roots.samples, filter, page] as const,
 };
 
 function pagePath(path: string, page: number, params = new URLSearchParams()): string {
@@ -56,13 +76,23 @@ function pagePath(path: string, page: number, params = new URLSearchParams()): s
 }
 
 export const generationQueries = {
-  datasets: (page: number) => queryOptions({ queryKey: queryKeys.datasetsPage(page), queryFn: () => apiRequest<Page<Dataset>>(pagePath('/api/datasets', page)) }),
+  datasets: (page: number, filter: DatasetQueryFilter = {}) => {
+    const params = new URLSearchParams();
+    if (filter.search?.trim()) params.set('search', filter.search.trim());
+    if (filter.status !== undefined) params.set('status', filter.status);
+    return queryOptions({ queryKey: queryKeys.datasetsPage(filter, page), queryFn: () => apiRequest<Page<Dataset>>(pagePath('/api/datasets', page, params)) });
+  },
+  dataset: (id: number) => queryOptions({ queryKey: queryKeys.dataset(id), queryFn: () => apiRequest<Dataset>(`/api/datasets/${id}`) }),
   contentPlans: (page: number) => queryOptions({ queryKey: queryKeys.contentPlansPage(page), queryFn: () => apiRequest<Page<ContentPlan>>(pagePath('/api/content-plans', page)) }),
   contentBackgrounds: (id: number) => queryOptions({ queryKey: queryKeys.contentBackgrounds(id), queryFn: () => apiRequest<ContentPlanBackgrounds>(`/api/content-plans/${id}/backgrounds`) }),
   promptPresets: (page: number) => queryOptions({ queryKey: queryKeys.promptPresetsPage(page), queryFn: () => apiRequest<Page<PromptPreset>>(pagePath('/api/prompt-presets', page)) }),
   backgroundPresets: (page: number) => queryOptions({ queryKey: queryKeys.backgroundPresetsPage(page), queryFn: () => apiRequest<Page<BackgroundPreset>>(pagePath('/api/video-background-presets', page)) }),
   batchDrafts: (page: number) => queryOptions({ queryKey: queryKeys.batchDraftsPage(page), queryFn: () => apiRequest<Page<BatchDraft>>(pagePath('/api/batch-drafts', page)) }),
-  jobs: (page: number) => queryOptions({ queryKey: queryKeys.jobsPage(page), queryFn: () => apiRequest<Page<JobSummary>>(pagePath('/api/jobs', page)) }),
+  jobs: (page: number, filter: JobQueryFilter = {}) => {
+    const params = new URLSearchParams();
+    filter.statuses?.forEach(status => params.append('status', status));
+    return queryOptions({ queryKey: queryKeys.jobsPage(filter, page), queryFn: () => apiRequest<Page<JobSummary>>(pagePath('/api/jobs', page, params)) });
+  },
   job: (id: number) => queryOptions({ queryKey: queryKeys.job(id), queryFn: () => apiRequest<JobDetail>(`/api/jobs/${id}`) }),
   jobItems: (id: number, page: number) => queryOptions({ queryKey: queryKeys.jobItems(id, page), queryFn: () => apiRequest<Page<JobItem>>(pagePath(`/api/jobs/${id}/items`, page)) }),
   jobAttempts: (itemId: number, page: number) => queryOptions({ queryKey: queryKeys.jobAttempts(itemId, page), queryFn: () => apiRequest<Page<GenerationAttempt>>(pagePath(`/api/job-items/${itemId}/attempts`, page)) }),
@@ -70,6 +100,7 @@ export const generationQueries = {
   gpuSlots: () => queryOptions({ queryKey: queryKeys.gpuSlots, queryFn: () => apiRequest<GpuSlot[]>('/api/gpu-slots'), refetchOnWindowFocus: true }),
   health: () => queryOptions({ queryKey: queryKeys.health, queryFn: () => apiRequest<Health>('/api/health') }),
   reviewers: (page: number) => queryOptions({ queryKey: queryKeys.reviewersPage(page), queryFn: () => apiRequest<Page<Reviewer>>(pagePath('/api/reviewers', page)) }),
+  reviewer: (id: number) => queryOptions({ queryKey: queryKeys.reviewer(id), queryFn: () => apiRequest<Reviewer>(`/api/reviewers/${id}`) }),
   reviews: (sampleId: number, page: number) => queryOptions({ queryKey: queryKeys.reviewsPage(sampleId, page), queryFn: () => apiRequest<Page<Review>>(pagePath('/api/reviews', page, new URLSearchParams({ sampleId: String(sampleId) }))) }),
   reviewerStatistics: (reviewerId: number, filter: ReviewerStatisticsFilter) => {
     const params = new URLSearchParams();
@@ -79,10 +110,14 @@ export const generationQueries = {
     return queryOptions({ queryKey: queryKeys.reviewerStatistics(reviewerId, filter), queryFn: () => apiRequest<ReviewerStatistics>(`/api/reviewers/${reviewerId}/statistics${params.size ? `?${params.toString()}` : ''}`) });
   },
   archives: (page: number) => queryOptions({ queryKey: queryKeys.archivesPage(page), queryFn: () => apiRequest<Page<Archive>>(pagePath('/api/archives', page)) }),
-  samples: (decision: ReviewDecision | undefined, page: number) => {
+  samples: (filter: SampleQueryFilter, page: number) => {
     const params = new URLSearchParams();
-    if (decision !== undefined) params.set('decision', decision);
-    return queryOptions({ queryKey: queryKeys.samplesPage(decision, page), queryFn: () => apiRequest<Page<Sample>>(pagePath('/api/samples', page, params)) });
+    if (filter.decision !== undefined) params.set('decision', filter.decision);
+    if (filter.datasetId !== undefined) params.set('datasetId', String(filter.datasetId));
+    if (filter.protocol !== undefined) params.set('protocol', filter.protocol);
+    if (filter.category !== undefined) params.set('category', filter.category);
+    if (filter.search?.trim()) params.set('search', filter.search.trim());
+    return queryOptions({ queryKey: queryKeys.samplesPage(filter, page), queryFn: () => apiRequest<Page<Sample>>(pagePath('/api/samples', page, params)) });
   },
   sample: (id: number) => queryOptions({ queryKey: queryKeys.sample(id), queryFn: () => apiRequest<Sample>(`/api/samples/${id}`) }),
 };
@@ -102,18 +137,20 @@ export async function invalidateJobAuthority(client: QueryClient, id: number, in
   await Promise.all(invalidations);
 }
 
-export function useDatasetsQuery(page = 1) { return useQuery(generationQueries.datasets(page)); }
+export function useDatasetsQuery(page = 1, filter: DatasetQueryFilter = {}) { return useQuery(generationQueries.datasets(page, filter)); }
+export function useDatasetQuery(id: number | null) { return useQuery({ ...generationQueries.dataset(id ?? 0), enabled: id !== null }); }
 export function useContentPlansQuery(page = 1) { return useQuery(generationQueries.contentPlans(page)); }
 export function useContentBackgroundsQuery(id: number | null) { return useQuery({ ...generationQueries.contentBackgrounds(id ?? 0), enabled: id !== null }); }
 export function usePromptPresetsQuery(page = 1) { return useQuery(generationQueries.promptPresets(page)); }
 export function useBackgroundPresetsQuery(page = 1) { return useQuery(generationQueries.backgroundPresets(page)); }
 export function useBatchDraftsQuery(page = 1) { return useQuery(generationQueries.batchDrafts(page)); }
-export function useJobsQuery(page = 1) { return useQuery(generationQueries.jobs(page)); }
+export function useJobsQuery(page = 1, filter: JobQueryFilter = {}) { return useQuery(generationQueries.jobs(page, filter)); }
 export function useGpuSlotsQuery() { return useQuery(generationQueries.gpuSlots()); }
 export function useHealthQuery() { return useQuery(generationQueries.health()); }
 export function useReviewersQuery(page = 1) { return useQuery(generationQueries.reviewers(page)); }
+export function useReviewerQuery(id: number | null) { return useQuery({ ...generationQueries.reviewer(id ?? 0), enabled: id !== null }); }
 export function useArchivesQuery(page = 1) { return useQuery(generationQueries.archives(page)); }
-export function useSamplesQuery(decision?: ReviewDecision, page = 1) { return useQuery(generationQueries.samples(decision, page)); }
+export function useSamplesQuery(filter: SampleQueryFilter = {}, page = 1) { return useQuery(generationQueries.samples(filter, page)); }
 export function useSampleQuery(id: number | null) { return useQuery({ ...generationQueries.sample(id ?? 0), enabled: id !== null }); }
 export function useReviewsQuery(sampleId: number | null, page = 1) { return useQuery({ ...generationQueries.reviews(sampleId ?? 0, page), enabled: sampleId !== null }); }
 export function useReviewerStatisticsQuery(reviewerId: number | null, filter: ReviewerStatisticsFilter) { return useQuery({ ...generationQueries.reviewerStatistics(reviewerId ?? 0, filter), enabled: reviewerId !== null && filter.startDate !== undefined && filter.endDate !== undefined }); }

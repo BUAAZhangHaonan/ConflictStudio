@@ -86,6 +86,42 @@ def test_reviewer_create_normalizes_name_and_rename_is_revisioned(tmp_path: Path
     assert conflict.json()["error"]["code"] == "reviewer_name_conflict"
 
 
+def test_sample_queue_filters_are_applied_before_pagination(tmp_path: Path) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+        dataset = client.get(f"/api/datasets/{sample['datasetId']}").json()
+        matching = client.get(
+            "/api/samples",
+            params={
+                "decision": "Pending",
+                "datasetId": sample["datasetId"],
+                "protocol": "VA",
+                "category": "A-VA",
+                "search": sample["displayId"],
+            },
+        )
+        by_dataset_name = client.get(
+            "/api/samples",
+            params={"decision": "Pending", "search": dataset["name"]},
+        )
+        wrong_protocol = client.get(
+            "/api/samples",
+            params={"decision": "Pending", "protocol": "VT"},
+        )
+        wrong_category = client.get(
+            "/api/samples",
+            params={"decision": "Pending", "category": "C-VA"},
+        )
+
+    assert matching.status_code == 200
+    assert matching.json()["total"] == 1
+    assert matching.json()["items"][0]["datasetName"] == dataset["name"]
+    assert by_dataset_name.json()["total"] == 1
+    assert wrong_protocol.json()["total"] == 0
+    assert wrong_category.json()["total"] == 0
+
+
 def test_review_history_is_append_only_and_rejects_no_change_or_pending(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:

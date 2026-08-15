@@ -34,6 +34,13 @@ class ReviewerService:
                 ReviewerRead.model_validate,
             )
 
+    def get(self, reviewer_id: int) -> ReviewerRead:
+        with self.database.read_session() as session:
+            row = session.get(Reviewer, reviewer_id)
+            if row is None:
+                raise not_found("reviewer", reviewer_id)
+            return ReviewerRead.model_validate(row)
+
     def create(self, payload: ReviewerCreate) -> ReviewerRead:
         name, name_key = normalize_reviewer_name(payload.name)
         with self.database.immediate_session() as session:

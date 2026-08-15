@@ -8,6 +8,20 @@
   gap: 14px;
 }
 
+.settings-current-reviewer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+}
+
+.settings-current-reviewer > span {
+  color: var(--color-text-muted);
+}
+
 .settings-services__recheck {
   display: flex;
   min-width: 0;

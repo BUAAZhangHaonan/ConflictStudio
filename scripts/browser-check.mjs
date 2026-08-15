@@ -128,6 +128,17 @@ try {
   assert.equal(await page.getByRole('columnheader', { name: 'Purpose', exact: true }).count(), 1);
   assert.equal(await page.locator('.workspace-datasets tbody tr').count(), 20, 'Workspace must render one server page of 20 datasets.');
   assert.match(await page.locator('.workspace-datasets .pagination').innerText(), /Page 1 of 2.*22 records/su);
+  for (const [label, total] of [['Pending review', '30'], ['Running jobs', '12'], ['Failed jobs', '12'], ['Pending archive', '25']]) {
+    const metric = page.locator('.workspace-metric-link').filter({ hasText: label });
+    assert.equal(await metric.locator('.metric__value').innerText(), total, `${label} must use the server total, not the first page count.`);
+  }
+  await expectPaginationState(page.locator('.workspace-jobs > .pagination'), { page: 1, totalPages: 2, total: 24 });
+  assert.equal(await page.locator('.workspace-job-card').count(), 20, 'Workspace tasks must keep a 20-row server page.');
+  await page.locator('#workspace-dataset-search').fill('Dataset 22');
+  await expectCount(page.locator('.workspace-datasets tbody tr'), 1, 'Dataset search must be applied before pagination.');
+  assert.equal(await page.locator('.workspace-datasets tbody tr').first().innerText().then(text => text.includes('Dataset 22')), true);
+  await page.locator('#workspace-dataset-search').fill('');
+  await expectCount(page.locator('.workspace-datasets tbody tr'), 20, 'Clearing dataset search must restore the server page.');
   const nameRows = await page.locator('.workspace-dataset-name').evaluateAll(elements => elements.map(element => {
     const name = element.querySelector('.workspace-dataset-name__title')?.getBoundingClientRect();
     const note = element.querySelector('.workspace-dataset-name__note')?.getBoundingClientRect();
@@ -211,15 +222,21 @@ try {
   assert.equal(await promptSection.locator('input[type="radio"]:checked').count(), 1, 'Saved prompt preset must be restored.');
   assert.equal(await page.locator('#batch-model').inputValue(), 'LTX-2.5');
   assert.equal(await page.locator('#batch-precision').inputValue(), 'INT8');
+  await page.locator('#batch-quantity').fill('3');
   await page.getByRole('button', { name: 'Save batch draft' }).click();
   await page.waitForFunction(() => document.querySelector('.generation-unsaved-status')?.textContent === '');
+  const resaveRequest = api.state.requests.findLast(request => request.method === 'PUT' && request.path === '/api/batch-drafts/1');
+  assert.deepEqual(resaveRequest?.body.contentSelections, batchRequest.body.contentSelections, 'Re-saving a restored draft must retain every content and scene selection.');
+  assert.equal(resaveRequest?.body.targetDatasetId, batchRequest.body.targetDatasetId);
+  assert.equal(resaveRequest?.body.promptPresetId, batchRequest.body.promptPresetId);
   assert.equal('backgroundPresets' in batchRequest.body, false, 'The removed global scene contract must not be sent.');
 
   await open(page, '/generate/content');
   assert.equal(await page.locator('.generation-selection-list > li').count(), 2);
   await page.locator('.generation-selection-card').filter({ hasText: 'Restrained reply' }).click();
   const fixedEditor = page.locator('.generation-compatible-scenes');
-  assert.equal(await fixedEditor.locator('input').count(), 0);
+  assert.equal(await fixedEditor.locator('input[type="radio"]').count(), 2, 'Fixed content must expose one source-scene choice.');
+  assert.equal(await fixedEditor.locator('input[type="radio"]:checked').count(), 1, 'Fixed content must keep exactly one source scene selected.');
   await page.locator('.generation-selection-card').filter({ hasText: 'Unexpected call' }).click();
   const compatibilityChecks = page.locator('.generation-compatible-scenes input[type="checkbox"]');
   await page.waitForFunction(() => [...document.querySelectorAll('.generation-compatible-scenes input[type="checkbox"]')].length === 2 && [...document.querySelectorAll('.generation-compatible-scenes input[type="checkbox"]')].every(input => input.checked));
@@ -288,6 +305,12 @@ try {
   await open(page, '/review');
   const reviewList = page.locator('.review-queue__list');
   const reviewPagination = page.locator('.review-queue .pagination');
+  const reviewDatasetPagination = page.locator('.review-dataset-picker .pagination');
+  await expectPaginationState(reviewDatasetPagination, { page: 1, totalPages: 2, total: 22 });
+  await reviewDatasetPagination.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('#review-dataset-filter option').length === 3);
+  assert.equal(await page.locator('#review-dataset-filter option').count(), 3, 'The second dataset page must expose its two datasets plus the all option.');
+  await reviewDatasetPagination.getByRole('button', { name: 'Previous', exact: true }).click();
   await expectCount(reviewList.locator(':scope > li'), 20, 'Review queue must render 20 rows.');
   await expectPaginationState(reviewPagination, { page: 1, totalPages: 2, total: 30 });
   await expectPaginationBelow(reviewList, reviewPagination, 'Review queue pagination');
@@ -319,6 +342,13 @@ try {
   await page.waitForURL(`${baseUrl}/archive?dataset=1&page=2`);
 
   await open(page, '/settings');
+  await page.evaluate(keys => {
+    localStorage.setItem(keys.reviewerId, '25');
+    localStorage.setItem(keys.reviewerName, 'Stale name');
+  }, preferenceKeys);
+  await page.reload({ waitUntil: 'networkidle' });
+  assert.match(await page.locator('.settings-current-reviewer').innerText(), /Reviewer 25/su, 'Settings must load the current reviewer independently of page one.');
+  assert.equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/reviewers/25'), true);
   const reviewerList = page.locator('.settings-reviewer-list');
   const reviewerPagination = page.locator('.settings-reviewers .pagination');
   await expectCount(page.locator('.settings-reviewer-choice'), 20, 'Reviewer names must render 20 rows.');
@@ -334,15 +364,19 @@ try {
   await page.keyboard.press('Enter');
   await expectCount(page.locator('.settings-reviewer-choice'), 5, 'The final reviewer page must render the remaining names.');
   await expectPaginationState(reviewerPagination, { page: 2, totalPages: 2, total: 25 });
+  assert.equal(await page.locator('.settings-reviewer-choice input:checked').inputValue(), 'on', 'The current reviewer must remain selected when its page opens.');
 
-  const savedReviewers = api.state.reviewers.map(reviewer => ({ ...reviewer }));
-  api.state.reviewers.length = 0;
-  await open(page, '/settings');
-  assert.equal(await page.locator('.settings-reviewers .pagination').count(), 0, 'An empty reviewer page must not show pagination controls.');
-  assert.equal(await page.getByRole('button', { name: /Previous|Next/u }).count(), 0, 'An empty reviewer page must not show meaningless paging buttons.');
-  api.state.reviewers.push(...savedReviewers);
+  await open(page, '/me/statistics');
+  const statisticsDatasetPagination = page.locator('.statistics-dataset-picker .pagination');
+  await expectPaginationState(statisticsDatasetPagination, { page: 1, totalPages: 2, total: 22 });
+  await statisticsDatasetPagination.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('#statistics-dataset option').length === 3);
+  assert.equal(await page.locator('#statistics-dataset option').count(), 3, 'Statistics must expose the second server page of datasets.');
+  await page.locator('#statistics-dataset-search').fill('Validation samples');
+  await page.waitForFunction(() => document.querySelectorAll('#statistics-dataset option').length === 2);
+  assert.equal(await page.locator('#statistics-dataset option').count(), 2, 'Statistics dataset search must keep the all option and one server result.');
 
-  const routes = ['/workspace', '/generate/batches', '/generate/test', '/generate/content', '/generate/presets', '/generate/jobs?job=1', '/review?sampleId=1', '/archive?dataset=1&page=2', '/settings'];
+  const routes = ['/workspace', '/generate/batches', '/generate/test', '/generate/content', '/generate/presets', '/generate/jobs?job=1', '/review?sampleId=1', '/archive?dataset=1&page=2', '/settings', '/me/statistics'];
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of [[1440, 900], [1024, 768], [768, 900], [390, 844]]) {
       for (const route of routes) await expectNoOverflow(page, route, locale, width, height);

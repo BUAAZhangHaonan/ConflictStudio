@@ -86,7 +86,10 @@ try {
   await page.locator('#review-category-filter').selectOption('C-VA');
   const queueList = page.locator('.review-queue__list');
   const target = page.locator('.review-queue__item').filter({ hasText: 'CS-000006' });
+  await target.waitFor();
   assert.equal(await target.count(), 1, 'The mobile scroll test must target exactly CS-000006.');
+  const filteredRequest = api.state.requests.findLast(request => request.method === 'GET' && request.path === '/api/samples' && request.query.search === 'CS-000');
+  assert.deepEqual(filteredRequest?.query, { page: '1', decision: 'Pending', datasetId: '1', category: 'C-VA', search: 'CS-000' }, 'Review filters must be sent to the paged sample API.');
   await target.scrollIntoViewIfNeeded();
   await queueList.evaluate(element => { element.scrollTop = 160; });
   await page.evaluate(() => window.scrollTo(0, Math.min(420, document.documentElement.scrollHeight - innerHeight)));

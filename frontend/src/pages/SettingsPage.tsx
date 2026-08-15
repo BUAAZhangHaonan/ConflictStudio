@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiErrorMessage } from '../api/client';
 import type { GpuSlot, Reviewer } from '../api/contracts';
@@ -8,6 +8,7 @@ import {
   useGpuSlotsQuery,
   useHealthQuery,
   useRenameReviewerMutation,
+  useReviewerQuery,
   useReviewersQuery,
 } from '../api/queries';
 import { Button, Dialog, Field, PageHeader, Pagination, StateView, StatusBadge } from '../components';
@@ -28,6 +29,7 @@ export function SettingsPage() {
   const preferences = usePreferences();
   const [reviewerPage, setReviewerPage] = useState(1);
   const reviewersQuery = useReviewersQuery(reviewerPage);
+  const currentReviewerQuery = useReviewerQuery(preferences.currentReviewerId);
   const healthQuery = useHealthQuery();
   const datasetsQuery = useDatasetsQuery();
   const gpuQuery = useGpuSlotsQuery();
@@ -38,12 +40,15 @@ export function SettingsPage() {
   const [renameValue, setRenameValue] = useState('');
   const [recheckState, setRecheckState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const reviewers = reviewersQuery.data?.items ?? [];
-  const currentReviewer = useMemo(
-    () => reviewers.find(reviewer => reviewer.id === preferences.currentReviewerId) ?? null,
-    [preferences.currentReviewerId, reviewers],
-  );
+  const currentReviewer = currentReviewerQuery.data ?? null;
   const locale = preferences.locale;
   const copyKey = 'workspaceSettingsStatistics.settings';
+
+  useEffect(() => {
+    if (currentReviewer && currentReviewer.name !== preferences.currentReviewerName) {
+      setCurrentReviewer(currentReviewer);
+    }
+  }, [currentReviewer, preferences.currentReviewerName]);
 
   const createReviewer = (event: FormEvent) => {
     event.preventDefault();
@@ -78,12 +83,13 @@ export function SettingsPage() {
       datasetsQuery.refetch(),
       gpuQuery.refetch(),
       reviewersQuery.refetch(),
+      currentReviewerQuery.refetch(),
     ]);
     setRecheckState(results.some(result => result.error) ? 'error' : 'success');
   };
 
-  const queryError = reviewersQuery.error ?? healthQuery.error ?? datasetsQuery.error ?? gpuQuery.error;
-  if (reviewersQuery.isPending || healthQuery.isPending || datasetsQuery.isPending || gpuQuery.isPending) {
+  const queryError = reviewersQuery.error ?? currentReviewerQuery.error ?? healthQuery.error ?? datasetsQuery.error ?? gpuQuery.error;
+  if (reviewersQuery.isPending || currentReviewerQuery.isPending || healthQuery.isPending || datasetsQuery.isPending || gpuQuery.isPending) {
     return <div className="page-stack settings-page"><PageHeader title={t('settings.title')} /><StateView state="loading" /></div>;
   }
   if (queryError) {
@@ -100,8 +106,9 @@ export function SettingsPage() {
       {mutationError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(mutationError, locale)}</p></section> : null}
       <section className="panel settings-section settings-reviewers">
         <div className="section-header"><h2>{t(`${copyKey}.reviewers.title`)}</h2></div>
+        {currentReviewer ? <div className="settings-current-reviewer"><span>{t(`${copyKey}.reviewers.currentLegend`)}</span><strong>{currentReviewer.name}</strong><Button type="button" variant="quiet" onClick={() => { setRenameTarget(currentReviewer); setRenameValue(currentReviewer.name); renameMutation.reset(); }}>{t(`${copyKey}.reviewers.renameCurrent`)}</Button></div> : null}
         {reviewers.length === 0 ? <StateView state="empty" /> : (
-          <fieldset className="settings-reviewer-list"><legend>{t(`${copyKey}.reviewers.currentLegend`)}</legend>{reviewers.map(reviewer => <label className="settings-reviewer-choice" key={reviewer.id}><input type="radio" name="current-reviewer" checked={reviewer.id === preferences.currentReviewerId} onChange={() => setCurrentReviewer(reviewer)} /><span>{reviewer.name}</span>{reviewer.id === preferences.currentReviewerId ? <Button type="button" variant="quiet" onClick={event => { event.preventDefault(); setRenameTarget(reviewer); setRenameValue(reviewer.name); renameMutation.reset(); }}>{t(`${copyKey}.reviewers.renameCurrent`)}</Button> : null}</label>)}</fieldset>
+          <fieldset className="settings-reviewer-list"><legend>{t(`${copyKey}.reviewers.availableLegend`)}</legend>{reviewers.map(reviewer => <label className="settings-reviewer-choice" key={reviewer.id}><input type="radio" name="current-reviewer" checked={reviewer.id === preferences.currentReviewerId} onChange={() => setCurrentReviewer(reviewer)} /><span>{reviewer.name}</span></label>)}</fieldset>
         )}
         <Pagination page={reviewersQuery.data?.page ?? 1} totalPages={reviewersQuery.data?.totalPages ?? 0} total={reviewersQuery.data?.total ?? 0} onPageChange={setReviewerPage} />
         <form className="inline-form settings-reviewer-create" onSubmit={createReviewer}>

@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from backend.adapters.renderer import RendererInstallationStatus
-from backend.domain.enums import GpuSlotName, ReviewDecision
+from backend.domain.enums import Category, GpuSlotName, JobStatus, Protocol, ResourceStatus, ReviewDecision
 from backend.domain.schemas import (
     ArchivePreviewRead,
     ArchivePreviewRequest,
@@ -139,8 +139,15 @@ async def health(request: Request) -> HealthRead:
 def list_datasets(
     request: Request,
     page: int = Query(default=1, ge=1),
+    search: str | None = Query(default=None, min_length=1, max_length=160),
+    status_filter: ResourceStatus | None = Query(default=None, alias="status"),
 ) -> PageRead[DatasetRead]:
-    return catalog(request).list_datasets(page)
+    return catalog(request).list_datasets(page, search, status_filter)
+
+
+@router.get("/datasets/{dataset_id}", response_model=DatasetRead)
+def get_dataset(dataset_id: int, request: Request) -> DatasetRead:
+    return catalog(request).get_dataset(dataset_id)
 
 
 @router.post("/datasets", response_model=DatasetRead, status_code=status.HTTP_201_CREATED)
@@ -356,8 +363,9 @@ async def submit_batch(draft_id: int, payload: BatchSubmitRequest, request: Requ
 def list_jobs(
     request: Request,
     page: int = Query(default=1, ge=1),
+    status_filter: list[JobStatus] | None = Query(default=None, alias="status"),
 ) -> PageRead[JobSummaryRead]:
-    return batches(request).list_jobs(page)
+    return batches(request).list_jobs(page, status_filter)
 
 
 @router.get("/jobs/{job_id}", response_model=JobDetailRead)
@@ -395,9 +403,20 @@ def keep_test_result(item_id: int, payload: KeepTestResultRequest, request: Requ
 def list_samples(
     request: Request,
     decision: ReviewDecision | None = Query(default=None),
+    dataset_id: int | None = Query(default=None, alias="datasetId", gt=0),
+    protocol: Protocol | None = Query(default=None),
+    category: Category | None = Query(default=None),
+    search: str | None = Query(default=None, min_length=1, max_length=160),
     page: int = Query(default=1, ge=1),
 ) -> PageRead[SampleRead]:
-    return samples(request).list_samples(page, decision)
+    return samples(request).list_samples(
+        page,
+        decision,
+        dataset_id,
+        protocol,
+        category,
+        search,
+    )
 
 
 @router.get("/samples/{sample_id}", response_model=SampleRead)
@@ -420,6 +439,11 @@ def list_reviewers(
     page: int = Query(default=1, ge=1),
 ) -> PageRead[ReviewerRead]:
     return reviewers(request).list_reviewers(page)
+
+
+@router.get("/reviewers/{reviewer_id}", response_model=ReviewerRead)
+def get_reviewer(reviewer_id: int, request: Request) -> ReviewerRead:
+    return reviewers(request).get(reviewer_id)
 
 
 @router.post("/reviewers", response_model=ReviewerRead, status_code=status.HTTP_201_CREATED)

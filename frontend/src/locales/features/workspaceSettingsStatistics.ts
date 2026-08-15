@@ -201,6 +201,7 @@ export const workspaceSettingsStatisticsEnUS = {
     reviewers: {
       title: 'Names',
       currentLegend: 'Current name',
+      availableLegend: 'Available names',
       renameCurrent: 'Rename current name',
       noCurrent: 'Select a name before renaming it.',
       emptyTitle: 'No names',
@@ -267,6 +268,7 @@ export const workspaceSettingsStatisticsEnUS = {
     resetFilters: 'Reset filters',
     currentReviewer: 'Current reviewer: {{name}}',
     datasetLabel: 'Dataset',
+    datasetSearchLabel: 'Search datasets',
     allDatasets: 'All datasets',
     startDateLabel: 'Start date',
     endDateLabel: 'End date',
@@ -494,6 +496,7 @@ export const workspaceSettingsStatisticsZhCN = {
     reviewers: {
       title: '姓名',
       currentLegend: '当前姓名',
+      availableLegend: '可选姓名',
       renameCurrent: '重命名当前姓名',
       noCurrent: '选择姓名后才能重命名。',
       emptyTitle: '暂无姓名',
@@ -560,6 +563,7 @@ export const workspaceSettingsStatisticsZhCN = {
     resetFilters: '重置筛选',
     currentReviewer: '当前审核人：{{name}}',
     datasetLabel: '数据集',
+    datasetSearchLabel: '搜索数据集',
     allDatasets: '全部数据集',
     startDateLabel: '开始日期',
     endDateLabel: '结束日期',

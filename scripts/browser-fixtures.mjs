@@ -114,7 +114,7 @@ export function sampleFixture(id, reviewDecision = 'Pending', category = 'C-VA')
   const accepted = reviewDecision === 'Accepted';
   const currentReview = accepted ? reviewRecord(5000 + id, id) : null;
   return {
-    id, displayId: `CS-${String(id).padStart(6, '0')}`, jobItemId: id, datasetId: 1, category,
+    id, displayId: `CS-${String(id).padStart(6, '0')}`, jobItemId: id, datasetId: 1, datasetName: 'Formal samples', category,
     conflictDirection: category === 'C-VA' ? 'Audio' : category === 'C-VT' ? 'Text' : null,
     reviewDecision, reviewRevision: accepted ? 1 : 0, currentReview, inArchive: accepted,
     archiveSyncStatus: accepted ? 'Current' : 'NeedsUpdate', model: 'LTX-2.5',
@@ -162,7 +162,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
     batchDrafts: [],
     jobs: [
       jobFixture,
-      ...Array.from({ length: 24 }, (_, index) => ({ ...jobFixture, id: index + 2, displayName: `${index % 2 ? 'C-VA' : 'A-VA'}-20260814${String(160001 + index).padStart(6, '0')}`, source: index % 3 === 0 ? 'Test' : 'Production', status: index % 5 === 0 ? 'Failed' : 'Completed', failureCode: index % 5 === 0 ? 'renderer_execution_failed' : null })),
+      ...Array.from({ length: 24 }, (_, index) => ({ ...jobFixture, id: index + 2, displayName: `${index % 2 ? 'C-VA' : 'A-VA'}-20260814${String(160001 + index).padStart(6, '0')}`, source: index % 3 === 0 ? 'Test' : 'Production', status: index % 2 === 0 ? 'Running' : 'Failed', failureCode: index % 2 === 0 ? null : 'renderer_execution_failed' })),
     ],
     jobEvents: Array.from({ length: 45 }, (_, index) => ({
       id: index + 1,
@@ -249,13 +249,19 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
         state.requests.push({ method, path, query: Object.fromEntries(url.searchParams), body });
 
         if (method === 'GET' && path === '/api/health') return fulfillJson(route, { ok: true, database: 'available', promptServiceConfigured: true, rendererInstallation: 'installed' });
-        if (method === 'GET' && path === '/api/datasets') return fulfillJson(route, pageValue(url, state.datasets));
+        if (method === 'GET' && path === '/api/datasets') {
+          const search = (url.searchParams.get('search') ?? '').trim().toLocaleLowerCase('en-US');
+          const status = url.searchParams.get('status');
+          const values = state.datasets.filter(dataset => (!search || `${dataset.name} ${dataset.note}`.toLocaleLowerCase('en-US').includes(search)) && (!status || dataset.status === status));
+          return fulfillJson(route, pageValue(url, values));
+        }
         if (method === 'POST' && path === '/api/datasets') {
           const dataset = { id: Math.max(0, ...state.datasets.map(item => item.id)) + 1, name: body.name, purpose: 'Formal', note: body.note ?? '', status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp };
           state.datasets.push(dataset);
           return fulfillJson(route, dataset, 201);
         }
         const datasetMatch = /^\/api\/datasets\/(\d+)$/u.exec(path);
+        if (method === 'GET' && datasetMatch) return fulfillJson(route, state.datasets.find(item => item.id === Number(datasetMatch[1])));
         if (method === 'PATCH' && datasetMatch) {
           const id = Number(datasetMatch[1]);
           const index = state.datasets.findIndex(item => item.id === id);
@@ -314,7 +320,10 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           state.batchDrafts = [draft];
           return fulfillJson(route, draft, method === 'POST' ? 201 : 200);
         }
-        if (method === 'GET' && path === '/api/jobs') return fulfillJson(route, pageValue(url, state.jobs));
+        if (method === 'GET' && path === '/api/jobs') {
+          const statuses = url.searchParams.getAll('status');
+          return fulfillJson(route, pageValue(url, statuses.length ? state.jobs.filter(job => statuses.includes(job.status)) : state.jobs));
+        }
         const jobMatch = /^\/api\/jobs\/(\d+)$/u.exec(path);
         if (method === 'GET' && jobMatch) return fulfillJson(route, state.jobs.find(item => item.id === Number(jobMatch[1])));
         const jobItemsMatch = /^\/api\/jobs\/(\d+)\/items$/u.exec(path);
@@ -335,6 +344,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           return fulfillJson(route, reviewer, 201);
         }
         const reviewerMatch = /^\/api\/reviewers\/(\d+)$/u.exec(path);
+        if (method === 'GET' && reviewerMatch) return fulfillJson(route, state.reviewers.find(item => item.id === Number(reviewerMatch[1])));
         if (method === 'PATCH' && reviewerMatch) {
           const id = Number(reviewerMatch[1]);
           const index = state.reviewers.findIndex(item => item.id === id);
@@ -348,7 +358,16 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
         if (method === 'POST' && path === '/api/reviews/batch') return fulfillJson(route, body.items.map(updateSampleWithReview), 201);
         if (method === 'GET' && path === '/api/samples') {
           const decision = url.searchParams.get('decision');
-          return fulfillJson(route, pageValue(url, decision ? state.samples.filter(sample => sample.reviewDecision === decision) : state.samples));
+          const datasetId = Number(url.searchParams.get('datasetId'));
+          const protocol = url.searchParams.get('protocol');
+          const category = url.searchParams.get('category');
+          const search = (url.searchParams.get('search') ?? '').trim().toLocaleLowerCase('en-US');
+          const values = state.samples.filter(sample => (!decision || sample.reviewDecision === decision)
+            && (!datasetId || sample.datasetId === datasetId)
+            && (!protocol || sample.category.endsWith(`-${protocol}`))
+            && (!category || sample.category === category)
+            && (!search || `${sample.displayId} ${sample.datasetName}`.toLocaleLowerCase('en-US').includes(search)));
+          return fulfillJson(route, pageValue(url, values));
         }
         const sampleMatch = /^\/api\/samples\/(\d+)$/u.exec(path);
         if (method === 'GET' && sampleMatch) return fulfillJson(route, state.samples.find(sample => sample.id === Number(sampleMatch[1])));

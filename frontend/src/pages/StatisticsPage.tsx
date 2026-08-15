@@ -2,8 +2,8 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { apiErrorMessage } from '../api/client';
-import { useDatasetsQuery, useReviewerStatisticsQuery } from '../api/queries';
-import { Button, Field, Metric, PageHeader, StateView, TableShell } from '../components';
+import { useDatasetQuery, useDatasetsQuery, useReviewerStatisticsQuery } from '../api/queries';
+import { Button, Field, Metric, PageHeader, Pagination, StateView, TableShell } from '../components';
 import { usePreferences } from '../preferences';
 import { formatDate } from '../time';
 import './StatisticsPage.css';
@@ -16,12 +16,20 @@ export function StatisticsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const preferences = usePreferences();
-  const datasetsQuery = useDatasetsQuery();
+  const [datasetPage, setDatasetPage] = useState(1);
+  const [datasetSearch, setDatasetSearch] = useState('');
   const [defaultRange] = useState(() => ({
     startDate: dateDaysAgo(new Date(), 29),
     endDate: dateDaysAgo(new Date(), 0),
   }));
   const [datasetId, setDatasetId] = useState<number | undefined>(undefined);
+  const datasetsQuery = useDatasetsQuery(datasetPage, datasetSearch.trim() ? { search: datasetSearch } : {});
+  const selectedDatasetQuery = useDatasetQuery(datasetId ?? null);
+  const datasets = datasetsQuery.data?.items ?? [];
+  const selectedDataset = selectedDatasetQuery.data ?? null;
+  const datasetOptions = selectedDataset && !datasets.some(dataset => dataset.id === selectedDataset.id)
+    ? [selectedDataset, ...datasets]
+    : datasets;
   const [startDate, setStartDate] = useState(defaultRange.startDate);
   const [endDate, setEndDate] = useState(defaultRange.endDate);
   const validRange = startDate !== '' && endDate !== '' && startDate <= endDate;
@@ -38,6 +46,8 @@ export function StatisticsPage() {
 
   const resetFilters = () => {
     setDatasetId(undefined);
+    setDatasetSearch('');
+    setDatasetPage(1);
     setStartDate(defaultRange.startDate);
     setEndDate(defaultRange.endDate);
   };
@@ -45,10 +55,10 @@ export function StatisticsPage() {
   if (preferences.currentReviewerId === null) {
     return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><StateView state="empty" action={{ label: t('nav.settings'), onClick: () => navigate('/settings') }} /></div>;
   }
-  if (datasetsQuery.isPending || (statisticsQuery.isPending && validRange)) {
+  if (datasetsQuery.isPending || (datasetId !== undefined && selectedDatasetQuery.isPending) || (statisticsQuery.isPending && validRange)) {
     return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><StateView state="loading" /></div>;
   }
-  const error = datasetsQuery.error ?? statisticsQuery.error;
+  const error = datasetsQuery.error ?? selectedDatasetQuery.error ?? statisticsQuery.error;
   if (error) {
     return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><section className="state-view" role="alert"><h2>{t('state.error.title')}</h2><p>{apiErrorMessage(error, locale)}</p></section></div>;
   }
@@ -60,7 +70,11 @@ export function StatisticsPage() {
         <div className="section-header"><h2 id="statistics-filters-title">{t('workspaceSettingsStatistics.statistics.filtersTitle')}</h2>{filtersChanged ? <Button variant="quiet" onClick={resetFilters}>{t('workspaceSettingsStatistics.statistics.resetFilters')}</Button> : null}</div>
         <p>{t('workspaceSettingsStatistics.statistics.currentReviewer', { name: preferences.currentReviewerName ?? '' })}</p>
         <div className="statistics-filters__grid">
-          <Field label={t('workspaceSettingsStatistics.statistics.datasetLabel')} htmlFor="statistics-dataset"><select id="statistics-dataset" value={datasetId ?? ''} onChange={event => setDatasetId(event.target.value ? Number(event.target.value) : undefined)}><option value="">{t('workspaceSettingsStatistics.statistics.allDatasets')}</option>{(datasetsQuery.data?.items ?? []).map(dataset => <option key={dataset.id} value={dataset.id}>{dataset.name}</option>)}</select></Field>
+          <div className="statistics-dataset-picker">
+            <Field label={t('workspaceSettingsStatistics.statistics.datasetSearchLabel')} htmlFor="statistics-dataset-search"><input id="statistics-dataset-search" type="search" value={datasetSearch} onChange={event => { setDatasetSearch(event.target.value); setDatasetPage(1); }} /></Field>
+            <Field label={t('workspaceSettingsStatistics.statistics.datasetLabel')} htmlFor="statistics-dataset"><select id="statistics-dataset" value={datasetId ?? ''} onChange={event => setDatasetId(event.target.value ? Number(event.target.value) : undefined)}><option value="">{t('workspaceSettingsStatistics.statistics.allDatasets')}</option>{datasetOptions.map(dataset => <option key={dataset.id} value={dataset.id}>{dataset.name}</option>)}</select></Field>
+            <Pagination page={datasetsQuery.data?.page ?? 1} totalPages={datasetsQuery.data?.totalPages ?? 0} total={datasetsQuery.data?.total ?? 0} onPageChange={setDatasetPage} />
+          </div>
           <Field label={t('workspaceSettingsStatistics.statistics.startDateLabel')} htmlFor="statistics-start" error={!validRange ? t('workspaceSettingsStatistics.statistics.invalidDateRange') : undefined}><input id="statistics-start" type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></Field>
           <Field label={t('workspaceSettingsStatistics.statistics.endDateLabel')} htmlFor="statistics-end"><input id="statistics-end" type="date" value={endDate} onChange={event => setEndDate(event.target.value)} /></Field>
         </div>

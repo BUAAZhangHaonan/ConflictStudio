@@ -47,8 +47,18 @@
 
 .review-filters__grid {
   display: grid;
-  grid-template-columns: minmax(220px, 1.6fr) repeat(4, minmax(130px, 1fr));
+  grid-template-columns: minmax(220px, 1.5fr) minmax(280px, 1.5fr) repeat(2, minmax(130px, 1fr));
   gap: 12px;
+}
+
+.review-dataset-picker {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.review-dataset-picker .pagination {
+  padding-top: 0;
 }
 
 .review-operation {

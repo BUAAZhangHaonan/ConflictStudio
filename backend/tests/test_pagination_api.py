@@ -56,3 +56,46 @@ def test_every_growing_collection_uses_the_same_page_contract(tmp_path: Path) ->
                 "totalPages": 1,
             }, route
             assert invalid.status_code == 422, route
+
+
+def test_dataset_and_reviewer_context_remains_addressable_after_page_twenty(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        reviewers = [create_reviewer(client, f"Reviewer {index:02d}") for index in range(1, 26)]
+        datasets = [
+            client.post(
+                "/api/datasets",
+                json={"name": f"Dataset {index:02d}", "note": f"Note {index:02d}"},
+            ).json()
+            for index in range(1, 25)
+        ]
+        reviewer_page = client.get("/api/reviewers", params={"page": 2})
+        reviewer_detail = client.get(f"/api/reviewers/{reviewers[-1]['id']}")
+        dataset_page = client.get("/api/datasets", params={"page": 2})
+        dataset_detail = client.get(f"/api/datasets/{datasets[-1]['id']}")
+        dataset_search = client.get(
+            "/api/datasets",
+            params={"search": datasets[-1]["name"]},
+        )
+        job_status = client.get("/api/jobs").json()["items"][0]["status"]
+        matching_jobs = client.get(
+            "/api/jobs",
+            params={"status": job_status},
+        )
+        nonmatching_jobs = client.get(
+            "/api/jobs",
+            params={"status": "Cancelled" if job_status != "Cancelled" else "Failed"},
+        )
+
+    assert reviewer_page.json()["total"] == 25
+    assert len(reviewer_page.json()["items"]) == 5
+    assert reviewer_detail.json()["name"] == "Reviewer 25"
+    assert dataset_page.json()["total"] == 25
+    assert len(dataset_page.json()["items"]) == 5
+    assert dataset_detail.json()["name"] == "Dataset 24"
+    assert dataset_search.json()["total"] == 1
+    assert dataset_search.json()["items"][0]["id"] == datasets[-1]["id"]
+    assert matching_jobs.json()["total"] == 1
+    assert nonmatching_jobs.json()["total"] == 0

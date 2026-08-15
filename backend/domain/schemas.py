@@ -848,6 +848,7 @@ class SampleRead(ApiModel):
     display_id: str
     job_item_id: int
     dataset_id: int
+    dataset_name: str
     category: Category
     conflict_direction: ConflictDirection | None
     review_decision: ReviewDecision

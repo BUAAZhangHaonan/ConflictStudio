@@ -2,6 +2,16 @@
   min-width: 0;
 }
 
+.statistics-dataset-picker {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.statistics-dataset-picker .pagination {
+  padding-top: 0;
+}
+
 .statistics-current-reviewer {
   margin: 0 0 12px;
   color: var(--color-text-muted);

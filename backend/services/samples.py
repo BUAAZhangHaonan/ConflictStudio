@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
 from backend.domain.enums import (
     archive_status_for,
     GenerationAttemptStatus,
+    Category,
     JobSource,
     JobStatus,
     Relation,
+    Protocol,
     ResourceStatus,
     ReviewDecision,
     protocol_for,
@@ -107,11 +110,34 @@ class SampleService:
         self,
         page: int,
         decision: ReviewDecision | None = None,
+        dataset_id: int | None = None,
+        protocol: Protocol | None = None,
+        category: Category | None = None,
+        search: str | None = None,
     ) -> PageRead[SampleRead]:
         with self.database.read_session() as session:
             statement = select(Sample)
             if decision is not None:
                 statement = statement.where(Sample.review_decision == decision)
+            if dataset_id is not None:
+                statement = statement.where(Sample.dataset_id == dataset_id)
+            if protocol is Protocol.VA:
+                statement = statement.where(Sample.category.in_([Category.A_VA, Category.C_VA]))
+            elif protocol is Protocol.VT:
+                statement = statement.where(Sample.category.in_([Category.A_VT, Category.C_VT]))
+            if category is not None:
+                statement = statement.where(Sample.category == category)
+            if search is not None and search.strip():
+                needle = search.strip().casefold()
+                dataset_ids = select(Dataset.id).where(
+                    func.lower(Dataset.name).contains(needle)
+                )
+                statement = statement.where(
+                    or_(
+                        func.lower(func.printf("CS-%06d", Sample.id)).contains(needle),
+                        Sample.dataset_id.in_(dataset_ids),
+                    )
+                )
             return paginate(
                 session,
                 statement.order_by(Sample.created_at, Sample.id),
@@ -205,9 +231,13 @@ class SampleService:
             row.revision,
             archive_item.sample_revision if archive_item is not None else None,
         )
+        dataset = session.get(Dataset, row.dataset_id)
+        if dataset is None:
+            raise state_conflict("sample", row.id, "The sample dataset does not exist")
         return SampleRead(
             **row.model_dump(),
             display_id=f"CS-{row.id:06d}",
+            dataset_name=dataset.name,
             source_asset_url=asset_content_url(row.source_asset_id),
             primary_asset_url=asset_content_url(row.primary_asset_id),
             generation_record=GenerationAttemptRead(

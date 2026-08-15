@@ -553,11 +553,18 @@ class BatchService:
                 session.flush()
                 return self._job_detail(session, job)
 
-    def list_jobs(self, page: int) -> PageRead[JobSummaryRead]:
+    def list_jobs(
+        self,
+        page: int,
+        statuses: list[JobStatus] | None = None,
+    ) -> PageRead[JobSummaryRead]:
         with self.database.read_session() as session:
+            statement = select(Job)
+            if statuses:
+                statement = statement.where(Job.status.in_(statuses))
             return paginate(
                 session,
-                select(Job).order_by(Job.created_at.desc(), Job.id.desc()),
+                statement.order_by(Job.created_at.desc(), Job.id.desc()),
                 page,
                 JobSummaryRead.model_validate,
             )

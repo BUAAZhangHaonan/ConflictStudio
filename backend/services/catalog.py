@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import delete, func
+from sqlalchemy import delete, func, or_
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
@@ -47,7 +47,7 @@ from backend.domain.schemas import (
     validate_content_background_ids,
 )
 
-from .errors import ServiceError, not_found, revision_conflict, state_conflict
+from .errors import ServiceError, invalid_request, not_found, revision_conflict, state_conflict
 from .pagination import paginate
 
 
@@ -59,13 +59,35 @@ class CatalogService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def list_datasets(self, page: int) -> PageRead[DatasetRead]:
+    def list_datasets(
+        self,
+        page: int,
+        search: str | None = None,
+        status: ResourceStatus | None = None,
+    ) -> PageRead[DatasetRead]:
         with self.database.read_session() as session:
+            statement = select(Dataset)
+            if search is not None and search.strip():
+                needle = search.strip().casefold()
+                statement = statement.where(
+                    or_(
+                        func.lower(Dataset.name).contains(needle),
+                        func.lower(Dataset.note).contains(needle),
+                    )
+                )
+            if status is not None:
+                statement = statement.where(Dataset.status == status)
             return paginate(
                 session,
-                select(Dataset).order_by(Dataset.created_at, Dataset.id),
+                statement.order_by(Dataset.created_at, Dataset.id),
                 page,
                 DatasetRead.model_validate,
+            )
+
+    def get_dataset(self, dataset_id: int) -> DatasetRead:
+        with self.database.read_session() as session:
+            return DatasetRead.model_validate(
+                self._get(session, Dataset, dataset_id, "dataset")
             )
 
     def create_dataset(self, payload: DatasetCreate) -> DatasetRead:
@@ -485,7 +507,10 @@ class CatalogService:
         background_ids: list[int],
         mode: ContentMode,
     ) -> list[VideoBackgroundPreset]:
-        validate_content_background_ids(background_ids, mode)
+        try:
+            validate_content_background_ids(background_ids, mode)
+        except ValueError as error:
+            raise invalid_request(str(error)) from error
         return [
             CatalogService._get(
                 session,

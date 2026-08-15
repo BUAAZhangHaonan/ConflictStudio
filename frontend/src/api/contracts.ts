@@ -530,6 +530,7 @@ export interface Sample {
   displayId: string;
   jobItemId: number;
   datasetId: number;
+  datasetName: string;
   category: Category;
   conflictDirection: ConflictDirection | null;
   reviewDecision: ReviewDecision;

@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { Button, ConfirmDialog, Dialog, Field, Metric, PageHeader, Pagination, StatusBadge, TableShell, useToast } from '../components';
@@ -43,9 +43,18 @@ export function WorkspacePage() {
   const { t, i18n } = useTranslation();
   const { showToast } = useToast();
   const [datasetPage, setDatasetPage] = useState(1);
-  const datasetsQuery = useDatasetsQuery(datasetPage);
-  const jobsQuery = useJobsQuery();
-  const samplesQuery = useSamplesQuery();
+  const [jobPage, setJobPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState<DatasetStatus | 'All'>('All');
+  const datasetsQuery = useDatasetsQuery(datasetPage, {
+    ...(search.trim() ? { search } : {}),
+    ...(status === 'All' ? {} : { status }),
+  });
+  const jobsQuery = useJobsQuery(jobPage, { statuses: ['Running', 'Failed'] });
+  const runningJobsQuery = useJobsQuery(1, { statuses: ['Running'] });
+  const failedJobsQuery = useJobsQuery(1, { statuses: ['Failed'] });
+  const pendingReviewQuery = useSamplesQuery({ decision: 'Pending' });
+  const pendingArchiveQuery = useSamplesQuery({ decision: 'Accepted' });
   const createMutation = useCreateDatasetMutation();
   const updateMutation = useUpdateDatasetMutation();
   const deleteMutation = useDeleteDatasetMutation();
@@ -58,25 +67,16 @@ export function WorkspacePage() {
   const [disableTarget, setDisableTarget] = useState<DatasetTarget | null>(null);
   const [enableTarget, setEnableTarget] = useState<DatasetTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DatasetTarget | null>(null);
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<DatasetStatus | 'All'>('All');
   const datasets = datasetsQuery.data?.items ?? [];
   const jobs = jobsQuery.data?.items ?? [];
-  const samples = samplesQuery.data?.items ?? [];
   const locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
-  const queryError = datasetsQuery.error ?? jobsQuery.error ?? samplesQuery.error ?? null;
+  const queryError = datasetsQuery.error ?? jobsQuery.error ?? runningJobsQuery.error
+    ?? failedJobsQuery.error ?? pendingReviewQuery.error ?? pendingArchiveQuery.error ?? null;
   const mutationError = createMutation.error ?? updateMutation.error ?? deleteMutation.error ?? null;
-  const pendingReview = samples.filter(sample => sample.reviewDecision === 'Pending').length;
-  const pendingArchive = samples.filter(sample => sample.reviewDecision === 'Accepted').length;
+  const pendingReview = pendingReviewQuery.data?.total ?? 0;
+  const pendingArchive = pendingArchiveQuery.data?.total ?? 0;
   const runningJobs = jobs.filter(job => job.status === 'Running');
   const failedJobs = jobs.filter(job => job.status === 'Failed');
-  const filtered = useMemo(() => {
-    const value = search.trim().toLocaleLowerCase(locale);
-    return datasets.filter(dataset =>
-      (status === 'All' || dataset.status === status)
-      && (value === '' || dataset.name.toLocaleLowerCase(locale).includes(value)),
-    );
-  }, [datasets, locale, search, status]);
 
   const resetCreate = () => {
     setCreateOpen(false);
@@ -155,18 +155,18 @@ export function WorkspacePage() {
     ? <p className="workspace-jobs__empty">{t(`${copyKey}.workspace.jobs.${emptyKey}`)}</p>
     : <ul className="workspace-jobs__list">{values.map(job => <li key={job.id}><Link className="workspace-job-card" to={`/generate/jobs?job=${job.id}`}><span className="workspace-job-card__header"><strong>{job.displayName}</strong><StatusBadge label={t(`${copyKey}.status.job.${job.status}`)} kind={jobStatusKind(job.status)} /></span><dl className="workspace-job-card__details"><div><dt>{t(`${copyKey}.workspace.jobs.model`)}</dt><dd>{job.model}</dd></div><div><dt>{t(`${copyKey}.workspace.jobs.progress`, { value: Math.round(((job.completedCount + job.failedCount) / job.totalCount) * 100) })}</dt><dd>{job.completedCount + job.failedCount}/{job.totalCount}</dd></div></dl>{job.status === 'Failed' ? <p className="workspace-job-card__failure"><strong>{t(`${copyKey}.workspace.jobs.failureLabel`)}</strong><span>{t(`${copyKey}.workspace.jobs.failureReason.${failureKey(job.failureCode)}`)}</span></p> : null}<time dateTime={job.updatedAt}>{formatDateTime(job.updatedAt)}</time></Link></li>)}</ul>;
 
-  if (datasetsQuery.isPending || jobsQuery.isPending || samplesQuery.isPending) return <div className="page-stack workspace-page"><PageHeader title={t(`${copyKey}.workspace.title`)} /><p role="status">{t(`${copyKey}.common.state.loading.body`)}</p></div>;
+  if (datasetsQuery.isPending || jobsQuery.isPending || runningJobsQuery.isPending || failedJobsQuery.isPending || pendingReviewQuery.isPending || pendingArchiveQuery.isPending) return <div className="page-stack workspace-page"><PageHeader title={t(`${copyKey}.workspace.title`)} /><p role="status">{t(`${copyKey}.common.state.loading.body`)}</p></div>;
   if (queryError) return <div className="page-stack workspace-page"><PageHeader title={t(`${copyKey}.workspace.title`)} /><section className="generation-feedback" role="alert"><p>{apiErrorMessage(queryError, locale)}</p></section></div>;
 
   return (
     <div className="page-stack workspace-page">
       <PageHeader title={t(`${copyKey}.workspace.title`)} actions={<Button variant="primary" onClick={() => setCreateOpen(true)}>{t(`${copyKey}.workspace.create.action`)}</Button>} />
       {mutationError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(mutationError, locale)}</p></section> : null}
-      <section className="workspace-attention" aria-labelledby="workspace-attention-title"><div className="section-header"><h2 id="workspace-attention-title">{t(`${copyKey}.workspace.attention.title`)}</h2></div><div className="metric-grid metric-grid--five workspace-attention__metrics"><Link className="workspace-metric-link" to="/review?decision=Pending"><Metric label={t(`${copyKey}.workspace.attention.pendingReview`)} value={pendingReview} /></Link><Link className="workspace-metric-link" to="/generate/jobs?status=Running"><Metric label={t(`${copyKey}.workspace.attention.runningJobs`)} value={runningJobs.length} /></Link><Link className="workspace-metric-link" to="/generate/jobs?status=Failed"><Metric label={t(`${copyKey}.workspace.attention.failedJobs`)} value={failedJobs.length} /></Link><Link className="workspace-metric-link" to="/archive"><Metric label={t(`${copyKey}.workspace.attention.pendingArchive`)} value={pendingArchive} /></Link></div></section>
+      <section className="workspace-attention" aria-labelledby="workspace-attention-title"><div className="section-header"><h2 id="workspace-attention-title">{t(`${copyKey}.workspace.attention.title`)}</h2></div><div className="metric-grid metric-grid--five workspace-attention__metrics"><Link className="workspace-metric-link" to="/review?decision=Pending"><Metric label={t(`${copyKey}.workspace.attention.pendingReview`)} value={pendingReview} /></Link><Link className="workspace-metric-link" to="/generate/jobs?status=Running"><Metric label={t(`${copyKey}.workspace.attention.runningJobs`)} value={runningJobsQuery.data?.total ?? 0} /></Link><Link className="workspace-metric-link" to="/generate/jobs?status=Failed"><Metric label={t(`${copyKey}.workspace.attention.failedJobs`)} value={failedJobsQuery.data?.total ?? 0} /></Link><Link className="workspace-metric-link" to="/archive"><Metric label={t(`${copyKey}.workspace.attention.pendingArchive`)} value={pendingArchive} /></Link></div></section>
       <section className="panel workspace-datasets" aria-labelledby="workspace-datasets-title">
         <div className="section-header"><h2 id="workspace-datasets-title">{t(`${copyKey}.workspace.datasets.title`)}</h2></div>
-        <div className="workspace-datasets__filters"><Field label={t(`${copyKey}.workspace.datasets.searchLabel`)} htmlFor="workspace-dataset-search"><input id="workspace-dataset-search" type="search" value={search} onChange={event => setSearch(event.target.value)} /></Field><Field label={t(`${copyKey}.workspace.datasets.statusFilterLabel`)} htmlFor="workspace-dataset-status"><select id="workspace-dataset-status" value={status} onChange={event => setStatus(event.target.value as DatasetStatus | 'All')}><option value="All">{t(`${copyKey}.workspace.datasets.allStatuses`)}</option><option value="Active">{t(`${copyKey}.status.dataset.Active`)}</option><option value="Inactive">{t(`${copyKey}.status.dataset.Inactive`)}</option></select></Field></div>
-        {filtered.length === 0 ? <p>{t(`${copyKey}.workspace.datasets.emptyBody`)}</p> : <TableShell caption={t(`${copyKey}.workspace.datasets.caption`)} columns={[{ key: 'name', label: t(`${copyKey}.workspace.datasets.name`) }, { key: 'purpose', label: t(`${copyKey}.workspace.datasets.purposeLabel`) }, { key: 'status', label: t(`${copyKey}.workspace.datasets.status`) }, { key: 'updated', label: t(`${copyKey}.workspace.datasets.updatedAt`) }, { key: 'actions', label: t(`${copyKey}.workspace.datasets.actions`) }]}>{filtered.map(dataset => <tr key={dataset.id}>
+        <div className="workspace-datasets__filters"><Field label={t(`${copyKey}.workspace.datasets.searchLabel`)} htmlFor="workspace-dataset-search"><input id="workspace-dataset-search" type="search" value={search} onChange={event => { setSearch(event.target.value); setDatasetPage(1); }} /></Field><Field label={t(`${copyKey}.workspace.datasets.statusFilterLabel`)} htmlFor="workspace-dataset-status"><select id="workspace-dataset-status" value={status} onChange={event => { setStatus(event.target.value as DatasetStatus | 'All'); setDatasetPage(1); }}><option value="All">{t(`${copyKey}.workspace.datasets.allStatuses`)}</option><option value="Active">{t(`${copyKey}.status.dataset.Active`)}</option><option value="Inactive">{t(`${copyKey}.status.dataset.Inactive`)}</option></select></Field></div>
+        {datasets.length === 0 ? <p>{t(`${copyKey}.workspace.datasets.emptyBody`)}</p> : <TableShell caption={t(`${copyKey}.workspace.datasets.caption`)} columns={[{ key: 'name', label: t(`${copyKey}.workspace.datasets.name`) }, { key: 'purpose', label: t(`${copyKey}.workspace.datasets.purposeLabel`) }, { key: 'status', label: t(`${copyKey}.workspace.datasets.status`) }, { key: 'updated', label: t(`${copyKey}.workspace.datasets.updatedAt`) }, { key: 'actions', label: t(`${copyKey}.workspace.datasets.actions`) }]}>{datasets.map(dataset => <tr key={dataset.id}>
           <th scope="row" data-label={t(`${copyKey}.workspace.datasets.name`)}><span className="workspace-dataset-name"><strong className="workspace-dataset-name__title">{dataset.name}</strong>{dataset.note ? <span className="workspace-dataset-name__note">{dataset.note}</span> : null}</span></th>
           <td data-label={t(`${copyKey}.workspace.datasets.purposeLabel`)}>{t(`${copyKey}.workspace.datasets.purpose.${dataset.purpose}`)}</td>
           <td data-label={t(`${copyKey}.workspace.datasets.status`)}><StatusBadge label={t(`${copyKey}.status.dataset.${dataset.status}`)} kind={dataset.status === 'Active' ? 'active' : 'neutral'} /></td>
@@ -175,7 +175,7 @@ export function WorkspacePage() {
         </tr>)}</TableShell>}
         <Pagination page={datasetsQuery.data?.page ?? 1} totalPages={datasetsQuery.data?.totalPages ?? 0} total={datasetsQuery.data?.total ?? 0} onPageChange={setDatasetPage} />
       </section>
-      <section className="panel workspace-jobs" aria-labelledby="workspace-jobs-title"><div className="section-header"><h2 id="workspace-jobs-title">{t(`${copyKey}.workspace.jobs.title`)}</h2></div><div className="workspace-jobs__grid"><section className="workspace-jobs__group"><h3>{t(`${copyKey}.workspace.jobs.runningTitle`)}</h3>{renderJobs(runningJobs, 'runningEmpty')}</section><section className="workspace-jobs__group"><h3>{t(`${copyKey}.workspace.jobs.failedTitle`)}</h3>{renderJobs(failedJobs, 'failedEmpty')}</section></div></section>
+      <section className="panel workspace-jobs" aria-labelledby="workspace-jobs-title"><div className="section-header"><h2 id="workspace-jobs-title">{t(`${copyKey}.workspace.jobs.title`)}</h2></div><div className="workspace-jobs__grid"><section className="workspace-jobs__group"><h3>{t(`${copyKey}.workspace.jobs.runningTitle`)}</h3>{renderJobs(runningJobs, 'runningEmpty')}</section><section className="workspace-jobs__group"><h3>{t(`${copyKey}.workspace.jobs.failedTitle`)}</h3>{renderJobs(failedJobs, 'failedEmpty')}</section></div><Pagination page={jobsQuery.data?.page ?? 1} totalPages={jobsQuery.data?.totalPages ?? 0} total={jobsQuery.data?.total ?? 0} onPageChange={setJobPage} /></section>
       <Dialog open={createOpen} title={t(`${copyKey}.workspace.create.title`)} closeLabel={t(`${copyKey}.common.close`)} onClose={resetCreate} footer={<><Button onClick={resetCreate}>{t(`${copyKey}.common.cancel`)}</Button><Button type="submit" form="create-dataset-form" variant="primary">{t(`${copyKey}.workspace.create.submit`)}</Button></>}><form id="create-dataset-form" className="workspace-dialog-form" onSubmit={event => void createDataset(event)}><Field label={t(`${copyKey}.workspace.datasetName.label`)} htmlFor="create-dataset-name" required><input id="create-dataset-name" autoFocus value={createName} onChange={event => setCreateName(event.target.value)} /></Field><p className="field__help">{t(`${copyKey}.workspace.create.purposeNote`)}</p><Field label={t(`${copyKey}.workspace.datasetNote.label`)} htmlFor="create-dataset-note"><textarea id="create-dataset-note" value={createNote} onChange={event => setCreateNote(event.target.value)} /></Field>{createMutation.isError ? <p className="field__error" role="alert">{apiErrorMessage(createMutation.error, locale)}</p> : null}</form></Dialog>
       <Dialog open={renameTarget !== null} title={t(`${copyKey}.workspace.rename.title`)} closeLabel={t(`${copyKey}.common.close`)} onClose={() => setRenameTarget(null)} footer={<><Button onClick={() => setRenameTarget(null)}>{t(`${copyKey}.common.cancel`)}</Button><Button type="submit" form="rename-dataset-form" variant="primary">{t(`${copyKey}.workspace.rename.submit`)}</Button></>}><form id="rename-dataset-form" className="workspace-dialog-form" onSubmit={event => void renameDataset(event)}><Field label={t(`${copyKey}.workspace.datasetName.label`)} htmlFor="rename-dataset-name" required><input id="rename-dataset-name" value={renameName} onChange={event => setRenameName(event.target.value)} /></Field><Field label={t(`${copyKey}.workspace.datasetNote.label`)} htmlFor="rename-dataset-note"><textarea id="rename-dataset-note" value={renameNote} onChange={event => setRenameNote(event.target.value)} /></Field>{updateMutation.isError ? <p className="field__error" role="alert">{apiErrorMessage(updateMutation.error, locale)}</p> : null}</form></Dialog>
       <ConfirmDialog open={disableTarget !== null} title={t(`${copyKey}.workspace.disable.title`)} body={t(`${copyKey}.workspace.disable.body`, { name: disableTarget?.name ?? '' })} confirmLabel={t(`${copyKey}.workspace.disable.confirm`)} cancelLabel={t(`${copyKey}.common.cancel`)} closeLabel={t(`${copyKey}.common.close`)} onConfirm={() => void changeDatasetStatus(disableTarget, 'Inactive')} onClose={() => setDisableTarget(null)} />
