@@ -6,6 +6,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from backend.adapters.llm import PromptModelResponse, PromptResponseMetadata
 from backend.domain.enums import (
     Category,
     ConflictDirection,
@@ -49,9 +50,16 @@ class StaticPromptModel:
         self.raw = raw
         self.calls = 0
 
-    async def generate(self, system_input: str, user_input: str) -> str:
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
         self.calls += 1
-        return self.raw
+        return PromptModelResponse(
+            content=self.raw,
+            metadata=PromptResponseMetadata(
+                http_status=200, finish_reason="stop", request_id="strict-test"
+            ),
+        )
 
     async def close(self) -> None:
         return None
@@ -459,7 +467,11 @@ def test_invalid_json_has_distinct_error() -> None:
     with pytest.raises(ServiceError) as error:
         asyncio.run(service.complete(prepared, Category.A_VA))
     assert error.value.code == "invalid_prompt_json"
-    assert error.value.details == {}
+    assert error.value.details == {
+        "httpStatus": 200,
+        "finishReason": "stop",
+        "requestId": "strict-test",
+    }
 
 
 def test_duplicate_json_key_has_distinct_error() -> None:
@@ -471,7 +483,11 @@ def test_duplicate_json_key_has_distinct_error() -> None:
     with pytest.raises(ServiceError) as error:
         asyncio.run(service.complete(prepared, Category.A_VA))
     assert error.value.code == "duplicate_prompt_key"
-    assert error.value.details == {}
+    assert error.value.details == {
+        "httpStatus": 200,
+        "finishReason": "stop",
+        "requestId": "strict-test",
+    }
 
 
 @pytest.mark.parametrize(
@@ -490,7 +506,12 @@ def test_schema_error_has_only_safe_field_diagnostics(raw: str) -> None:
         asyncio.run(service.complete(prepared, Category.A_VA))
 
     assert error.value.code == "invalid_prompt_schema"
-    assert set(error.value.details) == {"fields"}
+    assert set(error.value.details) == {
+        "httpStatus",
+        "finishReason",
+        "requestId",
+        "fields",
+    }
     assert error.value.details["fields"]
     assert all(
         set(field) == {"path", "type", "reason"}

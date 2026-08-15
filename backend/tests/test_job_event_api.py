@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlmodel import select
 from starlette.websockets import WebSocketDisconnect
 
 from backend.adapters.config import Settings
+from backend.adapters.llm import PromptModelResponse, PromptResponseMetadata
 from backend.app import create_app
 from backend.domain.enums import (
     GenerationAttemptStatus,
@@ -16,7 +18,7 @@ from backend.domain.enums import (
     JobStatus,
     ModelName,
 )
-from backend.domain.models import GenerationAttempt, Job, JobEvent, utc_now
+from backend.domain.models import GenerationAttempt, Job, JobEvent, JobItem, utc_now
 from backend.tests.test_job_executor import (
     FakeRenderer,
     RecordingPromptModel,
@@ -27,12 +29,36 @@ from backend.tests.test_job_executor import (
 )
 
 
-def create_queued_job(tmp_path: Path, *, quantity: int = 3):  # type: ignore[no-untyped-def]
+class SchemaFailurePromptModel:
+    configured = True
+
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
+        return PromptModelResponse(
+            content='{"privatePayload":"raw-response-secret"}',
+            metadata=PromptResponseMetadata(
+                http_status=200,
+                finish_reason="length",
+                request_id="request-persisted-123",
+            ),
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+def create_queued_job(
+    tmp_path: Path,
+    *,
+    quantity: int = 3,
+    prompt_model=None,  # type: ignore[no-untyped-def]
+):  # type: ignore[no-untyped-def]
     frontend = tmp_path / "frontend"
     frontend.mkdir()
     app = create_app(
         Settings(data_root=tmp_path, frontend_dist=frontend),
-        RecordingPromptModel(),
+        prompt_model or RecordingPromptModel(),
         FakeRenderer(),
     )
     resources = create_resources(app.state.database, "event api")
@@ -45,6 +71,75 @@ def create_queued_job(tmp_path: Path, *, quantity: int = 3):  # type: ignore[no-
     make_available(app.state.database, [GpuSlotName.GPU0])
     job = asyncio.run(enqueue(app.state.batch_service, draft))
     return app, job
+
+
+def test_prompt_failure_details_persist_and_replay_without_sensitive_payloads(
+    tmp_path: Path,
+) -> None:
+    app, job = create_queued_job(
+        tmp_path, quantity=1, prompt_model=SchemaFailurePromptModel()
+    )
+    executor = app.state.job_executor
+    assert executor._claim_queued_job(job.id)
+    asyncio.run(executor._run_job(job.id))
+
+    details = {
+        "httpStatus": 200,
+        "finishReason": "length",
+        "requestId": "request-persisted-123",
+    }
+    with app.state.database.read_session() as session:
+        stored_item = session.exec(
+            select(JobItem).where(JobItem.job_id == job.id)
+        ).one()
+        stored_event = session.exec(
+            select(JobEvent).where(
+                JobEvent.job_id == job.id,
+                JobEvent.event_type == "ItemFailed",
+            )
+        ).one()
+        assert stored_item.failure_details_json is not None
+        stored_details = json.loads(stored_item.failure_details_json)
+        stored_payload = json.loads(stored_event.payload_json)
+
+    assert {key: stored_details[key] for key in details} == details
+    assert stored_details["fields"]
+    assert all(
+        set(field) == {"path", "type", "reason"}
+        for field in stored_details["fields"]
+    )
+    assert stored_payload["failureDetails"] == stored_details
+    persisted = json.dumps(
+        {"item": stored_details, "event": stored_payload}, ensure_ascii=False
+    )
+    for sensitive in (
+        "raw-response-secret",
+        "system-prompt-secret",
+        "user-prompt-secret",
+        "authorization",
+        "api-key-secret",
+    ):
+        assert sensitive not in persisted.casefold()
+
+    events = app.state.batch_service.list_job_events(job.id, 1).items
+    failed_event = next(event for event in events if event.event_type == "ItemFailed")
+    previous_event_id = max(event.id for event in events if event.id < failed_event.id)
+    with TestClient(app) as client:
+        item_payload = client.get(f"/api/jobs/{job.id}/items").json()["items"][0]
+        event_payload = client.get(f"/api/jobs/{job.id}/events").json()["items"]
+        api_failed_event = next(
+            event for event in event_payload if event["eventType"] == "ItemFailed"
+        )
+        assert item_payload["failureDetails"] == stored_details
+        assert api_failed_event["payload"]["failureDetails"] == stored_details
+
+        with client.websocket_connect(
+            f"/api/ws/jobs/{job.id}",
+            params={"afterEventId": previous_event_id},
+        ) as websocket:
+            websocket_event = websocket.receive_json()
+        assert websocket_event["eventType"] == "ItemFailed"
+        assert websocket_event["payload"]["failureDetails"] == stored_details
 
 
 def append_event(
@@ -92,14 +187,16 @@ def test_job_items_and_events_are_stably_paginated_and_validated(tmp_path: Path)
     app, job = create_queued_job(tmp_path, quantity=21)
     queued_id = first_event_id(app, job.id)
     first_id = append_event(app, job.id, "ItemPromptStarted", sequence=1)
-    code, reason = app.state.job_executor._failure_details(RuntimeError("private database detail"))
+    failure = app.state.job_executor._failure_details(
+        RuntimeError("private database detail")
+    )
     second_id = append_event(
         app,
         job.id,
         "ItemFailed",
         sequence=1,
-        failure_code=code,
-        failure_reason=reason,
+        failure_code=failure.code,
+        failure_reason=failure.reason,
     )
     added_ids = [
         append_event(app, job.id, "ItemPromptStarted", sequence=sequence)

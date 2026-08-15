@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.domain.schemas import PromptFailureDetails
+
 
 class ServiceError(Exception):
     def __init__(
@@ -16,6 +18,25 @@ class ServiceError(Exception):
         self.code = code
         self.message = message
         self.details = details or {}
+
+
+class PromptServiceError(ServiceError):
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        failure_details: PromptFailureDetails | None = None,
+    ) -> None:
+        self.failure_details = failure_details
+        super().__init__(
+            status_code,
+            code,
+            message,
+            failure_details.model_dump(by_alias=True, exclude_none=True)
+            if failure_details is not None
+            else None,
+        )
 
 
 def not_found(resource: str, identifier: int | str) -> ServiceError:

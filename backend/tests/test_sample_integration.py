@@ -9,7 +9,11 @@ from sqlmodel import select
 
 from backend.adapters.config import Settings
 from backend.adapters.gpu import SlotInspection
-from backend.adapters.llm import PromptAdapterError
+from backend.adapters.llm import (
+    PromptAdapterError,
+    PromptModelResponse,
+    PromptResponseMetadata,
+)
 from backend.adapters.renderer import (
     CancelOutcome,
     RenderResult,
@@ -80,9 +84,12 @@ class ApiRenderer:
 class ApiPromptModel:
     configured = True
 
-    async def generate(self, system_input: str, user_input: str) -> str:
-        return json.dumps(
-            {
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
+        return PromptModelResponse(
+            content=json.dumps(
+                {
                 "spokenText": "我没事，只是需要一点时间。",
                 "appearance": "She wears a charcoal jacket, and her dark hair remains tucked behind one ear.",
                 "bodyAction": (
@@ -103,8 +110,14 @@ class ApiPromptModel:
                     "Soft daylight keeps her face bright and evenly lit with gentle highlights across the jacket fabric."
                 ),
                 "trueEmotionDescription": "说话内容和可见动作共同表明她在平静地回应当前事件。",
-            },
-            ensure_ascii=False,
+                },
+                ensure_ascii=False,
+            ),
+            metadata=PromptResponseMetadata(
+                http_status=200,
+                finish_reason="stop",
+                request_id="request-api-success",
+            ),
         )
 
     async def close(self) -> None:
@@ -112,9 +125,12 @@ class ApiPromptModel:
 
 
 class InvalidApiPromptModel(ApiPromptModel):
-    async def generate(self, system_input: str, user_input: str) -> str:
-        return json.dumps(
-            {
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
+        return PromptModelResponse(
+            content=json.dumps(
+                {
                 "spokenText": "我没事，只是需要一点时间。",
                 "appearance": "She wears a plain jacket.",
                 "bodyAction": "She sits upright.",
@@ -124,13 +140,21 @@ class InvalidApiPromptModel(ApiPromptModel):
                 "camera": "The camera holds a static close-up.",
                 "lighting": "Soft light reaches her face.",
                 "trueEmotionDescription": "说话内容和可见动作共同表明她在平静地回应当前事件。",
-            },
-            ensure_ascii=False,
+                },
+                ensure_ascii=False,
+            ),
+            metadata=PromptResponseMetadata(
+                http_status=200,
+                finish_reason="stop",
+                request_id="request-api-invalid",
+            ),
         )
 
 
 class UnexpectedApiPromptModel(ApiPromptModel):
-    async def generate(self, system_input: str, user_input: str) -> str:
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
         raise AssertionError("The prompt model must not run for an invalid scene")
 
 
@@ -138,23 +162,34 @@ class RawApiPromptModel(ApiPromptModel):
     def __init__(self, raw: str) -> None:
         self.raw = raw
 
-    async def generate(self, system_input: str, user_input: str) -> str:
-        return self.raw
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
+        return PromptModelResponse(
+            content=self.raw,
+            metadata=PromptResponseMetadata(
+                http_status=200,
+                finish_reason="stop",
+                request_id="request-api-raw",
+            ),
+        )
 
 
 class ErrorApiPromptModel(ApiPromptModel):
     def __init__(self, code: str) -> None:
         self.code = code
 
-    async def generate(self, system_input: str, user_input: str) -> str:
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
         raise PromptAdapterError(
             self.code,
             "Safe prompt response failure",
-            {
-                "httpStatus": 200,
-                "finishReason": "length",
-                "requestId": "request-api-123",
-            },
+            PromptResponseMetadata(
+                http_status=200,
+                finish_reason="length",
+                request_id="request-api-123",
+            ),
         )
 
 
@@ -378,13 +413,20 @@ def test_prompt_response_errors_keep_distinct_api_codes_and_safe_details(
             "requestId": "request-api-123",
         }
     elif expected_code == "invalid_prompt_schema":
+        assert payload["details"]["httpStatus"] == 200
+        assert payload["details"]["finishReason"] == "stop"
+        assert payload["details"]["requestId"] == "request-api-raw"
         assert payload["details"]["fields"]
         assert all(
             set(field) == {"path", "type", "reason"}
             for field in payload["details"]["fields"]
         )
     else:
-        assert payload["details"] == {}
+        assert payload["details"] == {
+            "httpStatus": 200,
+            "finishReason": "stop",
+            "requestId": "request-api-raw",
+        }
 
 
 def test_historical_dirty_scene_is_blocked_before_prompt_generation(

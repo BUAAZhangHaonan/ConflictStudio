@@ -630,6 +630,9 @@ class JobItem(SQLModel, table=True):
     status: JobStatus = Field(default=JobStatus.QUEUED, sa_column=enum_column(JobStatus))
     failure_code: str | None = Field(default=None, sa_column=Column(String(80), nullable=True))
     failure_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    failure_details_json: str | None = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     renderer_prompt_id: str | None = Field(default=None, sa_column=Column(String(160), nullable=True))
     source_asset_id: int | None = Field(
         default=None,

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Protocol
+from dataclasses import dataclass
+from typing import Protocol
 
 import httpx
 
@@ -10,23 +11,50 @@ PROMPT_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
 PROMPT_MODEL = "deepseek-v4-flash"
 
 
+@dataclass(frozen=True)
+class PromptResponseMetadata:
+    http_status: int
+    finish_reason: str | None = None
+    request_id: str | None = None
+
+    def as_details(self) -> dict[str, int | str]:
+        details: dict[str, int | str] = {"httpStatus": self.http_status}
+        if self.finish_reason is not None:
+            details["finishReason"] = self.finish_reason
+        if self.request_id is not None:
+            details["requestId"] = self.request_id
+        return details
+
+
+@dataclass(frozen=True)
+class PromptModelResponse:
+    content: str
+    metadata: PromptResponseMetadata
+
+
 class PromptAdapterError(Exception):
     def __init__(
         self,
         code: str,
         message: str,
-        details: dict[str, Any] | None = None,
+        metadata: PromptResponseMetadata | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
-        self.details = details or {}
+        self.metadata = metadata
+
+    @property
+    def details(self) -> dict[str, int | str]:
+        return self.metadata.as_details() if self.metadata is not None else {}
 
 
 class PromptModel(Protocol):
     configured: bool
 
-    async def generate(self, system_input: str, user_input: str) -> str: ...
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse: ...
 
     async def close(self) -> None: ...
 
@@ -34,7 +62,9 @@ class PromptModel(Protocol):
 class UnconfiguredPromptModel:
     configured = False
 
-    async def generate(self, system_input: str, user_input: str) -> str:
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
         raise PromptAdapterError(
             "external_configuration_missing",
             "Prompt generation requires CONFLICTSTUDIO_LLM_API_KEY",
@@ -61,7 +91,9 @@ class OpenAICompatiblePromptModel:
             return UnconfiguredPromptModel()
         return cls(api_key)
 
-    async def generate(self, system_input: str, user_input: str) -> str:
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
         try:
             response = await self.client.post(
                 PROMPT_ENDPOINT,
@@ -98,19 +130,19 @@ class OpenAICompatiblePromptModel:
             raise PromptAdapterError(
                 "prompt_authentication_failed",
                 "The prompt service rejected the configured credentials",
-                self._response_diagnostics(response),
+                self._response_metadata(response),
             )
         if response.status_code == 429:
             raise PromptAdapterError(
                 "prompt_rate_limited",
                 "The prompt service rate limit was reached",
-                self._response_diagnostics(response),
+                self._response_metadata(response),
             )
         if not response.is_success:
             raise PromptAdapterError(
                 "prompt_service_failed",
                 f"The prompt service returned an unsuccessful response (HTTP {response.status_code})",
-                self._response_diagnostics(response),
+                self._response_metadata(response),
             )
 
         try:
@@ -119,25 +151,25 @@ class OpenAICompatiblePromptModel:
             raise PromptAdapterError(
                 "invalid_prompt_envelope",
                 "The prompt service returned an invalid response envelope",
-                self._response_diagnostics(response),
+                self._response_metadata(response),
             ) from None
 
         if not isinstance(body, dict):
             raise PromptAdapterError(
                 "invalid_prompt_envelope",
                 "The prompt service returned an invalid response envelope",
-                self._response_diagnostics(response),
+                self._response_metadata(response),
             )
         choices = body.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
             raise PromptAdapterError(
                 "invalid_prompt_envelope",
                 "The prompt service returned an invalid response envelope",
-                self._response_diagnostics(response),
+                self._response_metadata(response),
             )
         choice = choices[0]
         finish_reason = choice.get("finish_reason")
-        diagnostics = self._response_diagnostics(
+        metadata = self._response_metadata(
             response,
             finish_reason=finish_reason if isinstance(finish_reason, str) else None,
         )
@@ -146,36 +178,35 @@ class OpenAICompatiblePromptModel:
             raise PromptAdapterError(
                 "invalid_prompt_envelope",
                 "The prompt service returned an invalid response envelope",
-                diagnostics,
+                metadata,
             )
         content = message["content"]
         if content is None or (isinstance(content, str) and not content.strip()):
             raise PromptAdapterError(
                 "empty_prompt_content",
                 "The prompt service returned empty prompt content",
-                diagnostics,
+                metadata,
             )
         if not isinstance(content, str):
             raise PromptAdapterError(
                 "invalid_prompt_envelope",
                 "The prompt service returned an invalid response envelope",
-                diagnostics,
+                metadata,
             )
-        return content
+        return PromptModelResponse(content=content, metadata=metadata)
 
     @staticmethod
-    def _response_diagnostics(
+    def _response_metadata(
         response: httpx.Response,
         *,
         finish_reason: str | None = None,
-    ) -> dict[str, Any]:
-        diagnostics: dict[str, Any] = {"httpStatus": response.status_code}
+    ) -> PromptResponseMetadata:
         request_id = response.headers.get("x-request-id")
-        if request_id:
-            diagnostics["requestId"] = request_id
-        if finish_reason:
-            diagnostics["finishReason"] = finish_reason
-        return diagnostics
+        return PromptResponseMetadata(
+            http_status=response.status_code,
+            finish_reason=finish_reason,
+            request_id=request_id or None,
+        )
 
     async def close(self) -> None:
         if self._owns_client:

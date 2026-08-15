@@ -118,6 +118,23 @@ class ErrorResponse(ApiModel):
     error: ErrorValue
 
 
+class PromptSchemaFieldDetail(ApiModel):
+    model_config = ConfigDict(strict=True)
+
+    path: str
+    type: str
+    reason: str
+
+
+class PromptFailureDetails(ApiModel):
+    model_config = ConfigDict(strict=True)
+
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    finish_reason: str | None = Field(default=None, min_length=1, max_length=160)
+    request_id: str | None = Field(default=None, min_length=1, max_length=200)
+    fields: list[PromptSchemaFieldDetail] | None = Field(default=None, min_length=1)
+
+
 class ExpectedRevision(ApiModel):
     expected_revision: int = Field(ge=1)
 
@@ -689,6 +706,7 @@ class JobItemRead(ApiModel):
     status: JobStatus
     failure_code: str | None
     failure_reason: str | None
+    failure_details: PromptFailureDetails | None
     renderer_prompt_id: str | None
     source_asset_id: int | None
     source_asset_url: str | None
@@ -904,6 +922,7 @@ class JobEventPayloadRead(ApiModel):
     gpu_slot: GpuSlotName | None = None
     failure_code: str | None = None
     failure_reason: str | None = None
+    failure_details: PromptFailureDetails | None = None
     progress_value: int | None = Field(default=None, ge=0)
     progress_maximum: int | None = Field(default=None, ge=1)
 

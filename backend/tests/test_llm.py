@@ -7,7 +7,11 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from backend.adapters.llm import OpenAICompatiblePromptModel, PromptAdapterError
+from backend.adapters.llm import (
+    OpenAICompatiblePromptModel,
+    PromptAdapterError,
+    PromptModelResponse,
+)
 
 
 SECRET_KEY = "prompt-test-secret-key"
@@ -66,9 +70,13 @@ def test_request_sets_fixed_structured_output_budget() -> None:
                     }
                 ]
             },
+            headers={
+                "x-request-id": "request-success-123",
+                "x-private-debug": "response-secret",
+            },
         )
 
-    async def scenario() -> str:
+    async def scenario() -> PromptModelResponse:
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         model = OpenAICompatiblePromptModel(SECRET_KEY, client)
         try:
@@ -76,7 +84,16 @@ def test_request_sets_fixed_structured_output_budget() -> None:
         finally:
             await client.aclose()
 
-    assert run(scenario()) == '{"spokenText":"测试"}'
+    result = run(scenario())
+    assert result.content == '{"spokenText":"测试"}'
+    assert result.metadata.http_status == 200
+    assert result.metadata.finish_reason == "stop"
+    assert result.metadata.request_id == "request-success-123"
+    assert result.metadata.as_details() == {
+        "httpStatus": 200,
+        "finishReason": "stop",
+        "requestId": "request-success-123",
+    }
 
 
 @pytest.mark.parametrize(

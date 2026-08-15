@@ -18,6 +18,7 @@ from pydantic import (
 from backend.adapters.llm import PromptAdapterError, PromptModel
 from backend.domain.enums import Category, ContentMode, Ethnicity, Gender
 from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
+from backend.domain.schemas import PromptFailureDetails, PromptSchemaFieldDetail
 from backend.domain.prompt_policy import (
     BANNED_CERTAINTY_MODIFIERS,
     COMPONENT_WORD_LIMITS,
@@ -32,7 +33,7 @@ from backend.domain.prompt_policy import (
     validate_generated_component,
 )
 
-from .errors import ServiceError
+from .errors import PromptServiceError, ServiceError
 
 
 FORBIDDEN_TRUE_EMOTION_DESCRIPTION_TOKENS = (
@@ -261,39 +262,51 @@ class PromptService:
             )
         if prepared.fixed_output is None:
             try:
-                raw = await self.model.generate(
+                response = await self.model.generate(
                     prepared.system_input, prepared.user_input
                 )
             except PromptAdapterError as error:
                 status = 503 if error.code == "external_configuration_missing" else 502
-                raise ServiceError(
+                raise PromptServiceError(
                     status,
                     error.code,
                     error.message,
-                    error.details,
+                    PromptFailureDetails.model_validate(error.details)
+                    if error.metadata is not None
+                    else None,
                 ) from error
+            raw = response.content
+            transport_details = response.metadata.as_details()
             try:
                 payload = _load_unique_json(raw)
             except DuplicatePromptKeyError as error:
-                raise ServiceError(
+                raise PromptServiceError(
                     502,
                     "duplicate_prompt_key",
                     "The prompt service returned JSON with a duplicate key",
+                    PromptFailureDetails.model_validate(transport_details),
                 ) from error
             except json.JSONDecodeError as error:
-                raise ServiceError(
+                raise PromptServiceError(
                     502,
                     "invalid_prompt_json",
                     "The prompt service returned invalid JSON",
+                    PromptFailureDetails.model_validate(transport_details),
                 ) from error
             try:
                 output = GeneratedPrompt.model_validate(payload)
             except ValidationError as error:
-                raise ServiceError(
+                raise PromptServiceError(
                     502,
                     "invalid_prompt_schema",
                     "The prompt service returned JSON that does not match the required schema",
-                    {"fields": _pydantic_error_fields(error)},
+                    PromptFailureDetails(
+                        **transport_details,
+                        fields=[
+                            PromptSchemaFieldDetail.model_validate(field)
+                            for field in _pydantic_error_fields(error)
+                        ],
+                    ),
                 ) from error
         else:
             output = prepared.fixed_output

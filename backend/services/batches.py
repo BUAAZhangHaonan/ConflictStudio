@@ -73,6 +73,7 @@ from backend.domain.schemas import (
     JobItemPromptResultRead,
     JobSummaryRead,
     PageRead,
+    PromptFailureDetails,
     PromptPreviewRead,
     PromptPreviewRequest,
     SelectionRead,
@@ -1346,6 +1347,13 @@ class BatchService:
                     status=item.status,
                     failure_reason=item.failure_reason,
                     failure_code=item.failure_code,
+                    failure_details=(
+                        PromptFailureDetails.model_validate_json(
+                            item.failure_details_json
+                        )
+                        if item.failure_details_json is not None
+                        else None
+                    ),
                     renderer_prompt_id=item.renderer_prompt_id,
                     source_asset_id=item.source_asset_id,
                     source_asset_url=asset_content_url(item.source_asset_id),

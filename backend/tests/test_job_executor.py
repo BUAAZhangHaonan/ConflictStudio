@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import select
 
 from backend.adapters.config import Settings
+from backend.adapters.llm import PromptModelResponse, PromptResponseMetadata
 from backend.adapters.renderer import (
     CancelOutcome,
     RenderRequest,
@@ -64,7 +65,9 @@ class RecordingPromptModel:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def generate(self, system_input: str, user_input: str) -> str:
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
         self.calls += 1
         if "Age: 35" in user_input:
             appearance = "He wears a plain navy shirt, and his short dark hair remains neatly combed away from his face."
@@ -72,8 +75,9 @@ class RecordingPromptModel:
         else:
             appearance = "She wears a charcoal jacket, and her dark hair remains neatly tucked behind one ear."
             pronoun = "She"
-        return json.dumps(
-            {
+        return PromptModelResponse(
+            content=json.dumps(
+                {
                 "spokenText": DIALOGUE,
                 "appearance": appearance,
                 "bodyAction": (
@@ -94,8 +98,14 @@ class RecordingPromptModel:
                     "Soft daylight keeps the face bright and evenly lit with gentle highlights across the plain fabric."
                 ),
                 "trueEmotionDescription": "说话内容和可见动作共同表达受控状态。",
-            },
-            ensure_ascii=False,
+                },
+                ensure_ascii=False,
+            ),
+            metadata=PromptResponseMetadata(
+                http_status=200,
+                finish_reason="stop",
+                request_id="test-prompt-request",
+            ),
         )
 
     async def close(self) -> None:
@@ -110,7 +120,9 @@ class BlockingPromptModel(RecordingPromptModel):
         self.all_started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def generate(self, system_input: str, user_input: str) -> str:
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
         self.entered_calls += 1
         if self.entered_calls == self.expected_calls:
             self.all_started.set()

@@ -38,9 +38,15 @@ from backend.domain.models import (
     JobItemPromptResult,
     utc_now,
 )
-from backend.domain.schemas import JobCancelRequest
+from backend.domain.schemas import JobCancelRequest, PromptFailureDetails
 
-from .errors import ServiceError, not_found, revision_conflict, state_conflict
+from .errors import (
+    PromptServiceError,
+    ServiceError,
+    not_found,
+    revision_conflict,
+    state_conflict,
+)
 from .prompts import FixedPrompt, PreparedPrompt, PromptResult, PromptService
 from .samples import create_sample_for_completed_item
 
@@ -64,6 +70,13 @@ class _ItemExecution:
     source_has_audio: bool
     derive_silent_primary: bool
     prepared_prompt: PreparedPrompt
+
+
+@dataclass(frozen=True)
+class _Failure:
+    code: str
+    reason: str
+    details: PromptFailureDetails | None = None
 
 
 class JobExecutor:
@@ -396,8 +409,8 @@ class JobExecutor:
                 try:
                     cancel_outcome = await self.renderer.cancel(gpu_slot, prompt_id)
                 except Exception as error:
-                    code, reason = self._failure_details(error)
-                    self._fail_item(job_id, item_id, code, reason)
+                    failure = self._failure_details(error)
+                    self._fail_item(job_id, item_id, failure)
                     raise
             if cancel_outcome is CancelOutcome.ALREADY_COMPLETED:
                 self._complete_item(job_id, item_id)
@@ -405,8 +418,8 @@ class JobExecutor:
                 self._cancel_item(job_id, item_id)
             raise
         except Exception as error:
-            code, reason = self._failure_details(error)
-            self._fail_item(job_id, item_id, code, reason)
+            failure = self._failure_details(error)
+            self._fail_item(job_id, item_id, failure)
 
     def _begin_item(
         self,
@@ -546,7 +559,7 @@ class JobExecutor:
             job.revision += 1
             self._append_event(session, job, "ItemCompleted", item=item)
 
-    def _fail_item(self, job_id: int, item_id: int, code: str, reason: str) -> None:
+    def _fail_item(self, job_id: int, item_id: int, failure: _Failure) -> None:
         with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
@@ -561,18 +574,29 @@ class JobExecutor:
             ).one_or_none()
             if attempt is not None:
                 attempt.status = GenerationAttemptStatus.FAILED
-                attempt.failure_reason = reason
+                attempt.failure_reason = failure.reason
                 attempt.finished_at = timestamp
             item.status = JobStatus.FAILED
-            item.failure_code = code
-            item.failure_reason = reason
+            item.failure_code = failure.code
+            item.failure_reason = failure.reason
+            item.failure_details_json = (
+                failure.details.model_dump_json(by_alias=True, exclude_none=True)
+                if failure.details is not None
+                else None
+            )
             item.updated_at = timestamp
             item.revision += 1
             job.failed_count += 1
             job.updated_at = timestamp
             job.revision += 1
             self._append_event(
-                session, job, "ItemFailed", item=item, code=code, reason=reason
+                session,
+                job,
+                "ItemFailed",
+                item=item,
+                code=failure.code,
+                reason=failure.reason,
+                details=failure.details,
             )
 
     def _cancel_item(self, job_id: int, item_id: int) -> None:
@@ -811,8 +835,9 @@ class JobExecutor:
         item: JobItem | None = None,
         code: str | None = None,
         reason: str | None = None,
+        details: PromptFailureDetails | None = None,
     ) -> None:
-        payload: dict[str, int | str | None] = {
+        payload: dict[str, object] = {
             "preparedCount": job.prepared_count,
             "completedCount": job.completed_count,
             "failedCount": job.failed_count,
@@ -825,6 +850,10 @@ class JobExecutor:
             payload["failureCode"] = code
         if reason is not None:
             payload["failureReason"] = reason
+        if details is not None:
+            payload["failureDetails"] = details.model_dump(
+                by_alias=True, exclude_none=True
+            )
         session.add(
             JobEvent(
                 job_id=job.id,
@@ -838,9 +867,13 @@ class JobExecutor:
         )
 
     @staticmethod
-    def _failure_details(error: Exception) -> tuple[str, str]:
+    def _failure_details(error: Exception) -> _Failure:
+        if isinstance(error, PromptServiceError):
+            return _Failure(error.code, error.message, error.failure_details)
         if isinstance(error, ServiceError):
-            return error.code, error.message
+            return _Failure(error.code, error.message)
         if isinstance(error, RendererGatewayError):
-            return error.code, error.message
-        return "item_execution_failed", "The job item failed during execution"
+            return _Failure(error.code, error.message)
+        return _Failure(
+            "item_execution_failed", "The job item failed during execution"
+        )
