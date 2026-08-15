@@ -194,7 +194,6 @@ class PromptService:
                 ),
                 content_scene_supplement=context.content.scene_supplement_en,
                 style_instruction=context.preset.style_instruction,
-                preset_scene_supplement=context.preset.scene_supplement,
                 positive_examples=context.positive_examples,
                 negative_examples=context.negative_examples,
                 background={

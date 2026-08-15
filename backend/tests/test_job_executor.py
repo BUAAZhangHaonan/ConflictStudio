@@ -40,13 +40,14 @@ from backend.domain.models import (
 )
 from backend.domain.schemas import (
     BatchDraftCreate,
+    BatchContentSelectionInput,
+    ContentPlanBackgroundReplace,
     BatchSubmitRequest,
     ContentPlanCreate,
     DatasetCreate,
     DemographicInput,
     JobCancelRequest,
     PromptPresetCreate,
-    SourceSelection,
     VideoBackgroundPresetCreate,
 )
 from backend.services.batches import BatchService
@@ -189,7 +190,7 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
     catalog = CatalogService(database)
     dataset = catalog.create_dataset(
         DatasetCreate(
-            name=f"Production {suffix}", purpose=DatasetPurpose.PRODUCTION, note=""
+            name=f"Production {suffix}", purpose=DatasetPurpose.FORMAL, note=""
         )
     )
     content = catalog.create_content_plan(
@@ -237,6 +238,15 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
             framingEn="Use a static eye-level medium shot.",
         )
     )
+    content = catalog.get_content_plan(content.id)
+    catalog.replace_content_backgrounds(
+        content.id,
+        ContentPlanBackgroundReplace(
+            expectedRevision=content.revision,
+            backgroundPresetIds=[background.id],
+        ),
+    )
+    content = catalog.get_content_plan(content.id)
     return dataset, content, preset, background
 
 
@@ -251,20 +261,18 @@ def create_draft(
     dataset, content, preset, background = resources
     return batches.create_batch_draft(
         BatchDraftCreate(
-            datasetId=dataset.id,
+            targetDatasetId=dataset.id,
             category=Category.A_VA,
             model=model,
             quantity=quantity,
             seed=1208,
-            contentPlans=[
-                SourceSelection(id=content.id, expectedRevision=content.revision)
+            contentSelections=[
+                BatchContentSelectionInput(
+                    contentPlanId=content.id,
+                    backgroundPresetIds=[background.id],
+                )
             ],
-            promptPresets=[
-                SourceSelection(id=preset.id, expectedRevision=preset.revision)
-            ],
-            backgroundPresets=[
-                SourceSelection(id=background.id, expectedRevision=background.revision)
-            ],
+            promptPresetId=preset.id,
             demographics=[
                 DemographicInput(
                     age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN

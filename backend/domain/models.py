@@ -3,7 +3,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import CheckConstraint, Column, Enum as SqlEnum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    Enum as SqlEnum,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlmodel import Field, SQLModel
 
 from .enums import (
@@ -219,7 +229,6 @@ class PromptPreset(SQLModel, table=True):
     name_key: str = Field(sa_column=Column(String(160), nullable=False))
     category: Category = Field(sa_column=enum_column(Category))
     style_instruction: str = Field(default="", sa_column=Column(Text, nullable=False))
-    scene_supplement: str = Field(default="", sa_column=Column(Text, nullable=False))
     final_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
     status: ResourceStatus = Field(default=ResourceStatus.ACTIVE, sa_column=enum_column(ResourceStatus))
     revision: int = Field(default=1, ge=1)
@@ -275,6 +284,40 @@ class VideoBackgroundPreset(SQLModel, table=True):
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
+class ContentPlanBackground(SQLModel, table=True):
+    __tablename__ = "content_plan_backgrounds"
+    __table_args__ = (
+        UniqueConstraint(
+            "content_plan_id",
+            "background_preset_id",
+            name="uq_content_plan_background_pair",
+        ),
+        UniqueConstraint(
+            "content_plan_id",
+            "position",
+            name="uq_content_plan_background_position",
+        ),
+        CheckConstraint("position >= 0", name="ck_content_plan_background_position"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    content_plan_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("content_plans.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    background_preset_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("video_background_presets.id", ondelete="RESTRICT"),
+            nullable=False,
+        )
+    )
+    position: int = Field(ge=0)
+
+
 class BatchDraft(SQLModel, table=True):
     __tablename__ = "batch_drafts"
     __table_args__ = (
@@ -311,12 +354,12 @@ class BatchDraft(SQLModel, table=True):
         super().__init__(**data)
 
 
-class BatchDraftContentPlan(SQLModel, table=True):
-    __tablename__ = "batch_draft_content_plans"
+class BatchDraftContentSelection(SQLModel, table=True):
+    __tablename__ = "batch_draft_content_selections"
     __table_args__ = (
-        UniqueConstraint("batch_draft_id", "position", name="uq_batch_content_position"),
-        CheckConstraint("position >= 0", name="ck_batch_content_position"),
-        CheckConstraint("source_revision >= 1", name="ck_batch_content_revision"),
+        UniqueConstraint("batch_draft_id", "position", name="uq_batch_content_selection_position"),
+        CheckConstraint("position >= 0", name="ck_batch_content_selection_position"),
+        CheckConstraint("source_revision >= 1", name="ck_batch_content_selection_revision"),
     )
 
     batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
@@ -329,26 +372,66 @@ class BatchDraftPromptPreset(SQLModel, table=True):
     __tablename__ = "batch_draft_prompt_presets"
     __table_args__ = (
         UniqueConstraint("batch_draft_id", "position", name="uq_batch_preset_position"),
-        CheckConstraint("position >= 0", name="ck_batch_preset_position"),
+        CheckConstraint("position = 0", name="ck_batch_single_prompt_preset"),
         CheckConstraint("source_revision >= 1", name="ck_batch_preset_revision"),
     )
 
-    batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
-    prompt_preset_id: int = Field(sa_column=Column(Integer, ForeignKey("prompt_presets.id", ondelete="RESTRICT"), primary_key=True))
-    position: int = Field(ge=0)
+    batch_draft_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("batch_drafts.id", ondelete="CASCADE"),
+            primary_key=True,
+        )
+    )
+    prompt_preset_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("prompt_presets.id", ondelete="RESTRICT"),
+            primary_key=True,
+        )
+    )
+    position: int = Field(default=0, ge=0, le=0)
     source_revision: int = Field(ge=1)
 
 
-class BatchDraftBackgroundPreset(SQLModel, table=True):
-    __tablename__ = "batch_draft_background_presets"
+class BatchDraftContentBackground(SQLModel, table=True):
+    __tablename__ = "batch_draft_content_backgrounds"
     __table_args__ = (
-        UniqueConstraint("batch_draft_id", "position", name="uq_batch_background_position"),
-        CheckConstraint("position >= 0", name="ck_batch_background_position"),
-        CheckConstraint("source_revision >= 1", name="ck_batch_background_revision"),
+        ForeignKeyConstraint(
+            ["batch_draft_id", "content_plan_id"],
+            [
+                "batch_draft_content_selections.batch_draft_id",
+                "batch_draft_content_selections.content_plan_id",
+            ],
+            ondelete="CASCADE",
+            name="fk_batch_content_background_selection",
+        ),
+        UniqueConstraint(
+            "batch_draft_id",
+            "content_plan_id",
+            "background_preset_id",
+            name="uq_batch_content_background_pair",
+        ),
+        UniqueConstraint(
+            "batch_draft_id",
+            "content_plan_id",
+            "position",
+            name="uq_batch_content_background_position",
+        ),
+        CheckConstraint("position >= 0", name="ck_batch_content_background_position"),
+        CheckConstraint("source_revision >= 1", name="ck_batch_content_background_revision"),
     )
 
-    batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
-    background_preset_id: int = Field(sa_column=Column(Integer, ForeignKey("video_background_presets.id", ondelete="RESTRICT"), primary_key=True))
+    id: int | None = Field(default=None, primary_key=True)
+    batch_draft_id: int = Field(nullable=False)
+    content_plan_id: int = Field(nullable=False)
+    background_preset_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("video_background_presets.id", ondelete="RESTRICT"),
+            nullable=False,
+        )
+    )
     position: int = Field(ge=0)
     source_revision: int = Field(ge=1)
 

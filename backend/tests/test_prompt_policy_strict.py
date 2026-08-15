@@ -161,7 +161,6 @@ def prompt_context(
         name_key="natural camera",
         category=category,
         style_instruction="Use restrained natural performance and a static close-up.",
-        scene_supplement="",
         final_negative_prompt="subtitles, captions, distorted face",
         status=ResourceStatus.ACTIVE,
     )

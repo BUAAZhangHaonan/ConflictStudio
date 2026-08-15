@@ -33,6 +33,7 @@ class Precision(ValueEnum):
 
 
 class DatasetPurpose(ValueEnum):
+    FORMAL = "Formal"
     PRODUCTION = "Production"
     VALIDATION = "Validation"
 

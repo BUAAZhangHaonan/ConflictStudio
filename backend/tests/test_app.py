@@ -460,6 +460,15 @@ def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) ->
             "/api/video-background-presets",
             json=background_request(),
         )
+        mapping = client.put(
+            f"/api/content-plans/{content.json()['id']}/backgrounds",
+            json={
+                "expectedRevision": content.json()["revision"],
+                "backgroundPresetIds": [background.json()["id"]],
+            },
+        )
+        assert mapping.status_code == 200
+        content = client.get(f"/api/content-plans/{content.json()['id']}")
         response = client.post(
             "/api/prompt-preview",
             json={
@@ -482,7 +491,7 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
     with client_for(tmp_path, renderer) as client:
         dataset = client.post(
             "/api/datasets",
-            json={"name": "Production", "purpose": "Production", "note": ""},
+            json={"name": "Production", "purpose": "Formal", "note": ""},
         )
         content = client.post(
             "/api/content-plans",
@@ -501,17 +510,29 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
             "/api/video-background-presets",
             json=background_request(nameZh="私人书房", nameEn="Private study"),
         )
+        mapping = client.put(
+            f"/api/content-plans/{content.json()['id']}/backgrounds",
+            json={
+                "expectedRevision": content.json()["revision"],
+                "backgroundPresetIds": [background.json()["id"]],
+            },
+        )
+        assert mapping.status_code == 200
         draft = client.post(
             "/api/batch-drafts",
             json={
-                "datasetId": dataset.json()["id"],
+                "targetDatasetId": dataset.json()["id"],
                 "category": "A-VA",
                 "model": "LTX-2.5",
                 "precision": "INT8",
-                "quantity": 1,
-                "contentPlans": [{"id": content.json()["id"], "expectedRevision": content.json()["revision"]}],
-                "promptPresets": [{"id": prompt.json()["id"], "expectedRevision": prompt.json()["revision"]}],
-                "backgroundPresets": [{"id": background.json()["id"], "expectedRevision": background.json()["revision"]}],
+                    "quantity": 1,
+                    "contentSelections": [
+                        {
+                            "contentPlanId": content.json()["id"],
+                            "backgroundPresetIds": [background.json()["id"]],
+                        }
+                    ],
+                "promptPresetId": prompt.json()["id"],
                 "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
                 "gpuSlots": ["GPU0"],
             },

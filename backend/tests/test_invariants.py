@@ -24,7 +24,7 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
     records = {
         "dataset": client.post(
             "/api/datasets",
-            json={"name": "Production", "purpose": "Production", "note": "Initial"},
+            json={"name": "Production", "purpose": "Formal", "note": "Initial"},
         ),
         "content": client.post(
             "/api/content-plans",
@@ -76,7 +76,19 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
         ),
     }
     assert all(response.status_code == 201 for response in records.values())
-    return {name: response.json() for name, response in records.items()}
+    values = {name: response.json() for name, response in records.items()}
+    mapping = client.put(
+        f"/api/content-plans/{values['content']['id']}/backgrounds",
+        json={
+            "expectedRevision": values["content"]["revision"],
+            "backgroundPresetIds": [values["background"]["id"]],
+        },
+    )
+    assert mapping.status_code == 200
+    values["content"] = client.get(
+        f"/api/content-plans/{values['content']['id']}"
+    ).json()
+    return values
 
 
 def normalized_table_sql(database: Database, table_name: str) -> str:
@@ -213,10 +225,17 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "prompt_presets": ("ck_prompt_presets_revision",),
         "prompt_examples": ("ck_prompt_examples_position",),
         "video_background_presets": ("ck_background_presets_revision",),
+        "content_plan_backgrounds": ("ck_content_plan_background_position",),
         "batch_drafts": ("ck_batch_drafts_dataset_revision", "ck_batch_drafts_revision", "ck_batch_drafts_model_precision"),
-        "batch_draft_content_plans": ("ck_batch_content_position", "ck_batch_content_revision"),
-        "batch_draft_prompt_presets": ("ck_batch_preset_position", "ck_batch_preset_revision"),
-        "batch_draft_background_presets": ("ck_batch_background_position", "ck_batch_background_revision"),
+        "batch_draft_content_selections": (
+            "ck_batch_content_selection_position",
+            "ck_batch_content_selection_revision",
+        ),
+        "batch_draft_prompt_presets": ("ck_batch_single_prompt_preset", "ck_batch_preset_revision"),
+        "batch_draft_content_backgrounds": (
+            "ck_batch_content_background_position",
+            "ck_batch_content_background_revision",
+        ),
         "batch_draft_demographics": ("ck_batch_demographics_position",),
         "batch_draft_gpu_slots": ("ck_batch_gpu_position",),
         "batch_video_input_snapshots": (
@@ -347,32 +366,43 @@ def test_expected_revision_only_updates_return_422_without_incrementing_revision
     with client_for(tmp_path) as client:
         records = create_catalog_records(client)
         requests = (
-            (f"/api/datasets/{records['dataset']['id']}", "/api/datasets", records["dataset"]["id"]),
+            (
+                f"/api/datasets/{records['dataset']['id']}",
+                "/api/datasets",
+                records["dataset"]["id"],
+                records["dataset"]["revision"],
+            ),
             (
                 f"/api/content-plans/{records['content']['id']}",
                 f"/api/content-plans/{records['content']['id']}",
                 None,
+                records["content"]["revision"],
             ),
             (
                 f"/api/prompt-presets/{records['prompt']['id']}",
                 f"/api/prompt-presets/{records['prompt']['id']}",
                 None,
+                records["prompt"]["revision"],
             ),
             (
                 f"/api/video-background-presets/{records['background']['id']}",
                 f"/api/video-background-presets/{records['background']['id']}",
                 None,
+                records["background"]["revision"],
             ),
         )
 
-        for update_path, read_path, list_identifier in requests:
-            response = client.patch(update_path, json={"expectedRevision": 1})
+        for update_path, read_path, list_identifier, revision in requests:
+            response = client.patch(
+                update_path,
+                json={"expectedRevision": revision},
+            )
             assert response.status_code == 422
             assert response.json()["error"]["code"] == "validation_error"
             current = client.get(read_path).json()
             if list_identifier is not None:
                 current = next(row for row in current if row["id"] == list_identifier)
-            assert current["revision"] == 1
+            assert current["revision"] == revision
 
 
 def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
@@ -381,14 +411,18 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
         draft_response = client.post(
             "/api/batch-drafts",
             json={
-                "datasetId": records["dataset"]["id"],
+                "targetDatasetId": records["dataset"]["id"],
                 "category": "A-VA",
                 "model": "LTX-2.3",
                 "quantity": 1,
                 "seed": 7,
-                "contentPlans": [{"id": records["content"]["id"], "expectedRevision": 1}],
-                "promptPresets": [{"id": records["prompt"]["id"], "expectedRevision": 1}],
-                "backgroundPresets": [{"id": records["background"]["id"], "expectedRevision": 1}],
+                "contentSelections": [
+                    {
+                        "contentPlanId": records["content"]["id"],
+                        "backgroundPresetIds": [records["background"]["id"]],
+                    }
+                ],
+                "promptPresetId": records["prompt"]["id"],
                 "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
                 "gpuSlots": ["GPU0"],
             },
@@ -400,7 +434,7 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
             (f"/api/datasets/{records['dataset']['id']}", {"expectedRevision": 1, "note": "Changed"}),
             (
                 f"/api/content-plans/{records['content']['id']}",
-                {"expectedRevision": 1, "sceneEn": "A changed private study."},
+                {"expectedRevision": 2, "sceneEn": "A changed private study."},
             ),
             (
                 f"/api/prompt-presets/{records['prompt']['id']}",
@@ -420,6 +454,6 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
         assert saved.status_code == 200
         body = saved.json()
         assert body["datasetRevision"] == 1
-        assert body["contentPlans"][0]["revision"] == 1
-        assert body["promptPresets"][0]["revision"] == 1
-        assert body["backgroundPresets"][0]["revision"] == 1
+        assert body["contentSelections"][0]["contentPlan"]["revision"] == 2
+        assert body["promptPreset"]["revision"] == 1
+        assert body["contentSelections"][0]["backgroundPresets"][0]["revision"] == 1

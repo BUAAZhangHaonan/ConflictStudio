@@ -188,6 +188,15 @@ def create_api_sources(
             "framingEn": "Use a static eye-level medium shot.",
         },
     ).json()
+    mapping = client.put(
+        f"/api/content-plans/{content['id']}/backgrounds",
+        json={
+            "expectedRevision": content["revision"],
+            "backgroundPresetIds": [background["id"]],
+        },
+    )
+    assert mapping.status_code == 200
+    content = client.get(f"/api/content-plans/{content['id']}").json()
     return content, prompt, background
 
 

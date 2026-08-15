@@ -250,9 +250,8 @@ class PromptPresetFields(ApiModel):
     name: Name
     category: Category
     style_instruction: str = Field(default="", alias="styleGuidance")
-    scene_supplement: str = ""
-    positive_examples: list[TextValue] = Field(default_factory=list)
-    negative_examples: list[TextValue] = Field(default_factory=list)
+    positive_examples: list[TextValue] = Field(default_factory=list, max_length=20)
+    negative_examples: list[TextValue] = Field(default_factory=list, max_length=20)
     final_negative_prompt: TextValue = Field(alias="finalRenderNegativeConstraints")
     status: ResourceStatus = ResourceStatus.ACTIVE
 
@@ -269,9 +268,8 @@ class PromptPresetCreate(PromptPresetFields):
 class PromptPresetUpdate(UpdateWithChanges):
     name: Name | None = None
     style_instruction: str | None = Field(default=None, alias="styleGuidance")
-    scene_supplement: str | None = None
-    positive_examples: list[TextValue] | None = None
-    negative_examples: list[TextValue] | None = None
+    positive_examples: list[TextValue] | None = Field(default=None, max_length=20)
+    negative_examples: list[TextValue] | None = Field(default=None, max_length=20)
     final_negative_prompt: TextValue | None = Field(default=None, alias="finalRenderNegativeConstraints")
     status: ResourceStatus | None = None
 
@@ -358,6 +356,18 @@ class SourceSelection(ApiModel):
     expected_revision: int = Field(ge=1)
 
 
+class ContentPlanBackgroundReplace(ExpectedRevision):
+    background_preset_ids: list[int] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def reject_duplicate_backgrounds(self) -> Self:
+        if len(self.background_preset_ids) != len(set(self.background_preset_ids)):
+            raise ValueError("A background preset can be registered only once")
+        if any(identifier <= 0 for identifier in self.background_preset_ids):
+            raise ValueError("Background preset ids must be positive")
+        return self
+
+
 class DemographicInput(ApiModel):
     age: int
     gender: Gender
@@ -370,17 +380,29 @@ class DemographicInput(ApiModel):
         return self
 
 
+class BatchContentSelectionInput(ApiModel):
+    content_plan_id: int = Field(gt=0)
+    background_preset_ids: list[int] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def reject_duplicate_backgrounds(self) -> Self:
+        if len(self.background_preset_ids) != len(set(self.background_preset_ids)):
+            raise ValueError("A background preset can be selected only once per content plan")
+        if any(identifier <= 0 for identifier in self.background_preset_ids):
+            raise ValueError("Background preset ids must be positive")
+        return self
+
+
 class BatchDraftFields(ApiModel):
-    dataset_id: int = Field(gt=0)
+    target_dataset_id: int = Field(gt=0)
     category: Category
     conflict_direction: ConflictDirection | None = None
     model: ModelName = ModelName.LTX_25
     precision: Precision | None = Precision.INT8
     quantity: int = Field(gt=0, le=10000)
     seed: int | None = Field(default=None, ge=0, lt=2**31)
-    content_plans: list[SourceSelection] = Field(min_length=1)
-    prompt_presets: list[SourceSelection] = Field(min_length=1)
-    background_presets: list[SourceSelection] = Field(min_length=1)
+    content_selections: list[BatchContentSelectionInput] = Field(min_length=1)
+    prompt_preset_id: int = Field(gt=0)
     demographics: list[DemographicInput] = Field(min_length=1)
     gpu_slots: list[GpuSlotName] = Field(min_length=1, max_length=2)
 
@@ -399,14 +421,9 @@ class BatchDraftFields(ApiModel):
             raise ValueError("Conflict direction does not match the category")
         if not validate_model_precision(self.model, self.precision):
             raise ValueError("LTX-2.5 requires BF16 or INT8 precision; older models require null precision")
-        for values, label in (
-            (self.content_plans, "content plan"),
-            (self.prompt_presets, "prompt preset"),
-            (self.background_presets, "background preset"),
-        ):
-            identifiers = [value.id for value in values]
-            if len(identifiers) != len(set(identifiers)):
-                raise ValueError(f"Duplicate {label} selection")
+        identifiers = [value.content_plan_id for value in self.content_selections]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("Duplicate content plan selection")
         if len(self.gpu_slots) != len(set(self.gpu_slots)):
             raise ValueError("Duplicate GPU selection")
         return self
@@ -433,9 +450,20 @@ class BilingualSelectionRead(ApiModel):
     revision: int
 
 
+class ContentPlanBackgroundRead(ApiModel):
+    content_plan_id: int
+    content_plan_revision: int
+    backgrounds: list[BilingualSelectionRead]
+
+
+class BatchContentSelectionRead(ApiModel):
+    content_plan: BilingualSelectionRead
+    background_presets: list[BilingualSelectionRead]
+
+
 class BatchDraftRead(ApiModel):
     id: int
-    dataset_id: int
+    target_dataset_id: int
     dataset_revision: int
     category: Category
     conflict_direction: ConflictDirection | None
@@ -444,9 +472,8 @@ class BatchDraftRead(ApiModel):
     quantity: int
     seed: int
     status: BatchDraftStatus
-    content_plans: list[BilingualSelectionRead]
-    prompt_presets: list[SelectionRead]
-    background_presets: list[BilingualSelectionRead]
+    content_selections: list[BatchContentSelectionRead]
+    prompt_preset: SelectionRead
     demographics: list[DemographicInput]
     gpu_slots: list[GpuSlotName]
     revision: int

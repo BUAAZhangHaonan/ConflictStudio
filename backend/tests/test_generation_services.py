@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from itertools import product
 from pathlib import Path
 
 import httpx
@@ -42,6 +41,8 @@ from backend.domain.models import (
 from backend.domain.schemas import (
     BatchDraftCreate,
     BatchSubmitRequest,
+    BatchContentSelectionInput,
+    ContentPlanBackgroundReplace,
     ContentPlanCreate,
     DatasetCreate,
     DatasetUpdate,
@@ -159,7 +160,7 @@ def fixed_resources(
     catalog = CatalogService(database)
     dataset = catalog.create_dataset(
         DatasetCreate(
-            name="正式生成集", purpose=DatasetPurpose.PRODUCTION, note="第一批真实生成"
+            name="正式生成集", purpose=DatasetPurpose.FORMAL, note="第一批真实生成"
         )
     )
     content = catalog.create_content_plan(
@@ -195,7 +196,6 @@ def fixed_resources(
             name="自然室内",
             category=Category.A_VA,
             styleGuidance="Use restrained natural performance and a static medium shot.",
-            sceneSupplement="Keep the room visually simple.",
             positiveExamples=[
                 "Observable behavior is specific and physically plausible."
             ],
@@ -219,6 +219,15 @@ def fixed_resources(
             framingEn="Static eye-level medium shot.",
         )
     )
+    content = catalog.get_content_plan(content.id)
+    catalog.replace_content_backgrounds(
+        content.id,
+        ContentPlanBackgroundReplace(
+            expectedRevision=content.revision,
+            backgroundPresetIds=[background.id],
+        ),
+    )
+    content = catalog.get_content_plan(content.id)
     return catalog, dataset, content, preset, background
 
 
@@ -235,21 +244,16 @@ def make_batch(
 ):
     return service.create_batch_draft(
         BatchDraftCreate(
-            datasetId=dataset.id,
+            targetDatasetId=dataset.id,
             category=Category.A_VA,
             model=model,
             precision=precision,
             quantity=quantity,
             seed=1208,
-            contentPlans=[
-                SourceSelection(id=content.id, expectedRevision=content.revision)
+            contentSelections=[
+                BatchContentSelectionInput(contentPlanId=content.id)
             ],
-            promptPresets=[
-                SourceSelection(id=preset.id, expectedRevision=preset.revision)
-            ],
-            backgroundPresets=[
-                SourceSelection(id=background.id, expectedRevision=background.revision)
-            ],
+            promptPresetId=preset.id,
             demographics=[
                 DemographicInput(
                     age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
@@ -854,21 +858,15 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
     )
     draft = batches.create_batch_draft(
         BatchDraftCreate(
-            datasetId=dataset.id,
+            targetDatasetId=dataset.id,
             category=Category.A_VA,
             model=ModelName.LTX,
             quantity=4,
             seed=7,
-            contentPlans=[
-                SourceSelection(id=content.id, expectedRevision=content.revision)
+            contentSelections=[
+                BatchContentSelectionInput(contentPlanId=content.id)
             ],
-            promptPresets=[
-                SourceSelection(id=preset.id, expectedRevision=preset.revision)
-            ],
-            backgroundPresets=[
-                SourceSelection(id=background.id, expectedRevision=background.revision),
-                SourceSelection(id=second.id, expectedRevision=second.revision),
-            ],
+            promptPresetId=preset.id,
             demographics=[
                 DemographicInput(
                     age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.LATINO
@@ -880,8 +878,7 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
     preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
     assert [item.background_preset.id for item in preview.allocations] == [
         background.id,
-        second.id,
-    ] * 2
+    ] * 4
 
     with pytest.raises(ServiceError) as error:
         asyncio.run(
@@ -1191,15 +1188,6 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             sceneSupplementEn="",
         )
     )
-    preset_two = catalog.create_prompt_preset(
-        PromptPresetCreate(
-            name="自然室内二",
-            category=Category.A_VA,
-            styleGuidance="Use restrained natural performance and a static medium shot.",
-            sceneSupplement="Keep the room visually simple.",
-            finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
-        )
-    )
     background_two = catalog.create_background_preset(
         VideoBackgroundPresetCreate(
             nameZh="安静办公室二",
@@ -1216,6 +1204,15 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             framingEn="Static eye-level medium shot.",
         )
     )
+    content_two = catalog.get_content_plan(content_two.id)
+    catalog.replace_content_backgrounds(
+        content_two.id,
+        ContentPlanBackgroundReplace(
+            expectedRevision=content_two.revision,
+            backgroundPresetIds=[background_two.id],
+        ),
+    )
+    content_two = catalog.get_content_plan(content_two.id)
     batches = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("test")),
@@ -1226,32 +1223,21 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
         DemographicInput(age=35, gender=Gender.MALE, ethnicity=Ethnicity.WHITE),
     ]
     selections = {
-        "datasetId": dataset.id,
+        "targetDatasetId": dataset.id,
         "category": Category.A_VA,
         "model": ModelName.LTX,
         "seed": 47,
-        "contentPlans": [
-            SourceSelection(id=content_one.id, expectedRevision=content_one.revision),
-            SourceSelection(id=content_two.id, expectedRevision=content_two.revision),
+        "contentSelections": [
+            BatchContentSelectionInput(contentPlanId=content_one.id),
+            BatchContentSelectionInput(contentPlanId=content_two.id),
         ],
-        "promptPresets": [
-            SourceSelection(id=preset_one.id, expectedRevision=preset_one.revision),
-            SourceSelection(id=preset_two.id, expectedRevision=preset_two.revision),
-        ],
-        "backgroundPresets": [
-            SourceSelection(
-                id=background_one.id, expectedRevision=background_one.revision
-            ),
-            SourceSelection(
-                id=background_two.id, expectedRevision=background_two.revision
-            ),
-        ],
+        "promptPresetId": preset_one.id,
         "demographics": demographics,
         "gpuSlots": [GpuSlotName.GPU0, GpuSlotName.GPU1],
     }
-    draft = batches.create_batch_draft(BatchDraftCreate(quantity=16, **selections))
+    draft = batches.create_batch_draft(BatchDraftCreate(quantity=4, **selections))
     repeating_draft = batches.create_batch_draft(
-        BatchDraftCreate(quantity=18, **selections)
+        BatchDraftCreate(quantity=6, **selections)
     )
     with database.immediate_session() as session:
         for row in session.exec(select(GpuSlot)).all():
@@ -1263,17 +1249,32 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
         batches.preview_batch(repeating_draft.id, repeating_draft.revision)
     )
 
-    expected = list(
-        product(
-            [content_one.id, content_two.id],
-            [preset_one.id, preset_two.id],
-            [background_one.id, background_two.id],
-            [
-                (25, Gender.FEMALE, Ethnicity.EAST_ASIAN),
-                (35, Gender.MALE, Ethnicity.WHITE),
-            ],
-        )
-    )
+    expected = [
+        (
+            content_one.id,
+            preset_one.id,
+            background_one.id,
+            (25, Gender.FEMALE, Ethnicity.EAST_ASIAN),
+        ),
+        (
+            content_one.id,
+            preset_one.id,
+            background_one.id,
+            (35, Gender.MALE, Ethnicity.WHITE),
+        ),
+        (
+            content_two.id,
+            preset_one.id,
+            background_two.id,
+            (25, Gender.FEMALE, Ethnicity.EAST_ASIAN),
+        ),
+        (
+            content_two.id,
+            preset_one.id,
+            background_two.id,
+            (35, Gender.MALE, Ethnicity.WHITE),
+        ),
+    ]
 
     def preview_signatures(allocations: list[object]) -> list[tuple[object, ...]]:
         return [
@@ -1293,13 +1294,13 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
     preview_values = preview_signatures(preview.allocations)
     repeating_values = preview_signatures(repeating_preview.allocations)
     assert preview_values == expected
-    assert len(set(preview_values)) == 16
-    assert repeating_values[:16] == expected
-    assert repeating_values[16:] == expected[:2]
+    assert len(set(preview_values)) == 4
+    assert repeating_values[:4] == expected
+    assert repeating_values[4:] == expected[:2]
     assert [item.gpu_slot for item in preview.allocations] == [
         GpuSlotName.GPU0,
         GpuSlotName.GPU1,
-    ] * 8
+    ] * 2
 
     job = asyncio.run(
         batches.submit_batch(
@@ -1369,10 +1370,18 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             name="文字自然室内",
             category=Category.A_VT,
             styleGuidance="Use restrained natural performance and a static medium shot.",
-            sceneSupplement="Keep the room visually simple.",
             finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
         )
     )
+    content = catalog.get_content_plan(content.id)
+    catalog.replace_content_backgrounds(
+        content.id,
+        ContentPlanBackgroundReplace(
+            expectedRevision=content.revision,
+            backgroundPresetIds=[background.id],
+        ),
+    )
+    content = catalog.get_content_plan(content.id)
     batches = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("test")),
@@ -1380,20 +1389,15 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
     )
     draft = batches.create_batch_draft(
         BatchDraftCreate(
-            datasetId=dataset.id,
+            targetDatasetId=dataset.id,
             category=Category.A_VT,
             model=ModelName.H3,
             quantity=1,
             seed=83,
-            contentPlans=[
-                SourceSelection(id=content.id, expectedRevision=content.revision)
+            contentSelections=[
+                BatchContentSelectionInput(contentPlanId=content.id)
             ],
-            promptPresets=[
-                SourceSelection(id=preset.id, expectedRevision=preset.revision)
-            ],
-            backgroundPresets=[
-                SourceSelection(id=background.id, expectedRevision=background.revision)
-            ],
+            promptPresetId=preset.id,
             demographics=[
                 DemographicInput(
                     age=45, gender=Gender.MALE, ethnicity=Ethnicity.SOUTH_ASIAN

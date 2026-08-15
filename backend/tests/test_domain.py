@@ -26,6 +26,7 @@ from backend.domain.schemas import (
     ContentPlanUpdate,
     DatasetUpdate,
     PromptPresetUpdate,
+    PromptPresetCreate,
     VideoBackgroundPresetCreate,
     VideoBackgroundPresetUpdate,
 )
@@ -33,17 +34,47 @@ from backend.domain.schemas import (
 
 def batch_payload(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
-        "datasetId": 1,
+        "targetDatasetId": 1,
         "category": "A-VA",
         "quantity": 1,
-        "contentPlans": [{"id": 1, "expectedRevision": 1}],
-        "promptPresets": [{"id": 1, "expectedRevision": 1}],
-        "backgroundPresets": [{"id": 1, "expectedRevision": 1}],
+        "contentSelections": [
+            {"contentPlanId": 1, "backgroundPresetIds": [1]}
+        ],
+        "promptPresetId": 1,
         "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
         "gpuSlots": ["GPU0"],
     }
     values.update(overrides)
     return values
+
+
+def test_batch_contract_rejects_removed_global_selection_fields() -> None:
+    payload = batch_payload()
+    payload.pop("contentSelections")
+    payload.pop("promptPresetId")
+    payload.update(
+        {
+            "datasetId": 1,
+            "contentPlans": [{"id": 1, "expectedRevision": 1}],
+            "promptPresets": [{"id": 1, "expectedRevision": 1}],
+            "backgroundPresets": [{"id": 1, "expectedRevision": 1}],
+        }
+    )
+    with pytest.raises(ValidationError):
+        BatchDraftCreate.model_validate(payload)
+
+
+def test_prompt_preset_rejects_removed_scene_supplement() -> None:
+    with pytest.raises(ValidationError):
+        PromptPresetCreate.model_validate(
+            {
+                "name": "Natural",
+                "category": "A-VA",
+                "styleGuidance": "Use concise observable wording.",
+                "sceneSupplement": "Use a quiet office.",
+                "finalRenderNegativeConstraints": "subtitles",
+            }
+        )
 
 
 def content_plan_payload(**overrides: object) -> dict[str, object]:

@@ -4,16 +4,18 @@ from collections.abc import Sequence
 from typing import Any
 
 from pydantic import ValidationError
+from sqlalchemy import delete
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
-from backend.domain.enums import ContentStatus, ExampleKind, ResourceStatus
+from backend.domain.enums import ContentMode, ContentStatus, ExampleKind, ResourceStatus
 from backend.domain.models import (
-    BatchDraftBackgroundPreset,
-    BatchDraftContentPlan,
+    BatchDraftContentBackground,
+    BatchDraftContentSelection,
     BatchDraftPromptPreset,
     BatchVideoInputSnapshot,
     ContentPlan,
+    ContentPlanBackground,
     Dataset,
     PromptExample,
     PromptPreset,
@@ -21,6 +23,9 @@ from backend.domain.models import (
     utc_now,
 )
 from backend.domain.schemas import (
+    BilingualSelectionRead,
+    ContentPlanBackgroundRead,
+    ContentPlanBackgroundReplace,
     ContentPlanCreate,
     ContentPlanRead,
     ContentPlanUpdate,
@@ -137,6 +142,57 @@ class CatalogService:
                 raise state_conflict("contentPlan", content_id, "The content plan is already used by a batch")
             session.delete(row)
 
+    def get_content_backgrounds(self, content_id: int) -> ContentPlanBackgroundRead:
+        with self.database.read_session() as session:
+            content = self._get(session, ContentPlan, content_id, "contentPlan")
+            return self._content_background_read(session, content)
+
+    def replace_content_backgrounds(
+        self,
+        content_id: int,
+        payload: ContentPlanBackgroundReplace,
+    ) -> ContentPlanBackgroundRead:
+        with self.database.immediate_session() as session:
+            content = self._get(session, ContentPlan, content_id, "contentPlan")
+            self._check_revision(
+                content,
+                payload.expected_revision,
+                "contentPlan",
+            )
+            if content.mode is ContentMode.FIXED and len(payload.background_preset_ids) != 1:
+                raise ServiceError(
+                    422,
+                    "validation_error",
+                    "Fixed content requires exactly one source background",
+                )
+            backgrounds = [
+                self._get(
+                    session,
+                    VideoBackgroundPreset,
+                    background_id,
+                    "videoBackgroundPreset",
+                )
+                for background_id in payload.background_preset_ids
+            ]
+            session.exec(
+                delete(ContentPlanBackground).where(
+                    ContentPlanBackground.content_plan_id == content_id
+                )
+            )
+            session.flush()
+            for position, background in enumerate(backgrounds):
+                session.add(
+                    ContentPlanBackground(
+                        content_plan_id=content_id,
+                        background_preset_id=background.id,
+                        position=position,
+                    )
+                )
+            content.revision += 1
+            content.updated_at = utc_now()
+            session.flush()
+            return self._content_background_read(session, content)
+
     def list_prompt_presets(self) -> list[PromptPresetRead]:
         with self.database.read_session() as session:
             rows = session.exec(select(PromptPreset).order_by(PromptPreset.category, PromptPreset.name, PromptPreset.id)).all()
@@ -154,7 +210,6 @@ class CatalogService:
                 name_key=name_key(payload.name),
                 category=payload.category,
                 style_instruction=payload.style_instruction.strip(),
-                scene_supplement=payload.scene_supplement.strip(),
                 final_negative_prompt=payload.final_negative_prompt,
                 status=payload.status,
             )
@@ -189,7 +244,9 @@ class CatalogService:
             if row.status is not ResourceStatus.DISABLED:
                 raise state_conflict("promptPreset", preset_id, "Disable the prompt preset before deleting it")
             if session.exec(
-                select(BatchDraftPromptPreset).where(BatchDraftPromptPreset.prompt_preset_id == preset_id)
+                select(BatchDraftPromptPreset).where(
+                    BatchDraftPromptPreset.prompt_preset_id == preset_id
+                )
             ).first():
                 raise state_conflict("promptPreset", preset_id, "The prompt preset is already used by a batch")
             session.delete(row)
@@ -254,8 +311,12 @@ class CatalogService:
             if row.status is not ResourceStatus.DISABLED:
                 raise state_conflict("videoBackgroundPreset", preset_id, "Disable the background preset before deleting it")
             if session.exec(
-                select(BatchDraftBackgroundPreset).where(
-                    BatchDraftBackgroundPreset.background_preset_id == preset_id
+                select(BatchDraftContentBackground).where(
+                    BatchDraftContentBackground.background_preset_id == preset_id
+                )
+            ).first() or session.exec(
+                select(ContentPlanBackground).where(
+                    ContentPlanBackground.background_preset_id == preset_id
                 )
             ).first():
                 raise state_conflict("videoBackgroundPreset", preset_id, "The background preset is already used by a batch")
@@ -372,10 +433,47 @@ class CatalogService:
         return PromptPresetRead.model_validate(values)
 
     @staticmethod
+    def _content_background_read(
+        session: Session,
+        content: ContentPlan,
+    ) -> ContentPlanBackgroundRead:
+        links = session.exec(
+            select(ContentPlanBackground)
+            .where(ContentPlanBackground.content_plan_id == content.id)
+            .order_by(ContentPlanBackground.position)
+        ).all()
+        backgrounds = [
+            session.get(VideoBackgroundPreset, link.background_preset_id)
+            for link in links
+        ]
+        if any(background is None for background in backgrounds):
+            raise ServiceError(
+                409,
+                "state_conflict",
+                "A registered background no longer exists",
+            )
+        return ContentPlanBackgroundRead(
+            content_plan_id=content.id,
+            content_plan_revision=content.revision,
+            backgrounds=[
+                BilingualSelectionRead(
+                    id=background.id,
+                    name_zh=background.name_zh,
+                    name_en=background.name_en,
+                    revision=background.revision,
+                )
+                for background in backgrounds
+                if background is not None
+            ],
+        )
+
+    @staticmethod
     def _content_referenced(session: Session, content_id: int) -> bool:
         return bool(
             session.exec(
-                select(BatchDraftContentPlan).where(BatchDraftContentPlan.content_plan_id == content_id)
+                select(BatchDraftContentSelection).where(
+                    BatchDraftContentSelection.content_plan_id == content_id
+                )
             ).first()
             or session.exec(
                 select(BatchVideoInputSnapshot).where(BatchVideoInputSnapshot.content_plan_id == content_id)
