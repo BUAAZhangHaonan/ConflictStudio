@@ -150,6 +150,9 @@ try {
 
   const prefillPage = await context.newPage();
   await api.install(prefillPage);
+  const originalPrefillDisplayId = api.state.samples[0].displayId;
+  api.state.samples[0].displayId = 'CS-000002';
+  const prefillRequestsBefore = api.state.requests.length;
   await open(prefillPage, '/review?sampleId=1', 'en-US');
   const generationFacts = await prefillPage.locator('.review-context__facts--generation').innerText();
   for (const value of ['Content plan', 'Corrected restrained reply', 'Actual video scene', 'Quiet office']) {
@@ -164,7 +167,7 @@ try {
   await prefillPage.waitForURL(`${baseUrl}/generate/batches`);
   const navigationPrefill = await prefillPage.evaluate(() => history.state?.usr?.correctedSampleBatch ?? null);
   assert.deepEqual(navigationPrefill, {
-    sourceDisplayId: 'CS-000001',
+    sourceDisplayId: 'CS-000002',
     category: 'C-VA',
     conflictDirection: 'Audio',
     contentPlan: { id: 22, nameZh: '修正后的克制回应', nameEn: 'Corrected restrained reply', revision: 1, mode: 'Fixed' },
@@ -174,7 +177,7 @@ try {
     precision: 'BF16',
     demographic: { age: 35, gender: 'Female', ethnicity: 'EastAsian' },
   });
-  await prefillPage.getByText('CS-000001 has been copied into a new unsaved batch with the registered scene.').waitFor();
+  await prefillPage.getByText('CS-000002 has been copied into a new unsaved batch with the registered scene.').waitFor();
   assert.equal(await prefillPage.locator('input[name="target-dataset"]:checked').count(), 0, 'The destination dataset must remain unselected.');
   assert.equal(await prefillPage.locator('#batch-category').inputValue(), 'C-VA');
   assert.equal(await prefillPage.locator('#batch-direction').inputValue(), 'Audio');
@@ -183,7 +186,12 @@ try {
   assert.equal(await prefillPage.locator('#batch-quantity').inputValue(), '1');
   const correctedContent = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '2. Content plans and video scenes' }) });
   assert.equal(await correctedContent.locator(':scope > .generation-choice-grid label').filter({ hasText: 'Corrected restrained reply' }).locator('input').isChecked(), true);
+  await correctedContent.getByText('This page has no other active content matching the selected category and direction.').waitFor();
+  assert.equal((await correctedContent.innerText()).includes('No active content matches this category and direction.'), false, 'The current-page empty state must not deny the selected cross-page content.');
   assert.match(await correctedContent.locator('.generation-content-scene').innerText(), /Corrected restrained reply.*Quiet reception room/su);
+  const prefillContentRequests = api.state.requests.slice(prefillRequestsBefore).filter(request => request.method === 'GET' && request.path.startsWith('/api/content-plans'));
+  assert.equal(prefillContentRequests.some(request => request.path === '/api/content-plans/22'), true, 'The selected cross-page content must load through the single-item endpoint.');
+  assert.equal(prefillContentRequests.some(request => request.path === '/api/content-plans' && request.query.page === '2'), false, 'The prefill must not scan later content pages.');
   const correctedPrompt = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '3. Prompt preset' }) });
   assert.equal(await correctedPrompt.locator('label').filter({ hasText: 'Restrained conflict' }).locator('input').isChecked(), true);
   const correctedPeople = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '4. Person attributes' }) });
@@ -192,6 +200,7 @@ try {
   assert.equal(await prefillPage.evaluate(() => sessionStorage.getItem('conflictstudio.generation.draft.batch-form-v3')), null, 'Navigation prefill must not be persisted as a browser draft.');
   const batchWritesAfter = api.state.requests.filter(request => ['POST', 'PUT', 'PATCH'].includes(request.method) && request.path.startsWith('/api/batch-drafts')).length;
   assert.equal(batchWritesAfter, batchWritesBefore, 'Opening a corrected batch must not save or submit it.');
+  api.state.samples[0].displayId = originalPrefillDisplayId;
   await prefillPage.close();
 
   const noScenePage = await context.newPage();

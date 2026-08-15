@@ -186,7 +186,12 @@ test('batch scene selection and result prompts use explicit independent controls
   assert.match(localeSource, /regenerateAction: '使用已登记场景重新生成'/u);
   assert.match(localeSource, /'batches\.correctedPrefill': '\{\{sample\}\} has been copied into a new unsaved batch/u);
   assert.match(localeSource, /'batches\.correctedPrefill': '已将 \{\{sample\}\} 和登记场景预填/u);
+  assert.match(batchesSource, /useQueries\(\{ queries: selectedContentDetailIds\.map\(id => generationQueries\.contentPlan\(id\)\) \}\)/u);
+  assert.match(batchesSource, /batches\.noContentOnPage/u);
+  assert.doesNotMatch(localeSource, /No active content matches this category and direction\.|没有与当前类别和方向匹配的已启用内容。/u);
   assert.equal((jobsSource.match(/className="generation-current-input__prompt"/gu) ?? []).length, 2);
+  assert.doesNotMatch(jobsSource, /item\.input\.userInput/u);
+  assert.match(jobsSource, /jobs\.promptNotGenerated/u);
   assert.match(generationCss, /\.generation-current-input__prompt \{[\s\S]*grid-column: 1 \/ -1/u);
   assert.match(generationCss, /\.generation-current-input__prompt pre \{[\s\S]*white-space: pre-wrap/u);
 });

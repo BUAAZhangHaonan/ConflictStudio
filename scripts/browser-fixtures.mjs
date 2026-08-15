@@ -44,7 +44,15 @@ export const contentPlansFixture = [{
   psychologicalBackgroundZh: '人物保持克制', psychologicalBackgroundEn: 'The person remains restrained',
   dialogue: '', displayText: null, trueEmotionDescription: '', baseVideoPrompt: '', contentRequirementsZh: '生成自然对白', contentRequirementsEn: 'Write natural dialogue',
   sceneSupplementZh: '', sceneSupplementEn: '', backgroundPresetIds: [1, 2], revision: 1, createdAt: timestamp, updatedAt: timestamp,
-}, {
+}, ...Array.from({ length: 19 }, (_, index) => ({
+  id: index + 3, nameZh: `文字内容 ${index + 3}`, nameEn: `Text content ${index + 3}`, category: 'A-VT', conflictDirection: null,
+  mode: 'Fixed', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'sadness',
+  sceneZh: '安静办公室', sceneEn: 'Quiet office', triggerEventZh: '收到消息', triggerEventEn: 'A message arrives',
+  psychologicalBackgroundZh: '人物保持克制', psychologicalBackgroundEn: 'The person remains restrained',
+  dialogue: null, displayText: 'I understand.', trueEmotionDescription: 'The text and expression carry sadness.',
+  baseVideoPrompt: 'A fixed camera records a short reply.', contentRequirementsZh: '', contentRequirementsEn: '',
+  sceneSupplementZh: '', sceneSupplementEn: '', backgroundPresetIds: [1], revision: 1, createdAt: timestamp, updatedAt: timestamp,
+})), {
   id: 22, nameZh: '修正后的克制回应', nameEn: 'Corrected restrained reply', category: 'C-VA', conflictDirection: 'Audio',
   mode: 'Fixed', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'neutral',
   sceneZh: '安静会客室', sceneEn: 'Quiet reception room', triggerEventZh: '收到坏消息', triggerEventEn: 'Bad news arrives',
@@ -114,7 +122,13 @@ function jobItem(id, sequence, gpuSlot) {
       fixedPositivePrompt: 'A fixed camera records one person in a quiet office. The person faces forward, speaks a short restrained reply, keeps natural eye movement, and shows a clear but controlled emotional expression. Soft light keeps the full face visible while the background remains simple and still.', fixedDialogue: 'I understand.', fixedVtText: null,
       fixedTrueEmotionDescription: 'The voice and expression carry sadness.', trueEmotion: 'sadness', apparentEmotion: 'sadness', createdAt: timestamp,
     },
-    promptResult: null,
+    promptResult: {
+      id: 1000 + id, jobItemId: id, policyVersion: 'prompt-policy-v1',
+      systemInput: 'Internal prompt model rules.', userInput: 'Internal structured generation input.', rawStructuredResponse: '{"internal":"response"}',
+      finalPositivePrompt: 'Final positive prompt line one.\nFinal positive prompt line two.',
+      finalNegativePrompt: 'Final negative prompt line one.\nFinal negative prompt line two.',
+      dialogue: 'Internal generated dialogue.', vtText: null, trueEmotionDescription: 'Internal emotion description.', createdAt: timestamp,
+    },
     latestAttempt: { id, attemptNumber: 1, model: 'LTX-2.5', precision: 'INT8', gpuSlot, seed: 3200 + sequence, sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/browser-check.webm', rendererPromptId: `prompt-${id}`, status: 'Completed', failureReason: null, startedAt: timestamp, finishedAt: timestamp },
     attemptCount: 25,
     sampleId: id,

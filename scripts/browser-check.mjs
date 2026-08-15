@@ -232,7 +232,7 @@ try {
   assert.equal('backgroundPresets' in batchRequest.body, false, 'The removed global scene contract must not be sent.');
 
   await open(page, '/generate/content');
-  assert.equal(await page.locator('.generation-selection-list > li').count(), 3);
+  assert.equal(await page.locator('.generation-selection-list > li').count(), 20);
   await page.locator('.generation-selection-card').filter({ hasText: /^Restrained reply/u }).click();
   const fixedEditor = page.locator('.generation-compatible-scenes');
   await fixedEditor.getByText('Quiet office', { exact: true }).waitFor();
@@ -258,6 +258,10 @@ try {
   jobItemsFixture[20].failureCode = 'invalid_prompt_schema';
   jobItemsFixture[20].failureReason = 'Private prompt failure with internal field names.';
   jobItemsFixture[20].failureDetails = { httpStatus: 200, finishReason: 'length', requestId: 'request-browser-secret', fields: [{ path: 'spokenText', type: 'missing', reason: 'Field required' }] };
+  jobItemsFixture[20].status = 'Failed';
+  jobItemsFixture[20].promptResult = null;
+  jobItemsFixture[20].input.fixedPositivePrompt = null;
+  jobItemsFixture[20].input.userInput = 'RAW_GENERATION_INSTRUCTION with spokenText, positivePrompt, dialogue, vtText, and the complete internal generation command.';
   api.state.jobEvents[20] = { ...api.state.jobEvents[20], eventType: 'ItemFailed', failureCode: 'invalid_prompt_schema', failureReason: 'Private prompt failure with internal field names.', failureDetails: jobItemsFixture[20].failureDetails, payload: { ...api.state.jobEvents[20].payload, failureCode: 'invalid_prompt_schema', failureReason: 'Private prompt failure with internal field names.', failureDetails: jobItemsFixture[20].failureDetails } };
   await open(page, '/generate/jobs?job=1');
   const jobList = page.locator('.generation-job-list');
@@ -273,6 +277,10 @@ try {
   await expectPaginationBelow(jobList, jobPagination, 'Job pagination');
   await expectPaginationState(itemPagination, { page: 1, totalPages: 2, total: 25 });
   await expectPaginationBelow(page.locator('.generation-result-cards'), itemPagination, 'Video item pagination');
+  assert.deepEqual(await page.locator('.generation-result-card').first().locator('.generation-current-input__prompt pre').allTextContents(), [
+    'Final positive prompt line one.\nFinal positive prompt line two.',
+    'Final negative prompt line one.\nFinal negative prompt line two.',
+  ], 'A normal result must show both complete final prompts.');
   await expectPaginationState(eventPagination, { page: 1, totalPages: 3, total: 45 });
   await expectPaginationBelow(page.locator('.generation-log-list'), eventPagination, 'Task log pagination');
   await page.getByRole('button', { name: /Show 25 new log entries/ }).waitFor();
@@ -289,6 +297,9 @@ try {
   await itemPagination.getByRole('button', { name: 'Next', exact: true }).click();
   await expectCount(page.locator('.generation-result-card'), 5, 'The final video item page must render the remaining rows.');
   await expectPaginationState(itemPagination, { page: 2, totalPages: 2, total: 25 });
+  const failedItemText = await page.locator('.generation-result-card').first().innerText();
+  assert.match(failedItemText, /Prompt not generated/u);
+  assert.doesNotMatch(failedItemText, /RAW_GENERATION_INSTRUCTION|spokenText|positivePrompt|dialogue|vtText|complete internal generation command/u, 'A failed item must not expose raw prompt input or internal fields.');
   await page.locator('.generation-result-card').first().getByRole('button', { name: /Attempt history/ }).click();
   await expectCount(page.locator('.generation-attempt-list > li'), 20, 'Attempt history must render 20 rows on the first page.');
   const attemptSection = page.locator('.generation-job-section').filter({ has: page.getByRole('heading', { name: 'Attempt history' }) });
@@ -308,6 +319,13 @@ try {
   await eventPagination.getByRole('button', { name: 'Next', exact: true }).click();
   await expectCount(page.locator('.generation-log-list > li'), 5, 'The last log page must render the remaining entries.');
   await expectPaginationState(eventPagination, { page: 3, totalPages: 3, total: 45 });
+
+  await open(page, '/generate/jobs?job=1', 'zh-CN');
+  const chineseItemsSection = page.locator('.generation-job-section').filter({ has: page.getByRole('heading', { name: '视频列表' }) });
+  await chineseItemsSection.locator('.pagination').getByRole('button', { name: '下一页', exact: true }).click();
+  const chineseFailedItemText = await chineseItemsSection.locator('.generation-result-card').first().innerText();
+  assert.match(chineseFailedItemText, /提示词未生成/u);
+  assert.doesNotMatch(chineseFailedItemText, /RAW_GENERATION_INSTRUCTION|spokenText|positivePrompt|dialogue|vtText|complete internal generation command/u, '中文失败条目不得显示原始指令或内部字段。');
 
   await open(page, '/generate/test');
   assert.equal(await page.locator('.generation-job-list > li').count() <= 20, true, 'Test history must use one server page.');
