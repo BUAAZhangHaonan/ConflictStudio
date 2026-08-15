@@ -6,14 +6,15 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.adapters.database import Database
 from backend.adapters.llm import OpenAICompatiblePromptModel
-from backend.domain.enums import Category, ContentMode, ContentStatus, Ethnicity, Gender, GpuSlotName, ModelName
-from backend.domain.models import ContentPlanBackground
+from backend.domain.enums import Category, ContentMode, ContentStatus, DatasetPurpose, Ethnicity, Gender, GpuSlotName, ModelName, ResourceStatus
+from backend.domain.models import ContentPlanBackground, Dataset
 from backend.domain.schemas import (
     BatchContentSelectionInput,
     BatchDraftCreate,
     ContentPlanBackgroundReplace,
     ContentPlanCreate,
     DemographicInput,
+    DatasetUpdate,
     VideoBackgroundPresetCreate,
 )
 from backend.services.batches import BatchService
@@ -237,3 +238,48 @@ def test_fixed_background_is_automatic_and_generative_uses_only_registered_choic
             )
         )
     assert incompatible.value.status_code == 422
+
+
+def test_formal_batch_rejects_inactive_and_nonformal_datasets(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    catalog, dataset, content, preset, _ = fixed_resources(database)
+    service = BatchService(
+        database,
+        PromptService(OpenAICompatiblePromptModel("test")),
+        _ConfiguredRendererGateway(),
+    )
+    payload = BatchDraftCreate(
+        targetDatasetId=dataset.id,
+        category=Category.A_VA,
+        model=ModelName.LTX,
+        quantity=1,
+        seed=7,
+        contentSelections=[BatchContentSelectionInput(contentPlanId=content.id)],
+        promptPresetId=preset.id,
+        demographics=[
+            DemographicInput(
+                age=25,
+                gender=Gender.FEMALE,
+                ethnicity=Ethnicity.EAST_ASIAN,
+            )
+        ],
+        gpuSlots=[GpuSlotName.GPU0],
+    )
+    catalog.update_dataset(
+        dataset.id,
+        DatasetUpdate(expectedRevision=dataset.revision, status=ResourceStatus.INACTIVE),
+    )
+    with pytest.raises(ServiceError) as inactive:
+        service.create_batch_draft(payload)
+    assert inactive.value.status_code == 422
+
+    with database.immediate_session() as session:
+        row = session.get(Dataset, dataset.id)
+        assert row is not None
+        row.status = ResourceStatus.ACTIVE
+        row.purpose = DatasetPurpose.VALIDATION
+        row.revision += 1
+    with pytest.raises(ServiceError) as nonformal:
+        service.create_batch_draft(payload)
+    assert nonformal.value.status_code == 422

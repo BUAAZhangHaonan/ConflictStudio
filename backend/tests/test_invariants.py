@@ -24,7 +24,7 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
     records = {
         "dataset": client.post(
             "/api/datasets",
-            json={"name": "Production", "purpose": "Formal", "note": "Initial"},
+            json={"name": "Production", "note": "Initial"},
         ),
         "content": client.post(
             "/api/content-plans",
@@ -282,7 +282,7 @@ def test_archive_item_database_trigger_requires_matching_sample_dataset(tmp_path
         sample = client.get("/api/samples").json()[0]
         other = client.post(
             "/api/datasets",
-            json={"name": "Other", "purpose": "Validation", "note": ""},
+            json={"name": "Other", "note": ""},
         ).json()
 
     connection = sqlite3.connect(app.state.database.database_path)
@@ -310,7 +310,7 @@ def test_write_lock_returns_stable_409_and_releases_connection(tmp_path: Path) -
         try:
             response = client.post(
                 "/api/datasets",
-                json={"name": "Locked", "purpose": "Production", "note": ""},
+                json={"name": "Locked", "note": ""},
             )
         finally:
             locker.rollback()
@@ -327,7 +327,7 @@ def test_write_lock_returns_stable_409_and_releases_connection(tmp_path: Path) -
 
         retried = client.post(
             "/api/datasets",
-            json={"name": "Unlocked", "purpose": "Production", "note": ""},
+            json={"name": "Unlocked", "note": ""},
         )
         assert retried.status_code == 201
 

@@ -188,7 +188,7 @@ async def create_running_request(
     database.initialize()
     catalog = CatalogService(database)
     dataset = catalog.create_dataset(
-        DatasetCreate(name="Renderer gateway", purpose=DatasetPurpose.FORMAL, note="")
+        DatasetCreate(name="Renderer gateway", note="")
     )
     content = catalog.create_content_plan(
         ContentPlanCreate(

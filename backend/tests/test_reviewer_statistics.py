@@ -38,7 +38,7 @@ def test_statistics_use_latest_review_snapshots_and_shanghai_calendar_days(tmp_p
         )
         dataset = client.post(
             "/api/datasets",
-            json={"name": "No reviews", "purpose": "Validation", "note": ""},
+            json={"name": "No reviews", "note": ""},
         ).json()
         filtered = client.get(
             f"/api/reviewers/{reviewer['id']}/statistics",

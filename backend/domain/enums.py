@@ -40,6 +40,7 @@ class DatasetPurpose(ValueEnum):
 
 class ResourceStatus(ValueEnum):
     ACTIVE = "Active"
+    INACTIVE = "Inactive"
     DISABLED = "Disabled"
 
 

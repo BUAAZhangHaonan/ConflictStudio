@@ -4,12 +4,15 @@ from collections.abc import Sequence
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import delete
+from sqlalchemy import delete, func
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
-from backend.domain.enums import ContentMode, ContentStatus, ExampleKind, ResourceStatus
+from backend.domain.enums import ContentMode, ContentStatus, DatasetPurpose, ExampleKind, ResourceStatus
 from backend.domain.models import (
+    Archive,
+    ArchiveItem,
+    BatchDraft,
     BatchDraftContentBackground,
     BatchDraftContentSelection,
     BatchDraftPromptPreset,
@@ -17,8 +20,10 @@ from backend.domain.models import (
     ContentPlan,
     ContentPlanBackground,
     Dataset,
+    Job,
     PromptExample,
     PromptPreset,
+    Sample,
     VideoBackgroundPreset,
     utc_now,
 )
@@ -59,7 +64,12 @@ class CatalogService:
     def create_dataset(self, payload: DatasetCreate) -> DatasetRead:
         with self.database.immediate_session() as session:
             self._ensure_dataset_name_available(session, payload.name)
-            row = Dataset(name=payload.name, name_key=name_key(payload.name), purpose=payload.purpose, note=payload.note.strip())
+            row = Dataset(
+                name=payload.name,
+                name_key=name_key(payload.name),
+                purpose=DatasetPurpose.FORMAL,
+                note=payload.note.strip(),
+            )
             session.add(row)
             session.flush()
             return DatasetRead.model_validate(row)
@@ -74,6 +84,36 @@ class CatalogService:
                 values["name_key"] = name_key(values["name"])
             self._apply_update(row, values)
             return DatasetRead.model_validate(row)
+
+    def delete_dataset(self, dataset_id: int, expected_revision: int) -> None:
+        with self.database.immediate_session() as session:
+            row = self._get(session, Dataset, dataset_id, "dataset")
+            self._check_revision(row, expected_revision, "dataset")
+            references = {
+                "samples": self._reference_count(session, Sample, Sample.dataset_id, dataset_id),
+                "jobs": self._reference_count(session, Job, Job.dataset_id, dataset_id),
+                "archives": self._reference_count(session, Archive, Archive.dataset_id, dataset_id),
+                "archiveItems": self._reference_count(
+                    session,
+                    ArchiveItem,
+                    ArchiveItem.dataset_id,
+                    dataset_id,
+                ),
+                "batchDrafts": self._reference_count(
+                    session,
+                    BatchDraft,
+                    BatchDraft.dataset_id,
+                    dataset_id,
+                ),
+            }
+            if any(references.values()):
+                raise ServiceError(
+                    409,
+                    "dataset_not_empty",
+                    "The dataset is still referenced and cannot be deleted",
+                    {"references": references},
+                )
+            session.delete(row)
 
     def list_content_plans(self) -> list[ContentPlanRead]:
         with self.database.read_session() as session:
@@ -328,6 +368,19 @@ class CatalogService:
         if row is None:
             raise not_found(resource, identifier)
         return row
+
+    @staticmethod
+    def _reference_count(
+        session: Session,
+        model: type[Any],
+        column: Any,
+        dataset_id: int,
+    ) -> int:
+        return int(
+            session.exec(
+                select(func.count()).select_from(model).where(column == dataset_id)
+            ).one()
+        )
 
     @staticmethod
     def _check_revision(row: Any, expected: int, resource: str) -> None:

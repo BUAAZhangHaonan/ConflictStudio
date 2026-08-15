@@ -159,9 +159,7 @@ def fixed_resources(
 ) -> tuple[CatalogService, object, object, object, object]:
     catalog = CatalogService(database)
     dataset = catalog.create_dataset(
-        DatasetCreate(
-            name="正式生成集", purpose=DatasetPurpose.FORMAL, note="第一批真实生成"
-        )
+        DatasetCreate(name="正式生成集", note="第一批真实生成")
     )
     content = catalog.create_content_plan(
         ContentPlanCreate(

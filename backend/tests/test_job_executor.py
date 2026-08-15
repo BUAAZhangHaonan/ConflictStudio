@@ -189,9 +189,7 @@ class FakeRenderer:
 def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
     catalog = CatalogService(database)
     dataset = catalog.create_dataset(
-        DatasetCreate(
-            name=f"Production {suffix}", purpose=DatasetPurpose.FORMAL, note=""
-        )
+        DatasetCreate(name=f"Production {suffix}", note="")
     )
     content = catalog.create_content_plan(
         ContentPlanCreate(
@@ -480,7 +478,6 @@ def test_concurrent_prompt_generation_releases_database_transactions(
             created = catalog.create_dataset(
                 DatasetCreate(
                     name="Catalog write during prompt generation",
-                    purpose=DatasetPurpose.PRODUCTION,
                     note="",
                 )
             )

@@ -385,7 +385,7 @@ def test_review_snapshot_must_match_current_sample_in_sqlite(tmp_path: Path) -> 
         reviewer = create_reviewer(client)
         other_dataset = client.post(
             "/api/datasets",
-            json={"name": "Other", "purpose": "Validation", "note": ""},
+            json={"name": "Other", "note": ""},
         ).json()
 
     statement = (

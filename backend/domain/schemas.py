@@ -120,19 +120,23 @@ class UpdateWithChanges(ExpectedRevision):
 
 class DatasetCreate(ApiModel):
     name: Name
-    purpose: DatasetPurpose
     note: str = ""
 
 
 class DatasetUpdate(UpdateWithChanges):
     name: Name | None = None
-    purpose: DatasetPurpose | None = None
     note: str | None = None
     status: ResourceStatus | None = None
 
     @model_validator(mode="after")
     def reject_null_fields(self) -> Self:
-        return self.reject_explicit_nulls()
+        self.reject_explicit_nulls()
+        if self.status is not None and self.status not in {
+            ResourceStatus.ACTIVE,
+            ResourceStatus.INACTIVE,
+        }:
+            raise ValueError("Dataset status must be Active or Inactive")
+        return self
 
 
 class DatasetRead(ApiModel):

@@ -214,11 +214,11 @@ def test_dataset_crud_uses_camel_case_and_stable_conflict(tmp_path: Path) -> Non
     with client_for(tmp_path) as client:
         created = client.post(
             "/api/datasets",
-            json={"name": "正式生成集", "purpose": "Production", "note": "正式数据"},
+            json={"name": "正式生成集", "note": "正式数据"},
         )
         duplicate = client.post(
             "/api/datasets",
-            json={"name": "正式生成集", "purpose": "Validation", "note": ""},
+            json={"name": "正式生成集", "note": ""},
         )
         updated = client.patch(
             f"/api/datasets/{created.json()['id']}",
@@ -491,7 +491,7 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
     with client_for(tmp_path, renderer) as client:
         dataset = client.post(
             "/api/datasets",
-            json={"name": "Production", "purpose": "Formal", "note": ""},
+            json={"name": "Production", "note": ""},
         )
         content = client.post(
             "/api/content-plans",

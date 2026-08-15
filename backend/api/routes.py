@@ -148,6 +148,16 @@ def update_dataset(dataset_id: int, payload: DatasetUpdate, request: Request) ->
     return catalog(request).update_dataset(dataset_id, payload)
 
 
+@router.delete("/datasets/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dataset(
+    dataset_id: int,
+    request: Request,
+    expected_revision: int = Query(alias="expectedRevision", ge=1),
+) -> Response:
+    catalog(request).delete_dataset(dataset_id, expected_revision)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/content-plans", response_model=list[ContentPlanRead])
 def list_content_plans(request: Request) -> list[ContentPlanRead]:
     return catalog(request).list_content_plans()
