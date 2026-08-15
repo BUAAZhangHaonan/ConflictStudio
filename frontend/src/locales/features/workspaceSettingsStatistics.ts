@@ -34,7 +34,7 @@ export const workspaceSettingsStatisticsEnUS = {
   status: {
     dataset: {
       Active: 'Active',
-      Disabled: 'Disabled',
+      Inactive: 'Inactive',
     },
     review: {
       Pending: 'Pending',
@@ -73,6 +73,7 @@ export const workspaceSettingsStatisticsEnUS = {
       action: 'Create dataset',
       title: 'Create dataset',
       submit: 'Create',
+      purposeNote: 'New datasets are active formal datasets.',
     },
     datasetName: {
       label: 'Dataset name',
@@ -105,6 +106,7 @@ export const workspaceSettingsStatisticsEnUS = {
       filteredBody: 'Clear the dataset filters to view all datasets.',
       purpose: {
         openLabel: '{{name}}. {{description}}',
+        Formal: 'Formal datasets receive generated samples and enter review and archiving.',
         Production: 'Production datasets enter formal review and archiving.',
         Validation: 'Validation datasets test prompts and models. They do not enter the archive by default.',
         General: '',
@@ -123,10 +125,26 @@ export const workspaceSettingsStatisticsEnUS = {
       body: '{{name}} will remain in the workspace, but it cannot be used for new work.',
       confirm: 'Disable dataset',
     },
+    enable: {
+      action: 'Enable',
+      title: 'Enable dataset?',
+      body: '{{name}} can be selected for new production batches after it is enabled.',
+      confirm: 'Enable dataset',
+    },
+    delete: {
+      action: 'Delete',
+      title: 'Delete dataset?',
+      body: 'Delete {{name}}.',
+      impact: 'Only an empty dataset can be deleted. This action cannot be undone.',
+      confirm: 'Delete dataset',
+      notEmpty: 'This dataset contains samples or related records. Remove those records before deleting it.',
+    },
     feedback: {
       created: 'Dataset {{name}} was created.',
       renamed: 'Dataset {{name}} was updated.',
       disabled: 'Dataset {{name}} was disabled.',
+      enabled: 'Dataset {{name}} was enabled.',
+      deleted: 'Dataset {{name}} was deleted.',
     },
     jobs: {
       title: 'Running and failed jobs',
@@ -309,7 +327,7 @@ export const workspaceSettingsStatisticsZhCN = {
   status: {
     dataset: {
       Active: '已启用',
-      Disabled: '已停用',
+      Inactive: '已停用',
     },
     review: {
       Pending: '待审核',
@@ -348,6 +366,7 @@ export const workspaceSettingsStatisticsZhCN = {
       action: '新建数据集',
       title: '新建数据集',
       submit: '新建',
+      purposeNote: '新建的数据集为已启用的正式数据集。',
     },
     datasetName: {
       label: '数据集名称',
@@ -380,6 +399,7 @@ export const workspaceSettingsStatisticsZhCN = {
       filteredBody: '清除数据集筛选后可查看全部数据集。',
       purpose: {
         openLabel: '{{name}}：{{description}}',
+        Formal: '正式数据集用于接收生成样本，并进入审核和归档。',
         Production: '正式生成集进入正式审核和归档。',
         Validation: '验证集用于测试提示词和模型，默认不进入归档。',
         General: '',
@@ -398,10 +418,26 @@ export const workspaceSettingsStatisticsZhCN = {
       body: '{{name}} 会保留在工作台中，但不能用于新的工作。',
       confirm: '停用数据集',
     },
+    enable: {
+      action: '启用',
+      title: '启用数据集？',
+      body: '启用 {{name}} 后，可在新的正式批次中选择该数据集。',
+      confirm: '启用数据集',
+    },
+    delete: {
+      action: '删除',
+      title: '删除数据集？',
+      body: '删除 {{name}}。',
+      impact: '只能删除空数据集。删除后无法恢复。',
+      confirm: '删除数据集',
+      notEmpty: '该数据集包含样本或关联记录。请先移除这些内容。',
+    },
     feedback: {
       created: '已新建数据集 {{name}}。',
       renamed: '已更新数据集 {{name}}。',
       disabled: '已停用数据集 {{name}}。',
+      enabled: '已启用数据集 {{name}}。',
+      deleted: '已删除数据集 {{name}}。',
     },
     jobs: {
       title: '运行和失败任务',
