@@ -9,6 +9,7 @@ from sqlmodel import select
 
 from backend.adapters.config import Settings
 from backend.adapters.gpu import SlotInspection
+from backend.adapters.llm import PromptAdapterError
 from backend.adapters.renderer import (
     CancelOutcome,
     RenderResult,
@@ -125,6 +126,35 @@ class InvalidApiPromptModel(ApiPromptModel):
                 "trueEmotionDescription": "说话内容和可见动作共同表明她在平静地回应当前事件。",
             },
             ensure_ascii=False,
+        )
+
+
+class UnexpectedApiPromptModel(ApiPromptModel):
+    async def generate(self, system_input: str, user_input: str) -> str:
+        raise AssertionError("The prompt model must not run for an invalid scene")
+
+
+class RawApiPromptModel(ApiPromptModel):
+    def __init__(self, raw: str) -> None:
+        self.raw = raw
+
+    async def generate(self, system_input: str, user_input: str) -> str:
+        return self.raw
+
+
+class ErrorApiPromptModel(ApiPromptModel):
+    def __init__(self, code: str) -> None:
+        self.code = code
+
+    async def generate(self, system_input: str, user_input: str) -> str:
+        raise PromptAdapterError(
+            self.code,
+            "Safe prompt response failure",
+            {
+                "httpStatus": 200,
+                "finishReason": "length",
+                "requestId": "request-api-123",
+            },
         )
 
 
@@ -284,6 +314,132 @@ def test_invalid_generative_prompt_creates_no_job_or_generation_records(
         assert session.exec(select(GenerationAttempt)).all() == []
         assert session.exec(select(Asset)).all() == []
         assert session.exec(select(Sample)).all() == []
+
+
+@pytest.mark.parametrize(
+    ("prompt_model", "expected_code"),
+    [
+        (ErrorApiPromptModel("invalid_prompt_envelope"), "invalid_prompt_envelope"),
+        (ErrorApiPromptModel("empty_prompt_content"), "empty_prompt_content"),
+        (RawApiPromptModel('{"spokenText":'), "invalid_prompt_json"),
+        (
+            RawApiPromptModel('{"spokenText":"甲","spokenText":"乙"}'),
+            "duplicate_prompt_key",
+        ),
+        (RawApiPromptModel("{}"), "invalid_prompt_schema"),
+    ],
+)
+def test_prompt_response_errors_keep_distinct_api_codes_and_safe_details(
+    tmp_path: Path,
+    prompt_model: ApiPromptModel,
+    expected_code: str,
+) -> None:
+    app = make_app(tmp_path, prompt_model)
+    with TestClient(app) as client:
+        content, prompt, background = create_api_sources(client)
+        gpu = client.get("/api/gpu-slots").json()[0]
+        response = client.post(
+            "/api/test-runs",
+            json={
+                "contentPlan": {
+                    "id": content["id"],
+                    "expectedRevision": content["revision"],
+                },
+                "promptPreset": {
+                    "id": prompt["id"],
+                    "expectedRevision": prompt["revision"],
+                },
+                "backgroundPreset": {
+                    "id": background["id"],
+                    "expectedRevision": background["revision"],
+                },
+                "demographic": {
+                    "age": 25,
+                    "gender": "Female",
+                    "ethnicity": "EastAsian",
+                },
+                "seed": 77,
+                "comparisons": [
+                    {"model": "LTX-2.3", "precision": None, "gpuSlot": "GPU0"}
+                ],
+                "executionMode": "Serial",
+                "expectedGpuRevisions": {"GPU0": gpu["revision"]},
+                "confirmModelSwitch": False,
+            },
+        )
+
+    payload = response.json()["error"]
+    assert response.status_code == 502
+    assert payload["code"] == expected_code
+    if expected_code in {"invalid_prompt_envelope", "empty_prompt_content"}:
+        assert payload["details"] == {
+            "httpStatus": 200,
+            "finishReason": "length",
+            "requestId": "request-api-123",
+        }
+    elif expected_code == "invalid_prompt_schema":
+        assert payload["details"]["fields"]
+        assert all(
+            set(field) == {"path", "type", "reason"}
+            for field in payload["details"]["fields"]
+        )
+    else:
+        assert payload["details"] == {}
+
+
+def test_historical_dirty_scene_is_blocked_before_prompt_generation(
+    tmp_path: Path,
+) -> None:
+    app = make_app(tmp_path, UnexpectedApiPromptModel())
+    with TestClient(app) as client:
+        content, prompt, background = create_api_sources(client)
+        with app.state.database.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "DROP TRIGGER reject_video_background_presets_update"
+            )
+            connection.exec_driver_sql(
+                "UPDATE video_background_presets "
+                "SET participant_relationship_en = ? WHERE id = ?",
+                ("One other person remains off-frame.", int(background["id"])),
+            )
+
+        gpu = client.get("/api/gpu-slots").json()[0]
+        response = client.post(
+            "/api/test-runs",
+            json={
+                "contentPlan": {
+                    "id": content["id"],
+                    "expectedRevision": content["revision"],
+                },
+                "promptPreset": {
+                    "id": prompt["id"],
+                    "expectedRevision": prompt["revision"],
+                },
+                "backgroundPreset": {
+                    "id": background["id"],
+                    "expectedRevision": background["revision"],
+                },
+                "demographic": {
+                    "age": 25,
+                    "gender": "Female",
+                    "ethnicity": "EastAsian",
+                },
+                "seed": 77,
+                "comparisons": [
+                    {"model": "LTX-2.3", "precision": None, "gpuSlot": "GPU0"}
+                ],
+                "executionMode": "Serial",
+                "expectedGpuRevisions": {"GPU0": gpu["revision"]},
+                "confirmModelSwitch": False,
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    with app.state.database.read_session() as session:
+        assert session.exec(select(Job)).all() == []
+        assert session.exec(select(JobItem)).all() == []
+        assert session.exec(select(GenerationAttempt)).all() == []
 
 
 def add_completed_result(

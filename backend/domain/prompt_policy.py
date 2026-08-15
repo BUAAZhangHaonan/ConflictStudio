@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .enums import Category, ConflictDirection
 
 
-POLICY_VERSION = "2026-08-14.4"
+POLICY_VERSION = "2026-08-15.1"
 
 COMPONENT_WORD_LIMITS: Mapping[str, int] = {
     "appearance": 18,
@@ -212,6 +212,10 @@ FORBIDDEN_RENDERED_TEXT_PHRASES: tuple[str, ...] = (
 
 FORBIDDEN_BACKGROUND_PERSON_PHRASES: tuple[str, ...] = (
     *FORBIDDEN_MULTI_SUBJECT_PHRASES,
+    "one other person",
+    "one other man",
+    "one other woman",
+    "one other adult",
     "another person",
     "another man",
     "another woman",
@@ -222,6 +226,8 @@ FORBIDDEN_BACKGROUND_PERSON_PHRASES: tuple[str, ...] = (
     "second adult",
     "off camera",
     "off-camera",
+    "off frame",
+    "off-frame",
     "offscreen person",
     "off-screen person",
     "offscreen voice",

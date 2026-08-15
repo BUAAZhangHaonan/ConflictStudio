@@ -25,6 +25,7 @@ from backend.domain.prompt_policy import (
     POLICIES,
     PromptPolicyViolation,
     direction_rule,
+    validate_background_policy_fields,
     validate_component_word_limit,
     validate_final_positive_prompt,
     validate_fixed_positive_prompt,
@@ -164,6 +165,34 @@ class PromptService:
         self.model = model
 
     def prepare(self, context: PromptContext) -> PreparedPrompt:
+        try:
+            validate_background_policy_fields(
+                {
+                    "sceneEn": context.background.scene_en,
+                    "ambientSoundEn": context.background.ambient_sound_en,
+                    "participantRelationshipEn": (
+                        context.background.participant_relationship_en
+                    ),
+                    "lightingEn": context.background.lighting_en,
+                    "framingEn": context.background.framing_en,
+                }
+            )
+        except PromptPolicyViolation as error:
+            raise ServiceError(
+                422,
+                "validation_error",
+                "The selected scene violates the prompt policy",
+                {
+                    "fields": [
+                        {
+                            "path": "backgroundPreset",
+                            "type": "prompt_policy",
+                            "reason": str(error),
+                        }
+                    ]
+                },
+            ) from error
+
         fixed_output = None
         system_input = ""
         user_input = ""
@@ -237,14 +266,34 @@ class PromptService:
                 )
             except PromptAdapterError as error:
                 status = 503 if error.code == "external_configuration_missing" else 502
-                raise ServiceError(status, error.code, error.message) from error
+                raise ServiceError(
+                    status,
+                    error.code,
+                    error.message,
+                    error.details,
+                ) from error
             try:
-                output = GeneratedPrompt.model_validate(_load_unique_json_object(raw))
-            except (ValidationError, ValueError, json.JSONDecodeError) as error:
+                payload = _load_unique_json(raw)
+            except DuplicatePromptKeyError as error:
                 raise ServiceError(
                     502,
-                    "invalid_prompt_response",
-                    "The prompt service returned data that does not match the required structure",
+                    "duplicate_prompt_key",
+                    "The prompt service returned JSON with a duplicate key",
+                ) from error
+            except json.JSONDecodeError as error:
+                raise ServiceError(
+                    502,
+                    "invalid_prompt_json",
+                    "The prompt service returned invalid JSON",
+                ) from error
+            try:
+                output = GeneratedPrompt.model_validate(payload)
+            except ValidationError as error:
+                raise ServiceError(
+                    502,
+                    "invalid_prompt_schema",
+                    "The prompt service returned JSON that does not match the required schema",
+                    {"fields": _pydantic_error_fields(error)},
                 ) from error
         else:
             output = prepared.fixed_output
@@ -431,19 +480,39 @@ class PromptService:
         return f"A {age}-year-old {cls._ethnicity_text(ethnicity)} {person}"
 
 
-def _load_unique_json_object(raw: str) -> dict[str, object]:
+class DuplicatePromptKeyError(ValueError):
+    pass
+
+
+def _load_unique_json(raw: str) -> object:
     def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
         result: dict[str, object] = {}
         for key, value in pairs:
             if key in result:
-                raise ValueError(f"Duplicate JSON key: {key}")
+                raise DuplicatePromptKeyError(
+                    "The prompt response contains a duplicate JSON key"
+                )
             result[key] = value
         return result
 
-    value = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
-    if not isinstance(value, dict):
-        raise ValueError("The prompt response must be a JSON object")
-    return value
+    return json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+
+
+def _pydantic_error_fields(error: ValidationError) -> list[dict[str, str]]:
+    fields: list[dict[str, str]] = []
+    for item in error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    ):
+        fields.append(
+            {
+                "path": ".".join(str(part) for part in item["loc"]),
+                "type": str(item["type"]),
+                "reason": str(item["msg"]).removeprefix("Value error, "),
+            }
+        )
+    return fields
 
 
 def _validate_spoken_text_component(value: str) -> str:

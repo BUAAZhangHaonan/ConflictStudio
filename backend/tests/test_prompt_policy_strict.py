@@ -453,23 +453,50 @@ def test_json_key_order_is_irrelevant() -> None:
     assert result.dialogue == VA_DIALOGUE
 
 
-@pytest.mark.parametrize(
-    "raw",
-    [
-        component_json().replace(
-            '"spokenText":', '"spokenText": "重复", "spokenText":', 1
-        ),
-        component_json(extraField="not allowed"),
-        component_json(camera=42),
-        component_json().replace('"spokenText":', '"dialogue":', 1),
-    ],
-)
-def test_schema_rejects_duplicate_extra_wrong_type_and_old_keys(raw: str) -> None:
+def test_invalid_json_has_distinct_error() -> None:
+    service = PromptService(StaticPromptModel('{"spokenText":'))
+    prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
+    with pytest.raises(ServiceError) as error:
+        asyncio.run(service.complete(prepared, Category.A_VA))
+    assert error.value.code == "invalid_prompt_json"
+    assert error.value.details == {}
+
+
+def test_duplicate_json_key_has_distinct_error() -> None:
+    raw = component_json().replace(
+        '"spokenText":', '"spokenText": "重复", "spokenText":', 1
+    )
     service = PromptService(StaticPromptModel(raw))
     prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
     with pytest.raises(ServiceError) as error:
         asyncio.run(service.complete(prepared, Category.A_VA))
-    assert error.value.code == "invalid_prompt_response"
+    assert error.value.code == "duplicate_prompt_key"
+    assert error.value.details == {}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        component_json(extraField="model-output-secret"),
+        component_json(camera=42),
+        component_json().replace('"spokenText":', '"dialogue":', 1),
+        "[]",
+    ],
+)
+def test_schema_error_has_only_safe_field_diagnostics(raw: str) -> None:
+    service = PromptService(StaticPromptModel(raw))
+    prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
+    with pytest.raises(ServiceError) as error:
+        asyncio.run(service.complete(prepared, Category.A_VA))
+
+    assert error.value.code == "invalid_prompt_schema"
+    assert set(error.value.details) == {"fields"}
+    assert error.value.details["fields"]
+    assert all(
+        set(field) == {"path", "type", "reason"}
+        for field in error.value.details["fields"]
+    )
+    assert "model-output-secret" not in json.dumps(error.value.details)
 
 
 def test_generated_prompt_model_rejects_blank_and_wrong_types() -> None:
@@ -634,13 +661,16 @@ def test_old_complete_prompt_response_has_no_compatibility_entry() -> None:
     prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
     with pytest.raises(ServiceError) as error:
         asyncio.run(service.complete(prepared, Category.A_VA))
-    assert error.value.code == "invalid_prompt_response"
+    assert error.value.code == "invalid_prompt_schema"
 
 
 @pytest.mark.parametrize(
     "value",
     [
         "A friend waits beside the subject.",
+        "One other person waits beside the subject.",
+        "One other woman speaks from off frame.",
+        "A voice answers from off-frame.",
         "Soft background music fills the room.",
         "The walls create a sad atmosphere.",
         "The A-VT protocol applies here.",
@@ -657,3 +687,29 @@ def test_background_policy_rejects_person_music_emotion_internal_and_protocol_co
 def test_background_policy_keeps_valid_text_unchanged() -> None:
     value = "Low room tone and steady ventilation remain audible."
     assert validate_background_policy_text(value, "ambientAudio") is value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "The subject faces the camera.",
+        "The subject directly addresses the camera.",
+    ],
+)
+def test_background_policy_allows_direct_camera_address(value: str) -> None:
+    assert validate_background_policy_text(value, "framingEn") is value
+
+
+@pytest.mark.parametrize("mode", [ContentMode.GENERATIVE, ContentMode.FIXED])
+def test_prepare_revalidates_historical_background_text(mode: ContentMode) -> None:
+    context = prompt_context(mode=mode, base_video_prompt=FIXED_PROMPT)
+    context.background.participant_relationship_en = (
+        "One other person remains off frame."
+    )
+
+    with pytest.raises(ServiceError) as error:
+        PromptService(StaticPromptModel("unused")).prepare(context)
+
+    assert error.value.status_code == 422
+    assert error.value.code == "validation_error"
+    assert error.value.details["fields"][0]["path"] == "backgroundPreset"
