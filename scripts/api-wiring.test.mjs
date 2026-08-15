@@ -19,8 +19,10 @@ const statisticsSource = read('../frontend/src/pages/StatisticsPage.tsx');
 const workspaceSource = read('../frontend/src/pages/WorkspacePage.tsx');
 const workspaceCss = read('../frontend/src/pages/WorkspacePage.css');
 const batchesSource = read('../frontend/src/pages/generate/BatchesPage.tsx');
+const backgroundsSource = read('../frontend/src/pages/generate/BackgroundsPage.tsx');
 const contentSource = read('../frontend/src/pages/generate/ContentPage.tsx');
 const jobsSource = read('../frontend/src/pages/generate/JobsPage.tsx');
+const presetsSource = read('../frontend/src/pages/generate/PresetsPage.tsx');
 const generationCss = read('../frontend/src/pages/generate/GenerationPage.css');
 const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
 const gpuStatusSource = read('../frontend/src/gpuStatus.ts');
@@ -74,6 +76,36 @@ test('prompt response failures have concise bilingual messages without internal 
         return true;
       },
     );
+  }
+});
+
+test('display name failures have plain bilingual messages without backend details', async () => {
+  const client = loadClient(async () => ({
+    ok: false,
+    status: 422,
+    json: async () => ({
+      error: {
+        code: 'invalid_display_name',
+        message: 'internal regex and field detail',
+        details: { fields: [{ field: 'name_en', message: 'sensitive pattern' }] },
+      },
+    }),
+  }));
+
+  await assert.rejects(
+    () => client.apiRequest('/api/content-plans', { method: 'POST', body: '{}' }),
+    error => {
+      assert.equal(client.apiErrorMessage(error, 'en-US'), 'Use a clear English name of 1 to 60 characters. Do not use import labels, slugs, statuses, or version tags.');
+      assert.equal(client.apiErrorMessage(error, 'zh-CN'), '请输入 1 至 60 个字符的清晰英文名称。不要使用导入标记、短标识、状态值或版本号。');
+      assert.doesNotMatch(client.apiErrorMessage(error, 'en-US'), /name_en|regex|sensitive pattern/u);
+      assert.doesNotMatch(client.apiErrorMessage(error, 'zh-CN'), /name_en|regex|sensitive pattern/u);
+      return true;
+    },
+  );
+
+  for (const editorSource of [contentSource, presetsSource, backgroundsSource]) {
+    assert.match(editorSource, /const error = createMutation\.error \?\? updateMutation\.error/u);
+    assert.match(editorSource, /<OperationFeedback error=\{error\}/u);
   }
 });
 
