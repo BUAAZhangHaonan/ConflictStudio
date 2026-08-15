@@ -36,6 +36,7 @@ from backend.domain.schemas import (
     PageRead,
 )
 
+from .assets import asset_content_url
 from .errors import archive_preview_stale, not_found, state_conflict
 from .reviews import latest_review
 from .pagination import paginate
@@ -161,9 +162,10 @@ class ArchiveService:
             needs_update_count=needs_update_count,
         )
 
-    @staticmethod
-    def _calculate_preview(session: Session, dataset_id: int) -> ArchivePreviewRead:
-        if session.get(Dataset, dataset_id) is None:
+    @classmethod
+    def _calculate_preview(cls, session: Session, dataset_id: int) -> ArchivePreviewRead:
+        dataset = session.get(Dataset, dataset_id)
+        if dataset is None:
             raise not_found("dataset", dataset_id)
         archive = session.get(Archive, dataset_id)
         samples = {
@@ -183,7 +185,7 @@ class ArchiveService:
         for sample_id, sample in sorted(samples.items()):
             item = items.get(sample_id)
             if sample.review_decision is ReviewDecision.ACCEPTED:
-                change = ArchiveChangeRead(sample_id=sample_id, expected_revision=sample.revision)
+                change = cls._archive_change(dataset, sample)
                 if item is None:
                     added.append(change)
                 elif item.sample_revision != sample.revision:
@@ -191,9 +193,7 @@ class ArchiveService:
                 else:
                     unchanged_count += 1
             elif item is not None:
-                removed.append(
-                    ArchiveChangeRead(sample_id=sample_id, expected_revision=sample.revision)
-                )
+                removed.append(cls._archive_change(dataset, sample))
         return ArchivePreviewRead(
             dataset_id=dataset_id,
             added=added,
@@ -201,6 +201,23 @@ class ArchiveService:
             removed=removed,
             unchanged_count=unchanged_count,
             expected_archive_revision=archive.revision if archive is not None else 0,
+        )
+
+    @staticmethod
+    def _archive_change(dataset: Dataset, sample: Sample) -> ArchiveChangeRead:
+        if sample.id is None:
+            raise RuntimeError("A persisted sample must have an id")
+        return ArchiveChangeRead(
+            sample_id=sample.id,
+            display_id=f"CS-{sample.id:06d}",
+            expected_revision=sample.revision,
+            dataset_id=dataset.id,
+            dataset_name=dataset.name,
+            category=sample.category,
+            protocol=protocol_for(sample.category),
+            relation=relation_for(sample.category),
+            primary_asset_id=sample.primary_asset_id,
+            primary_asset_url=asset_content_url(sample.primary_asset_id),
         )
 
     @staticmethod

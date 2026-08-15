@@ -378,7 +378,21 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           return fulfillJson(route, next);
         }
         if (method === 'GET' && path === '/api/archives') return fulfillJson(route, pageValue(url, state.archives));
-        if (method === 'POST' && path === '/api/archives/preview') return fulfillJson(route, { datasetId: body.datasetId, added: [{ sampleId: 31, expectedRevision: 1 }], updated: [{ sampleId: 32, expectedRevision: 1 }], removed: [{ sampleId: 33, expectedRevision: 1 }], unchangedCount: 22, expectedArchiveRevision: 2 });
+        if (method === 'POST' && path === '/api/archives/preview') {
+          const changes = state.samples.filter(sample => sample.datasetId === body.datasetId && sample.id >= 31).slice(0, 25).map(sample => ({
+            sampleId: sample.id,
+            displayId: sample.displayId,
+            expectedRevision: sample.revision,
+            datasetId: sample.datasetId,
+            datasetName: state.datasets.find(dataset => dataset.id === sample.datasetId)?.name ?? '',
+            category: sample.category,
+            protocol: sample.category.endsWith('-VA') ? 'VA' : 'VT',
+            relation: sample.category.startsWith('A-') ? 'Aligned' : 'Conflict',
+            primaryAssetId: sample.primaryAssetId,
+            primaryAssetUrl: sample.primaryAssetUrl,
+          }));
+          return fulfillJson(route, { datasetId: body.datasetId, added: changes.slice(0, 21), updated: changes.slice(21, 23), removed: changes.slice(23), unchangedCount: 30, expectedArchiveRevision: 2 });
+        }
         if (method === 'POST' && path === '/api/archives/sync') {
           state.archives = [{ datasetId: body.datasetId, revision: body.expectedArchiveRevision + 1, lastSyncedAt: timestamp, manifestAvailable: true, currentCount: 25, needsUpdateCount: 0 }];
           return fulfillJson(route, state.archives[0]);

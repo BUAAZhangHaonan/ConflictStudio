@@ -39,6 +39,19 @@ async function waitForFrame(page) {
   await page.evaluate(() => new Promise(resolveFrame => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
 }
 
+async function expectPaginationState(pagination, { page, totalPages, total }) {
+  await pagination.waitFor();
+  assert.match(await pagination.innerText(), new RegExp(`Page ${page} of ${totalPages}.*${total} records`, 'su'));
+  assert.equal(await pagination.getByRole('button', { name: 'Previous', exact: true }).isDisabled(), page === 1);
+  assert.equal(await pagination.getByRole('button', { name: 'Next', exact: true }).isDisabled(), page === totalPages);
+}
+
+async function expectCount(locator, count, message) {
+  if (count > 0) await locator.nth(count - 1).waitFor();
+  await locator.nth(count).waitFor({ state: 'detached' });
+  assert.equal(await locator.count(), count, message);
+}
+
 const server = await createServer({
   root: frontendRoot,
   logLevel: 'silent',
@@ -202,6 +215,13 @@ try {
   assert.deepEqual(await page.locator('.archive-list-panel tbody th a').allTextContents(), pageTwoIds, 'Archive return must restore the same sample set.');
 
   await page.getByRole('button', { name: 'Preview sync' }).click();
+  const previewPanel = page.locator('.archive-preview');
+  await expectCount(previewPanel.locator('.archive-preview__list > li'), 20, 'Archive preview must show the first 20 cross-page changes.');
+  await expectPaginationState(previewPanel.locator('.pagination'), { page: 1, totalPages: 2, total: 25 });
+  assert.equal(await previewPanel.getByRole('link', { name: 'CS-000031', exact: true }).count(), 1, 'Preview must render a sample that came from another sample page.');
+  await previewPanel.locator('.pagination').getByRole('button', { name: 'Next', exact: true }).click();
+  await expectCount(previewPanel.locator('.archive-preview__list > li'), 5, 'Archive preview final page must show the remaining changes.');
+  await expectPaginationState(previewPanel.locator('.pagination'), { page: 2, totalPages: 2, total: 25 });
   await page.getByRole('button', { name: 'Sync archive' }).click();
   const syncDialog = page.getByRole('dialog');
   await syncDialog.waitFor();

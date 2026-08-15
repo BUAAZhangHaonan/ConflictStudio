@@ -205,6 +205,17 @@
   border-top: 1px solid var(--color-border);
 }
 
+.archive-preview__list li > span:not(.status-badge) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.archive-preview__list li small {
+  color: var(--color-text-muted);
+  line-height: 1.35;
+}
+
 .archive-preview__groups {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

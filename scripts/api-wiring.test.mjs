@@ -112,6 +112,8 @@ test('archive uses preview, sync, manifest download and canonical return locatio
   assert.match(archiveSource, /reviewLocation\(sample\.id, returnTo\)/u);
   assert.match(archiveHelpers, /if \(state\.page > 1\) params\.set\('page'/u);
   assert.doesNotMatch(archiveSource, /archiveJsonl|Blob|URL\.createObjectURL|navigate\(-1\)/u);
+  assert.doesNotMatch(archiveSource, /previewSamples\(|byId\.get\(item\.sampleId\)/u);
+  assert.match(archiveSource, /preview\.added\.map\(sample/u);
 });
 
 test('workspace is a card list through 1024px and keeps every action visible', () => {

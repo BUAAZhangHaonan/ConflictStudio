@@ -490,7 +490,15 @@ export interface ReviewerStatisticsFilter {
 
 export interface ArchiveChange {
   sampleId: number;
+  displayId: string;
   expectedRevision: number;
+  datasetId: number;
+  datasetName: string;
+  category: Category;
+  protocol: Protocol;
+  relation: Relation;
+  primaryAssetId: number;
+  primaryAssetUrl: string;
 }
 
 export interface ArchivePreviewRequest {

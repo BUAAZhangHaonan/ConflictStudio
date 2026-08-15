@@ -49,22 +49,33 @@ def test_archive_preview_and_sync_cover_add_update_remove_and_unchanged(tmp_path
         third_sync = client.post("/api/archives/sync", json=removed.json())
         download = client.get(f"/api/archives/{sample['datasetId']}/manifest")
 
-    assert added.json()["added"] == [
-        {"sampleId": sample["id"], "expectedRevision": sample["revision"]}
-    ]
+    assert len(added.json()["added"]) == 1
+    added_change = added.json()["added"][0]
+    assert added_change == {
+        "sampleId": sample["id"],
+        "displayId": sample["displayId"],
+        "expectedRevision": sample["revision"],
+        "datasetId": sample["datasetId"],
+        "datasetName": "Formal",
+        "category": sample["category"],
+        "protocol": "VA",
+        "relation": "Aligned",
+        "primaryAssetId": sample["primaryAssetId"],
+        "primaryAssetUrl": sample["primaryAssetUrl"],
+    }
     assert added.json()["expectedArchiveRevision"] == 0
     assert first_sync.status_code == 200
     assert first_sync.json()["revision"] == 1
     assert unchanged.json()["unchangedCount"] == 1
     assert unchanged.json()["added"] == unchanged.json()["updated"] == unchanged.json()["removed"] == []
-    assert updated.json()["updated"] == [
-        {"sampleId": sample["id"], "expectedRevision": changed["revision"]}
+    assert [(row["sampleId"], row["expectedRevision"]) for row in updated.json()["updated"]] == [
+        (sample["id"], changed["revision"])
     ]
     assert stale.status_code == 409
     assert stale.json()["error"]["code"] == "archive_preview_stale"
     assert second_sync.json()["revision"] == 2
-    assert removed.json()["removed"] == [
-        {"sampleId": sample["id"], "expectedRevision": rejected["revision"]}
+    assert [(row["sampleId"], row["expectedRevision"]) for row in removed.json()["removed"]] == [
+        (sample["id"], rejected["revision"])
     ]
     assert third_sync.json()["revision"] == 3
     assert third_sync.json()["currentCount"] == 0

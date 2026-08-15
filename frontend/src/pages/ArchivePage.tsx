@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { apiErrorMessage } from '../api/client';
-import type { ArchivePreview, Sample } from '../api/contracts';
+import type { ArchiveChange } from '../api/contracts';
 import {
   useArchivesQuery,
   useDatasetsQuery,
@@ -20,15 +20,6 @@ import type { Category } from '../types';
 import './ArchivePage.css';
 
 const categories: readonly Category[] = ['A-VA', 'C-VA', 'A-VT', 'C-VT'];
-
-function previewSamples(preview: ArchivePreview, samples: Sample[]): Array<{ sample: Sample; change: 'added' | 'updated' | 'removed' }> {
-  const byId = new Map(samples.map(sample => [sample.id, sample]));
-  return [
-    ...preview.added.map(item => ({ sample: byId.get(item.sampleId), change: 'added' as const })),
-    ...preview.updated.map(item => ({ sample: byId.get(item.sampleId), change: 'updated' as const })),
-    ...preview.removed.map(item => ({ sample: byId.get(item.sampleId), change: 'removed' as const })),
-  ].flatMap(item => item.sample ? [{ sample: item.sample, change: item.change }] : []);
-}
 
 export function ArchivePage() {
   const { t, i18n } = useTranslation();
@@ -48,6 +39,7 @@ export function ArchivePage() {
   const [search, setSearch] = useState(initial.get('search') ?? '');
   const [category, setCategory] = useState<Category | 'All'>(categories.includes(initialCategory as Category) ? initialCategory as Category : 'All');
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [previewPage, setPreviewPage] = useState(1);
   const datasets = datasetsQuery.data?.items ?? [];
   const samples = samplesQuery.data?.items ?? [];
   const archives = archivesQuery.data?.items ?? [];
@@ -71,7 +63,13 @@ export function ArchivePage() {
   const visibleRows = filteredRows;
   const returnTo = buildArchiveLocation({ datasetId: dataset?.id ?? null, search, category, page: currentPage });
   const preview = previewMutation.data ?? null;
-  const previewRows = preview ? previewSamples(preview, samples) : [];
+  const previewRows: Array<{ sample: ArchiveChange; change: 'added' | 'updated' | 'removed' }> = preview ? [
+    ...preview.added.map(sample => ({ sample, change: 'added' as const })),
+    ...preview.updated.map(sample => ({ sample, change: 'updated' as const })),
+    ...preview.removed.map(sample => ({ sample, change: 'removed' as const })),
+  ] : [];
+  const previewTotalPages = Math.ceil(previewRows.length / 20);
+  const visiblePreviewRows = previewRows.slice((previewPage - 1) * 20, previewPage * 20);
 
   useEffect(() => {
     if (!archiveDataReady) return;
@@ -85,6 +83,7 @@ export function ArchivePage() {
     setPage(1);
     previewMutation.reset();
     syncMutation.reset();
+    setPreviewPage(1);
   };
   const sync = () => {
     if (!preview) return;
@@ -111,9 +110,9 @@ export function ArchivePage() {
       <PageHeader title={t('archive.title')} />
       {actionError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(actionError, locale)}</p></section> : null}
       {datasets.length === 0 ? <section className="panel archive-state"><h2>{t('archive.emptyTitle')}</h2><p>{t('workspaceSettingsStatistics.workspace.datasets.emptyBody')}</p></section> : <>
-        <section className="panel archive-toolbar" aria-label={t('archive.aria.toolbar')}><label className="archive-dataset-select"><span>{t('archive.datasetLabel')}</span><select value={dataset?.id ?? ''} onChange={event => selectDataset(Number(event.target.value))}>{datasets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><div className="archive-toolbar__actions"><Button variant="secondary" busy={previewMutation.isPending} onClick={() => dataset && previewMutation.mutate({ datasetId: dataset.id })}>{t('actions.previewSync')}</Button>{archive?.manifestAvailable ? <a className="button button--quiet" href={`/api/archives/${archive.datasetId}/manifest`} download="manifest.jsonl">{t('archive.downloadJsonl')}</a> : null}</div></section>
+        <section className="panel archive-toolbar" aria-label={t('archive.aria.toolbar')}><label className="archive-dataset-select"><span>{t('archive.datasetLabel')}</span><select value={dataset?.id ?? ''} onChange={event => selectDataset(Number(event.target.value))}>{datasets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><div className="archive-toolbar__actions"><Button variant="secondary" busy={previewMutation.isPending} onClick={() => { if (dataset) { setPreviewPage(1); previewMutation.mutate({ datasetId: dataset.id }); } }}>{t('actions.previewSync')}</Button>{archive?.manifestAvailable ? <a className="button button--quiet" href={`/api/archives/${archive.datasetId}/manifest`} download="manifest.jsonl">{t('archive.downloadJsonl')}</a> : null}</div></section>
         <section className="panel archive-overview" aria-label={t('archive.aria.overview')}><div className="archive-overview__header"><h2>{t('archive.overview')}</h2><span>{archive?.lastSyncedAt ? t('archive.lastSynced', { date: formatDateTime(archive.lastSyncedAt) }) : t('archive.neverSynced')}</span></div><div className="metric-grid archive-metrics"><Metric label={t('archive.current')} value={archive?.currentCount ?? 0} /><Metric label={t('statistics.needsUpdate')} value={archive?.needsUpdateCount ?? 0} /></div></section>
-        {preview ? <section className="panel archive-preview" aria-label={t('archive.aria.preview')}><div className="section-header"><h2>{t('archive.previewTitle')}</h2></div><div className="metric-grid archive-metrics"><Metric label={t('archive.toAdd')} value={preview.added.length} /><Metric label={t('archive.toUpdate')} value={preview.updated.length} /><Metric label={t('archive.toRemove')} value={preview.removed.length} /><Metric label={t('archive.unchanged')} value={preview.unchangedCount} /></div>{previewRows.length ? <ul className="archive-preview__list">{previewRows.map(({ sample, change }) => <li key={`${change}-${sample.id}`}><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" /><Link to={reviewLocation(sample.id, returnTo)}>{sample.displayId}</Link><StatusBadge label={t(`archive.${change}`)} kind={change === 'removed' ? 'problem' : 'neutral'} /></li>)}</ul> : <p>{t('archive.noChangesBody')}</p>}<Button variant="primary" disabled={previewRows.length === 0} onClick={() => setConfirmOpen(true)}>{t('actions.syncArchive')}</Button></section> : null}
+        {preview ? <section className="panel archive-preview" aria-label={t('archive.aria.preview')}><div className="section-header"><h2>{t('archive.previewTitle')}</h2></div><div className="metric-grid archive-metrics"><Metric label={t('archive.toAdd')} value={preview.added.length} /><Metric label={t('archive.toUpdate')} value={preview.updated.length} /><Metric label={t('archive.toRemove')} value={preview.removed.length} /><Metric label={t('archive.unchanged')} value={preview.unchangedCount} /></div>{previewRows.length ? <><ul className="archive-preview__list">{visiblePreviewRows.map(({ sample, change }) => <li key={`${change}-${sample.sampleId}`}><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /><span><Link to={reviewLocation(sample.sampleId, returnTo)}>{sample.displayId}</Link><small>{sample.datasetName} {t(`category.${sample.category}`)}</small></span><StatusBadge label={t(`archive.${change}`)} kind={change === 'removed' ? 'problem' : 'neutral'} /></li>)}</ul><Pagination page={previewPage} totalPages={previewTotalPages} total={previewRows.length} onPageChange={setPreviewPage} /></> : <p>{t('archive.noChangesBody')}</p>}<Button variant="primary" disabled={previewRows.length === 0} onClick={() => setConfirmOpen(true)}>{t('actions.syncArchive')}</Button></section> : null}
         {rows.length === 0 ? <section className="panel archive-state"><h2>{t('archive.emptyTitle')}</h2><p>{t('archive.emptyBody')}</p><Button variant="primary" onClick={() => navigate(`/review?${new URLSearchParams({ returnTo }).toString()}`)}>{t('actions.openReview')}</Button><Pagination page={samplesQuery.data?.page ?? 1} totalPages={samplesQuery.data?.totalPages ?? 0} total={samplesQuery.data?.total ?? 0} onPageChange={setPage} /></section> : <>
           <section className="panel archive-filters"><label className="archive-filter archive-filter--search"><span>{t('fields.search')}</span><input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} /></label><label className="archive-filter"><span>{t('archive.category')}</span><select value={category} onChange={event => { setCategory(event.target.value as Category | 'All'); setPage(1); }}><option value="All">{t('review.allCategories')}</option>{categories.map(value => <option key={value} value={value}>{t(`category.${value}`)}</option>)}</select></label>{hasFilters ? <Button variant="quiet" onClick={() => { setSearch(''); setCategory('All'); setPage(1); }}>{t('actions.clearFilters')}</Button> : null}</section>
           <section className="panel archive-list-panel"><div className="section-header"><h2>{t('archive.currentArchive')}</h2></div>{filteredRows.length === 0 ? <section className="archive-state"><h2>{t('archive.filteredTitle')}</h2><p>{t('archive.filteredBody')}</p></section> : <div className="table-shell archive-table-shell"><table><caption>{t('table.archiveCaption')}</caption><thead><tr><th>{t('archive.thumbnail')}</th><th>{t('archive.sampleId')}</th><th>{t('archive.category')}</th><th>{t('fields.status')}</th><th>{t('fields.updatedAt')}</th></tr></thead><tbody>{visibleRows.map(sample => <tr key={sample.id}><td><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /></td><th scope="row"><Link to={reviewLocation(sample.id, returnTo)}>{sample.displayId}</Link></th><td>{t(`category.${sample.category}`)}</td><td><StatusBadge label={t(`status.archive.${sample.archiveSyncStatus}`)} kind={sample.archiveSyncStatus === 'Current' ? 'complete' : 'problem'} /></td><td>{formatDateTime(sample.updatedAt)}</td></tr>)}</tbody></table></div>}<Pagination page={samplesQuery.data?.page ?? 1} totalPages={samplesQuery.data?.totalPages ?? 0} total={samplesQuery.data?.total ?? 0} onPageChange={setPage} /></section>

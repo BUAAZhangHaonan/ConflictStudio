@@ -801,7 +801,15 @@ class ReviewerStatisticsRead(ApiModel):
 
 class ArchiveChangeRead(ApiModel):
     sample_id: int
+    display_id: str
     expected_revision: int = Field(ge=1)
+    dataset_id: int
+    dataset_name: str
+    category: Category
+    protocol: Protocol
+    relation: Relation
+    primary_asset_id: int
+    primary_asset_url: str
 
 
 class ArchivePreviewRequest(ApiModel):
