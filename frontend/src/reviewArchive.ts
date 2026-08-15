@@ -33,8 +33,8 @@ export function buildArchiveLocation(state: ArchiveLocationState): string {
   return query ? `/archive?${query}` : '/archive';
 }
 
-export function reviewLocation(displayId: string, returnTo: string): string {
-  const params = new URLSearchParams({ sample: displayId });
+export function reviewLocation(sampleId: number, returnTo: string): string {
+  const params = new URLSearchParams({ sampleId: String(sampleId) });
   const safeReturnTo = safeReviewReturnTarget(returnTo);
   if (safeReturnTo) params.set('returnTo', safeReturnTo);
   return `/review?${params.toString()}`;

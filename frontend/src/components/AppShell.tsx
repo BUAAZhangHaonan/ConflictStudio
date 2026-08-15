@@ -1,8 +1,7 @@
 import { useEffect, useId, useRef, useState, type PropsWithChildren } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useReviewersQuery } from '../api/queries';
-import { setCurrentReviewer, setPreferredLocale, usePreferences } from '../preferences';
+import { setPreferredLocale, usePreferences } from '../preferences';
 
 const primaryNavigation = [
   { to: '/workspace', key: 'workspace' },
@@ -43,7 +42,6 @@ export function AppShell({ children }: PropsWithChildren) {
   const { t, i18n } = useTranslation();
   const location = useLocation();
   const preferences = usePreferences();
-  const reviewersQuery = useReviewersQuery();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerRef = useRef<HTMLDialogElement>(null);
   const reviewerMenuRef = useRef<HTMLDetailsElement>(null);
@@ -53,9 +51,6 @@ export function AppShell({ children }: PropsWithChildren) {
   const wasDrawerOpenRef = useRef(false);
   const drawerId = useId();
   const drawerTitleId = useId();
-  const currentReviewer = reviewersQuery.data?.find(
-    reviewer => reviewer.id === preferences.currentReviewerId,
-  ) ?? null;
 
   useEffect(() => {
     setDrawerOpen(false);
@@ -65,14 +60,6 @@ export function AppShell({ children }: PropsWithChildren) {
     document.documentElement.lang = preferences.locale;
     document.title = t('app.pageTitle', { page: t(pageTitleKey(location.pathname)) });
   }, [location.pathname, preferences.locale, t]);
-  useEffect(() => {
-    if (!reviewersQuery.isSuccess || preferences.currentReviewerId === null) return;
-    if (currentReviewer === null) {
-      setCurrentReviewer(null);
-      return;
-    }
-    if (preferences.currentReviewerName !== currentReviewer.name) setCurrentReviewer(currentReviewer);
-  }, [currentReviewer, preferences.currentReviewerId, preferences.currentReviewerName, reviewersQuery.isSuccess]);
   useEffect(() => {
     const dialog = drawerRef.current;
     if (!dialog) return;
@@ -241,11 +228,11 @@ export function AppShell({ children }: PropsWithChildren) {
             >
               <summary aria-label={t('app.reviewerMenu')}>
                 <span className="reviewer-menu__symbol" aria-hidden="true" />
-                {currentReviewer?.name ?? t('reviewer.noCurrent')}
+                {preferences.currentReviewerName ?? t('reviewer.noCurrent')}
               </summary>
               <div className="reviewer-menu__panel">
                 <span>{t('app.currentReviewer')}</span>
-                <strong>{currentReviewer?.name ?? t('reviewer.noCurrent')}</strong>
+                <strong>{preferences.currentReviewerName ?? t('reviewer.noCurrent')}</strong>
                 <NavLink to="/me/statistics" onClick={closeReviewerMenu}>{t('actions.viewStatistics')}</NavLink>
                 <NavLink to="/settings" onClick={closeReviewerMenu}>{t('nav.settings')}</NavLink>
               </div>

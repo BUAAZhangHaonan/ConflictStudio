@@ -52,8 +52,29 @@
   font-weight: 550;
 }
 
-.settings-reviewer-list label {
+.settings-reviewer-list .settings-reviewer-choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
   min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+}
+
+.settings-reviewer-choice + .settings-reviewer-choice {
+  margin-top: 6px;
+}
+
+.settings-reviewer-choice input[type='radio'] {
+  width: auto;
+  min-height: auto;
+  margin-top: 3px;
+}
+
+.settings-reviewer-choice > span {
+  line-height: 20px;
 }
 
 .settings-reviewer-list .state-view {
@@ -151,8 +172,14 @@
     width: 100%;
   }
 
-  .settings-reviewer-list label {
+  .settings-reviewer-list .settings-reviewer-choice {
+    grid-template-columns: auto minmax(0, 1fr);
     min-height: 44px;
+  }
+
+  .settings-reviewer-choice .button {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .settings-service-list > div {

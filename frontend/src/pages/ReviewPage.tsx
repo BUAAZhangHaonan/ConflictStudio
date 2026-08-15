@@ -7,10 +7,11 @@ import {
   useCreateReviewMutation,
   useCreateReviewsBatchMutation,
   useDatasetsQuery,
+  useSampleQuery,
   useSamplesQuery,
   useUpdateSampleClassificationMutation,
 } from '../api/queries';
-import { Button, ConfirmDialog, Field, MediaPanel, PageHeader, StatusBadge } from '../components';
+import { Button, ConfirmDialog, Field, MediaPanel, PageHeader, Pagination, StatusBadge } from '../components';
 import { usePreferences } from '../preferences';
 import { safeReviewReturnTarget } from '../reviewArchive';
 import { protocolForCategory, type Category, type ConflictDirection } from '../types';
@@ -46,8 +47,12 @@ export function ReviewPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const preferences = usePreferences();
-  const samplesQuery = useSamplesQuery();
+  const [samplePage, setSamplePage] = useState(1);
+  const samplesQuery = useSamplesQuery('Pending', samplePage);
   const datasetsQuery = useDatasetsQuery();
+  const requestedId = Number(params.get('sampleId'));
+  const selectedId = Number.isInteger(requestedId) && requestedId > 0 ? requestedId : null;
+  const selectedQuery = useSampleQuery(selectedId);
   const reviewMutation = useCreateReviewMutation();
   const batchMutation = useCreateReviewsBatchMutation();
   const classificationMutation = useUpdateSampleClassificationMutation();
@@ -68,12 +73,11 @@ export function ReviewPage() {
   const [targetDirection, setTargetDirection] = useState<ConflictDirection>('Vision');
   const [targetApparentEmotion, setTargetApparentEmotion] = useState('');
   const [targetDescription, setTargetDescription] = useState('');
-  const samples = samplesQuery.data ?? [];
-  const datasets = datasetsQuery.data ?? [];
-  const pendingSamples = useMemo(() => samples.filter(sample => sample.reviewDecision === 'Pending'), [samples]);
+  const samples = samplesQuery.data?.items ?? [];
+  const datasets = datasetsQuery.data?.items ?? [];
+  const pendingSamples = samples;
   const datasetsById = useMemo(() => new Map(datasets.map(dataset => [dataset.id, dataset])), [datasets]);
-  const requestedDisplayId = params.get('sample');
-  const selected = requestedDisplayId ? samples.find(sample => sample.displayId === requestedDisplayId) ?? null : null;
+  const selected = selectedQuery.data ?? null;
   const returnTarget = safeReviewReturnTarget(params.get('returnTo'));
   const mobileDetail = selected !== null;
   const locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
@@ -121,14 +125,14 @@ export function ReviewPage() {
       queue: queueListRef.current?.scrollTop ?? 0,
     };
     const next = new URLSearchParams(params);
-    next.set('sample', sample.displayId);
+    next.set('sampleId', String(sample.id));
     setParams(next, { replace: true });
   };
 
   const backToQueue = () => {
     restoreScrollRef.current = true;
     const next = new URLSearchParams(params);
-    next.delete('sample');
+    next.delete('sampleId');
     next.delete('returnTo');
     setParams(next, { replace: true });
   };
@@ -211,10 +215,10 @@ export function ReviewPage() {
     setSelectedIds(new Set());
   };
 
-  if (samplesQuery.isPending || datasetsQuery.isPending) {
+  if (samplesQuery.isPending || datasetsQuery.isPending || (selectedId !== null && selectedQuery.isPending)) {
     return <section className="page-stack review-page"><PageHeader title={t('review.title')} /><p role="status">{t('review.loadingBody')}</p></section>;
   }
-  const queryError = samplesQuery.error ?? datasetsQuery.error ?? null;
+  const queryError = samplesQuery.error ?? datasetsQuery.error ?? selectedQuery.error ?? null;
   if (queryError) {
     return <section className="page-stack review-page"><PageHeader title={t('review.title')} /><section className="generation-feedback" role="alert"><p>{apiErrorMessage(queryError, locale)}</p></section></section>;
   }
@@ -243,7 +247,7 @@ export function ReviewPage() {
   );
   return (
     <section className={`page-stack review-page${mobileDetail ? ' review-page--mobile-detail' : ''}`} aria-label={t('review.aria.page')}>
-      <PageHeader title={t('review.title')} actions={<span className="review-page__count">{t('review.queueCount', { visible: visible.length, total: pendingSamples.length })}</span>} />
+      <PageHeader title={t('review.title')} actions={<span className="review-page__count">{t('review.queueCount', { visible: visible.length, total: samplesQuery.data?.total ?? 0 })}</span>} />
       <p className="review-page__subtitle">{t('review.subtitle')}</p>
       {mutationError ? <OperationFeedback error={mutationError} onDismiss={() => { reviewMutation.reset(); batchMutation.reset(); classificationMutation.reset(); }} /> : null}
       <section className="panel review-filters" aria-label={t('review.aria.filters')}>
@@ -255,12 +259,13 @@ export function ReviewPage() {
           <Field label={t('review.categoryFilter')} htmlFor="review-category-filter"><select id="review-category-filter" value={category} onChange={event => setCategory(event.target.value as CategoryFilter)}>{categories.map(value => <option key={value} value={value}>{value === 'All' ? t('review.allCategories') : t(`category.${value}`)}</option>)}</select></Field>
         </div>
       </section>
-      {pendingSamples.length === 0 && !selected ? <section className="state-view review-page__state"><h2>{t('review.emptyTitle')}</h2><p>{t('review.emptyBody')}</p></section> : visible.length === 0 && !selected ? <section className="state-view review-page__state"><h2>{t('review.filteredTitle')}</h2><p>{t('review.filteredBody')}</p></section> : (
+      {(samplesQuery.data?.total ?? 0) === 0 && !selected ? <section className="state-view review-page__state"><h2>{t('review.emptyTitle')}</h2><p>{t('review.emptyBody')}</p></section> : visible.length === 0 && !selected ? <section className="state-view review-page__state"><h2>{t('review.filteredTitle')}</h2><p>{t('review.filteredBody')}</p></section> : (
         <div className={`review-grid${mobileDetail ? ' review-grid--mobile-detail' : ''}`} data-selected-sample={selected?.displayId} data-sample-revision={selected?.revision}>
           <section ref={queueRef} tabIndex={-1} className="panel review-queue" aria-label={t('review.aria.queue')}>
             <div className="section-header"><h2>{t('review.queue')}</h2><span>{t('review.selectionCount', { count: selectedVisibleCount })}</span></div>
             <div className="review-queue__selection"><label><input type="checkbox" checked={visible.length > 0 && selectedVisibleCount === visible.length} onChange={event => setSelectedIds(event.target.checked ? new Set(visible.map(sample => sample.id)) : new Set())} />{t('review.selectAllVisible')}</label>{selectedVisibleCount ? <Button variant="quiet" onClick={() => setSelectedIds(new Set())}>{t('review.clearSelection')}</Button> : null}</div>
             <ul ref={queueListRef} className="review-queue__list">{visible.map(sample => <li key={sample.id} className={sample.id === selected?.id ? 'is-active' : undefined} data-sample-id={sample.displayId}><label className="review-queue__check"><input type="checkbox" checked={selectedIds.has(sample.id)} aria-label={t('review.aria.queueItem', { id: sample.displayId, category: sample.category, decision: t(`status.review.${sample.reviewDecision}`) })} onChange={event => setSelectedIds(current => { const next = new Set(current); if (event.target.checked) next.add(sample.id); else next.delete(sample.id); return next; })} /></label><button type="button" className="review-queue__item" onClick={() => choose(sample)} aria-current={sample.id === selected?.id ? 'true' : undefined}><span className="review-queue__item-main"><strong>{sample.displayId}</strong><span>{sample.category}</span></span><span className="review-queue__dataset">{datasetsById.get(sample.datasetId)?.name ?? sample.datasetId}</span><StatusBadge label={t('status.review.Pending')} kind="neutral" /></button></li>)}</ul>
+            <Pagination page={samplesQuery.data?.page ?? 1} totalPages={samplesQuery.data?.totalPages ?? 0} total={samplesQuery.data?.total ?? 0} onPageChange={page => { setSamplePage(page); setSelectedIds(new Set()); }} />
             {selectedVisibleCount ? <section className="review-batch" aria-label={t('review.aria.batch')}><h3>{t('review.batch')}</h3><Field label={t('review.batchDecision')} htmlFor="review-batch-decision"><select id="review-batch-decision" value={batchDecision} onChange={event => setBatchDecision(event.target.value as Exclude<ReviewDecision, 'Pending'>)}><option value="Accepted">{t('status.review.Accepted')}</option><option value="Rejected">{t('status.review.Rejected')}</option></select></Field><Field label={t('fields.note')} htmlFor="review-batch-note"><textarea id="review-batch-note" value={batchNote} maxLength={2000} onChange={event => setBatchNote(event.target.value)} placeholder={t('review.batchNotePlaceholder')} /></Field><Button variant="secondary" onClick={() => setBatchConfirmOpen(true)}>{t('review.applyBatch')}</Button></section> : null}
           </section>
           {selected ? <div className="review-detail">

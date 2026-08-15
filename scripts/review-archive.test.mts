@@ -12,7 +12,7 @@ import {
 test('archive locations are canonical and retain active filters and page', () => {
   const location = buildArchiveLocation({ datasetId: 4, search: 'CS-000021', category: 'C-VT', page: 2 });
   assert.equal(location, '/archive?dataset=4&search=CS-000021&category=C-VT&page=2');
-  assert.equal(reviewLocation('CS-000021', location), '/review?sample=CS-000021&returnTo=%2Farchive%3Fdataset%3D4%26search%3DCS-000021%26category%3DC-VT%26page%3D2');
+  assert.equal(reviewLocation(21, location), '/review?sampleId=21&returnTo=%2Farchive%3Fdataset%3D4%26search%3DCS-000021%26category%3DC-VT%26page%3D2');
   assert.equal(safeReviewReturnTarget(location), location);
 });
 

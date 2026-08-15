@@ -2,22 +2,23 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiErrorMessage } from '../api/client';
 import { useCreateReviewerMutation, useReviewersQuery } from '../api/queries';
-import { Button, Dialog, Field } from '../components';
+import { Button, Dialog, Field, Pagination } from '../components';
 import { setCurrentReviewer, usePreferences } from '../preferences';
 
 export function FirstReviewerDialog() {
   const { t } = useTranslation();
   const preferences = usePreferences();
-  const reviewersQuery = useReviewersQuery();
+  const [reviewerPage, setReviewerPage] = useState(1);
+  const reviewersQuery = useReviewersQuery(reviewerPage);
   const createMutation = useCreateReviewerMutation();
-  const reviewers = reviewersQuery.data ?? [];
+  const reviewers = reviewersQuery.data?.items ?? [];
   const [name, setName] = useState('');
   const [mode, setMode] = useState<'existing' | 'new'>('new');
   const [selectedReviewerId, setSelectedReviewerId] = useState<number | null>(null);
-  const currentReviewer = useMemo(
-    () => reviewers.find(reviewer => reviewer.id === preferences.currentReviewerId) ?? null,
-    [preferences.currentReviewerId, reviewers],
-  );
+  const currentReviewer = useMemo(() => preferences.currentReviewerId === null ? null : {
+    id: preferences.currentReviewerId,
+    name: preferences.currentReviewerName ?? '',
+  }, [preferences.currentReviewerId, preferences.currentReviewerName]);
   const open = reviewersQuery.isSuccess && currentReviewer === null;
 
   useEffect(() => {
@@ -26,7 +27,7 @@ export function FirstReviewerDialog() {
       setSelectedReviewerId(null);
       return;
     }
-    if (selectedReviewerId === null || !reviewers.some(reviewer => reviewer.id === selectedReviewerId)) {
+    if (selectedReviewerId === null) {
       setSelectedReviewerId(reviewers[0].id);
       setMode('existing');
     }
@@ -95,6 +96,7 @@ export function FirstReviewerDialog() {
               />
               <span>{t('actions.addName')}</span>
             </label>
+            <Pagination page={reviewersQuery.data?.page ?? 1} totalPages={reviewersQuery.data?.totalPages ?? 0} total={reviewersQuery.data?.total ?? 0} onPageChange={setReviewerPage} />
           </fieldset>
         ) : null}
         {reviewers.length === 0 || mode === 'new' ? (
