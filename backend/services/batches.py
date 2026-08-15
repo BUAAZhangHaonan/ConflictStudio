@@ -72,6 +72,7 @@ from backend.domain.schemas import (
     JobItemRead,
     JobItemPromptResultRead,
     JobSummaryRead,
+    PageRead,
     PromptPreviewRead,
     PromptPreviewRequest,
     SelectionRead,
@@ -84,6 +85,7 @@ from .errors import ServiceError, not_found, revision_conflict, state_conflict
 from .assets import asset_content_url
 from .gpu_slots import GpuSlotService, GpuSlotSnapshot
 from .prompts import PreparedPrompt, PromptContext, PromptService
+from .pagination import PAGE_SIZE, paginate
 
 
 @dataclass(frozen=True)
@@ -154,10 +156,17 @@ class BatchService:
         self.renderer = renderer or UnconfiguredRendererGateway()
         self.gpu_slots = GpuSlotService(database, self.renderer)
 
-    def list_batch_drafts(self) -> list[BatchDraftRead]:
+    def list_batch_drafts(self, page: int) -> PageRead[BatchDraftRead]:
         with self.database.read_session() as session:
-            rows = session.exec(select(BatchDraft).order_by(BatchDraft.created_at.desc(), BatchDraft.id.desc())).all()
-            return [self._draft_read(self._load_aggregate(session, row.id)) for row in rows]
+            return paginate(
+                session,
+                select(BatchDraft).order_by(
+                    BatchDraft.created_at.desc(),
+                    BatchDraft.id.desc(),
+                ),
+                page,
+                lambda row: self._draft_read(self._load_aggregate(session, row.id)),
+            )
 
     def get_batch_draft(self, draft_id: int) -> BatchDraftRead:
         with self.database.read_session() as session:
@@ -543,10 +552,14 @@ class BatchService:
                 session.flush()
                 return self._job_detail(session, job)
 
-    def list_jobs(self) -> list[JobSummaryRead]:
+    def list_jobs(self, page: int) -> PageRead[JobSummaryRead]:
         with self.database.read_session() as session:
-            rows = session.exec(select(Job).order_by(Job.created_at.desc(), Job.id.desc())).all()
-            return [JobSummaryRead.model_validate(row) for row in rows]
+            return paginate(
+                session,
+                select(Job).order_by(Job.created_at.desc(), Job.id.desc()),
+                page,
+                JobSummaryRead.model_validate,
+            )
 
     def get_job(self, job_id: int) -> JobDetailRead:
         with self.database.read_session() as session:
@@ -559,27 +572,57 @@ class BatchService:
         with self.database.read_session() as session:
             return session.get(Job, job_id) is not None
 
-    def list_job_items(self, job_id: int, offset: int, limit: int) -> list[JobItemRead]:
+    def list_job_items(self, job_id: int, page: int) -> PageRead[JobItemRead]:
         with self.database.read_session() as session:
             self._required(session, Job, job_id, "job")
-            items = session.exec(
+            rows = paginate(
+                session,
                 select(JobItem)
                 .where(JobItem.job_id == job_id)
-                .order_by(JobItem.sequence, JobItem.id)
-                .offset(offset)
-                .limit(limit)
-            ).all()
-            return self._job_item_reads(session, items)
+                .order_by(JobItem.sequence, JobItem.id),
+                page,
+                lambda item: item,
+            )
+            return PageRead(
+                items=self._job_item_reads(session, rows.items),
+                page=rows.page,
+                page_size=rows.page_size,
+                total=rows.total,
+                total_pages=rows.total_pages,
+            )
 
-    def list_job_events(self, job_id: int, after_event_id: int, limit: int) -> list[JobEventRead]:
-        events, _ = self.list_job_events_snapshot(job_id, after_event_id, limit)
-        return events
+    def list_job_attempts(
+        self,
+        item_id: int,
+        page: int,
+    ) -> PageRead[GenerationAttemptRead]:
+        with self.database.read_session() as session:
+            self._required(session, JobItem, item_id, "jobItem")
+            return paginate(
+                session,
+                select(GenerationAttempt)
+                .where(GenerationAttempt.job_item_id == item_id)
+                .order_by(GenerationAttempt.attempt_number, GenerationAttempt.id),
+                page,
+                self._generation_attempt_read,
+            )
+
+    def list_job_events(self, job_id: int, page: int) -> PageRead[JobEventRead]:
+        with self.database.read_session() as session:
+            self._required(session, Job, job_id, "job")
+            return paginate(
+                session,
+                select(JobEvent)
+                .where(JobEvent.job_id == job_id)
+                .order_by(JobEvent.id),
+                page,
+                self._job_event_read,
+            )
 
     def list_job_events_snapshot(
         self,
         job_id: int,
         after_event_id: int,
-        limit: int,
     ) -> tuple[list[JobEventRead], bool]:
         with self.database.read_session() as session:
             job = self._required(session, Job, job_id, "job")
@@ -587,7 +630,7 @@ class BatchService:
                 select(JobEvent)
                 .where(JobEvent.job_id == job_id, JobEvent.id > after_event_id)
                 .order_by(JobEvent.id)
-                .limit(limit)
+                .limit(PAGE_SIZE)
             ).all()
             return [self._job_event_read(event) for event in events], job.status in {
                 JobStatus.COMPLETED,
@@ -1206,15 +1249,7 @@ class BatchService:
 
     @staticmethod
     def _job_detail(session: Session, job: Job) -> JobDetailRead:
-        items = session.exec(
-            select(JobItem).where(JobItem.job_id == job.id).order_by(JobItem.sequence, JobItem.id)
-        ).all()
-        events = session.exec(select(JobEvent).where(JobEvent.job_id == job.id).order_by(JobEvent.id)).all()
-        return JobDetailRead(
-            **JobSummaryRead.model_validate(job).model_dump(),
-            items=BatchService._job_item_reads(session, items),
-            events=[BatchService._job_event_read(event) for event in events],
-        )
+        return JobDetailRead.model_validate(job)
 
     @staticmethod
     def _job_item_reads(session: Session, items: list[JobItem]) -> list[JobItemRead]:
@@ -1273,18 +1308,28 @@ class BatchService:
                     prompt_result=JobItemPromptResultRead.model_validate(prompt_result)
                     if prompt_result is not None
                     else None,
-                    attempts=[
-                        GenerationAttemptRead(
-                            **attempt.model_dump(exclude={"job_item_id"}),
-                            source_asset_url=asset_content_url(attempt.source_asset_id),
-                            primary_asset_url=asset_content_url(attempt.primary_asset_id),
+                    latest_attempt=(
+                        BatchService._generation_attempt_read(
+                            attempts_by_item[item.id][-1]
                         )
-                        for attempt in attempts_by_item.get(item.id, [])
-                    ],
+                        if attempts_by_item.get(item.id)
+                        else None
+                    ),
+                    attempt_count=len(attempts_by_item.get(item.id, [])),
                     sample_id=sample_by_item.get(item.id),
                 )
             )
         return item_reads
+
+    @staticmethod
+    def _generation_attempt_read(
+        attempt: GenerationAttempt,
+    ) -> GenerationAttemptRead:
+        return GenerationAttemptRead(
+            **attempt.model_dump(exclude={"job_item_id"}),
+            source_asset_url=asset_content_url(attempt.source_asset_id),
+            primary_asset_url=asset_content_url(attempt.primary_asset_id),
+        )
 
     @staticmethod
     def _job_event_read(event: JobEvent) -> JobEventRead:

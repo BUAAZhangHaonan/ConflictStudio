@@ -33,10 +33,12 @@ from backend.domain.schemas import (
     ArchiveRead,
     ArchiveSyncRequest,
     emotion_key,
+    PageRead,
 )
 
 from .errors import archive_preview_stale, not_found, state_conflict
 from .reviews import latest_review
+from .pagination import paginate
 
 
 class ArchiveService:
@@ -44,10 +46,14 @@ class ArchiveService:
         self.database = database
         self.manifests = ArchiveManifestStore(database.data_root)
 
-    def list_archives(self) -> list[ArchiveRead]:
+    def list_archives(self, page: int) -> PageRead[ArchiveRead]:
         with self.database.read_session() as session:
-            datasets = session.exec(select(Dataset).order_by(Dataset.id)).all()
-            return [self._read_archive(session, row.id) for row in datasets]
+            return paginate(
+                session,
+                select(Dataset).order_by(Dataset.id),
+                page,
+                lambda row: self._read_archive(session, row.id),
+            )
 
     def preview(self, payload: ArchivePreviewRequest) -> ArchivePreviewRead:
         with self.database.read_session() as session:

@@ -30,6 +30,7 @@ from backend.domain.schemas import (
     emotion_key,
     GenerationAttemptRead,
     KeepTestResultRequest,
+    PageRead,
     SampleRead,
     SampleClassificationUpdate,
 )
@@ -37,6 +38,7 @@ from backend.domain.schemas import (
 from .assets import asset_content_url
 from .errors import invalid_request, not_found, revision_conflict, state_conflict
 from .reviews import latest_review, review_read
+from .pagination import paginate
 
 
 def create_sample_for_completed_item(
@@ -101,13 +103,21 @@ class SampleService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def list_samples(self, decision: ReviewDecision | None = None) -> list[SampleRead]:
+    def list_samples(
+        self,
+        page: int,
+        decision: ReviewDecision | None = None,
+    ) -> PageRead[SampleRead]:
         with self.database.read_session() as session:
             statement = select(Sample)
             if decision is not None:
                 statement = statement.where(Sample.review_decision == decision)
-            rows = session.exec(statement.order_by(Sample.created_at, Sample.id)).all()
-            return [self._read(session, row) for row in rows]
+            return paginate(
+                session,
+                statement.order_by(Sample.created_at, Sample.id),
+                page,
+                lambda row: self._read(session, row),
+            )
 
     def get_sample(self, sample_id: int) -> SampleRead:
         with self.database.read_session() as session:

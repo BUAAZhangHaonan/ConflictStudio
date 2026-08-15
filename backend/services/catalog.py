@@ -40,12 +40,14 @@ from backend.domain.schemas import (
     PromptPresetCreate,
     PromptPresetRead,
     PromptPresetUpdate,
+    PageRead,
     VideoBackgroundPresetCreate,
     VideoBackgroundPresetRead,
     VideoBackgroundPresetUpdate,
 )
 
 from .errors import ServiceError, not_found, revision_conflict, state_conflict
+from .pagination import paginate
 
 
 def name_key(value: str) -> str:
@@ -56,10 +58,14 @@ class CatalogService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def list_datasets(self) -> list[DatasetRead]:
+    def list_datasets(self, page: int) -> PageRead[DatasetRead]:
         with self.database.read_session() as session:
-            rows = session.exec(select(Dataset).order_by(Dataset.created_at, Dataset.id)).all()
-            return [DatasetRead.model_validate(row) for row in rows]
+            return paginate(
+                session,
+                select(Dataset).order_by(Dataset.created_at, Dataset.id),
+                page,
+                DatasetRead.model_validate,
+            )
 
     def create_dataset(self, payload: DatasetCreate) -> DatasetRead:
         with self.database.immediate_session() as session:
@@ -115,17 +121,19 @@ class CatalogService:
                 )
             session.delete(row)
 
-    def list_content_plans(self) -> list[ContentPlanRead]:
+    def list_content_plans(self, page: int) -> PageRead[ContentPlanRead]:
         with self.database.read_session() as session:
-            rows = session.exec(
+            return paginate(
+                session,
                 select(ContentPlan).order_by(
                     ContentPlan.category,
                     ContentPlan.name_zh,
                     ContentPlan.name_en,
                     ContentPlan.id,
-                )
-            ).all()
-            return [ContentPlanRead.model_validate(row) for row in rows]
+                ),
+                page,
+                ContentPlanRead.model_validate,
+            )
 
     def get_content_plan(self, content_id: int) -> ContentPlanRead:
         with self.database.read_session() as session:
@@ -233,10 +241,18 @@ class CatalogService:
             session.flush()
             return self._content_background_read(session, content)
 
-    def list_prompt_presets(self) -> list[PromptPresetRead]:
+    def list_prompt_presets(self, page: int) -> PageRead[PromptPresetRead]:
         with self.database.read_session() as session:
-            rows = session.exec(select(PromptPreset).order_by(PromptPreset.category, PromptPreset.name, PromptPreset.id)).all()
-            return [self._prompt_preset_read(session, row) for row in rows]
+            return paginate(
+                session,
+                select(PromptPreset).order_by(
+                    PromptPreset.category,
+                    PromptPreset.name,
+                    PromptPreset.id,
+                ),
+                page,
+                lambda row: self._prompt_preset_read(session, row),
+            )
 
     def get_prompt_preset(self, preset_id: int) -> PromptPresetRead:
         with self.database.read_session() as session:
@@ -291,16 +307,21 @@ class CatalogService:
                 raise state_conflict("promptPreset", preset_id, "The prompt preset is already used by a batch")
             session.delete(row)
 
-    def list_background_presets(self) -> list[VideoBackgroundPresetRead]:
+    def list_background_presets(
+        self,
+        page: int,
+    ) -> PageRead[VideoBackgroundPresetRead]:
         with self.database.read_session() as session:
-            rows = session.exec(
+            return paginate(
+                session,
                 select(VideoBackgroundPreset).order_by(
                     VideoBackgroundPreset.name_zh,
                     VideoBackgroundPreset.name_en,
                     VideoBackgroundPreset.id,
-                )
-            ).all()
-            return [VideoBackgroundPresetRead.model_validate(row) for row in rows]
+                ),
+                page,
+                VideoBackgroundPresetRead.model_validate,
+            )
 
     def get_background_preset(self, preset_id: int) -> VideoBackgroundPresetRead:
         with self.database.read_session() as session:

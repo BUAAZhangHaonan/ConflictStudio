@@ -5,9 +5,10 @@ from sqlmodel import Session, select
 from backend.adapters.database import Database
 from backend.domain.enums import ReviewDecision, protocol_for, relation_for
 from backend.domain.models import Review, Reviewer, Sample, utc_now
-from backend.domain.schemas import ReviewBatchCreate, ReviewCreate, ReviewRead, SampleRead
+from backend.domain.schemas import PageRead, ReviewBatchCreate, ReviewCreate, ReviewRead, SampleRead
 
 from .errors import invalid_request, not_found, review_revision_conflict, revision_conflict
+from .pagination import paginate
 
 
 def latest_review(session: Session, sample_id: int) -> Review | None:
@@ -30,16 +31,18 @@ class ReviewService:
         self.database = database
         self.sample_service = sample_service
 
-    def list_for_sample(self, sample_id: int) -> list[ReviewRead]:
+    def list_for_sample(self, sample_id: int, page: int) -> PageRead[ReviewRead]:
         with self.database.read_session() as session:
             if session.get(Sample, sample_id) is None:
                 raise not_found("sample", sample_id)
-            rows = session.exec(
+            return paginate(
+                session,
                 select(Review)
                 .where(Review.sample_id == sample_id)
-                .order_by(Review.revision)
-            ).all()
-            return [review_read(session, row) for row in rows]
+                .order_by(Review.revision),
+                page,
+                lambda row: review_read(session, row),
+            )
 
     def create(self, payload: ReviewCreate) -> SampleRead:
         with self.database.immediate_session() as session:

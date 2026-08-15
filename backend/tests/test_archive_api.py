@@ -18,7 +18,7 @@ from backend.tests.test_review_api import (
 
 
 def accept_sample(client: TestClient) -> tuple[dict, dict]:
-    sample = client.get("/api/samples").json()[0]
+    sample = client.get("/api/samples").json()["items"][0]
     reviewer = create_reviewer(client)
     reviewed = client.post("/api/reviews", json=review_payload(sample, reviewer))
     assert reviewed.status_code == 201
@@ -279,7 +279,7 @@ def test_database_failure_after_manifest_replace_restores_both_states(tmp_path: 
 def test_manifest_download_requires_an_existing_file(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         response = client.get(f"/api/archives/{sample['datasetId']}/manifest")
         missing_dataset = client.post("/api/archives/preview", json={"datasetId": 99999})
 

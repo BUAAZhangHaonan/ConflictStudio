@@ -234,15 +234,16 @@ def test_post_test_runs_creates_real_test_job_and_items(tmp_path: Path) -> None:
                 "confirmModelSwitch": False,
             },
         )
+        payload = response.json()
+        items = client.get(f"/api/jobs/{payload['id']}/items").json()
 
     assert response.status_code == 202
-    payload = response.json()
     assert response.headers["Location"] == f"/api/jobs/{payload['id']}"
     assert payload["source"] == "Test"
     assert payload["datasetId"] is None and payload["batchDraftId"] is None
     assert payload["model"] is None and payload["precision"] is None
-    assert len(payload["items"]) == 1
-    assert payload["items"][0]["input"]["seed"] == 77
+    assert items["total"] == 1
+    assert items["items"][0]["input"]["seed"] == 77
 
 
 def test_invalid_generative_prompt_creates_no_job_or_generation_records(
@@ -484,11 +485,11 @@ def test_completed_production_result_enters_pending_review_queue(
 
     with TestClient(app) as client:
         queue = client.get("/api/samples", params={"decision": "Pending"})
-        item = client.get(f"/api/jobs/{job_id}/items").json()[0]
+        item = client.get(f"/api/jobs/{job_id}/items").json()["items"][0]
 
     assert queue.status_code == 200
-    assert len(queue.json()) == 1
-    sample = queue.json()[0]
+    assert queue.json()["total"] == 1
+    sample = queue.json()["items"][0]
     assert sample["jobItemId"] == item_id
     assert sample["reviewDecision"] == "Pending"
     assert sample["primaryAssetId"] == item["primaryAssetId"]
@@ -516,7 +517,7 @@ def test_sample_api_reads_precision_only_from_current_successful_attempt(
         response = client.get("/api/samples", params={"decision": "Pending"})
 
     assert response.status_code == 200
-    sample = response.json()[0]
+    sample = response.json()["items"][0]
     assert sample["model"] == model.value
     assert "precision" not in sample
     assert sample["generationRecord"]["model"] == model.value
@@ -534,7 +535,8 @@ def test_test_result_keep_reuses_assets_and_review_history_is_revisioned(
     app.state.job_executor._complete_item(job_id, item_id)
 
     with TestClient(app) as client:
-        item = client.get(f"/api/jobs/{job_id}/items").json()[0]
+        item = client.get(f"/api/jobs/{job_id}/items").json()["items"][0]
+        attempts = client.get(f"/api/job-items/{item_id}/attempts").json()
         kept = client.post(
             f"/api/job-items/{item_id}/keep",
             json={"datasetId": dataset_id, "expectedRevision": item["revision"]},
@@ -553,9 +555,10 @@ def test_test_result_keep_reuses_assets_and_review_history_is_revisioned(
         )
 
     assert kept.status_code == 201
-    assert len(item["attempts"]) == 1
-    assert item["attempts"][0]["status"] == "Completed"
-    assert item["attempts"][0]["primaryAssetUrl"] == item["primaryAssetUrl"]
+    assert item["attemptCount"] == 1
+    assert item["latestAttempt"]["status"] == "Completed"
+    assert attempts["total"] == 1
+    assert attempts["items"][0]["primaryAssetUrl"] == item["primaryAssetUrl"]
     assert kept.json()["primaryAssetId"] == item["primaryAssetId"]
     assert kept.json()["sourceAssetId"] == item["sourceAssetId"]
     assert reviewer.status_code == 201

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Generic, Literal, Self, TypeVar
 
 from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, field_validator, model_validator
 
@@ -48,6 +48,17 @@ class ApiModel(BaseModel):
         from_attributes=True,
         extra="forbid",
     )
+
+
+PageItem = TypeVar("PageItem")
+
+
+class PageRead(ApiModel, Generic[PageItem]):
+    items: list[PageItem]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
 
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
@@ -674,7 +685,8 @@ class JobItemRead(ApiModel):
     updated_at: str
     input: SnapshotRead
     prompt_result: JobItemPromptResultRead | None
-    attempts: list[GenerationAttemptRead] = Field(default_factory=list)
+    latest_attempt: GenerationAttemptRead | None = None
+    attempt_count: int = 0
     sample_id: int | None = None
 
 
@@ -925,8 +937,7 @@ class JobSummaryRead(ApiModel):
 
 
 class JobDetailRead(JobSummaryRead):
-    items: list[JobItemRead]
-    events: list[JobEventRead] = Field(default_factory=list)
+    pass
 
 
 class HealthRead(ApiModel):

@@ -6,9 +6,10 @@ from sqlmodel import select
 
 from backend.adapters.database import Database
 from backend.domain.models import Reviewer, utc_now
-from backend.domain.schemas import ReviewerCreate, ReviewerRead, ReviewerRename
+from backend.domain.schemas import PageRead, ReviewerCreate, ReviewerRead, ReviewerRename
 
 from .errors import invalid_request, not_found, reviewer_name_conflict, revision_conflict
+from .pagination import paginate
 
 
 def normalize_reviewer_name(value: str) -> tuple[str, str]:
@@ -24,10 +25,14 @@ class ReviewerService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def list_reviewers(self) -> list[ReviewerRead]:
+    def list_reviewers(self, page: int) -> PageRead[ReviewerRead]:
         with self.database.read_session() as session:
-            rows = session.exec(select(Reviewer).order_by(Reviewer.name_key, Reviewer.id)).all()
-            return [ReviewerRead.model_validate(row) for row in rows]
+            return paginate(
+                session,
+                select(Reviewer).order_by(Reviewer.name_key, Reviewer.id),
+                page,
+                ReviewerRead.model_validate,
+            )
 
     def create(self, payload: ReviewerCreate) -> ReviewerRead:
         name, name_key = normalize_reviewer_name(payload.name)

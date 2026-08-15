@@ -231,8 +231,9 @@ def test_job_item_maps_existing_asset_ids_to_content_urls_without_flattening_pro
     app, job = create_queued_job(tmp_path, quantity=1)
     client = TestClient(app)
     asset = add_asset(client, "media/jobs/1/items/1/attempts/1/source.mp4", b"video")
+    job_item = app.state.batch_service.list_job_items(job.id, 1).items[0]
     with app.state.database.immediate_session() as session:
-        item = session.get(JobItem, job.items[0].id)
+        item = session.get(JobItem, job_item.id)
         assert item is not None
         item.source_asset_id = asset.id
         item.primary_asset_id = asset.id
@@ -242,7 +243,7 @@ def test_job_item_maps_existing_asset_ids_to_content_urls_without_flattening_pro
         client.close()
 
     assert response.status_code == 200
-    item_payload = response.json()[0]
+    item_payload = response.json()["items"][0]
     assert item_payload["sourceAssetId"] == asset.id
     assert item_payload["sourceAssetUrl"] == f"/api/media/{asset.id}"
     assert item_payload["primaryAssetId"] == asset.id

@@ -10,8 +10,13 @@ from starlette.websockets import WebSocketDisconnect
 
 from backend.adapters.config import Settings
 from backend.app import create_app
-from backend.domain.enums import GpuSlotName, JobStatus
-from backend.domain.models import Job, JobEvent
+from backend.domain.enums import (
+    GenerationAttemptStatus,
+    GpuSlotName,
+    JobStatus,
+    ModelName,
+)
+from backend.domain.models import GenerationAttempt, Job, JobEvent, utc_now
 from backend.tests.test_job_executor import (
     FakeRenderer,
     RecordingPromptModel,
@@ -77,9 +82,15 @@ def append_event(
         return row.id
 
 
+def first_event_id(app, job_id: int) -> int:  # type: ignore[no-untyped-def]
+    events = app.state.batch_service.list_job_events(job_id, 1)
+    assert events.items
+    return events.items[0].id
+
+
 def test_job_items_and_events_are_stably_paginated_and_validated(tmp_path: Path) -> None:
-    app, job = create_queued_job(tmp_path)
-    queued_id = job.events[0].id
+    app, job = create_queued_job(tmp_path, quantity=21)
+    queued_id = first_event_id(app, job.id)
     first_id = append_event(app, job.id, "ItemPromptStarted", sequence=1)
     code, reason = app.state.job_executor._failure_details(RuntimeError("private database detail"))
     second_id = append_event(
@@ -90,40 +101,55 @@ def test_job_items_and_events_are_stably_paginated_and_validated(tmp_path: Path)
         failure_code=code,
         failure_reason=reason,
     )
-    third_id = append_event(app, job.id, "ItemPromptStarted", sequence=2)
+    added_ids = [
+        append_event(app, job.id, "ItemPromptStarted", sequence=sequence)
+        for sequence in range(2, 22)
+    ]
 
     client = TestClient(app)
     try:
-        first_page = client.get(f"/api/jobs/{job.id}/items", params={"offset": 1, "limit": 1})
-        repeated_page = client.get(f"/api/jobs/{job.id}/items", params={"offset": 1, "limit": 1})
-        event_page = client.get(
-            f"/api/jobs/{job.id}/events",
-            params={"afterEventId": queued_id, "limit": 2},
-        )
+        first_page = client.get(f"/api/jobs/{job.id}/items", params={"page": 1})
+        repeated_page = client.get(f"/api/jobs/{job.id}/items", params={"page": 1})
+        last_page = client.get(f"/api/jobs/{job.id}/items", params={"page": 2})
+        empty_page = client.get(f"/api/jobs/{job.id}/items", params={"page": 3})
+        event_page = client.get(f"/api/jobs/{job.id}/events", params={"page": 1})
 
         assert first_page.status_code == 200
         assert first_page.json() == repeated_page.json()
-        assert [item["sequence"] for item in first_page.json()] == [2]
-        assert [event["id"] for event in event_page.json()] == [first_id, second_id]
-        assert all(event["id"] > queued_id for event in event_page.json())
-        assert event_page.json()[1]["payload"]["failureReason"] == "The job item failed during execution"
+        assert first_page.json()["pageSize"] == 20
+        assert first_page.json()["total"] == 21
+        assert first_page.json()["totalPages"] == 2
+        assert [item["sequence"] for item in first_page.json()["items"]] == list(range(1, 21))
+        assert [item["sequence"] for item in last_page.json()["items"]] == [21]
+        assert empty_page.json() == {
+            "items": [],
+            "page": 3,
+            "pageSize": 20,
+            "total": 21,
+            "totalPages": 2,
+        }
+        assert [event["id"] for event in event_page.json()["items"]] == [
+            queued_id,
+            first_id,
+            second_id,
+            *added_ids[:17],
+        ]
+        assert event_page.json()["items"][2]["payload"]["failureReason"] == "The job item failed during execution"
         assert "private database detail" not in event_page.text
-        assert "eventType" in event_page.json()[0]
-        assert "event_type" not in event_page.json()[0]
+        assert "eventType" in event_page.json()["items"][0]
+        assert "event_type" not in event_page.json()["items"][0]
 
         final_page = client.get(
             f"/api/jobs/{job.id}/events",
-            params={"afterEventId": second_id, "limit": 2},
+            params={"page": 2},
         )
-        assert [event["id"] for event in final_page.json()] == [third_id]
+        assert [event["id"] for event in final_page.json()["items"]] == added_ids[17:]
+        assert final_page.json()["total"] == 23
+        assert client.get(f"/api/jobs/{job.id}").json().keys().isdisjoint({"items", "events"})
 
         invalid_requests = [
-            client.get(f"/api/jobs/{job.id}/items", params={"offset": -1}),
-            client.get(f"/api/jobs/{job.id}/items", params={"limit": 0}),
-            client.get(f"/api/jobs/{job.id}/items", params={"limit": 501}),
-            client.get(f"/api/jobs/{job.id}/events", params={"afterEventId": -1}),
-            client.get(f"/api/jobs/{job.id}/events", params={"limit": 0}),
-            client.get(f"/api/jobs/{job.id}/events", params={"limit": 501}),
+            client.get(f"/api/jobs/{job.id}/items", params={"page": 0}),
+            client.get(f"/api/jobs/{job.id}/events", params={"page": 0}),
         ]
         assert all(response.status_code == 422 for response in invalid_requests)
         assert client.get("/api/jobs/999999/items").status_code == 404
@@ -134,7 +160,7 @@ def test_job_items_and_events_are_stably_paginated_and_validated(tmp_path: Path)
 
 def test_websocket_replays_initial_events_and_resumes_after_cursor(tmp_path: Path) -> None:
     app, job = create_queued_job(tmp_path)
-    queued_id = job.events[0].id
+    queued_id = first_event_id(app, job.id)
     continued_id = append_event(app, job.id, "ItemPromptStarted", sequence=1)
     client = TestClient(app)
     try:
@@ -157,6 +183,30 @@ def test_websocket_replays_initial_events_and_resumes_after_cursor(tmp_path: Pat
         client.close()
 
 
+def test_websocket_reconnect_replays_at_most_twenty_events(tmp_path: Path) -> None:
+    app, job = create_queued_job(tmp_path)
+    queued_id = first_event_id(app, job.id)
+    expected_ids = [
+        append_event(app, job.id, "ItemPromptStarted", sequence=sequence)
+        for sequence in range(1, 22)
+    ]
+    client = TestClient(app)
+    try:
+        with client.websocket_connect(
+            f"/api/ws/jobs/{job.id}",
+            params={"afterEventId": queued_id},
+        ) as websocket:
+            received = [websocket.receive_json()["id"] for _ in range(20)]
+            with pytest.raises(WebSocketDisconnect) as closed:
+                websocket.receive_json()
+
+        assert received == expected_ids[:20]
+        assert closed.value.code == 1000
+        assert closed.value.reason == "Job event history page completed"
+    finally:
+        client.close()
+
+
 def test_websocket_unsubscribes_when_idle_client_disconnects(tmp_path: Path) -> None:
     app, job = create_queued_job(tmp_path)
     executor = app.state.job_executor
@@ -164,7 +214,7 @@ def test_websocket_unsubscribes_when_idle_client_disconnects(tmp_path: Path) -> 
     try:
         with client.websocket_connect(
             f"/api/ws/jobs/{job.id}",
-            params={"afterEventId": job.events[0].id},
+            params={"afterEventId": first_event_id(app, job.id)},
         ):
             with executor._event_subscribers_lock:
                 assert len(executor._event_subscribers) == 1
@@ -197,14 +247,14 @@ def test_websocket_terminal_job_closes_when_cursor_already_consumed_terminal_eve
 
 def test_websocket_subscribes_before_replay_and_keeps_new_event(tmp_path: Path) -> None:
     app, job = create_queued_job(tmp_path)
-    queued_id = job.events[0].id
+    queued_id = first_event_id(app, job.id)
     service = app.state.batch_service
     executor = app.state.job_executor
     original = service.list_job_events_snapshot
     inserted_id: list[int] = []
 
-    def insert_during_first_replay(job_id: int, after_event_id: int, limit: int):  # type: ignore[no-untyped-def]
-        events, terminal = original(job_id, after_event_id, limit)
+    def insert_during_first_replay(job_id: int, after_event_id: int):  # type: ignore[no-untyped-def]
+        events, terminal = original(job_id, after_event_id)
         if not inserted_id:
             with executor._event_subscribers_lock:
                 assert len(executor._event_subscribers) == 1
@@ -225,7 +275,7 @@ def test_websocket_subscribes_before_replay_and_keeps_new_event(tmp_path: Path) 
 
 def test_websocket_polling_recovers_a_lost_notification(tmp_path: Path) -> None:
     app, job = create_queued_job(tmp_path)
-    queued_id = job.events[0].id
+    queued_id = first_event_id(app, job.id)
     client = TestClient(app)
     try:
         with client.websocket_connect(
@@ -240,7 +290,7 @@ def test_websocket_polling_recovers_a_lost_notification(tmp_path: Path) -> None:
 
 def test_websocket_deduplicates_notifications_and_closes_after_terminal_event(tmp_path: Path) -> None:
     app, job = create_queued_job(tmp_path)
-    queued_id = job.events[0].id
+    queued_id = first_event_id(app, job.id)
     executor = app.state.job_executor
     client = TestClient(app)
     try:
@@ -276,5 +326,41 @@ def test_websocket_unknown_job_uses_explicit_close(tmp_path: Path) -> None:
                 websocket.receive_json()
         assert closed.value.code == 4404
         assert closed.value.reason == "The requested job does not exist"
+    finally:
+        client.close()
+
+
+def test_generation_attempts_are_paginated_independently(tmp_path: Path) -> None:
+    app, job = create_queued_job(tmp_path, quantity=1)
+    item = app.state.batch_service.list_job_items(job.id, 1).items[0]
+    with app.state.database.immediate_session() as session:
+        for attempt_number in range(1, 22):
+            session.add(
+                GenerationAttempt(
+                    job_item_id=item.id,
+                    attempt_number=attempt_number,
+                    model=ModelName.LTX,
+                    gpu_slot=GpuSlotName.GPU0,
+                    seed=attempt_number,
+                    renderer_prompt_id=f"attempt-{attempt_number}",
+                    status=GenerationAttemptStatus.FAILED,
+                    failure_reason="Test failure",
+                    started_at=utc_now(),
+                    finished_at=utc_now(),
+                )
+            )
+
+    client = TestClient(app)
+    try:
+        first = client.get(f"/api/job-items/{item.id}/attempts", params={"page": 1})
+        last = client.get(f"/api/job-items/{item.id}/attempts", params={"page": 2})
+        empty = client.get(f"/api/job-items/{item.id}/attempts", params={"page": 3})
+
+        assert [row["attemptNumber"] for row in first.json()["items"]] == list(range(1, 21))
+        assert [row["attemptNumber"] for row in last.json()["items"]] == [21]
+        assert empty.json()["items"] == []
+        assert empty.json()["totalPages"] == 2
+        assert client.get(f"/api/job-items/{item.id}/attempts", params={"page": 0}).status_code == 422
+        assert client.get("/api/job-items/999999/attempts").status_code == 404
     finally:
         client.close()

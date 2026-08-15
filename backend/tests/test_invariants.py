@@ -279,7 +279,7 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
 def test_archive_item_database_trigger_requires_matching_sample_dataset(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         other = client.post(
             "/api/datasets",
             json={"name": "Other", "note": ""},
@@ -359,7 +359,7 @@ def test_prompt_preset_reads_continue_during_sqlite_write(tmp_path: Path) -> Non
             writer.close()
 
         assert response.status_code == 200
-        assert response.json() == [created.json()]
+        assert response.json()["items"] == [created.json()]
 
 
 def test_expected_revision_only_updates_return_422_without_incrementing_revision(tmp_path: Path) -> None:
@@ -401,7 +401,11 @@ def test_expected_revision_only_updates_return_422_without_incrementing_revision
             assert response.json()["error"]["code"] == "validation_error"
             current = client.get(read_path).json()
             if list_identifier is not None:
-                current = next(row for row in current if row["id"] == list_identifier)
+                current = next(
+                    row
+                    for row in current["items"]
+                    if row["id"] == list_identifier
+                )
             assert current["revision"] == revision
 
 

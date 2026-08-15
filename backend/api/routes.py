@@ -30,6 +30,7 @@ from backend.domain.schemas import (
     DatasetCreate,
     DatasetRead,
     DatasetUpdate,
+    GenerationAttemptRead,
     HealthRead,
     JobCancelRequest,
     JobDetailRead,
@@ -37,6 +38,7 @@ from backend.domain.schemas import (
     JobItemRead,
     JobSummaryRead,
     KeepTestResultRequest,
+    PageRead,
     PromptPresetCreate,
     PromptPresetRead,
     PromptPresetUpdate,
@@ -67,11 +69,12 @@ from backend.services.samples import SampleService
 from backend.services.reviewers import ReviewerService
 from backend.services.reviews import ReviewService
 from backend.services.statistics import StatisticsService
+from backend.services.pagination import PAGE_SIZE
 
 
 router = APIRouter(prefix="/api")
 
-EVENT_REPLAY_LIMIT = 200
+EVENT_REPLAY_LIMIT = PAGE_SIZE
 EVENT_POLL_SECONDS = 0.25
 TERMINAL_EVENT_TYPES = {"JobCompleted", "JobFailed", "JobCancelled"}
 MEDIA_CHUNK_SIZE = 1024 * 1024
@@ -133,9 +136,12 @@ async def health(request: Request) -> HealthRead:
     )
 
 
-@router.get("/datasets", response_model=list[DatasetRead])
-def list_datasets(request: Request) -> list[DatasetRead]:
-    return catalog(request).list_datasets()
+@router.get("/datasets", response_model=PageRead[DatasetRead])
+def list_datasets(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[DatasetRead]:
+    return catalog(request).list_datasets(page)
 
 
 @router.post("/datasets", response_model=DatasetRead, status_code=status.HTTP_201_CREATED)
@@ -158,9 +164,12 @@ def delete_dataset(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/content-plans", response_model=list[ContentPlanRead])
-def list_content_plans(request: Request) -> list[ContentPlanRead]:
-    return catalog(request).list_content_plans()
+@router.get("/content-plans", response_model=PageRead[ContentPlanRead])
+def list_content_plans(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[ContentPlanRead]:
+    return catalog(request).list_content_plans(page)
 
 
 @router.post("/content-plans", response_model=ContentPlanRead, status_code=status.HTTP_201_CREATED)
@@ -211,9 +220,12 @@ def delete_content_plan(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/prompt-presets", response_model=list[PromptPresetRead])
-def list_prompt_presets(request: Request) -> list[PromptPresetRead]:
-    return catalog(request).list_prompt_presets()
+@router.get("/prompt-presets", response_model=PageRead[PromptPresetRead])
+def list_prompt_presets(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[PromptPresetRead]:
+    return catalog(request).list_prompt_presets(page)
 
 
 @router.post("/prompt-presets", response_model=PromptPresetRead, status_code=status.HTTP_201_CREATED)
@@ -241,9 +253,15 @@ def delete_prompt_preset(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/video-background-presets", response_model=list[VideoBackgroundPresetRead])
-def list_background_presets(request: Request) -> list[VideoBackgroundPresetRead]:
-    return catalog(request).list_background_presets()
+@router.get(
+    "/video-background-presets",
+    response_model=PageRead[VideoBackgroundPresetRead],
+)
+def list_background_presets(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[VideoBackgroundPresetRead]:
+    return catalog(request).list_background_presets(page)
 
 
 @router.post(
@@ -298,9 +316,12 @@ async def submit_test_run(payload: TestRunCreate, request: Request) -> Response:
     )
 
 
-@router.get("/batch-drafts", response_model=list[BatchDraftRead])
-def list_batch_drafts(request: Request) -> list[BatchDraftRead]:
-    return batches(request).list_batch_drafts()
+@router.get("/batch-drafts", response_model=PageRead[BatchDraftRead])
+def list_batch_drafts(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[BatchDraftRead]:
+    return batches(request).list_batch_drafts(page)
 
 
 @router.post("/batch-drafts", response_model=BatchDraftRead, status_code=status.HTTP_201_CREATED)
@@ -344,9 +365,12 @@ async def submit_batch(draft_id: int, payload: BatchSubmitRequest, request: Requ
     )
 
 
-@router.get("/jobs", response_model=list[JobSummaryRead])
-def list_jobs(request: Request) -> list[JobSummaryRead]:
-    return batches(request).list_jobs()
+@router.get("/jobs", response_model=PageRead[JobSummaryRead])
+def list_jobs(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[JobSummaryRead]:
+    return batches(request).list_jobs(page)
 
 
 @router.get("/jobs/{job_id}", response_model=JobDetailRead)
@@ -354,14 +378,25 @@ def get_job(job_id: int, request: Request) -> JobDetailRead:
     return batches(request).get_job(job_id)
 
 
-@router.get("/jobs/{job_id}/items", response_model=list[JobItemRead])
+@router.get("/jobs/{job_id}/items", response_model=PageRead[JobItemRead])
 def list_job_items(
     job_id: int,
     request: Request,
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=500),
-) -> list[JobItemRead]:
-    return batches(request).list_job_items(job_id, offset, limit)
+    page: int = Query(default=1, ge=1),
+) -> PageRead[JobItemRead]:
+    return batches(request).list_job_items(job_id, page)
+
+
+@router.get(
+    "/job-items/{item_id}/attempts",
+    response_model=PageRead[GenerationAttemptRead],
+)
+def list_job_attempts(
+    item_id: int,
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[GenerationAttemptRead]:
+    return batches(request).list_job_attempts(item_id, page)
 
 
 @router.post("/job-items/{item_id}/keep", response_model=SampleRead, status_code=status.HTTP_201_CREATED)
@@ -369,12 +404,13 @@ def keep_test_result(item_id: int, payload: KeepTestResultRequest, request: Requ
     return samples(request).keep_test_result(item_id, payload)
 
 
-@router.get("/samples", response_model=list[SampleRead])
+@router.get("/samples", response_model=PageRead[SampleRead])
 def list_samples(
     request: Request,
     decision: ReviewDecision | None = Query(default=None),
-) -> list[SampleRead]:
-    return samples(request).list_samples(decision)
+    page: int = Query(default=1, ge=1),
+) -> PageRead[SampleRead]:
+    return samples(request).list_samples(page, decision)
 
 
 @router.get("/samples/{sample_id}", response_model=SampleRead)
@@ -391,9 +427,12 @@ def update_sample_classification(
     return samples(request).update_classification(sample_id, payload)
 
 
-@router.get("/reviewers", response_model=list[ReviewerRead])
-def list_reviewers(request: Request) -> list[ReviewerRead]:
-    return reviewers(request).list_reviewers()
+@router.get("/reviewers", response_model=PageRead[ReviewerRead])
+def list_reviewers(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[ReviewerRead]:
+    return reviewers(request).list_reviewers(page)
 
 
 @router.post("/reviewers", response_model=ReviewerRead, status_code=status.HTTP_201_CREATED)
@@ -410,12 +449,13 @@ def rename_reviewer(
     return reviewers(request).rename(reviewer_id, payload)
 
 
-@router.get("/reviews", response_model=list[ReviewRead])
+@router.get("/reviews", response_model=PageRead[ReviewRead])
 def list_reviews(
     request: Request,
     sample_id: int = Query(alias="sampleId", gt=0),
-) -> list[ReviewRead]:
-    return reviews(request).list_for_sample(sample_id)
+    page: int = Query(default=1, ge=1),
+) -> PageRead[ReviewRead]:
+    return reviews(request).list_for_sample(sample_id, page)
 
 
 @router.post("/reviews", response_model=SampleRead, status_code=status.HTTP_201_CREATED)
@@ -444,9 +484,12 @@ def reviewer_statistics(
     )
 
 
-@router.get("/archives", response_model=list[ArchiveRead])
-def list_archives(request: Request) -> list[ArchiveRead]:
-    return archives(request).list_archives()
+@router.get("/archives", response_model=PageRead[ArchiveRead])
+def list_archives(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[ArchiveRead]:
+    return archives(request).list_archives(page)
 
 
 @router.post("/archives/preview", response_model=ArchivePreviewRead)
@@ -601,14 +644,13 @@ class _UnsatisfiableRangeError(ValueError):
     pass
 
 
-@router.get("/jobs/{job_id}/events", response_model=list[JobEventRead])
+@router.get("/jobs/{job_id}/events", response_model=PageRead[JobEventRead])
 def list_job_events(
     job_id: int,
     request: Request,
-    after_event_id: int = Query(default=0, alias="afterEventId", ge=0),
-    limit: int = Query(default=200, ge=1, le=500),
-) -> list[JobEventRead]:
-    return batches(request).list_job_events(job_id, after_event_id, limit)
+    page: int = Query(default=1, ge=1),
+) -> PageRead[JobEventRead]:
+    return batches(request).list_job_events(job_id, page)
 
 
 @router.websocket("/ws/jobs/{job_id}")
@@ -631,9 +673,13 @@ async def replay_job_events(
 
         await websocket.accept()
         cursor = after_event_id
+        replaying = True
         while True:
             signal.clear()
-            events, job_terminal = batch_service.list_job_events_snapshot(job_id, cursor, EVENT_REPLAY_LIMIT)
+            events, job_terminal = batch_service.list_job_events_snapshot(
+                job_id,
+                cursor,
+            )
             terminal_sent = False
             for event in events:
                 if event.id <= cursor:
@@ -643,6 +689,13 @@ async def replay_job_events(
                 terminal_sent = terminal_sent or event.event_type in TERMINAL_EVENT_TYPES
 
             replay_exhausted = len(events) < EVENT_REPLAY_LIMIT
+            if replaying and not replay_exhausted:
+                await websocket.close(
+                    code=1000,
+                    reason="Job event history page completed",
+                )
+                return
+            replaying = False
             if terminal_sent or (job_terminal and replay_exhausted):
                 await websocket.close(code=1000, reason="Job event stream completed")
                 return

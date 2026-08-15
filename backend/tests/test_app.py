@@ -556,7 +556,8 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
         assert preview.json()["allocations"][0]["precision"] == "INT8"
         assert submit.json()["model"] == "LTX-2.5"
         assert submit.json()["precision"] == "INT8"
-        assert submit.json()["items"][0]["input"]["precision"] == "INT8"
+        job_items = client.get(f"/api/jobs/{submit.json()['id']}/items").json()
+        assert job_items["items"][0]["input"]["precision"] == "INT8"
         assert preview.json()["gpuRevisions"] == {"GPU0": 2}
 
     assert preview.status_code == 200

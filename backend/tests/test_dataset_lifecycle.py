@@ -56,10 +56,10 @@ def test_dataset_create_status_transitions_and_empty_delete(tmp_path: Path) -> N
 def test_dataset_delete_reports_every_reference_without_cascade(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         dataset = next(
             row
-            for row in client.get("/api/datasets").json()
+            for row in client.get("/api/datasets").json()["items"]
             if row["id"] == sample["datasetId"]
         )
         timestamp = utc_now()

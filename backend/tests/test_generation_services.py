@@ -306,12 +306,13 @@ def test_ltx25_precision_reaches_draft_preview_job_and_snapshot(tmp_path: Path) 
             ),
         )
     )
+    items = batches.list_job_items(job.id, 1).items
 
     assert draft.precision is Precision.INT8
     assert preview.allocations[0].precision is Precision.INT8
     assert job.precision is Precision.INT8
-    assert job.items[0].input.precision is Precision.INT8
-    assert job.items[0].input.frame_count == 121
+    assert items[0].input.precision is Precision.INT8
+    assert items[0].input.frame_count == 121
 
 
 def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -> None:
@@ -354,15 +355,16 @@ def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -
     )
 
     job = asyncio.run(batches.submit_test_run(payload))
+    items = batches.list_job_items(job.id, 1).items
 
     assert job.source is JobSource.TEST
     assert job.model is None and job.precision is None
     assert job.dataset_id is None and job.batch_draft_id is None
-    assert [item.input.model for item in job.items] == [ModelName.LTX_25, ModelName.H3]
-    assert [item.input.precision for item in job.items] == [Precision.BF16, None]
-    assert {item.input.seed for item in job.items} == {77}
-    assert len({item.input.fixed_positive_prompt for item in job.items}) == 1
-    assert len({item.input.final_negative_prompt for item in job.items}) == 1
+    assert [item.input.model for item in items] == [ModelName.LTX_25, ModelName.H3]
+    assert [item.input.precision for item in items] == [Precision.BF16, None]
+    assert {item.input.seed for item in items} == {77}
+    assert len({item.input.fixed_positive_prompt for item in items}) == 1
+    assert len({item.input.final_negative_prompt for item in items}) == 1
 
 
 def test_serial_test_requires_switch_confirmation_for_distinct_profiles(
@@ -617,7 +619,7 @@ def test_catalog_persists_records_and_rejects_stale_revision(tmp_path: Path) -> 
     reopened = Database(tmp_path)
     reopened.initialize()
     assert reopened.database_path.is_file()
-    assert reopened and CatalogService(reopened).list_datasets()[0].note == "已更新"
+    assert reopened and CatalogService(reopened).list_datasets(1).items[0].note == "已更新"
 
 
 def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) -> None:
@@ -1040,15 +1042,17 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
             ),
         )
     )
+    items = batches.list_job_items(job.id, 1).items
+    events = batches.list_job_events(job.id, 1).items
 
-    assert [item.gpu_slot for item in job.items] == [
+    assert [item.gpu_slot for item in items] == [
         GpuSlotName.GPU0,
         GpuSlotName.GPU1,
         GpuSlotName.GPU0,
         GpuSlotName.GPU1,
     ]
-    assert len({item.input.seed for item in job.items}) == 4
-    first_input = job.items[0].input
+    assert len({item.input.seed for item in items}) == 4
+    first_input = items[0].input
     first_preview = preview.allocations[0]
     assert (first_input.dataset_id, first_input.dataset_revision) == (
         dataset.id,
@@ -1087,14 +1091,14 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
     assert first_input.final_negative_prompt == first_preview.final_negative_prompt
     assert first_input.seed == first_preview.seed
     assert first_input.model is ModelName.LTX
-    assert job.items[0].prompt_result is None
+    assert items[0].prompt_result is None
     with database.read_session() as session:
         slots = session.exec(select(GpuSlot).order_by(GpuSlot.slot)).all()
         assert all(slot.availability is GpuAvailability.RESERVED for slot in slots)
         assert all(slot.active_job_id == job.id for slot in slots)
-        snapshot_id = job.items[0].input.id
-    assert job.events and job.events[0].event_type == "JobQueued"
-    assert job.events[0].payload.slot_count == 2
+        snapshot_id = items[0].input.id
+    assert events and events[0].event_type == "JobQueued"
+    assert events[0].payload.slot_count == 2
     with pytest.raises(IntegrityError):
         with database.immediate_session() as session:
             session.exec(
@@ -1111,13 +1115,13 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
         with database.immediate_session() as session:
             session.exec(
                 update(JobEvent)
-                .where(JobEvent.id == job.events[0].id)
+                .where(JobEvent.id == events[0].id)
                 .values(event_type="JobRestarted")
             )
             session.flush()
     with database.immediate_session() as session:
         prompt_result = JobItemPromptResult(
-            job_item_id=job.items[0].id,
+            job_item_id=items[0].id,
             policy_version="test",
             system_input="system",
             user_input="user",
@@ -1140,15 +1144,17 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
 
     reopened = Database(tmp_path)
     reopened.initialize()
-    restored = BatchService(
+    restored_service = BatchService(
         reopened,
         PromptService(OpenAICompatiblePromptModel("test")),
         _ConfiguredRendererGateway(),
-    ).get_job(job.id)
-    assert len(restored.items) == 4
+    )
+    restored = restored_service.get_job(job.id)
+    restored_items = restored_service.list_job_items(restored.id, 1).items
+    assert len(restored_items) == 4
     assert (
-        restored.items[0].input.final_negative_prompt
-        == job.items[0].input.final_negative_prompt
+        restored_items[0].input.final_negative_prompt
+        == items[0].input.final_negative_prompt
     )
 
 
@@ -1309,6 +1315,7 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             ),
         )
     )
+    items = batches.list_job_items(job.id, 1).items
     submitted_values = [
         (
             item.input.content_plan_id,
@@ -1316,16 +1323,16 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             item.input.background_preset_id,
             (item.input.age, item.input.gender, item.input.ethnicity),
         )
-        for item in job.items
+        for item in items
     ]
     assert submitted_values == preview_values
-    assert [item.input.seed for item in job.items] == [
+    assert [item.input.seed for item in items] == [
         item.seed for item in preview.allocations
     ]
-    assert [item.input.model for item in job.items] == [
+    assert [item.input.model for item in items] == [
         item.model for item in preview.allocations
     ]
-    assert [item.gpu_slot for item in job.items] == [
+    assert [item.gpu_slot for item in items] == [
         item.gpu_slot for item in preview.allocations
     ]
 
@@ -1419,8 +1426,9 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             ),
         )
     )
+    items = batches.list_job_items(job.id, 1).items
 
-    snapshot = job.items[0].input
+    snapshot = items[0].input
     assert (snapshot.width, snapshot.height, snapshot.fps, snapshot.frame_count) == (
         1344,
         768,

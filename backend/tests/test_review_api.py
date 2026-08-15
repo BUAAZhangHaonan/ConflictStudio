@@ -89,7 +89,7 @@ def test_reviewer_create_normalizes_name_and_rename_is_revisioned(tmp_path: Path
 def test_review_history_is_append_only_and_rejects_no_change_or_pending(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
         first = client.post("/api/reviews", json=review_payload(sample, reviewer))
         no_change = client.post(
@@ -117,15 +117,18 @@ def test_review_history_is_append_only_and_rejects_no_change_or_pending(tmp_path
     assert note_change.status_code == 201
     assert decision_change.status_code == 201
     assert pending.status_code == 422
-    assert [row["revision"] for row in history.json()] == [1, 2, 3]
-    assert [row["decision"] for row in history.json()] == ["Accepted", "Accepted", "Rejected"]
-    assert all(row["protocol"] == "VA" and row["relation"] == "Aligned" for row in history.json())
+    assert [row["revision"] for row in history.json()["items"]] == [1, 2, 3]
+    assert [row["decision"] for row in history.json()["items"]] == ["Accepted", "Accepted", "Rejected"]
+    assert all(
+        row["protocol"] == "VA" and row["relation"] == "Aligned"
+        for row in history.json()["items"]
+    )
 
 
 def test_review_distinguishes_sample_and_review_revision_conflicts(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
         reviewed = client.post("/api/reviews", json=review_payload(sample, reviewer)).json()
         stale_sample = client.post(
@@ -157,7 +160,7 @@ def test_review_distinguishes_sample_and_review_revision_conflicts(tmp_path: Pat
 def test_review_batch_is_atomic_when_any_item_is_invalid(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
         response = client.post(
             "/api/reviews/batch",
@@ -179,7 +182,7 @@ def test_review_batch_is_atomic_when_any_item_is_invalid(tmp_path: Path) -> None
     assert response.status_code == 404
     assert duplicate.status_code == 422
     assert empty.status_code == 422
-    assert history.json() == []
+    assert history.json()["items"] == []
     assert unchanged.json()["reviewRevision"] == 0
 
 
@@ -188,7 +191,7 @@ def test_aligned_to_conflict_requires_coherent_emotions_and_preserves_review_his
 ) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
         reviewed = client.post("/api/reviews", json=review_payload(sample, reviewer)).json()
         missing_description = client.patch(
@@ -285,8 +288,8 @@ def test_aligned_to_conflict_requires_coherent_emotions_and_preserves_review_his
     assert moved.json()["reviewRevision"] == reviewed["reviewRevision"]
     assert moved.json()["currentReview"] is None
     assert current.json()["currentReview"] is None
-    assert len(history.json()) == 1
-    assert history.json()[0]["decision"] == "Accepted"
+    assert history.json()["total"] == 1
+    assert history.json()["items"][0]["decision"] == "Accepted"
     assert missing_description.status_code == 422
     assert missing_apparent_emotion.status_code == 422
     assert matching_emotion.status_code == 422
@@ -303,7 +306,7 @@ def test_conflict_to_aligned_uses_preserved_true_emotion_and_clears_direction(
 ) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        aligned = client.get("/api/samples").json()[0]
+        aligned = client.get("/api/samples").json()["items"][0]
         conflict = client.patch(
             f"/api/samples/{aligned['id']}/classification",
             json=classification_payload(
@@ -358,13 +361,13 @@ def test_conflict_to_aligned_uses_preserved_true_emotion_and_clears_direction(
     assert moved.json()["reviewDecision"] == "Pending"
     assert moved.json()["reviewRevision"] == reviewed["reviewRevision"]
     assert moved.json()["currentReview"] is None
-    assert len(history.json()) == 1
+    assert history.json()["total"] == 1
 
 
 def test_review_rows_cannot_be_updated_or_deleted_in_sqlite(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
         client.post("/api/reviews", json=review_payload(sample, reviewer))
 
@@ -381,7 +384,7 @@ def test_review_rows_cannot_be_updated_or_deleted_in_sqlite(tmp_path: Path) -> N
 def test_review_snapshot_must_match_current_sample_in_sqlite(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
         other_dataset = client.post(
             "/api/datasets",

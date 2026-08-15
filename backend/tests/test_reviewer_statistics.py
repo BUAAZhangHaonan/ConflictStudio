@@ -13,7 +13,7 @@ from backend.tests.test_review_api import create_reviewer, review_payload, sampl
 def test_statistics_use_latest_review_snapshots_and_shanghai_calendar_days(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
         with patch("backend.services.reviews.utc_now", return_value="2026-08-01T15:30:00Z"):
             first = client.post("/api/reviews", json=review_payload(sample, reviewer)).json()
@@ -77,7 +77,7 @@ def test_statistics_use_latest_review_snapshots_and_shanghai_calendar_days(tmp_p
 def test_statistics_derive_current_and_needs_update_archive_counts(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
-        sample = client.get("/api/samples").json()[0]
+        sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
         with patch("backend.services.reviews.utc_now", return_value="2026-08-10T02:00:00Z"):
             accepted = client.post("/api/reviews", json=review_payload(sample, reviewer)).json()

@@ -349,7 +349,10 @@ def test_executor_persists_results_and_runs_two_gpu_channels(tmp_path: Path) -> 
         )
         make_available(database, [GpuSlotName.GPU0, GpuSlotName.GPU1])
         job = await enqueue(batches, draft)
-        items = {item.sequence: item.id for item in job.items}
+        items = {
+            item.sequence: item.id
+            for item in batches.list_job_items(job.id, 1).items
+        }
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
         await executor.start()
         try:
@@ -378,10 +381,12 @@ def test_executor_persists_results_and_runs_two_gpu_channels(tmp_path: Path) -> 
             completed.completed_count,
             completed.failed_count,
         ) == (4, 4, 0)
-        assert all(item.prompt_result is not None for item in completed.items)
-        assert all(item.prompt_result.final_positive_prompt for item in completed.items)
-        assert completed.events[-1].event_type == "JobCompleted"
-        assert completed.events[-1].payload.model_dump(
+        completed_items = batches.list_job_items(completed.id, 1).items
+        completed_events = batches.list_job_events(completed.id, 1).items
+        assert all(item.prompt_result is not None for item in completed_items)
+        assert all(item.prompt_result.final_positive_prompt for item in completed_items)
+        assert completed_events[-1].event_type == "JobCompleted"
+        assert completed_events[-1].payload.model_dump(
             by_alias=True, exclude_none=True
         ) == {
             "preparedCount": 4,
@@ -482,7 +487,7 @@ def test_concurrent_prompt_generation_releases_database_transactions(
                 )
             )
             assert created.name == "Catalog write during prompt generation"
-            assert len(catalog.list_content_plans()) == 2
+            assert catalog.list_content_plans(1).total == 2
             model.release.set()
             completed = await asyncio.gather(
                 wait_for_status(batches, first_job.id, {JobStatus.COMPLETED}),
@@ -518,7 +523,8 @@ def test_single_item_failure_is_not_retried_and_other_items_continue(
         )
         make_available(database, [GpuSlotName.GPU0])
         job = await enqueue(batches, draft)
-        failed_item_id = next(item.id for item in job.items if item.sequence == 2)
+        job_items = batches.list_job_items(job.id, 1).items
+        failed_item_id = next(item.id for item in job_items if item.sequence == 2)
         renderer.fail_items.add(failed_item_id)
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
         await executor.start()
@@ -528,16 +534,18 @@ def test_single_item_failure_is_not_retried_and_other_items_continue(
             await executor.stop()
 
         assert model.calls == 3
-        assert renderer.submit_counts == Counter({item.id: 1 for item in job.items})
+        assert renderer.submit_counts == Counter({item.id: 1 for item in job_items})
         assert (failed.prepared_count, failed.completed_count, failed.failed_count) == (
             3,
             2,
             1,
         )
-        failed_item = next(item for item in failed.items if item.id == failed_item_id)
+        failed_items = batches.list_job_items(failed.id, 1).items
+        failed_events = batches.list_job_events(failed.id, 1).items
+        failed_item = next(item for item in failed_items if item.id == failed_item_id)
         assert failed_item.failure_code == "fake_render_failed"
         assert failed_item.failure_reason == "The fake renderer rejected this item"
-        assert [event.event_type for event in failed.events].count("ItemFailed") == 1
+        assert [event.event_type for event in failed_events].count("ItemFailed") == 1
         with database.read_session() as session:
             slot = session.get(GpuSlot, GpuSlotName.GPU0)
             assert slot is not None
@@ -624,10 +632,12 @@ def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(
             await recovered.stop()
         assert interrupted.status is JobStatus.FAILED
         assert interrupted.failure_code == "interrupted_by_restart"
+        interrupted_items = running_batches.list_job_items(interrupted.id, 1).items
+        interrupted_events = running_batches.list_job_events(interrupted.id, 1).items
         assert all(
-            item.failure_code == "interrupted_by_restart" for item in interrupted.items
+            item.failure_code == "interrupted_by_restart" for item in interrupted_items
         )
-        assert "JobInterrupted" in [event.event_type for event in interrupted.events]
+        assert "JobInterrupted" in [event.event_type for event in interrupted_events]
         with running_database.read_session() as session:
             slot = session.get(GpuSlot, GpuSlotName.GPU0)
             assert slot is not None
@@ -683,7 +693,7 @@ def test_queued_and_running_cancellation_only_release_owned_slots(
 
         await executor.start()
         try:
-            second_item_id = second_job.items[0].id
+            second_item_id = batches.list_job_items(second_job.id, 1).items[0].id
             await wait_until(lambda: second_item_id in renderer.wait_started)
             running = batches.get_job(second_job.id)
             await executor.cancel_job(
@@ -699,8 +709,10 @@ def test_queued_and_running_cancellation_only_release_owned_slots(
         prompt_id = f"{second_job.id}:{second_item_id}"
         assert renderer.cancel_calls == [(GpuSlotName.GPU1, prompt_id)]
         assert cancelled_running.cancel_requested_at is not None
-        assert cancelled_running.items[0].status is JobStatus.CANCELLED
-        event_types = [event.event_type for event in cancelled_running.events]
+        cancelled_items = batches.list_job_items(cancelled_running.id, 1).items
+        cancelled_events = batches.list_job_events(cancelled_running.id, 1).items
+        assert cancelled_items[0].status is JobStatus.CANCELLED
+        event_types = [event.event_type for event in cancelled_events]
         assert "CancelRequested" in event_types
         assert event_types[-1] == "JobCancelled"
         with database.read_session() as session:
@@ -732,7 +744,7 @@ def test_cancel_race_keeps_an_already_completed_item(tmp_path: Path) -> None:
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
         await executor.start()
         try:
-            item_id = job.items[0].id
+            item_id = batches.list_job_items(job.id, 1).items[0].id
             await wait_until(lambda: item_id in renderer.wait_started)
             running = batches.get_job(job.id)
             await executor.cancel_job(
@@ -744,9 +756,11 @@ def test_cancel_race_keeps_an_already_completed_item(tmp_path: Path) -> None:
             await executor.stop()
 
         assert cancelled.completed_count == 1
-        assert cancelled.items[0].status is JobStatus.COMPLETED
-        assert cancelled.items[0].stage is JobItemStage.COMPLETED
-        assert "ItemCompleted" in [event.event_type for event in cancelled.events]
+        cancelled_items = batches.list_job_items(cancelled.id, 1).items
+        cancelled_events = batches.list_job_events(cancelled.id, 1).items
+        assert cancelled_items[0].status is JobStatus.COMPLETED
+        assert cancelled_items[0].stage is JobItemStage.COMPLETED
+        assert "ItemCompleted" in [event.event_type for event in cancelled_events]
 
     asyncio.run(scenario())
 
