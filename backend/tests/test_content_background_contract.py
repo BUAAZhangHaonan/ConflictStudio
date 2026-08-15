@@ -3,12 +3,13 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 
 from backend.adapters.database import Database
 from backend.adapters.llm import OpenAICompatiblePromptModel
 from backend.domain.enums import Category, ContentMode, ContentStatus, DatasetPurpose, Ethnicity, Gender, GpuSlotName, ModelName, ResourceStatus
-from backend.domain.models import ContentPlanBackground, Dataset
+from backend.domain.models import BatchDraftContentSelection, ContentPlanBackground, Dataset
 from backend.domain.schemas import (
     BatchContentSelectionInput,
     BatchDraftCreate,
@@ -341,3 +342,45 @@ def test_formal_batch_rejects_inactive_and_nonformal_datasets(tmp_path: Path) ->
     with pytest.raises(ServiceError) as nonformal:
         service.create_batch_draft(payload)
     assert nonformal.value.status_code == 422
+
+
+def test_incomplete_migrated_draft_can_be_reopened_but_not_previewed(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    _, dataset, content, preset, _ = fixed_resources(database)
+    service = BatchService(
+        database,
+        PromptService(OpenAICompatiblePromptModel("test")),
+        _ConfiguredRendererGateway(),
+    )
+    draft = service.create_batch_draft(
+        BatchDraftCreate(
+            targetDatasetId=dataset.id,
+            category=Category.A_VA,
+            model=ModelName.LTX,
+            quantity=1,
+            seed=7,
+            contentSelections=[BatchContentSelectionInput(contentPlanId=content.id)],
+            promptPresetId=preset.id,
+            demographics=[
+                DemographicInput(
+                    age=25,
+                    gender=Gender.FEMALE,
+                    ethnicity=Ethnicity.EAST_ASIAN,
+                )
+            ],
+            gpuSlots=[GpuSlotName.GPU0],
+        )
+    )
+    with database.immediate_session() as session:
+        session.exec(
+            delete(BatchDraftContentSelection).where(
+                BatchDraftContentSelection.batch_draft_id == draft.id
+            )
+        )
+
+    reopened = service.get_batch_draft(draft.id)
+    assert reopened.content_selections == []
+    with pytest.raises(ServiceError, match="incomplete source selections") as incomplete:
+        asyncio.run(service.preview_batch(draft.id, reopened.revision))
+    assert incomplete.value.status_code == 409

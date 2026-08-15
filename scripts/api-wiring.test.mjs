@@ -131,6 +131,7 @@ test('batch scene selection and result prompts use explicit independent controls
   assert.match(batchesSource, /selection\.contentPlan\.mode === 'Generative'/u);
   assert.match(batchesSource, /batches\.selectCompatibleScenes/u);
   assert.match(batchesSource, /batches\.clearCompatibleScenes/u);
+  assert.match(batchesSource, /selected && next\.contentSelections\.length > 0 \? next : null/u);
   assert.match(batchesSource, /role="status" aria-live="polite">\{dirty \? g\('batches\.unsavedStatus'\) : ''\}/u);
   assert.match(localeSource, /'batches\.selectCompatibleScenes': 'Select all available scenes'/u);
   assert.match(localeSource, /'batches\.unsavedStatus': 'Unsaved changes'/u);

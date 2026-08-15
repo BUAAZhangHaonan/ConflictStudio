@@ -168,7 +168,7 @@ export function BatchesPage() {
     }
     setSelectedId(id);
     setForm(next);
-    setBaseline(selected ? next : null);
+    setBaseline(selected && next.contentSelections.length > 0 ? next : null);
     setPreview(null);
     setValidation(false);
   };

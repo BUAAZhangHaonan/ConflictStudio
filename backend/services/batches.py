@@ -1028,7 +1028,6 @@ class BatchService:
             demographics=demographics,
             gpu_slots=[link.gpu_slot for link in gpu_links],
         )
-        self._ensure_complete_aggregate(aggregate)
         return aggregate
 
     @staticmethod
@@ -1041,6 +1040,7 @@ class BatchService:
             raise ServiceError(409, "state_conflict", "The batch draft has incomplete allocation settings")
 
     def _validate_aggregate(self, aggregate: DraftAggregate) -> None:
+        self._ensure_complete_aggregate(aggregate)
         if aggregate.draft.status is not BatchDraftStatus.DRAFT:
             raise state_conflict("batchDraft", aggregate.draft.id, "The batch has already been submitted")
         if (
