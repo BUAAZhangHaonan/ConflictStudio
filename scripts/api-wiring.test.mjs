@@ -52,6 +52,30 @@ test('API failures are mapped to localized error kinds without exposing server m
   assert.doesNotMatch(queryClientSource, /shouldRetry|refetchInterval/u);
 });
 
+test('prompt response failures have concise bilingual messages without internal codes', async () => {
+  const cases = [
+    ['invalid_prompt_envelope', 'The generation service returned an invalid response. Try again.', '生成服务返回了无效响应。请重试。'],
+    ['empty_prompt_content', 'The generation service returned no content. Try again.', '生成服务没有返回内容。请重试。'],
+    ['invalid_prompt_json', 'The generation service returned content that could not be read. Try again.', '生成服务返回的内容无法读取。请重试。'],
+    ['duplicate_prompt_key', 'The generation service returned repeated fields. Try again.', '生成服务返回了重复字段。请重试。'],
+    ['invalid_prompt_schema', 'The generation service returned missing or invalid fields. Try again.', '生成服务返回的字段缺失或有误。请重试。'],
+  ];
+
+  for (const [code, english, chinese] of cases) {
+    const client = loadClient(async () => ({ ok: false, status: 502, json: async () => ({ error: { code, message: 'sensitive upstream detail', details: { requestId: 'internal-request' } } }) }));
+    await assert.rejects(
+      () => client.apiRequest('/api/test-runs', { method: 'POST', body: '{}' }),
+      error => {
+        assert.equal(client.apiErrorMessage(error, 'en-US'), english);
+        assert.equal(client.apiErrorMessage(error, 'zh-CN'), chinese);
+        assert.doesNotMatch(client.apiErrorMessage(error, 'en-US'), new RegExp(code, 'u'));
+        assert.doesNotMatch(client.apiErrorMessage(error, 'zh-CN'), /internal-request|sensitive/u);
+        return true;
+      },
+    );
+  }
+});
+
 test('frontend contracts include the exact reviewer, review, statistics, archive, health and sample fields', () => {
   for (const name of ['Reviewer', 'ReviewerCreate', 'ReviewerRename', 'ReviewCreate', 'ReviewBatchCreate', 'Review', 'ReviewerStatistics', 'ArchivePreview', 'Archive', 'Health', 'SampleClassificationUpdate']) {
     assert.match(contractSource, new RegExp(`export (?:interface|type) ${name}\\b`));

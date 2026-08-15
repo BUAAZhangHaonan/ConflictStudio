@@ -2,7 +2,7 @@ import type { Locale } from '../types';
 
 export type ApiErrorTransport = 'http' | 'network' | 'malformed';
 export type ApiErrorRecovery = 'none' | 'reload' | 'retry' | 'confirmModelSwitch';
-type ApiErrorKind = 'notFound' | 'revision' | 'reference' | 'gpu' | 'database' | 'renderer' | 'http' | 'network' | 'invalidInput' | 'modelSwitchConfirmationRequired' | 'unavailable';
+type ApiErrorKind = 'notFound' | 'revision' | 'reference' | 'gpu' | 'database' | 'renderer' | 'promptEnvelope' | 'promptEmpty' | 'promptJson' | 'promptDuplicateKey' | 'promptSchema' | 'http' | 'network' | 'invalidInput' | 'modelSwitchConfirmationRequired' | 'unavailable';
 
 const reloadCodes = new Set(['revision_conflict', 'referenced_resource_changed', 'gpu_state_changed']);
 const referenceCodes = new Set(['referenced_resource_changed']);
@@ -18,6 +18,11 @@ function recoveryFor(status: number, code: string): ApiErrorRecovery {
 
 function kindFor(status: number, code: string): ApiErrorKind {
   if (code === 'model_switch_confirmation_required') return 'modelSwitchConfirmationRequired';
+  if (code === 'invalid_prompt_envelope') return 'promptEnvelope';
+  if (code === 'empty_prompt_content') return 'promptEmpty';
+  if (code === 'invalid_prompt_json') return 'promptJson';
+  if (code === 'duplicate_prompt_key') return 'promptDuplicateKey';
+  if (code === 'invalid_prompt_schema') return 'promptSchema';
   if (code === 'revision_conflict') return 'revision';
   if (referenceCodes.has(code)) return 'reference';
   if (gpuCodes.has(code)) return 'gpu';
@@ -83,10 +88,10 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
 
 const messages: Record<Locale, Record<ApiErrorKind, string>> = {
   'en-US': {
-    notFound: 'The requested record no longer exists.', revision: 'This record changed elsewhere. Reload it, then try again.', reference: 'A referenced record changed. Reload the form, then try again.', gpu: 'The selected GPU is no longer available. Reload GPU status and choose again.', database: 'The data store is busy. Try again shortly.', renderer: 'The renderer or model service is unavailable. Try again after it is ready.', http: 'The generation service is unavailable. Try again shortly.', network: 'The service could not be reached. Check the connection and try again.', invalidInput: 'Some fields need attention. Check the form and try again.', modelSwitchConfirmationRequired: 'The selected GPU has another model loaded. Confirm the model switch to submit.', unavailable: 'The service is unavailable. Try again shortly.',
+    notFound: 'The requested record no longer exists.', revision: 'This record changed elsewhere. Reload it, then try again.', reference: 'A referenced record changed. Reload the form, then try again.', gpu: 'The selected GPU is no longer available. Reload GPU status and choose again.', database: 'The data store is busy. Try again shortly.', renderer: 'The renderer or model service is unavailable. Try again after it is ready.', promptEnvelope: 'The generation service returned an invalid response. Try again.', promptEmpty: 'The generation service returned no content. Try again.', promptJson: 'The generation service returned content that could not be read. Try again.', promptDuplicateKey: 'The generation service returned repeated fields. Try again.', promptSchema: 'The generation service returned missing or invalid fields. Try again.', http: 'The generation service is unavailable. Try again shortly.', network: 'The service could not be reached. Check the connection and try again.', invalidInput: 'Some fields need attention. Check the form and try again.', modelSwitchConfirmationRequired: 'The selected GPU has another model loaded. Confirm the model switch to submit.', unavailable: 'The service is unavailable. Try again shortly.',
   },
   'zh-CN': {
-    notFound: '请求的记录已不存在。', revision: '记录已被其他操作修改。请重新加载后再试。', reference: '引用的记录已发生变化。请重新加载表单后再试。', gpu: '所选 GPU 已不可用。请刷新 GPU 状态后重新选择。', database: '数据存储正忙。请稍后再试。', renderer: '渲染器或模型服务不可用。请等待服务就绪后再试。', http: '生成服务暂时不可用。请稍后再试。', network: '无法连接服务。请检查网络后再试。', invalidInput: '部分字段需要修改。请检查表单后再试。', modelSwitchConfirmationRequired: '所选 GPU 已加载其他模型。请确认切换模型后再提交。', unavailable: '服务暂时不可用。请稍后再试。',
+    notFound: '请求的记录已不存在。', revision: '记录已被其他操作修改。请重新加载后再试。', reference: '引用的记录已发生变化。请重新加载表单后再试。', gpu: '所选 GPU 已不可用。请刷新 GPU 状态后重新选择。', database: '数据存储正忙。请稍后再试。', renderer: '渲染器或模型服务不可用。请等待服务就绪后再试。', promptEnvelope: '生成服务返回了无效响应。请重试。', promptEmpty: '生成服务没有返回内容。请重试。', promptJson: '生成服务返回的内容无法读取。请重试。', promptDuplicateKey: '生成服务返回了重复字段。请重试。', promptSchema: '生成服务返回的字段缺失或有误。请重试。', http: '生成服务暂时不可用。请稍后再试。', network: '无法连接服务。请检查网络后再试。', invalidInput: '部分字段需要修改。请检查表单后再试。', modelSwitchConfirmationRequired: '所选 GPU 已加载其他模型。请确认切换模型后再提交。', unavailable: '服务暂时不可用。请稍后再试。',
   },
 };
 
