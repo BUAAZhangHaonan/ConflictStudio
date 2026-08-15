@@ -5,16 +5,79 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
 from backend.domain.enums import JobSource
 from backend.tests.test_sample_integration import add_completed_result, make_app
 
 
-def sample_app(tmp_path: Path):  # type: ignore[no-untyped-def]
+def sample_app(tmp_path: Path, **source_options: object):  # type: ignore[no-untyped-def]
     app = make_app(tmp_path)
-    job_id, item_id, _ = add_completed_result(app, JobSource.PRODUCTION)
+    job_id, item_id, _ = add_completed_result(
+        app,
+        JobSource.PRODUCTION,
+        **source_options,
+    )
     app.state.job_executor._complete_item(job_id, item_id)
     return app
+
+
+@pytest.mark.parametrize(
+    ("actual_scene_id", "register_scene", "expected"),
+    [
+        (1, True, "NeedsRegeneration"),
+        (22, True, "Compatible"),
+        (22, False, "NeedsRegeneration"),
+    ],
+)
+def test_sample_derives_generation_compatibility_from_actual_content_scene_mapping(
+    tmp_path: Path,
+    actual_scene_id: int,
+    register_scene: bool,
+    expected: str,
+) -> None:
+    app = sample_app(
+        tmp_path,
+        content_id=22,
+        actual_background_id=actual_scene_id,
+        registered_background_id=22,
+        register_background=register_scene,
+    )
+
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+
+    assert sample["actualContentSummary"]["id"] == 22
+    assert sample["actualContentSummary"]["nameEn"] == "Aligned response"
+    assert sample["actualSceneSummary"]["id"] == actual_scene_id
+    assert sample["generationCompatibility"] == expected
+
+
+def test_incompatible_generation_cannot_be_accepted_but_can_be_rejected(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(
+        tmp_path,
+        content_id=22,
+        actual_background_id=1,
+        registered_background_id=22,
+    )
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+        reviewer = create_reviewer(client)
+        accepted = client.post("/api/reviews", json=review_payload(sample, reviewer))
+        rejected = client.post(
+            "/api/reviews",
+            json=review_payload(sample, reviewer, decision="Rejected"),
+        )
+
+    assert accepted.status_code == 422
+    assert accepted.json()["error"]["code"] == "generation_incompatible"
+    assert accepted.json()["error"]["details"] == {
+        "resource": "sample",
+        "id": sample["id"],
+        "generationCompatibility": "NeedsRegeneration",
+    }
+    assert rejected.status_code == 201
+    assert rejected.json()["reviewDecision"] == "Rejected"
 
 
 def create_reviewer(client: TestClient, name: str = "Reviewer One") -> dict:

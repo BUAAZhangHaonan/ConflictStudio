@@ -67,5 +67,18 @@ def invalid_request(message: str, details: dict[str, Any] | None = None) -> Serv
     return ServiceError(422, "validation_error", message, details)
 
 
+def incompatible_generation(sample_id: int) -> ServiceError:
+    return ServiceError(
+        422,
+        "generation_incompatible",
+        "The sample generation no longer matches its content plan",
+        {
+            "resource": "sample",
+            "id": sample_id,
+            "generationCompatibility": "NeedsRegeneration",
+        },
+    )
+
+
 def state_conflict(resource: str, identifier: int | str, message: str) -> ServiceError:
     return ServiceError(409, "state_conflict", message, {"resource": resource, "id": identifier})

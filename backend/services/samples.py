@@ -30,6 +30,7 @@ from backend.domain.models import (
     utc_now,
 )
 from backend.domain.schemas import (
+    BilingualSelectionRead,
     emotion_key,
     GenerationAttemptRead,
     KeepTestResultRequest,
@@ -40,6 +41,7 @@ from backend.domain.schemas import (
 
 from .assets import asset_content_url
 from .errors import invalid_request, not_found, revision_conflict, state_conflict
+from .generation_compatibility import generation_compatibility
 from .reviews import latest_review, review_read
 from .pagination import paginate
 
@@ -234,6 +236,7 @@ class SampleService:
         dataset = session.get(Dataset, row.dataset_id)
         if dataset is None:
             raise state_conflict("sample", row.id, "The sample dataset does not exist")
+        compatibility = generation_compatibility(session, row)
         return SampleRead(
             **row.model_dump(),
             display_id=f"CS-{row.id:06d}",
@@ -245,6 +248,19 @@ class SampleService:
                 source_asset_url=asset_content_url(attempt.source_asset_id),
                 primary_asset_url=asset_content_url(attempt.primary_asset_id),
             ),
+            actual_content_summary=BilingualSelectionRead(
+                id=compatibility.snapshot.content_plan_id,
+                name_zh=row.content_plan_name_zh,
+                name_en=row.content_plan_name_en,
+                revision=compatibility.snapshot.content_plan_revision,
+            ),
+            actual_scene_summary=BilingualSelectionRead(
+                id=compatibility.snapshot.background_preset_id,
+                name_zh=compatibility.scene.name_zh,
+                name_en=compatibility.scene.name_en,
+                revision=compatibility.snapshot.background_preset_revision,
+            ),
+            generation_compatibility=compatibility.status,
             current_review=review_read(session, current) if current is not None else None,
             in_archive=archive_item is not None,
             archive_sync_status=archive_sync_status,

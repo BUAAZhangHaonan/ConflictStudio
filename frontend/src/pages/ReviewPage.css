@@ -83,6 +83,20 @@
   border-left-style: solid;
 }
 
+.review-compatibility-warning {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-muted);
+}
+
+.review-compatibility-warning h3,
+.review-compatibility-warning p {
+  margin: 0;
+}
+
 .review-grid {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);

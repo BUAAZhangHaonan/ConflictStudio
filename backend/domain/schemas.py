@@ -18,6 +18,7 @@ from .enums import (
     Ethnicity,
     Gender,
     GenerationAttemptStatus,
+    GenerationCompatibility,
     GpuSlotName,
     JobItemStage,
     JobSource,
@@ -858,6 +859,9 @@ class SampleRead(ApiModel):
     archive_sync_status: ArchiveSyncStatus
     model: ModelName
     generation_record: GenerationAttemptRead
+    actual_content_summary: BilingualSelectionRead
+    actual_scene_summary: BilingualSelectionRead
+    generation_compatibility: GenerationCompatibility
     gpu_slot: GpuSlotName
     content_plan_id: int
     content_plan_revision: int

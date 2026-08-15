@@ -44,11 +44,23 @@ export const contentPlansFixture = [{
   psychologicalBackgroundZh: '人物保持克制', psychologicalBackgroundEn: 'The person remains restrained',
   dialogue: '', displayText: null, trueEmotionDescription: '', baseVideoPrompt: '', contentRequirementsZh: '生成自然对白', contentRequirementsEn: 'Write natural dialogue',
   sceneSupplementZh: '', sceneSupplementEn: '', backgroundPresetIds: [1, 2], revision: 1, createdAt: timestamp, updatedAt: timestamp,
+}, {
+  id: 22, nameZh: '修正后的克制回应', nameEn: 'Corrected restrained reply', category: 'C-VA', conflictDirection: 'Audio',
+  mode: 'Fixed', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'neutral',
+  sceneZh: '安静会客室', sceneEn: 'Quiet reception room', triggerEventZh: '收到坏消息', triggerEventEn: 'Bad news arrives',
+  psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
+  dialogue: 'I understand.', displayText: null, trueEmotionDescription: 'The voice carries sadness while the face stays neutral.',
+  baseVideoPrompt: 'A fixed camera records a restrained reply.', contentRequirementsZh: '', contentRequirementsEn: '',
+  sceneSupplementZh: '', sceneSupplementEn: '', backgroundPresetIds: [22], revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }];
 
 export const promptPresetsFixture = [{
   id: 1, name: 'Natural conversation', category: 'A-VA', styleGuidance: 'Natural restrained acting.',
   positiveExamples: ['A natural reply.'], negativeExamples: ['Exaggerated acting.'], finalRenderNegativeConstraints: 'No subtitles.',
+  status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp,
+}, {
+  id: 22, name: 'Restrained conflict', category: 'C-VA', styleGuidance: 'Natural restrained acting.',
+  positiveExamples: ['A restrained reply.'], negativeExamples: ['Exaggerated acting.'], finalRenderNegativeConstraints: 'No subtitles.',
   status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }];
 
@@ -69,6 +81,12 @@ export const backgroundsFixture = [
     id: 3, nameZh: '停用场景', nameEn: 'Disabled scene', sceneZh: '停用场景', sceneEn: 'Disabled scene',
     ambientSoundZh: '无', ambientSoundEn: 'None', participantRelationshipZh: '独处', participantRelationshipEn: 'Alone',
     lightingZh: '自然光', lightingEn: 'Natural light', framingZh: '中景', framingEn: 'Medium shot', status: 'Disabled',
+    revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  },
+  {
+    id: 22, nameZh: '安静会客室', nameEn: 'Quiet reception room', sceneZh: '安静会客室', sceneEn: 'Quiet reception room',
+    ambientSoundZh: '轻微室内底噪', ambientSoundEn: 'Low room tone', participantRelationshipZh: '独处', participantRelationshipEn: 'Alone',
+    lightingZh: '柔和窗光', lightingEn: 'Soft window light', framingZh: '中近景', framingEn: 'Medium close-up', status: 'Active',
     revision: 1, createdAt: timestamp, updatedAt: timestamp,
   },
 ];
@@ -113,13 +131,17 @@ export function sampleFixture(id, reviewDecision = 'Pending', category = 'C-VA')
   const protocol = category.endsWith('-VA') ? 'VA' : 'VT';
   const accepted = reviewDecision === 'Accepted';
   const currentReview = accepted ? reviewRecord(5000 + id, id) : null;
+  const incompatible = id === 1;
   return {
     id, displayId: `CS-${String(id).padStart(6, '0')}`, jobItemId: id, datasetId: 1, datasetName: 'Formal samples', category,
     conflictDirection: category === 'C-VA' ? 'Audio' : category === 'C-VT' ? 'Text' : null,
     reviewDecision, reviewRevision: accepted ? 1 : 0, currentReview, inArchive: accepted,
     archiveSyncStatus: accepted ? 'Current' : 'NeedsUpdate', model: 'LTX-2.5',
     generationRecord: { id: 9000 + id, attemptNumber: 3, model: 'LTX-2.5', precision: 'BF16', gpuSlot: id % 2 ? 'GPU0' : 'GPU1', seed: 424242 + id, sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/browser-check.webm', rendererPromptId: `prompt-${id}`, status: 'Completed', failureReason: null, startedAt: timestamp, finishedAt: timestamp },
-    gpuSlot: id % 2 ? 'GPU0' : 'GPU1', contentPlanId: 1, contentPlanRevision: 4, promptPresetId: 1,
+    actualContentSummary: incompatible ? { id: 22, nameZh: '修正后的克制回应', nameEn: 'Corrected restrained reply', revision: 1 } : { id: 1, nameZh: '克制回应', nameEn: 'Restrained reply', revision: 1 },
+    actualSceneSummary: { id: 1, nameZh: '安静办公室', nameEn: 'Quiet office', revision: 1 },
+    generationCompatibility: incompatible ? 'NeedsRegeneration' : 'Compatible',
+    gpuSlot: id % 2 ? 'GPU0' : 'GPU1', contentPlanId: incompatible ? 22 : 1, contentPlanRevision: incompatible ? 1 : 4, promptPresetId: incompatible ? 22 : 1,
     sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/browser-check.webm',
     dialogue: protocol === 'VA' ? 'I understand.' : null, displayText: protocol === 'VT' ? 'I understand.' : null,
     videoPrompt: 'A fixed camera records a short reply.', negativePrompt: 'No subtitles.',
@@ -152,7 +174,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
     contentPlans: contentPlansFixture.map(item => ({ ...item })),
     promptPresets: promptPresetsFixture.map(item => ({ ...item })),
     backgrounds: backgroundsFixture.map(item => ({ ...item })),
-    contentRelations: new Map([[1, [1]], [2, [1, 2]]]),
+    contentRelations: new Map([[1, [1]], [2, [1, 2]], [22, [22]]]),
     reviewers: reviewers.map(reviewer => ({ ...reviewer })),
     samples: [
       ...Array.from({ length: 30 }, (_, index) => sampleFixture(index + 1, 'Pending', index === 3 ? 'A-VT' : 'C-VA')),
@@ -284,6 +306,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           return fulfillJson(route, content, 201);
         }
         const contentMatch = /^\/api\/content-plans\/(\d+)$/u.exec(path);
+        if (method === 'GET' && contentMatch) return fulfillJson(route, state.contentPlans.find(item => item.id === Number(contentMatch[1])));
         if (method === 'PATCH' && contentMatch) {
           const id = Number(contentMatch[1]);
           const index = state.contentPlans.findIndex(item => item.id === id);
@@ -354,8 +377,15 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
         }
         if (method === 'GET' && /^\/api\/reviewers\/\d+\/statistics$/u.test(path)) return fulfillJson(route, statistics(url));
         if (method === 'GET' && path === '/api/reviews') return fulfillJson(route, pageValue(url, state.reviews.filter(review => review.sampleId === Number(url.searchParams.get('sampleId')))));
-        if (method === 'POST' && path === '/api/reviews') return fulfillJson(route, updateSampleWithReview(body), 201);
-        if (method === 'POST' && path === '/api/reviews/batch') return fulfillJson(route, body.items.map(updateSampleWithReview), 201);
+        if (method === 'POST' && path === '/api/reviews') {
+          const sample = state.samples.find(item => item.id === body.sampleId);
+          if (body.decision === 'Accepted' && sample?.generationCompatibility === 'NeedsRegeneration') return fulfillJson(route, { error: { code: 'generation_incompatible', message: 'The generation is incompatible.', details: { resource: 'sample', id: sample.id, generationCompatibility: 'NeedsRegeneration' } } }, 422);
+          return fulfillJson(route, updateSampleWithReview(body), 201);
+        }
+        if (method === 'POST' && path === '/api/reviews/batch') {
+          if (body.items.some(input => input.decision === 'Accepted' && state.samples.find(sample => sample.id === input.sampleId)?.generationCompatibility === 'NeedsRegeneration')) return fulfillJson(route, { error: { code: 'generation_incompatible', message: 'The generation is incompatible.', details: {} } }, 422);
+          return fulfillJson(route, body.items.map(updateSampleWithReview), 201);
+        }
         if (method === 'GET' && path === '/api/samples') {
           const decision = url.searchParams.get('decision');
           const datasetId = Number(url.searchParams.get('datasetId'));

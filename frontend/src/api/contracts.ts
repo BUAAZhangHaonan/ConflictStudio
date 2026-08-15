@@ -17,6 +17,7 @@ export type Ethnicity = 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino
 export type Age = 25 | 35 | 45 | 60;
 export type JobStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 export type GenerationAttemptStatus = 'Running' | 'Completed' | 'Failed';
+export type GenerationCompatibility = 'Compatible' | 'NeedsRegeneration';
 export type ReviewDecision = 'Pending' | 'Accepted' | 'Rejected';
 export type ArchiveSyncStatus = 'Current' | 'NeedsUpdate';
 export type Protocol = 'VA' | 'VT';
@@ -540,6 +541,9 @@ export interface Sample {
   archiveSyncStatus: ArchiveSyncStatus;
   model: ModelName;
   generationRecord: GenerationAttempt;
+  actualContentSummary: BilingualSelection;
+  actualSceneSummary: BilingualSelection;
+  generationCompatibility: GenerationCompatibility;
   gpuSlot: GpuSlotName;
   contentPlanId: number;
   contentPlanRevision: number;

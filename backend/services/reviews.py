@@ -3,11 +3,12 @@ from __future__ import annotations
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
-from backend.domain.enums import ReviewDecision, protocol_for, relation_for
+from backend.domain.enums import GenerationCompatibility, ReviewDecision, protocol_for, relation_for
 from backend.domain.models import Review, Reviewer, Sample, utc_now
 from backend.domain.schemas import PageRead, ReviewBatchCreate, ReviewCreate, ReviewRead, SampleRead
 
-from .errors import invalid_request, not_found, review_revision_conflict, revision_conflict
+from .errors import incompatible_generation, invalid_request, not_found, review_revision_conflict, revision_conflict
+from .generation_compatibility import generation_compatibility
 from .pagination import paginate
 
 
@@ -83,6 +84,12 @@ class ReviewService:
                 payload.expected_review_revision,
                 sample.review_revision,
             )
+        if (
+            payload.decision is ReviewDecision.ACCEPTED
+            and generation_compatibility(session, sample).status
+            is GenerationCompatibility.NEEDS_REGENERATION
+        ):
+            raise incompatible_generation(sample.id)
         current = latest_review(session, sample.id)
         if (
             sample.review_decision is payload.decision

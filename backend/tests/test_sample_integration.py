@@ -36,6 +36,7 @@ from backend.domain.models import (
     BatchDraft,
     BatchVideoInputSnapshot,
     ContentPlan,
+    ContentPlanBackground,
     Dataset,
     GenerationAttempt,
     Job,
@@ -290,6 +291,11 @@ def add_completed_result(
     source: JobSource,
     model: ModelName = ModelName.LTX,
     precision: Precision | None = None,
+    *,
+    content_id: int | None = None,
+    actual_background_id: int | None = None,
+    registered_background_id: int | None = None,
+    register_background: bool = True,
 ) -> tuple[int, int, int]:  # type: ignore[no-untyped-def]
     timestamp = utc_now()
     frame_count = 124 if model is ModelName.H3 else 121
@@ -301,6 +307,7 @@ def add_completed_result(
             status=ResourceStatus.ACTIVE,
         )
         content = ContentPlan(
+            id=content_id,
             name_zh="一致回应",
             name_zh_key="一致回应",
             name_en="Aligned response",
@@ -327,6 +334,7 @@ def add_completed_result(
             final_negative_prompt="subtitles",
         )
         background = VideoBackgroundPreset(
+            id=actual_background_id,
             name_zh="办公室",
             name_zh_key="办公室",
             name_en="Office",
@@ -334,8 +342,32 @@ def add_completed_result(
             scene_zh="一间办公室。",
             scene_en="A private office.",
         )
+        registered_background = background
+        if (
+            registered_background_id is not None
+            and registered_background_id != actual_background_id
+        ):
+            registered_background = VideoBackgroundPreset(
+                id=registered_background_id,
+                name_zh="登记办公室",
+                name_zh_key="登记办公室",
+                name_en="Registered office",
+                name_en_key="registered office",
+                scene_zh="一间登记的办公室。",
+                scene_en="A registered private office.",
+            )
         session.add_all([dataset, content, prompt, background])
+        if registered_background is not background:
+            session.add(registered_background)
         session.flush()
+        if register_background:
+            session.add(
+                ContentPlanBackground(
+                    content_plan_id=content.id,
+                    background_preset_id=registered_background.id,
+                    position=0,
+                )
+            )
         draft = None
         if source is JobSource.PRODUCTION:
             draft = BatchDraft(

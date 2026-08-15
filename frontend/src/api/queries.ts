@@ -49,6 +49,7 @@ export const queryKeys = {
   datasetsPage: (filter: DatasetQueryFilter, page: number) => [...roots.datasets, filter, page] as const,
   dataset: (id: number) => [...roots.datasets, 'detail', id] as const,
   contentPlansPage: (page: number) => [...roots.contentPlans, page] as const,
+  contentPlan: (id: number) => [...roots.contentPlans, 'detail', id] as const,
   contentBackgrounds: (id: number) => [...roots.contentPlans, id, 'backgrounds'] as const,
   promptPresetsPage: (page: number) => [...roots.promptPresets, page] as const,
   backgroundPresetsPage: (page: number) => [...roots.backgroundPresets, page] as const,
@@ -84,6 +85,7 @@ export const generationQueries = {
   },
   dataset: (id: number) => queryOptions({ queryKey: queryKeys.dataset(id), queryFn: () => apiRequest<Dataset>(`/api/datasets/${id}`) }),
   contentPlans: (page: number) => queryOptions({ queryKey: queryKeys.contentPlansPage(page), queryFn: () => apiRequest<Page<ContentPlan>>(pagePath('/api/content-plans', page)) }),
+  contentPlan: (id: number) => queryOptions({ queryKey: queryKeys.contentPlan(id), queryFn: () => apiRequest<ContentPlan>(`/api/content-plans/${id}`) }),
   contentBackgrounds: (id: number) => queryOptions({ queryKey: queryKeys.contentBackgrounds(id), queryFn: () => apiRequest<ContentPlanBackgrounds>(`/api/content-plans/${id}/backgrounds`) }),
   promptPresets: (page: number) => queryOptions({ queryKey: queryKeys.promptPresetsPage(page), queryFn: () => apiRequest<Page<PromptPreset>>(pagePath('/api/prompt-presets', page)) }),
   backgroundPresets: (page: number) => queryOptions({ queryKey: queryKeys.backgroundPresetsPage(page), queryFn: () => apiRequest<Page<BackgroundPreset>>(pagePath('/api/video-background-presets', page)) }),
@@ -140,6 +142,7 @@ export async function invalidateJobAuthority(client: QueryClient, id: number, in
 export function useDatasetsQuery(page = 1, filter: DatasetQueryFilter = {}) { return useQuery(generationQueries.datasets(page, filter)); }
 export function useDatasetQuery(id: number | null) { return useQuery({ ...generationQueries.dataset(id ?? 0), enabled: id !== null }); }
 export function useContentPlansQuery(page = 1) { return useQuery(generationQueries.contentPlans(page)); }
+export function useContentPlanQuery(id: number | null) { return useQuery({ ...generationQueries.contentPlan(id ?? 0), enabled: id !== null }); }
 export function useContentBackgroundsQuery(id: number | null) { return useQuery({ ...generationQueries.contentBackgrounds(id ?? 0), enabled: id !== null }); }
 export function usePromptPresetsQuery(page = 1) { return useQuery(generationQueries.promptPresets(page)); }
 export function useBackgroundPresetsQuery(page = 1) { return useQuery(generationQueries.backgroundPresets(page)); }

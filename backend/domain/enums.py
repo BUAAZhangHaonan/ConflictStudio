@@ -98,6 +98,11 @@ class GenerationAttemptStatus(ValueEnum):
     FAILED = "Failed"
 
 
+class GenerationCompatibility(ValueEnum):
+    COMPATIBLE = "Compatible"
+    NEEDS_REGENERATION = "NeedsRegeneration"
+
+
 class ReviewDecision(ValueEnum):
     PENDING = "Pending"
     ACCEPTED = "Accepted"
