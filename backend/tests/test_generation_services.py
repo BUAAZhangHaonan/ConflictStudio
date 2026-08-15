@@ -207,7 +207,7 @@ def fixed_resources(
     )
     preset = catalog.create_prompt_preset(
         PromptPresetCreate(
-            name="自然室内",
+            name="Natural Interior",
             category=Category.A_VA,
             styleGuidance="Use restrained natural performance and a static medium shot.",
             positiveExamples=[
@@ -683,7 +683,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     )
     preset_read = catalog.create_prompt_preset(
         PromptPresetCreate(
-            name="冲突预设",
+            name="Conflict Portrait",
             category=Category.C_VA,
             positiveExamples=[
                 "The person grips a ceramic cup with the right hand and lowers both shoulders."
@@ -1358,7 +1358,7 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
     )
     preset = catalog.create_prompt_preset(
         PromptPresetCreate(
-            name="文字自然室内",
+            name="Natural Text Interior",
             category=Category.A_VT,
             styleGuidance="Use restrained natural performance and a static medium shot.",
             finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",

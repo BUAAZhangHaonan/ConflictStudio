@@ -34,6 +34,7 @@ from .enums import (
     validate_direction,
     validate_model_precision,
 )
+from .display_names import EnglishDisplayName
 from .prompt_policy import validate_background_policy_text
 
 
@@ -192,7 +193,7 @@ class DatasetRead(ApiModel):
 
 class ContentPlanFields(ApiModel):
     name_zh: Name
-    name_en: Name
+    name_en: EnglishDisplayName
     category: Category
     conflict_direction: ConflictDirection | None = None
     mode: ContentMode
@@ -256,7 +257,7 @@ class ContentPlanCreate(ContentPlanFields):
 class ContentPlanUpdate(UpdateWithChanges):
     background_preset_ids: list[int] = Field(min_length=1)
     name_zh: Name | None = None
-    name_en: Name | None = None
+    name_en: EnglishDisplayName | None = None
     conflict_direction: ConflictDirection | None = None
     mode: ContentMode | None = None
     status: ContentStatus | None = None
@@ -303,7 +304,7 @@ class ContentPlanRead(ContentPlanFields):
 
 
 class PromptPresetFields(ApiModel):
-    name: Name
+    name: EnglishDisplayName
     category: Category
     style_instruction: str = Field(default="", alias="styleGuidance")
     positive_examples: list[TextValue] = Field(default_factory=list, max_length=20)
@@ -322,7 +323,7 @@ class PromptPresetCreate(PromptPresetFields):
 
 
 class PromptPresetUpdate(UpdateWithChanges):
-    name: Name | None = None
+    name: EnglishDisplayName | None = None
     style_instruction: str | None = Field(default=None, alias="styleGuidance")
     positive_examples: list[TextValue] | None = Field(default=None, max_length=20)
     negative_examples: list[TextValue] | None = Field(default=None, max_length=20)
@@ -350,7 +351,7 @@ class PromptPresetRead(PromptPresetFields):
 
 class VideoBackgroundPresetFields(ApiModel):
     name_zh: Name
-    name_en: Name
+    name_en: EnglishDisplayName
     scene_zh: TextValue
     scene_en: TextValue
     ambient_sound_zh: OptionalTextValue
@@ -375,7 +376,7 @@ class VideoBackgroundPresetCreate(VideoBackgroundPresetFields):
 
 class VideoBackgroundPresetUpdate(UpdateWithChanges):
     name_zh: Name | None = None
-    name_en: Name | None = None
+    name_en: EnglishDisplayName | None = None
     scene_zh: TextValue | None = None
     scene_en: TextValue | None = None
     ambient_sound_zh: OptionalTextValue | None = None

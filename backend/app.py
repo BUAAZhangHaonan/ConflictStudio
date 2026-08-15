@@ -14,6 +14,7 @@ from backend.adapters.llm import OpenAICompatiblePromptModel, PromptModel
 from backend.adapters.production_renderer import ProductionRendererGateway
 from backend.adapters.renderer import RendererGateway, UnconfiguredRendererGateway
 from backend.api.routes import router
+from backend.domain.display_names import DISPLAY_NAME_ERROR_CODE, DISPLAY_NAME_ERROR_MESSAGE
 from backend.services.assets import AssetService
 from backend.services.archives import ArchiveService
 from backend.services.batches import BatchService
@@ -94,16 +95,18 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(_: Request, error: RequestValidationError) -> JSONResponse:
+        errors = error.errors()
         fields = [
             {"field": ".".join(str(part) for part in item["loc"] if part != "body"), "message": item["msg"]}
-            for item in error.errors()
+            for item in errors
         ]
+        display_name_error = any(item["type"] == DISPLAY_NAME_ERROR_CODE for item in errors)
         return JSONResponse(
             status_code=422,
             content={
                 "error": {
-                    "code": "validation_error",
-                    "message": "The request data is not valid",
+                    "code": DISPLAY_NAME_ERROR_CODE if display_name_error else "validation_error",
+                    "message": DISPLAY_NAME_ERROR_MESSAGE if display_name_error else "The request data is not valid",
                     "details": {"fields": fields},
                 }
             },
