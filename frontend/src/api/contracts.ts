@@ -278,8 +278,22 @@ export interface JobEventPayload {
   gpuSlot: GpuSlotName | null;
   failureCode: string | null;
   failureReason: string | null;
+  failureDetails: PromptFailureDetails | null;
   progressValue: number | null;
   progressMaximum: number | null;
+}
+
+export interface PromptSchemaFieldDetail {
+  path: string;
+  type: string;
+  reason: string;
+}
+
+export interface PromptFailureDetails {
+  httpStatus: number | null;
+  finishReason: string | null;
+  requestId: string | null;
+  fields: PromptSchemaFieldDetail[] | null;
 }
 
 export type JobEventType =
@@ -389,6 +403,7 @@ export interface JobItem {
   status: JobStatus;
   failureCode: string | null;
   failureReason: string | null;
+  failureDetails: PromptFailureDetails | null;
   rendererPromptId: string | null;
   sourceAssetId: number | null;
   sourceAssetUrl: string | null;

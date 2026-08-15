@@ -101,7 +101,7 @@ export const jobFixture = {
 
 function jobItem(id, sequence, gpuSlot) {
   return {
-    id, sequence, gpuSlot, stage: 'Completed', status: 'Completed', failureCode: null, failureReason: null,
+    id, sequence, gpuSlot, stage: 'Completed', status: 'Completed', failureCode: null, failureReason: null, failureDetails: null,
     rendererPromptId: `prompt-${id}`, sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id,
     primaryAssetUrl: '/media/browser-check.webm', revision: 2, createdAt: timestamp, updatedAt: timestamp,
     input: {
@@ -191,7 +191,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
       jobId: 1,
       itemId: index === 0 ? null : (index % 25) + 1,
       eventType: index === 0 ? 'JobQueued' : index === 44 ? 'JobCompleted' : 'ItemRenderProgress',
-      payload: { preparedCount: 25, completedCount: Math.min(index, 25), failedCount: 0, totalCount: 25, slotCount: 2, sequence: index === 0 ? null : (index % 25) + 1, gpuSlot: index % 2 ? 'GPU1' : 'GPU0', failureCode: null, failureReason: null, progressValue: index, progressMaximum: 44 },
+      payload: { preparedCount: 25, completedCount: Math.min(index, 25), failedCount: 0, totalCount: 25, slotCount: 2, sequence: index === 0 ? null : (index % 25) + 1, gpuSlot: index % 2 ? 'GPU1' : 'GPU0', failureCode: null, failureReason: null, failureDetails: null, progressValue: index, progressMaximum: 44 },
       createdAt: timestamp,
     })),
     archives: [{ datasetId: 1, revision: 2, lastSyncedAt: timestamp, manifestAvailable: true, currentCount: 25, needsUpdateCount: 3 }],

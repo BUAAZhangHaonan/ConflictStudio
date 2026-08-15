@@ -96,7 +96,7 @@ try {
               jobId: 1,
               itemId: 1,
               eventType: 'ItemRenderProgress',
-              payload: { preparedCount: 128, completedCount: index, failedCount: 0, totalCount: 128, slotCount: 2, sequence: 1, gpuSlot: 'GPU0', failureCode: null, failureReason: null, progressValue: index, progressMaximum: 25 },
+              payload: { preparedCount: 128, completedCount: index, failedCount: 0, totalCount: 128, slotCount: 2, sequence: 1, gpuSlot: 'GPU0', failureCode: null, failureReason: null, failureDetails: null, progressValue: index, progressMaximum: 25 },
               createdAt: '2026-08-15T08:00:00.000Z',
             };
             this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(event) }));
@@ -255,6 +255,10 @@ try {
 
   api.state.jobs[0] = { ...api.state.jobs[0], status: 'Running', finishedAt: null };
   jobItemsFixture[20].latestAttempt.failureReason = 'RendererError: CUDA device 0 failed with a private backend trace.';
+  jobItemsFixture[20].failureCode = 'invalid_prompt_schema';
+  jobItemsFixture[20].failureReason = 'Private prompt failure with internal field names.';
+  jobItemsFixture[20].failureDetails = { httpStatus: 200, finishReason: 'length', requestId: 'request-browser-secret', fields: [{ path: 'spokenText', type: 'missing', reason: 'Field required' }] };
+  api.state.jobEvents[20] = { ...api.state.jobEvents[20], eventType: 'ItemFailed', failureCode: 'invalid_prompt_schema', failureReason: 'Private prompt failure with internal field names.', failureDetails: jobItemsFixture[20].failureDetails, payload: { ...api.state.jobEvents[20].payload, failureCode: 'invalid_prompt_schema', failureReason: 'Private prompt failure with internal field names.', failureDetails: jobItemsFixture[20].failureDetails } };
   await open(page, '/generate/jobs?job=1');
   const jobList = page.locator('.generation-job-list');
   const jobPagination = page.locator('.generation-list .pagination');
@@ -292,6 +296,8 @@ try {
   await expectPaginationState(attemptPagination, { page: 1, totalPages: 2, total: 25 });
   assert.equal((await attemptSection.innerText()).includes('RendererError:'), false, 'Attempt history must not expose the backend failure reason.');
   assert.match(await attemptSection.innerText(), /The task could not be completed\./u, 'Attempt failures must use the stable localized message.');
+  const jobsText = await page.locator('main').innerText();
+  assert.doesNotMatch(jobsText, /request-browser-secret|spokenText|httpStatus|finishReason|Private prompt failure/u, 'The task page must not render diagnostic internals.');
   await attemptPagination.getByRole('button', { name: 'Next', exact: true }).click();
   await expectCount(page.locator('.generation-attempt-list > li'), 5, 'Attempt history must render the remaining rows on the final page.');
   await expectPaginationState(attemptPagination, { page: 2, totalPages: 2, total: 25 });

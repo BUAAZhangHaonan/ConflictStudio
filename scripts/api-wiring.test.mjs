@@ -11,6 +11,7 @@ const clientSource = read('../frontend/src/api/client.ts');
 const contractSource = read('../frontend/src/api/contracts.ts');
 const querySource = read('../frontend/src/api/queries.ts');
 const queryClientSource = read('../frontend/src/api/queryClient.ts');
+const jobEventsSource = read('../frontend/src/api/jobEvents.ts');
 const reviewSource = read('../frontend/src/pages/ReviewPage.tsx');
 const archiveSource = read('../frontend/src/pages/ArchivePage.tsx');
 const settingsSource = read('../frontend/src/pages/SettingsPage.tsx');
@@ -218,7 +219,11 @@ test('GPU and task failures are localized from stable fields instead of raw back
   assert.match(jobsSource, /jobFailureMessage\(selected\.failureCode/u);
   assert.match(jobsSource, /jobFailureMessage\(item\.failureCode/u);
   assert.doesNotMatch(jobsSource, />\{selected\.failureReason\}</u);
+  assert.doesNotMatch(jobsSource, /failureDetails|requestId|httpStatus|finishReason/u);
   assert.match(workspaceSource, /failureKey\(job\.failureCode\)/u);
+  assert.match(contractSource, /export interface PromptFailureDetails/u);
+  assert.match(contractSource, /fields: PromptSchemaFieldDetail\[\] \| null/u);
+  assert.match(jobEventsSource, /failureDetails: event\.payload\.failureDetails \?\? item\.failureDetails/u);
 });
 
 test('GPU status reasons cover every availability without contradictory ready text', () => {

@@ -53,6 +53,7 @@ function updateItems(items: readonly JobItem[], event: JobEvent): JobItem[] {
       renderProgress,
       failureCode: event.payload.failureCode ?? item.failureCode,
       failureReason: event.payload.failureReason ?? item.failureReason,
+      failureDetails: event.payload.failureDetails ?? item.failureDetails,
       updatedAt: event.createdAt,
     };
   });
