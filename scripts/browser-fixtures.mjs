@@ -15,8 +15,18 @@ export const gpuSlotsFixture = [
 ];
 
 export const datasetsFixture = [
-  { id: 1, name: 'Formal samples', purpose: 'Production', note: 'Formal review data', status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp },
+  { id: 1, name: 'Formal samples', purpose: 'Formal', note: 'Formal review data', status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp },
   { id: 2, name: 'Validation samples', purpose: 'Validation', note: 'Model comparison data', status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp },
+  ...Array.from({ length: 20 }, (_, index) => ({
+    id: index + 3,
+    name: `Dataset ${index + 3}`,
+    purpose: 'Formal',
+    note: `Dataset note ${index + 3}`,
+    status: index === 0 ? 'Inactive' : 'Active',
+    revision: 1,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  })),
 ];
 
 export const contentPlansFixture = [{
@@ -27,10 +37,17 @@ export const contentPlansFixture = [{
   dialogue: 'I understand.', displayText: null, trueEmotionDescription: 'The voice and expression carry sadness.',
   baseVideoPrompt: 'A fixed camera records a short reply.', contentRequirementsZh: '自然回应', contentRequirementsEn: 'Natural reply',
   sceneSupplementZh: '稳定镜头', sceneSupplementEn: 'Stable camera', revision: 1, createdAt: timestamp, updatedAt: timestamp,
+}, {
+  id: 2, nameZh: '临时来电', nameEn: 'Unexpected call', category: 'A-VA', conflictDirection: null,
+  mode: 'Generative', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'sadness',
+  sceneZh: '接听电话', sceneEn: 'Answering a call', triggerEventZh: '收到消息', triggerEventEn: 'A message arrives',
+  psychologicalBackgroundZh: '人物保持克制', psychologicalBackgroundEn: 'The person remains restrained',
+  dialogue: '', displayText: null, trueEmotionDescription: '', baseVideoPrompt: '', contentRequirementsZh: '生成自然对白', contentRequirementsEn: 'Write natural dialogue',
+  sceneSupplementZh: '', sceneSupplementEn: '', revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }];
 
 export const promptPresetsFixture = [{
-  id: 1, name: 'Natural conversation', category: 'A-VA', styleGuidance: 'Natural restrained acting.', sceneSupplement: 'Stable camera.',
+  id: 1, name: 'Natural conversation', category: 'A-VA', styleGuidance: 'Natural restrained acting.',
   positiveExamples: ['A natural reply.'], negativeExamples: ['Exaggerated acting.'], finalRenderNegativeConstraints: 'No subtitles.',
   status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }];
@@ -80,12 +97,13 @@ function jobItem(id, sequence, gpuSlot) {
       fixedTrueEmotionDescription: 'The voice and expression carry sadness.', trueEmotion: 'sadness', apparentEmotion: 'sadness', createdAt: timestamp,
     },
     promptResult: null,
-    attempts: [{ id, attemptNumber: 1, model: 'LTX-2.5', precision: 'INT8', gpuSlot, seed: 3200 + sequence, sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/browser-check.webm', rendererPromptId: `prompt-${id}`, status: 'Completed', failureReason: null, startedAt: timestamp, finishedAt: timestamp }],
+    latestAttempt: { id, attemptNumber: 1, model: 'LTX-2.5', precision: 'INT8', gpuSlot, seed: 3200 + sequence, sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/browser-check.webm', rendererPromptId: `prompt-${id}`, status: 'Completed', failureReason: null, startedAt: timestamp, finishedAt: timestamp },
+    attemptCount: 25,
     sampleId: id,
   };
 }
 
-export const jobItemsFixture = [jobItem(1, 1, 'GPU0'), jobItem(2, 2, 'GPU1')];
+export const jobItemsFixture = Array.from({ length: 25 }, (_, index) => jobItem(index + 1, index + 1, index % 2 ? 'GPU1' : 'GPU0'));
 
 function reviewRecord(id, sampleId, decision = 'Accepted') {
   return { id, sampleId, reviewerId: 1, reviewerName: 'Lin', datasetId: 1, protocol: 'VA', relation: 'Conflict', decision, note: '', sampleRevision: 1, revision: 1, createdAt: timestamp };
@@ -128,8 +146,13 @@ export function installPreferences(context, locale = 'en-US') {
   }, { keys: preferenceKeys, selectedLocale: locale });
 }
 
-export function createBrowserApiFixture({ reviewers = [{ id: 1, name: 'Lin', revision: 1, createdAt: timestamp, updatedAt: timestamp }] } = {}) {
+export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, name: index === 0 ? 'Lin' : `Reviewer ${index + 1}`, revision: 1, createdAt: timestamp, updatedAt: timestamp })) } = {}) {
   const state = {
+    datasets: datasetsFixture.map(dataset => ({ ...dataset })),
+    contentPlans: contentPlansFixture.map(item => ({ ...item })),
+    promptPresets: promptPresetsFixture.map(item => ({ ...item })),
+    backgrounds: backgroundsFixture.map(item => ({ ...item })),
+    contentRelations: new Map([[1, [1]], [2, [1, 2]]]),
     reviewers: reviewers.map(reviewer => ({ ...reviewer })),
     samples: [
       ...Array.from({ length: 30 }, (_, index) => sampleFixture(index + 1, 'Pending', index === 3 ? 'A-VT' : 'C-VA')),
@@ -137,6 +160,18 @@ export function createBrowserApiFixture({ reviewers = [{ id: 1, name: 'Lin', rev
     ],
     reviews: [],
     batchDrafts: [],
+    jobs: [
+      jobFixture,
+      ...Array.from({ length: 24 }, (_, index) => ({ ...jobFixture, id: index + 2, displayName: `${index % 2 ? 'C-VA' : 'A-VA'}-20260814${String(160001 + index).padStart(6, '0')}`, source: index % 3 === 0 ? 'Test' : 'Production', status: index % 5 === 0 ? 'Failed' : 'Completed', failureCode: index % 5 === 0 ? 'renderer_execution_failed' : null })),
+    ],
+    jobEvents: Array.from({ length: 45 }, (_, index) => ({
+      id: index + 1,
+      jobId: 1,
+      itemId: index === 0 ? null : (index % 25) + 1,
+      eventType: index === 0 ? 'JobQueued' : index === 44 ? 'JobCompleted' : 'ItemRenderProgress',
+      payload: { preparedCount: 25, completedCount: Math.min(index, 25), failedCount: 0, totalCount: 25, slotCount: 2, sequence: index === 0 ? null : (index % 25) + 1, gpuSlot: index % 2 ? 'GPU1' : 'GPU0', failureCode: null, failureReason: null, progressValue: index, progressMaximum: 44 },
+      createdAt: timestamp,
+    })),
     archives: [{ datasetId: 1, revision: 2, lastSyncedAt: timestamp, manifestAvailable: true, currentCount: 25, needsUpdateCount: 3 }],
     requests: [],
     mediaRequests: 0,
@@ -185,6 +220,11 @@ export function createBrowserApiFixture({ reviewers = [{ id: 1, name: 'Lin', rev
   };
 
   const fulfillJson = (route, value, status = 200) => route.fulfill({ status, json: value, headers: { 'Cache-Control': 'no-store' } });
+  const pageValue = (url, values) => {
+    const page = Math.max(1, Number(url.searchParams.get('page') ?? '1'));
+    const start = (page - 1) * 20;
+    return { items: values.slice(start, start + 20), page, pageSize: 20, total: values.length, totalPages: Math.ceil(values.length / 20) };
+  };
 
   return {
     state,
@@ -205,26 +245,93 @@ export function createBrowserApiFixture({ reviewers = [{ id: 1, name: 'Lin', rev
         const method = request.method();
         const url = new URL(request.url());
         const path = url.pathname;
-        const body = method === 'GET' ? null : request.postDataJSON();
+        const body = method === 'GET' || method === 'DELETE' ? null : request.postDataJSON();
         state.requests.push({ method, path, query: Object.fromEntries(url.searchParams), body });
 
         if (method === 'GET' && path === '/api/health') return fulfillJson(route, { ok: true, database: 'available', promptServiceConfigured: true, rendererInstallation: 'installed' });
-        if (method === 'GET' && path === '/api/datasets') return fulfillJson(route, datasetsFixture);
-        if (method === 'GET' && path === '/api/gpu-slots') return fulfillJson(route, gpuSlotsFixture);
-        if (method === 'GET' && path === '/api/content-plans') return fulfillJson(route, contentPlansFixture);
-        if (method === 'GET' && path === '/api/prompt-presets') return fulfillJson(route, promptPresetsFixture);
-        if (method === 'GET' && path === '/api/video-background-presets') return fulfillJson(route, backgroundsFixture);
-        if (method === 'GET' && path === '/api/batch-drafts') return fulfillJson(route, state.batchDrafts);
-        if (method === 'POST' && path === '/api/batch-drafts') {
-          const draft = { id: 1, ...body, datasetRevision: 1, seed: body.seed ?? 3200, status: 'Draft', contentPlans: body.contentPlans.map(item => ({ ...item, nameZh: contentPlansFixture[0].nameZh, nameEn: contentPlansFixture[0].nameEn })), promptPresets: body.promptPresets.map(item => ({ ...item, name: promptPresetsFixture[0].name })), backgroundPresets: body.backgroundPresets.map(item => { const background = backgroundsFixture.find(value => value.id === item.id); return { ...item, nameZh: background?.nameZh ?? '', nameEn: background?.nameEn ?? '' }; }), revision: 1, createdAt: timestamp, updatedAt: timestamp };
-          state.batchDrafts = [draft];
-          return fulfillJson(route, draft, 201);
+        if (method === 'GET' && path === '/api/datasets') return fulfillJson(route, pageValue(url, state.datasets));
+        if (method === 'POST' && path === '/api/datasets') {
+          const dataset = { id: Math.max(0, ...state.datasets.map(item => item.id)) + 1, name: body.name, purpose: 'Formal', note: body.note ?? '', status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp };
+          state.datasets.push(dataset);
+          return fulfillJson(route, dataset, 201);
         }
-        if (method === 'GET' && path === '/api/jobs') return fulfillJson(route, [jobFixture]);
-        if (method === 'GET' && path === '/api/jobs/1') return fulfillJson(route, { ...jobFixture, items: jobItemsFixture, events: [] });
-        if (method === 'GET' && path === '/api/jobs/1/items') return fulfillJson(route, jobItemsFixture);
-        if (method === 'GET' && path === '/api/jobs/1/events') return fulfillJson(route, []);
-        if (method === 'GET' && path === '/api/reviewers') return fulfillJson(route, state.reviewers);
+        const datasetMatch = /^\/api\/datasets\/(\d+)$/u.exec(path);
+        if (method === 'PATCH' && datasetMatch) {
+          const id = Number(datasetMatch[1]);
+          const index = state.datasets.findIndex(item => item.id === id);
+          const dataset = { ...state.datasets[index], ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'expectedRevision')), revision: state.datasets[index].revision + 1, updatedAt: timestamp };
+          state.datasets[index] = dataset;
+          return fulfillJson(route, dataset);
+        }
+        if (method === 'DELETE' && datasetMatch) {
+          const id = Number(datasetMatch[1]);
+          if (state.samples.some(sample => sample.datasetId === id)) return fulfillJson(route, { error: { code: 'dataset_not_empty', message: 'Dataset contains records.', details: null } }, 409);
+          state.datasets = state.datasets.filter(item => item.id !== id);
+          return route.fulfill({ status: 204, body: '' });
+        }
+        if (method === 'GET' && path === '/api/gpu-slots') return fulfillJson(route, gpuSlotsFixture);
+        if (method === 'GET' && path === '/api/content-plans') return fulfillJson(route, pageValue(url, state.contentPlans));
+        if (method === 'POST' && path === '/api/content-plans') {
+          const content = { id: Math.max(0, ...state.contentPlans.map(item => item.id)) + 1, ...body, revision: 1, createdAt: timestamp, updatedAt: timestamp };
+          state.contentPlans.push(content);
+          state.contentRelations.set(content.id, []);
+          return fulfillJson(route, content, 201);
+        }
+        const contentMatch = /^\/api\/content-plans\/(\d+)$/u.exec(path);
+        if (method === 'PATCH' && contentMatch) {
+          const id = Number(contentMatch[1]);
+          const index = state.contentPlans.findIndex(item => item.id === id);
+          const content = { ...state.contentPlans[index], ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'expectedRevision')), revision: state.contentPlans[index].revision + 1, updatedAt: timestamp };
+          state.contentPlans[index] = content;
+          return fulfillJson(route, content);
+        }
+        const relationMatch = /^\/api\/content-plans\/(\d+)\/backgrounds$/u.exec(path);
+        if (method === 'GET' && relationMatch) {
+          const id = Number(relationMatch[1]);
+          const content = state.contentPlans.find(item => item.id === id);
+          const backgroundIds = state.contentRelations.get(id) ?? [];
+          return fulfillJson(route, { contentPlanId: id, contentPlanRevision: content?.revision ?? 1, backgrounds: state.backgrounds.filter(item => backgroundIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })) });
+        }
+        if (method === 'PUT' && relationMatch) {
+          const id = Number(relationMatch[1]);
+          state.contentRelations.set(id, [...body.backgroundPresetIds]);
+          const content = state.contentPlans.find(item => item.id === id);
+          if (content) content.revision += 1;
+          const backgroundIds = state.contentRelations.get(id) ?? [];
+          return fulfillJson(route, { contentPlanId: id, contentPlanRevision: content?.revision ?? 1, backgrounds: state.backgrounds.filter(item => backgroundIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })) });
+        }
+        if (method === 'GET' && path === '/api/prompt-presets') return fulfillJson(route, pageValue(url, state.promptPresets));
+        if (method === 'GET' && path === '/api/video-background-presets') return fulfillJson(route, pageValue(url, state.backgrounds));
+        if (method === 'GET' && path === '/api/batch-drafts') return fulfillJson(route, pageValue(url, state.batchDrafts));
+        if ((method === 'POST' && path === '/api/batch-drafts') || (method === 'PUT' && /^\/api\/batch-drafts\/\d+$/u.test(path))) {
+          const contentSelections = body.contentSelections.map(selection => {
+            const content = state.contentPlans.find(item => item.id === selection.contentPlanId);
+            return {
+              contentPlan: { id: content.id, nameZh: content.nameZh, nameEn: content.nameEn, revision: content.revision },
+              backgroundPresets: state.backgrounds.filter(item => selection.backgroundPresetIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
+            };
+          });
+          const promptPreset = state.promptPresets.find(item => item.id === body.promptPresetId);
+          const draft = { id: state.batchDrafts[0]?.id ?? 1, ...body, datasetRevision: 1, seed: body.seed ?? 3200, status: 'Draft', contentSelections, promptPreset: { id: promptPreset.id, name: promptPreset.name, revision: promptPreset.revision }, revision: (state.batchDrafts[0]?.revision ?? 0) + 1, createdAt: timestamp, updatedAt: timestamp };
+          delete draft.expectedRevision;
+          state.batchDrafts = [draft];
+          return fulfillJson(route, draft, method === 'POST' ? 201 : 200);
+        }
+        if (method === 'GET' && path === '/api/jobs') return fulfillJson(route, pageValue(url, state.jobs));
+        const jobMatch = /^\/api\/jobs\/(\d+)$/u.exec(path);
+        if (method === 'GET' && jobMatch) return fulfillJson(route, state.jobs.find(item => item.id === Number(jobMatch[1])));
+        const jobItemsMatch = /^\/api\/jobs\/(\d+)\/items$/u.exec(path);
+        if (method === 'GET' && jobItemsMatch) return fulfillJson(route, pageValue(url, Number(jobItemsMatch[1]) === 1 ? jobItemsFixture : []));
+        const jobEventsMatch = /^\/api\/jobs\/(\d+)\/events$/u.exec(path);
+        if (method === 'GET' && jobEventsMatch) return fulfillJson(route, pageValue(url, state.jobEvents.filter(item => item.jobId === Number(jobEventsMatch[1]))));
+        const attemptsMatch = /^\/api\/job-items\/(\d+)\/attempts$/u.exec(path);
+        if (method === 'GET' && attemptsMatch) {
+          const itemId = Number(attemptsMatch[1]);
+          const item = jobItemsFixture.find(value => value.id === itemId);
+          const attempts = Array.from({ length: 25 }, (_, index) => ({ ...item.latestAttempt, id: itemId * 100 + index + 1, attemptNumber: index + 1 }));
+          return fulfillJson(route, pageValue(url, attempts));
+        }
+        if (method === 'GET' && path === '/api/reviewers') return fulfillJson(route, pageValue(url, state.reviewers));
         if (method === 'POST' && path === '/api/reviewers') {
           const reviewer = { id: Math.max(0, ...state.reviewers.map(item => item.id)) + 1, name: body.name, revision: 1, createdAt: timestamp, updatedAt: timestamp };
           state.reviewers.push(reviewer);
@@ -239,13 +346,15 @@ export function createBrowserApiFixture({ reviewers = [{ id: 1, name: 'Lin', rev
           return fulfillJson(route, reviewer);
         }
         if (method === 'GET' && /^\/api\/reviewers\/\d+\/statistics$/u.test(path)) return fulfillJson(route, statistics(url));
-        if (method === 'GET' && path === '/api/reviews') return fulfillJson(route, state.reviews.filter(review => review.sampleId === Number(url.searchParams.get('sampleId'))));
+        if (method === 'GET' && path === '/api/reviews') return fulfillJson(route, pageValue(url, state.reviews.filter(review => review.sampleId === Number(url.searchParams.get('sampleId')))));
         if (method === 'POST' && path === '/api/reviews') return fulfillJson(route, updateSampleWithReview(body), 201);
         if (method === 'POST' && path === '/api/reviews/batch') return fulfillJson(route, body.items.map(updateSampleWithReview), 201);
         if (method === 'GET' && path === '/api/samples') {
           const decision = url.searchParams.get('decision');
-          return fulfillJson(route, decision ? state.samples.filter(sample => sample.reviewDecision === decision) : state.samples);
+          return fulfillJson(route, pageValue(url, decision ? state.samples.filter(sample => sample.reviewDecision === decision) : state.samples));
         }
+        const sampleMatch = /^\/api\/samples\/(\d+)$/u.exec(path);
+        if (method === 'GET' && sampleMatch) return fulfillJson(route, state.samples.find(sample => sample.id === Number(sampleMatch[1])));
         const classificationMatch = /^\/api\/samples\/(\d+)\/classification$/u.exec(path);
         if (method === 'PATCH' && classificationMatch) {
           const id = Number(classificationMatch[1]);
@@ -271,7 +380,7 @@ export function createBrowserApiFixture({ reviewers = [{ id: 1, name: 'Lin', rev
           state.samples[index] = next;
           return fulfillJson(route, next);
         }
-        if (method === 'GET' && path === '/api/archives') return fulfillJson(route, state.archives);
+        if (method === 'GET' && path === '/api/archives') return fulfillJson(route, pageValue(url, state.archives));
         if (method === 'POST' && path === '/api/archives/preview') return fulfillJson(route, { datasetId: body.datasetId, added: [{ sampleId: 31, expectedRevision: 1 }], updated: [{ sampleId: 32, expectedRevision: 1 }], removed: [{ sampleId: 33, expectedRevision: 1 }], unchangedCount: 22, expectedArchiveRevision: 2 });
         if (method === 'POST' && path === '/api/archives/sync') {
           state.archives = [{ datasetId: body.datasetId, revision: body.expectedArchiveRevision + 1, lastSyncedAt: timestamp, manifestAvailable: true, currentCount: 25, needsUpdateCount: 0 }];

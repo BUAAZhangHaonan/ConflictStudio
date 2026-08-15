@@ -127,7 +127,7 @@ try {
     ['en-US', ['Generation record', 'Attempt revision']],
     ['zh-CN', ['生成记录', '尝试序号']],
   ]) {
-    await open(page, '/review?sample=CS-000002', locale);
+    await open(page, '/review?sampleId=2', locale);
     const text = await page.locator('.review-generation-record').textContent();
     for (const label of labels) assert.equal(text.includes(label), true, `${locale} must show ${label}.`);
   }
@@ -137,7 +137,7 @@ try {
     ['zh-CN', { action: '修改类别', title: '修改样本类别', emotion: '新的表面情感', description: '修改后的真实情感描述' }],
   ]) {
     await page.setViewportSize({ width: 390, height: 844 });
-    await open(page, '/review?sample=CS-000004', locale);
+    await open(page, '/review?sampleId=4', locale);
     await page.getByRole('button', { name: labels.action, exact: true }).click();
     const dialog = page.getByRole('dialog', { name: labels.title });
     await dialog.waitFor();
@@ -153,13 +153,13 @@ try {
     await dialog.waitFor({ state: 'hidden' });
   }
 
-  await open(page, `/review?sample=CS-000001&returnTo=${encodeURIComponent('https://example.com/archive')}`, 'en-US');
+  await open(page, `/review?sampleId=1&returnTo=${encodeURIComponent('https://example.com/archive')}`, 'en-US');
   assert.equal(await page.getByRole('button', { name: 'Back to previous page', exact: true }).count(), 0, 'Unsafe returnTo must not render a source return action.');
   await page.getByRole('button', { name: 'Back to queue', exact: true }).click();
   assert.equal(new URL(page.url()).origin, baseUrl, 'Unsafe returnTo must never leave the application.');
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await open(page, '/review?sample=CS-000001', 'en-US');
+  await open(page, '/review?sampleId=1', 'en-US');
   const desktop = await page.evaluate(() => {
     const queue = document.querySelector('.review-queue')?.getBoundingClientRect();
     const media = document.querySelector('.review-media')?.getBoundingClientRect();
@@ -184,8 +184,8 @@ try {
   const archiveLocation = '/archive?dataset=1&search=CS-&category=C-VA&page=2';
   await open(page, archiveLocation, 'en-US');
   const pageTwoIds = await page.locator('.archive-list-panel tbody th a').allTextContents();
-  assert.deepEqual(pageTwoIds, ['CS-000051', 'CS-000052', 'CS-000053', 'CS-000054', 'CS-000055'], 'Archive page two must contain the expected 20-item-page remainder.');
-  await page.getByRole('link', { name: 'CS-000051', exact: true }).click();
+  assert.deepEqual(pageTwoIds, ['CS-000031', 'CS-000032', 'CS-000033', 'CS-000034', 'CS-000035', 'CS-000036', 'CS-000037', 'CS-000038', 'CS-000039', 'CS-000040'], 'Archive page two must contain accepted samples from the current server page.');
+  await page.getByRole('link', { name: 'CS-000031', exact: true }).click();
   assert.equal(new URL(page.url()).searchParams.get('returnTo'), archiveLocation);
   await page.evaluate(() => {
     const url = new URL(window.location.href);
@@ -198,7 +198,7 @@ try {
   assert.equal(`${new URL(page.url()).pathname}${new URL(page.url()).search}`, archiveLocation, 'Archive return must ignore unrelated history and restore the exact URL.');
   assert.equal(await page.locator('.archive-filter--search input').inputValue(), 'CS-', 'Archive return must restore search.');
   assert.equal(await page.locator('.archive-filter select').inputValue(), 'C-VA', 'Archive return must restore category.');
-  assert.equal(await page.locator('.archive-pagination select').inputValue(), '2', 'Archive return must restore page two.');
+  assert.match(await page.locator('.archive-list-panel .pagination').innerText(), /Page 2 of 3.*55 records/su, 'Archive return must restore page two.');
   assert.deepEqual(await page.locator('.archive-list-panel tbody th a').allTextContents(), pageTwoIds, 'Archive return must restore the same sample set.');
 
   await page.getByRole('button', { name: 'Preview sync' }).click();
@@ -212,7 +212,7 @@ try {
   await syncDialog.waitFor({ state: 'hidden' });
   assert.equal(await page.getByRole('button', { name: 'Sync archive' }).evaluate(element => element === document.activeElement), true, 'Closing the dialog must restore focus to its trigger.');
 
-  const routes = ['/review', '/review?sample=CS-000001', '/archive?dataset=1&category=C-VA&page=2'];
+  const routes = ['/review', '/review?sampleId=1', '/archive?dataset=1&category=C-VA&page=2'];
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of [[1440, 900], [768, 900], [390, 844]]) {
       for (const route of routes) await expectNoOverflow(page, route, locale, width, height);
@@ -220,7 +220,7 @@ try {
   }
   for (const locale of ['zh-CN', 'en-US']) {
     await page.setViewportSize({ width: 390, height: 844 });
-    await open(page, '/review?sample=CS-000001', locale);
+    await open(page, '/review?sampleId=1', locale);
     assert.equal(await page.locator('.review-media video').isVisible(), true, `${locale} mobile review must show media.`);
     assert.equal(await page.locator('body').textContent().then(text => text.includes('workspaceSettingsStatistics.') || text.includes('reviewArchive.')), false, `${locale} must not expose translation keys.`);
   }
