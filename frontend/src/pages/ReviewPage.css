@@ -92,6 +92,7 @@
 
 .review-queue {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   align-content: start;
   height: 640px;
   overflow: hidden;
@@ -156,7 +157,7 @@
 .review-queue__list {
   display: grid;
   min-height: 0;
-  margin: 0 -8px -8px;
+  margin: 0 -8px;
   padding: 8px;
   overflow-y: auto;
   list-style: none;

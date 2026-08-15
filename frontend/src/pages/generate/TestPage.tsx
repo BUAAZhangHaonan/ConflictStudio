@@ -107,7 +107,7 @@ export function TestPage() {
   ), [form.category, presetsQuery.data]);
   const selectedContent = content.find(item => item.id === form.contentPlanId) ?? null;
   const contentBackgroundsQuery = useContentBackgroundsQuery(selectedContent?.id ?? null);
-  const backgrounds = contentBackgroundsQuery.data?.backgrounds ?? [];
+  const backgrounds = useMemo(() => contentBackgroundsQuery.data?.backgrounds ?? [], [contentBackgroundsQuery.data]);
   const selectedPreset = presets.find(item => item.id === form.promptPresetId) ?? null;
   const selectedBackground = backgrounds.find(item => item.id === form.backgroundPresetId) ?? null;
   const formKey = JSON.stringify({
@@ -125,12 +125,13 @@ export function TestPage() {
   }, [form]);
 
   useEffect(() => {
-    setForm(current => ({
-      ...current,
-      contentPlanId: content.some(item => item.id === current.contentPlanId) ? current.contentPlanId : content[0]?.id ?? null,
-      promptPresetId: presets.some(item => item.id === current.promptPresetId) ? current.promptPresetId : presets[0]?.id ?? null,
-      backgroundPresetId: backgrounds.some(item => item.id === current.backgroundPresetId) ? current.backgroundPresetId : backgrounds[0]?.id ?? null,
-    }));
+    setForm(current => {
+      const contentPlanId = content.some(item => item.id === current.contentPlanId) ? current.contentPlanId : content[0]?.id ?? null;
+      const promptPresetId = presets.some(item => item.id === current.promptPresetId) ? current.promptPresetId : presets[0]?.id ?? null;
+      const backgroundPresetId = backgrounds.some(item => item.id === current.backgroundPresetId) ? current.backgroundPresetId : backgrounds[0]?.id ?? null;
+      if (contentPlanId === current.contentPlanId && promptPresetId === current.promptPresetId && backgroundPresetId === current.backgroundPresetId) return current;
+      return { ...current, contentPlanId, promptPresetId, backgroundPresetId };
+    });
   }, [content, presets, backgrounds]);
 
   const changeCategory = (category: Category) => {
