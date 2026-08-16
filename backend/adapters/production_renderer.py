@@ -185,7 +185,7 @@ class ProductionRendererGateway:
             builder = self.workflow_builders[request.model]
             build_arguments = {
                 "final_positive_prompt": request.positive_prompt,
-                "final_negative_prompt": request.negative_prompt,
+                "negative_prompt": request.negative_prompt,
                 "seed": request.seed,
                 "job_id": request.job_id,
                 "sequence": request.item_sequence,

@@ -241,7 +241,7 @@ def test_dataset_crud_uses_camel_case_and_stable_conflict(tmp_path: Path) -> Non
 def test_invalid_direction_returns_stable_422(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
         response = client.post(
-            "/api/content-plans",
+            "/api/content-scripts",
             json={
                 "nameZh": "无效方向",
                 "nameEn": "Invalid direction",
@@ -271,7 +271,7 @@ def test_invalid_direction_returns_stable_422(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "validation_error"
 
 
-def content_plan_request(background_preset_ids: list[int], **overrides: object) -> dict[str, object]:
+def content_script_request(scene_ids: list[int], **overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "nameZh": "一致回应",
         "nameEn": "Aligned response",
@@ -290,23 +290,23 @@ def content_plan_request(background_preset_ids: list[int], **overrides: object) 
         "contentRequirementsEn": "Describe one adult responding in the room.",
         "sceneSupplementZh": "",
         "sceneSupplementEn": "",
-        "backgroundPresetIds": background_preset_ids,
+        "sceneIds": scene_ids,
     }
     values.update(overrides)
     return values
 
 
-def test_content_plan_create_and_update_enforce_emotion_relation(tmp_path: Path) -> None:
+def test_content_script_create_and_update_enforce_emotion_relation(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
-        background = client.post("/api/video-background-presets", json=background_request()).json()
+        background = client.post("/api/scenes", json=background_request()).json()
         invalid_create = client.post(
-            "/api/content-plans",
-            json=content_plan_request([background["id"]], apparentEmotion="tense"),
+            "/api/content-scripts",
+            json=content_script_request([background["id"]], apparentEmotion="tense"),
         )
-        created = client.post("/api/content-plans", json=content_plan_request([background["id"]]))
+        created = client.post("/api/content-scripts", json=content_script_request([background["id"]]))
         invalid_update = client.patch(
-            f"/api/content-plans/{created.json()['id']}",
-            json={"expectedRevision": created.json()["revision"], "apparentEmotion": "tense", "backgroundPresetIds": [background["id"]]},
+            f"/api/content-scripts/{created.json()['id']}",
+            json={"expectedRevision": created.json()["revision"], "apparentEmotion": "tense", "sceneIds": [background["id"]]},
         )
 
     assert invalid_create.status_code == 422
@@ -338,7 +338,7 @@ def background_request(**overrides: object) -> dict[str, object]:
 def test_background_create_accepts_natural_scene_use_of_emotion_word(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
         response = client.post(
-            "/api/video-background-presets",
+            "/api/scenes",
             json=background_request(sceneEn="Alone in a small kitchen, preparing a surprise breakfast."),
         )
 
@@ -363,7 +363,7 @@ def test_background_create_returns_field_specific_policy_error(
 ) -> None:
     with client_for(tmp_path) as client:
         response = client.post(
-            "/api/video-background-presets",
+            "/api/scenes",
             json=background_request(**{field: value}),
         )
 
@@ -391,9 +391,9 @@ def test_background_update_returns_field_specific_policy_error(
     message: str,
 ) -> None:
     with client_for(tmp_path) as client:
-        created = client.post("/api/video-background-presets", json=background_request())
+        created = client.post("/api/scenes", json=background_request())
         response = client.patch(
-            f"/api/video-background-presets/{created.json()['id']}",
+            f"/api/scenes/{created.json()['id']}",
             json={"expectedRevision": created.json()["revision"], field: value},
         )
 
@@ -446,37 +446,41 @@ def test_frontend_deep_links_use_index_and_api_paths_stay_on_api(tmp_path: Path)
 def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
         background = client.post(
-            "/api/video-background-presets",
+            "/api/scenes",
             json=background_request(),
         )
         content = client.post(
-            "/api/content-plans",
-            json=content_plan_request([background.json()["id"]]),
+            "/api/content-scripts",
+            json=content_script_request([background.json()["id"]]),
         )
         prompt = client.post(
-            "/api/prompt-presets",
+            "/api/prompt-template-versions",
             json={
                 "name": "Natural shot",
                 "category": "A-VA",
                 "styleGuidance": "Use a static medium shot.",
-                "finalRenderNegativeConstraints": "subtitles, captions, distortion",
+                "ltxNegativePrompt": "subtitles, captions, distortion",
+                "h3NegativePrompt": "subtitles, captions, distortion",
+                "version": 1,
+                "verificationStatus": "Verified",
             },
         )
         response = client.post(
             "/api/prompt-preview",
             json={
-                "contentPlan": {"id": content.json()["id"], "expectedRevision": content.json()["revision"]},
-                "promptPreset": {"id": prompt.json()["id"], "expectedRevision": prompt.json()["revision"]},
-                "backgroundPreset": {"id": background.json()["id"], "expectedRevision": background.json()["revision"]},
+                "contentScript": {"id": content.json()["id"], "expectedRevision": content.json()["revision"]},
+                "promptTemplateVersion": {"id": prompt.json()["id"], "expectedRevision": prompt.json()["revision"]},
+                "scene": {"id": background.json()["id"], "expectedRevision": background.json()["revision"]},
                 "demographic": {"age": 25, "gender": "Female", "ethnicity": "EastAsian"},
+                "model": "LTX-2.3",
             },
         )
 
     assert response.status_code == 200
     assert response.json()["requiresPromptGeneration"] is True
     assert response.json()["finalPositivePrompt"] is None
-    assert response.json()["finalNegativePrompt"] == "subtitles, captions, distortion"
-    assert response.json()["contentPlan"]["id"] == content.json()["id"]
+    assert response.json()["negativePrompt"] == "subtitles, captions, distortion"
+    assert response.json()["contentScript"]["id"] == content.json()["id"]
 
 
 def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> None:
@@ -487,20 +491,23 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
             json={"name": "Production", "note": ""},
         )
         background = client.post(
-            "/api/video-background-presets",
+            "/api/scenes",
             json=background_request(nameZh="私人书房", nameEn="Private study"),
         )
         content = client.post(
-            "/api/content-plans",
-            json=content_plan_request([background.json()["id"]]),
+            "/api/content-scripts",
+            json=content_script_request([background.json()["id"]]),
         )
         prompt = client.post(
-            "/api/prompt-presets",
+            "/api/prompt-template-versions",
             json={
                 "name": "Natural shot",
                 "category": "A-VA",
                 "styleGuidance": "Use a static medium shot.",
-                "finalRenderNegativeConstraints": "subtitles, captions, distortion",
+                "ltxNegativePrompt": "subtitles, captions, distortion",
+                "h3NegativePrompt": "subtitles, captions, distortion",
+                "version": 1,
+                "verificationStatus": "Verified",
             },
         )
         draft = client.post(
@@ -513,11 +520,11 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
                     "quantity": 1,
                     "contentSelections": [
                         {
-                            "contentPlanId": content.json()["id"],
-                            "backgroundPresetIds": [background.json()["id"]],
+                            "contentScriptId": content.json()["id"],
+                            "sceneIds": [background.json()["id"]],
                         }
                     ],
-                "promptPresetId": prompt.json()["id"],
+                "promptTemplateVersionId": prompt.json()["id"],
                 "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
                 "gpuSlots": ["GPU0"],
             },

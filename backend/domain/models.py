@@ -25,7 +25,6 @@ from .enums import (
     ContentStatus,
     DatasetPurpose,
     Ethnicity,
-    ExampleKind,
     Gender,
     GenerationAttemptStatus,
     GpuAvailability,
@@ -39,6 +38,7 @@ from .enums import (
     Relation,
     ReviewDecision,
     ResourceStatus,
+    TemplateVersionStatus,
 )
 
 
@@ -163,18 +163,18 @@ class Dataset(SQLModel, table=True):
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
-class ContentPlan(SQLModel, table=True):
-    __tablename__ = "content_plans"
+class ContentScript(SQLModel, table=True):
+    __tablename__ = "content_scripts"
     __table_args__ = (
-        UniqueConstraint("category", "name_zh_key", name="uq_content_plans_category_name_zh"),
-        UniqueConstraint("category", "name_en_key", name="uq_content_plans_category_name_en"),
-        CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_content_plans_direction"),
-        CheckConstraint(CONTENT_EMOTION_CHECK, name="ck_content_plans_emotion_relation"),
+        UniqueConstraint("category", "name_zh_key", name="uq_content_scripts_category_name_zh"),
+        UniqueConstraint("category", "name_en_key", name="uq_content_scripts_category_name_en"),
+        CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_content_scripts_direction"),
+        CheckConstraint(CONTENT_EMOTION_CHECK, name="ck_content_scripts_emotion_relation"),
         CheckConstraint(
             "(mode = 'Fixed' AND length(trim(base_video_prompt)) > 0) OR "
             "(mode = 'Generative' AND length(trim(content_requirements_zh)) > 0 "
             "AND length(trim(content_requirements_en)) > 0)",
-            name="ck_content_plans_mode_input",
+            name="ck_content_scripts_mode_input",
         ),
         CheckConstraint(
             "length(trim(name_zh)) > 0 AND length(trim(name_en)) > 0 "
@@ -182,9 +182,9 @@ class ContentPlan(SQLModel, table=True):
             "AND length(trim(trigger_event_zh)) > 0 AND length(trim(trigger_event_en)) > 0 "
             "AND length(trim(psychological_background_zh)) > 0 "
             "AND length(trim(psychological_background_en)) > 0",
-            name="ck_content_plans_bilingual_text",
+            name="ck_content_scripts_bilingual_text",
         ),
-        CheckConstraint("revision >= 1", name="ck_content_plans_revision"),
+        CheckConstraint("revision >= 1", name="ck_content_scripts_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -217,50 +217,54 @@ class ContentPlan(SQLModel, table=True):
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
-class PromptPreset(SQLModel, table=True):
-    __tablename__ = "prompt_presets"
+class PromptTemplateVersion(SQLModel, table=True):
+    __tablename__ = "prompt_template_versions"
     __table_args__ = (
-        UniqueConstraint("category", "name_key", name="uq_prompt_presets_category_name"),
-        CheckConstraint("revision >= 1", name="ck_prompt_presets_revision"),
+        UniqueConstraint(
+            "category",
+            "name_key",
+            "version",
+            name="uq_prompt_template_versions_category_name_version",
+        ),
+        CheckConstraint("version >= 1", name="ck_prompt_template_versions_version"),
+        CheckConstraint("revision >= 1", name="ck_prompt_template_versions_revision"),
+        CheckConstraint(
+            "length(trim(ltx_negative_prompt)) > 0 AND "
+            "length(trim(h3_negative_prompt)) > 0",
+            name="ck_prompt_template_versions_negative_prompts",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(sa_column=Column(String(160), nullable=False))
     name_key: str = Field(sa_column=Column(String(160), nullable=False))
     category: Category = Field(sa_column=enum_column(Category))
+    version: int = Field(ge=1)
     style_instruction: str = Field(default="", sa_column=Column(Text, nullable=False))
-    final_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
-    status: ResourceStatus = Field(default=ResourceStatus.ACTIVE, sa_column=enum_column(ResourceStatus))
+    positive_examples_json: str = Field(default="[]", sa_column=Column(Text, nullable=False))
+    negative_examples_json: str = Field(default="[]", sa_column=Column(Text, nullable=False))
+    ltx_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    h3_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    verification_status: TemplateVersionStatus = Field(
+        default=TemplateVersionStatus.DRAFT,
+        sa_column=enum_column(TemplateVersionStatus),
+    )
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
-class PromptExample(SQLModel, table=True):
-    __tablename__ = "prompt_examples"
+class Scene(SQLModel, table=True):
+    __tablename__ = "scenes"
     __table_args__ = (
-        UniqueConstraint("preset_id", "kind", "position", name="uq_prompt_examples_position"),
-        CheckConstraint("position >= 0", name="ck_prompt_examples_position"),
-    )
-
-    id: int | None = Field(default=None, primary_key=True)
-    preset_id: int = Field(sa_column=Column(Integer, ForeignKey("prompt_presets.id", ondelete="CASCADE"), nullable=False))
-    kind: ExampleKind = Field(sa_column=enum_column(ExampleKind))
-    position: int = Field(ge=0)
-    text: str = Field(sa_column=Column(Text, nullable=False))
-
-
-class VideoBackgroundPreset(SQLModel, table=True):
-    __tablename__ = "video_background_presets"
-    __table_args__ = (
-        UniqueConstraint("name_zh_key", name="uq_video_background_presets_name_zh"),
-        UniqueConstraint("name_en_key", name="uq_video_background_presets_name_en"),
+        UniqueConstraint("name_zh_key", name="uq_scenes_name_zh"),
+        UniqueConstraint("name_en_key", name="uq_scenes_name_en"),
         CheckConstraint(
             "length(trim(name_zh)) > 0 AND length(trim(name_en)) > 0 "
             "AND length(trim(scene_zh)) > 0 AND length(trim(scene_en)) > 0",
-            name="ck_background_presets_bilingual_text",
+            name="ck_scenes_bilingual_text",
         ),
-        CheckConstraint("revision >= 1", name="ck_background_presets_revision"),
+        CheckConstraint("revision >= 1", name="ck_scenes_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -284,34 +288,34 @@ class VideoBackgroundPreset(SQLModel, table=True):
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
-class ContentPlanBackground(SQLModel, table=True):
-    __tablename__ = "content_plan_backgrounds"
+class ContentScriptScene(SQLModel, table=True):
+    __tablename__ = "content_script_scenes"
     __table_args__ = (
         UniqueConstraint(
-            "content_plan_id",
-            "background_preset_id",
-            name="uq_content_plan_background_pair",
+            "content_script_id",
+            "scene_id",
+            name="uq_content_script_scene_pair",
         ),
         UniqueConstraint(
-            "content_plan_id",
+            "content_script_id",
             "position",
-            name="uq_content_plan_background_position",
+            name="uq_content_script_scene_position",
         ),
-        CheckConstraint("position >= 0", name="ck_content_plan_background_position"),
+        CheckConstraint("position >= 0", name="ck_content_script_scene_position"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    content_plan_id: int = Field(
+    content_script_id: int = Field(
         sa_column=Column(
             Integer,
-            ForeignKey("content_plans.id", ondelete="CASCADE"),
+            ForeignKey("content_scripts.id", ondelete="CASCADE"),
             nullable=False,
         )
     )
-    background_preset_id: int = Field(
+    scene_id: int = Field(
         sa_column=Column(
             Integer,
-            ForeignKey("video_background_presets.id", ondelete="RESTRICT"),
+            ForeignKey("scenes.id", ondelete="RESTRICT"),
             nullable=False,
         )
     )
@@ -354,8 +358,8 @@ class BatchDraft(SQLModel, table=True):
         super().__init__(**data)
 
 
-class BatchDraftContentSelection(SQLModel, table=True):
-    __tablename__ = "batch_draft_content_selections"
+class BatchDraftScriptSelection(SQLModel, table=True):
+    __tablename__ = "batch_draft_script_selections"
     __table_args__ = (
         UniqueConstraint("batch_draft_id", "position", name="uq_batch_content_selection_position"),
         CheckConstraint("position >= 0", name="ck_batch_content_selection_position"),
@@ -363,16 +367,16 @@ class BatchDraftContentSelection(SQLModel, table=True):
     )
 
     batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
-    content_plan_id: int = Field(sa_column=Column(Integer, ForeignKey("content_plans.id", ondelete="RESTRICT"), primary_key=True))
+    content_script_id: int = Field(sa_column=Column(Integer, ForeignKey("content_scripts.id", ondelete="RESTRICT"), primary_key=True))
     position: int = Field(ge=0)
     source_revision: int = Field(ge=1)
 
 
-class BatchDraftPromptPreset(SQLModel, table=True):
-    __tablename__ = "batch_draft_prompt_presets"
+class BatchDraftPromptTemplateVersion(SQLModel, table=True):
+    __tablename__ = "batch_draft_prompt_template_versions"
     __table_args__ = (
         UniqueConstraint("batch_draft_id", "position", name="uq_batch_preset_position"),
-        CheckConstraint("position = 0", name="ck_batch_single_prompt_preset"),
+        CheckConstraint("position = 0", name="ck_batch_single_prompt_template_version"),
         CheckConstraint("source_revision >= 1", name="ck_batch_preset_revision"),
     )
 
@@ -383,10 +387,10 @@ class BatchDraftPromptPreset(SQLModel, table=True):
             primary_key=True,
         )
     )
-    prompt_preset_id: int = Field(
+    prompt_template_version_id: int = Field(
         sa_column=Column(
             Integer,
-            ForeignKey("prompt_presets.id", ondelete="RESTRICT"),
+            ForeignKey("prompt_template_versions.id", ondelete="RESTRICT"),
             primary_key=True,
         )
     )
@@ -394,41 +398,41 @@ class BatchDraftPromptPreset(SQLModel, table=True):
     source_revision: int = Field(ge=1)
 
 
-class BatchDraftContentBackground(SQLModel, table=True):
-    __tablename__ = "batch_draft_content_backgrounds"
+class BatchDraftContentScene(SQLModel, table=True):
+    __tablename__ = "batch_draft_content_scenes"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["batch_draft_id", "content_plan_id"],
+            ["batch_draft_id", "content_script_id"],
             [
-                "batch_draft_content_selections.batch_draft_id",
-                "batch_draft_content_selections.content_plan_id",
+                "batch_draft_script_selections.batch_draft_id",
+                "batch_draft_script_selections.content_script_id",
             ],
             ondelete="CASCADE",
-            name="fk_batch_content_background_selection",
+            name="fk_batch_content_scene_selection",
         ),
         UniqueConstraint(
             "batch_draft_id",
-            "content_plan_id",
-            "background_preset_id",
-            name="uq_batch_content_background_pair",
+            "content_script_id",
+            "scene_id",
+            name="uq_batch_content_scene_pair",
         ),
         UniqueConstraint(
             "batch_draft_id",
-            "content_plan_id",
+            "content_script_id",
             "position",
-            name="uq_batch_content_background_position",
+            name="uq_batch_content_scene_position",
         ),
-        CheckConstraint("position >= 0", name="ck_batch_content_background_position"),
-        CheckConstraint("source_revision >= 1", name="ck_batch_content_background_revision"),
+        CheckConstraint("position >= 0", name="ck_batch_content_scene_position"),
+        CheckConstraint("source_revision >= 1", name="ck_batch_content_scene_revision"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
     batch_draft_id: int = Field(nullable=False)
-    content_plan_id: int = Field(nullable=False)
-    background_preset_id: int = Field(
+    content_script_id: int = Field(nullable=False)
+    scene_id: int = Field(
         sa_column=Column(
             Integer,
-            ForeignKey("video_background_presets.id", ondelete="RESTRICT"),
+            ForeignKey("scenes.id", ondelete="RESTRICT"),
             nullable=False,
         )
     )
@@ -481,9 +485,9 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
         CheckConstraint(f"age IN {AGES}", name="ck_batch_snapshots_age"),
         CheckConstraint("seed >= 0 AND seed < 2147483648", name="ck_batch_snapshots_seed"),
         CheckConstraint("sequence > 0", name="ck_batch_snapshots_sequence"),
-        CheckConstraint("content_plan_revision >= 1", name="ck_batch_snapshots_content_revision"),
-        CheckConstraint("prompt_preset_revision >= 1", name="ck_batch_snapshots_preset_revision"),
-        CheckConstraint("background_preset_revision >= 1", name="ck_batch_snapshots_background_revision"),
+        CheckConstraint("content_script_revision >= 1", name="ck_batch_snapshots_content_revision"),
+        CheckConstraint("prompt_template_version_revision >= 1", name="ck_batch_snapshots_preset_revision"),
+        CheckConstraint("scene_revision >= 1", name="ck_batch_snapshots_scene_revision"),
         CheckConstraint("dataset_revision IS NULL OR dataset_revision >= 1", name="ck_batch_snapshots_dataset_revision"),
         CheckConstraint(
             f"width = {VIDEO_WIDTH} AND height = {VIDEO_HEIGHT} AND fps = {VIDEO_FPS}",
@@ -524,12 +528,12 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     )
     dataset_revision: int | None = Field(default=None, ge=1)
     sequence: int = Field(gt=0)
-    content_plan_id: int = Field(sa_column=Column(Integer, ForeignKey("content_plans.id", ondelete="RESTRICT"), nullable=False))
-    content_plan_revision: int = Field(ge=1)
-    prompt_preset_id: int = Field(sa_column=Column(Integer, ForeignKey("prompt_presets.id", ondelete="RESTRICT"), nullable=False))
-    prompt_preset_revision: int = Field(ge=1)
-    background_preset_id: int = Field(sa_column=Column(Integer, ForeignKey("video_background_presets.id", ondelete="RESTRICT"), nullable=False))
-    background_preset_revision: int = Field(ge=1)
+    content_script_id: int = Field(sa_column=Column(Integer, ForeignKey("content_scripts.id", ondelete="RESTRICT"), nullable=False))
+    content_script_revision: int = Field(ge=1)
+    prompt_template_version_id: int = Field(sa_column=Column(Integer, ForeignKey("prompt_template_versions.id", ondelete="RESTRICT"), nullable=False))
+    prompt_template_version_revision: int = Field(ge=1)
+    scene_id: int = Field(sa_column=Column(Integer, ForeignKey("scenes.id", ondelete="RESTRICT"), nullable=False))
+    scene_revision: int = Field(ge=1)
     policy_version: str = Field(sa_column=Column(String(40), nullable=False))
     category: Category = Field(sa_column=enum_column(Category))
     conflict_direction: ConflictDirection | None = Field(default=None, sa_column=enum_column(ConflictDirection, nullable=True))
@@ -549,7 +553,7 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     derive_silent_primary: bool
     system_input: str = Field(sa_column=Column(Text, nullable=False))
     user_input: str = Field(sa_column=Column(Text, nullable=False))
-    final_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
     fixed_positive_prompt: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     fixed_dialogue: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     fixed_vt_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
@@ -660,7 +664,7 @@ class JobItemPromptResult(SQLModel, table=True):
     user_input: str = Field(sa_column=Column(Text, nullable=False))
     raw_structured_response: str = Field(sa_column=Column(Text, nullable=False))
     final_positive_prompt: str = Field(sa_column=Column(Text, nullable=False))
-    final_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
+    negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
     dialogue: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     vt_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     true_emotion_description: str = Field(sa_column=Column(Text, nullable=False))
@@ -745,7 +749,7 @@ class Sample(SQLModel, table=True):
         UniqueConstraint("job_item_id", name="uq_samples_job_item"),
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_samples_direction"),
         CheckConstraint(f"age IN {AGES}", name="ck_samples_age"),
-        CheckConstraint("content_plan_revision >= 1", name="ck_samples_content_revision"),
+        CheckConstraint("content_script_revision >= 1", name="ck_samples_content_revision"),
         CheckConstraint("seed >= 0 AND seed < 2147483648", name="ck_samples_seed"),
         CheckConstraint("review_revision >= 0", name="ck_samples_review_revision"),
         CheckConstraint("revision >= 1", name="ck_samples_revision"),
@@ -772,12 +776,12 @@ class Sample(SQLModel, table=True):
     gpu_slot: GpuSlotName = Field(
         sa_column=enum_column(GpuSlotName, foreign_key="gpu_slots.slot", ondelete="RESTRICT")
     )
-    content_plan_id: int = Field(
-        sa_column=Column(Integer, ForeignKey("content_plans.id", ondelete="RESTRICT"), nullable=False)
+    content_script_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("content_scripts.id", ondelete="RESTRICT"), nullable=False)
     )
-    content_plan_revision: int = Field(ge=1)
-    prompt_preset_id: int = Field(
-        sa_column=Column(Integer, ForeignKey("prompt_presets.id", ondelete="RESTRICT"), nullable=False)
+    content_script_revision: int = Field(ge=1)
+    prompt_template_version_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("prompt_template_versions.id", ondelete="RESTRICT"), nullable=False)
     )
     source_asset_id: int | None = Field(
         default=None,
@@ -793,8 +797,8 @@ class Sample(SQLModel, table=True):
     true_emotion_description: str = Field(sa_column=Column(Text, nullable=False))
     true_emotion: str = Field(sa_column=Column(String(120), nullable=False))
     apparent_emotion: str = Field(sa_column=Column(String(120), nullable=False))
-    content_plan_name_zh: str = Field(sa_column=Column(String(160), nullable=False))
-    content_plan_name_en: str = Field(sa_column=Column(String(160), nullable=False))
+    content_script_name_zh: str = Field(sa_column=Column(String(160), nullable=False))
+    content_script_name_en: str = Field(sa_column=Column(String(160), nullable=False))
     scene_zh: str = Field(sa_column=Column(Text, nullable=False))
     scene_en: str = Field(sa_column=Column(Text, nullable=False))
     trigger_event_zh: str = Field(sa_column=Column(Text, nullable=False))

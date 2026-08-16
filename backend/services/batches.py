@@ -18,7 +18,6 @@ from backend.domain.enums import (
     ContentMode,
     ContentStatus,
     DatasetPurpose,
-    ExampleKind,
     GpuAvailability,
     GpuSlotName,
     JobItemStage,
@@ -27,17 +26,18 @@ from backend.domain.enums import (
     ModelName,
     Precision,
     ResourceStatus,
+    TemplateVersionStatus,
 )
 from backend.domain.models import (
     BatchDraft,
-    BatchDraftContentBackground,
-    BatchDraftContentSelection,
+    BatchDraftContentScene,
+    BatchDraftScriptSelection,
     BatchDraftDemographic,
     BatchDraftGpuSlot,
-    BatchDraftPromptPreset,
+    BatchDraftPromptTemplateVersion,
     BatchVideoInputSnapshot,
-    ContentPlan,
-    ContentPlanBackground,
+    ContentScript,
+    ContentScriptScene,
     Dataset,
     GenerationAttempt,
     GpuSlot,
@@ -45,14 +45,13 @@ from backend.domain.models import (
     JobEvent,
     JobItem,
     JobItemPromptResult,
-    PromptExample,
-    PromptPreset,
+    PromptTemplateVersion,
     RENDERER_PROFILE_VERSION,
     Sample,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
-    VideoBackgroundPreset,
+    Scene,
     utc_now,
 )
 from backend.domain.schemas import (
@@ -91,11 +90,11 @@ from .pagination import PAGE_SIZE, paginate
 
 @dataclass(frozen=True)
 class DraftContentSelection:
-    content: ContentPlan
-    backgrounds: list[VideoBackgroundPreset]
-    compatible_backgrounds: list[VideoBackgroundPreset]
+    content: ContentScript
+    scenes: list[Scene]
+    compatible_scenes: list[Scene]
     content_revision: int
-    background_revisions: dict[int, int]
+    scene_revisions: dict[int, int]
 
 
 @dataclass(frozen=True)
@@ -103,7 +102,7 @@ class DraftAggregate:
     draft: BatchDraft
     dataset: Dataset
     selections: list[DraftContentSelection]
-    preset: PromptPreset
+    preset: PromptTemplateVersion
     preset_revision: int
     preset_examples: tuple[list[str], list[str]]
     demographics: list[BatchDraftDemographic]
@@ -113,9 +112,9 @@ class DraftAggregate:
 @dataclass(frozen=True)
 class Allocation:
     sequence: int
-    content: ContentPlan
-    preset: PromptPreset
-    background: VideoBackgroundPreset
+    content: ContentScript
+    preset: PromptTemplateVersion
+    scene: Scene
     demographic: BatchDraftDemographic
     gpu_slot: GpuSlotName
     model: ModelName
@@ -126,9 +125,9 @@ class Allocation:
 
 @dataclass(frozen=True)
 class PromptSelection:
-    content: ContentPlan
-    preset: PromptPreset
-    background: VideoBackgroundPreset
+    content: ContentScript
+    preset: PromptTemplateVersion
+    scene: Scene
     prepared: PreparedPrompt
 
 
@@ -136,11 +135,11 @@ def allocation_inputs(
     selections: list[DraftContentSelection],
     demographics: list[BatchDraftDemographic],
     quantity: int,
-) -> list[tuple[ContentPlan, VideoBackgroundPreset, BatchDraftDemographic]]:
+) -> list[tuple[ContentScript, Scene, BatchDraftDemographic]]:
     combinations = [
-        (selection.content, background, demographic)
+        (selection.content, scene, demographic)
         for selection in selections
-        for background in selection.backgrounds
+        for scene in selection.scenes
         for demographic in demographics
     ]
     return [combinations[index % len(combinations)] for index in range(quantity)]
@@ -244,28 +243,29 @@ class BatchService:
         with self.database.read_session() as session:
             selection = self._prepare_prompt_selection(
                 session,
-                payload.content_plan,
-                payload.prompt_preset,
-                payload.background_preset,
+                payload.content_script,
+                payload.prompt_template_version,
+                payload.scene,
                 payload.demographic,
+                payload.model,
             )
             content = selection.content
             preset = selection.preset
-            background = selection.background
+            scene = selection.scene
             fixed = selection.prepared.fixed_output
             return PromptPreviewRead(
-                content_plan=BilingualSelectionRead(
+                content_script=BilingualSelectionRead(
                     id=content.id,
                     name_zh=content.name_zh,
                     name_en=content.name_en,
                     revision=content.revision,
                 ),
-                prompt_preset=SelectionRead(id=preset.id, name=preset.name, revision=preset.revision),
-                background_preset=BilingualSelectionRead(
-                    id=background.id,
-                    name_zh=background.name_zh,
-                    name_en=background.name_en,
-                    revision=background.revision,
+                prompt_template_version=SelectionRead(id=preset.id, name=preset.name, revision=preset.revision),
+                scene=BilingualSelectionRead(
+                    id=scene.id,
+                    name_zh=scene.name_zh,
+                    name_en=scene.name_en,
+                    revision=scene.revision,
                 ),
                 category=content.category,
                 conflict_direction=content.conflict_direction,
@@ -274,7 +274,7 @@ class BatchService:
                 system_input=selection.prepared.system_input,
                 user_input=selection.prepared.user_input,
                 final_positive_prompt=fixed.positive_prompt if fixed else None,
-                final_negative_prompt=selection.prepared.final_negative_prompt,
+                negative_prompt=selection.prepared.negative_prompt,
             )
 
     async def submit_test_run(self, payload: TestRunCreate) -> JobDetailRead:
@@ -288,10 +288,11 @@ class BatchService:
         with self.database.read_session() as session:
             selection = self._prepare_prompt_selection(
                 session,
-                payload.content_plan,
-                payload.prompt_preset,
-                payload.background_preset,
+                payload.content_script,
+                payload.prompt_template_version,
+                payload.scene,
                 payload.demographic,
+                payload.comparisons[0].model,
             )
         prompt_result = await self.prompts.complete(selection.prepared, selection.content.category)
         seed = payload.seed if payload.seed is not None else random.SystemRandom().randrange(0, 2**31)
@@ -300,10 +301,11 @@ class BatchService:
             with self.database.immediate_session() as session:
                 current = self._prepare_prompt_selection(
                     session,
-                    payload.content_plan,
-                    payload.prompt_preset,
-                    payload.background_preset,
+                    payload.content_script,
+                    payload.prompt_template_version,
+                    payload.scene,
                     payload.demographic,
+                    payload.comparisons[0].model,
                 )
                 requested_profiles: dict[GpuSlotName, list[tuple[ModelName, Precision | None]]] = {
                     slot: [] for slot in selected_slots
@@ -346,12 +348,12 @@ class BatchService:
                         dataset_id=None,
                         dataset_revision=None,
                         sequence=sequence,
-                        content_plan_id=current.content.id,
-                        content_plan_revision=current.content.revision,
-                        prompt_preset_id=current.preset.id,
-                        prompt_preset_revision=current.preset.revision,
-                        background_preset_id=current.background.id,
-                        background_preset_revision=current.background.revision,
+                        content_script_id=current.content.id,
+                        content_script_revision=current.content.revision,
+                        prompt_template_version_id=current.preset.id,
+                        prompt_template_version_revision=current.preset.revision,
+                        scene_id=current.scene.id,
+                        scene_revision=current.scene.revision,
                         policy_version=prompt_result.policy_version,
                         category=current.content.category,
                         conflict_direction=current.content.conflict_direction,
@@ -372,7 +374,11 @@ class BatchService:
                         in {Category.A_VT, Category.C_VT},
                         system_input=prompt_result.system_input,
                         user_input=prompt_result.user_input,
-                        final_negative_prompt=prompt_result.final_negative_prompt,
+                        negative_prompt=(
+                            current.preset.h3_negative_prompt
+                            if comparison.model is ModelName.H3
+                            else current.preset.ltx_negative_prompt
+                        ),
                         fixed_positive_prompt=prompt_result.final_positive_prompt,
                         fixed_dialogue=prompt_result.dialogue,
                         fixed_vt_text=prompt_result.vt_text,
@@ -477,13 +483,13 @@ class BatchService:
                         dataset_id=current.dataset.id,
                         dataset_revision=current.draft.dataset_revision,
                         sequence=allocation.sequence,
-                        content_plan_id=allocation.content.id,
-                        content_plan_revision=selection.content_revision,
-                        prompt_preset_id=allocation.preset.id,
-                        prompt_preset_revision=current.preset_revision,
-                        background_preset_id=allocation.background.id,
-                        background_preset_revision=selection.background_revisions[
-                            allocation.background.id
+                        content_script_id=allocation.content.id,
+                        content_script_revision=selection.content_revision,
+                        prompt_template_version_id=allocation.preset.id,
+                        prompt_template_version_revision=current.preset_revision,
+                        scene_id=allocation.scene.id,
+                        scene_revision=selection.scene_revisions[
+                            allocation.scene.id
                         ],
                         policy_version=allocation.prepared.policy_version,
                         category=current.draft.category,
@@ -504,7 +510,7 @@ class BatchService:
                         derive_silent_primary=current.draft.category in {Category.A_VT, Category.C_VT},
                         system_input=allocation.prepared.system_input,
                         user_input=allocation.prepared.user_input,
-                        final_negative_prompt=allocation.prepared.final_negative_prompt,
+                        negative_prompt=allocation.prepared.negative_prompt,
                         fixed_positive_prompt=fixed.positive_prompt if fixed is not None else None,
                         fixed_dialogue=fixed.dialogue if fixed is not None else None,
                         fixed_vt_text=fixed.vt_text if fixed is not None else None,
@@ -664,67 +670,68 @@ class BatchService:
         session: Session,
         content_selection: SourceSelection,
         preset_selection: SourceSelection,
-        background_selection: SourceSelection,
+        scene_selection: SourceSelection,
         demographic: DemographicInput,
+        model: ModelName,
     ) -> PromptSelection:
-        content = self._required(session, ContentPlan, content_selection.id, "contentPlan")
-        preset = self._required(session, PromptPreset, preset_selection.id, "promptPreset")
-        background = self._required(
+        content = self._required(session, ContentScript, content_selection.id, "contentScript")
+        preset = self._required(session, PromptTemplateVersion, preset_selection.id, "promptTemplateVersion")
+        scene = self._required(
             session,
-            VideoBackgroundPreset,
-            background_selection.id,
-            "videoBackgroundPreset",
+            Scene,
+            scene_selection.id,
+            "scene",
         )
-        self._check_source(content, content_selection.expected_revision, "contentPlan")
-        self._check_source(preset, preset_selection.expected_revision, "promptPreset")
-        self._check_source(background, background_selection.expected_revision, "videoBackgroundPreset")
+        self._check_source(content, content_selection.expected_revision, "contentScript")
+        self._check_source(preset, preset_selection.expected_revision, "promptTemplateVersion")
+        self._check_source(scene, scene_selection.expected_revision, "scene")
         if content.status is not ContentStatus.ACTIVE:
-            raise state_conflict("contentPlan", content.id, "The selected content plan is not active")
-        if preset.status is not ResourceStatus.ACTIVE:
-            raise state_conflict("promptPreset", preset.id, "The selected prompt preset is disabled")
-        if background.status is not ResourceStatus.ACTIVE:
+            raise state_conflict("contentScript", content.id, "The selected content script is not active")
+        if preset.verification_status is not TemplateVersionStatus.VERIFIED:
             raise state_conflict(
-                "videoBackgroundPreset",
-                background.id,
-                "The selected background preset is disabled",
+                "promptTemplateVersion",
+                preset.id,
+                "The selected prompt template version is not verified",
+            )
+        if scene.status is not ResourceStatus.ACTIVE:
+            raise state_conflict(
+                "scene",
+                scene.id,
+                "The selected scene is disabled",
             )
         if preset.category is not content.category:
-            raise ServiceError(422, "validation_error", "The prompt preset category does not match the content")
+            raise ServiceError(422, "validation_error", "The prompt template version category does not match the content")
         if session.exec(
-            select(ContentPlanBackground).where(
-                ContentPlanBackground.content_plan_id == content.id,
-                ContentPlanBackground.background_preset_id == background.id,
+            select(ContentScriptScene).where(
+                ContentScriptScene.content_script_id == content.id,
+                ContentScriptScene.scene_id == scene.id,
             )
         ).first() is None:
             raise ServiceError(
                 422,
-                "incompatible_content_background",
-                "The selected background is not registered for this content plan",
+                "incompatible_content_scene",
+                "The selected scene is not registered for this content script",
             )
-        examples = session.exec(
-            select(PromptExample)
-            .where(PromptExample.preset_id == preset.id)
-            .order_by(PromptExample.kind, PromptExample.position)
-        ).all()
         prepared = self.prompts.prepare(
             PromptContext(
                 content=content,
-                preset=preset,
-                positive_examples=[row.text for row in examples if row.kind is ExampleKind.POSITIVE],
-                negative_examples=[row.text for row in examples if row.kind is ExampleKind.NEGATIVE],
-                background=background,
+                template_version=preset,
+                positive_examples=json.loads(preset.positive_examples_json),
+                negative_examples=json.loads(preset.negative_examples_json),
+                scene=scene,
                 age=demographic.age,
                 gender=demographic.gender,
                 ethnicity=demographic.ethnicity,
+                model=model,
             )
         )
-        return PromptSelection(content, preset, background, prepared)
+        return PromptSelection(content, preset, scene, prepared)
 
     def _resolve_selections(
         self,
         session: Session,
         payload: BatchDraftCreate | BatchDraftUpdate,
-    ) -> tuple[Dataset, list[DraftContentSelection], PromptPreset]:
+    ) -> tuple[Dataset, list[DraftContentSelection], PromptTemplateVersion]:
         dataset = session.get(Dataset, payload.target_dataset_id)
         if dataset is None:
             raise not_found("dataset", payload.target_dataset_id)
@@ -741,104 +748,104 @@ class BatchService:
                 "A formal batch requires an active dataset",
             )
 
-        preset = session.get(PromptPreset, payload.prompt_preset_id)
+        preset = session.get(PromptTemplateVersion, payload.prompt_template_version_id)
         if preset is None:
-            raise not_found("promptPreset", payload.prompt_preset_id)
+            raise not_found("promptTemplateVersion", payload.prompt_template_version_id)
         if preset.category is not payload.category:
             raise ServiceError(
                 422,
                 "validation_error",
-                "The prompt preset category does not match the batch",
+                "The prompt template version category does not match the batch",
             )
-        if preset.status is not ResourceStatus.ACTIVE:
+        if preset.verification_status is not TemplateVersionStatus.VERIFIED:
             raise ServiceError(
                 422,
                 "validation_error",
-                "The selected prompt preset is not active",
+                "The selected prompt template version is not verified",
             )
 
         selections: list[DraftContentSelection] = []
         for requested in payload.content_selections:
-            content = session.get(ContentPlan, requested.content_plan_id)
+            content = session.get(ContentScript, requested.content_script_id)
             if content is None:
-                raise not_found("contentPlan", requested.content_plan_id)
+                raise not_found("contentScript", requested.content_script_id)
             if content.category is not payload.category:
                 raise ServiceError(422, "validation_error", "The content category does not match the batch")
             if content.status is not ContentStatus.ACTIVE:
                 raise ServiceError(
                     422,
                     "validation_error",
-                    "The selected content plan is not active",
+                    "The selected content script is not active",
                 )
             mappings = session.exec(
-                select(ContentPlanBackground)
-                .where(ContentPlanBackground.content_plan_id == content.id)
-                .order_by(ContentPlanBackground.position)
+                select(ContentScriptScene)
+                .where(ContentScriptScene.content_script_id == content.id)
+                .order_by(ContentScriptScene.position)
             ).all()
-            mapped_ids = [mapping.background_preset_id for mapping in mappings]
-            compatible_backgrounds = [
+            mapped_ids = [mapping.scene_id for mapping in mappings]
+            compatible_scenes = [
                 self._required(
                     session,
-                    VideoBackgroundPreset,
-                    background_id,
-                    "videoBackgroundPreset",
+                    Scene,
+                    scene_id,
+                    "scene",
                 )
-                for background_id in mapped_ids
+                for scene_id in mapped_ids
             ]
             if content.mode is ContentMode.FIXED:
-                if requested.background_preset_ids:
+                if requested.scene_ids:
                     raise ServiceError(
                         422,
-                        "fixed_background_is_automatic",
-                        "Fixed content does not accept a background selection",
+                        "fixed_scene_is_automatic",
+                        "Fixed content does not accept a scene selection",
                     )
                 if len(mapped_ids) != 1:
                     raise ServiceError(
                         422,
-                        "content_background_missing",
-                        "Fixed content requires exactly one registered source background",
+                        "content_scene_missing",
+                        "Fixed content requires exactly one registered source scene",
                     )
                 selected_ids = mapped_ids
             else:
-                if not requested.background_preset_ids:
+                if not requested.scene_ids:
                     raise ServiceError(
                         422,
-                        "content_background_required",
-                        "Generative content requires at least one registered background",
+                        "content_scene_required",
+                        "Generative content requires at least one registered scene",
                     )
                 if any(
-                    background_id not in mapped_ids
-                    for background_id in requested.background_preset_ids
+                    scene_id not in mapped_ids
+                    for scene_id in requested.scene_ids
                 ):
                     raise ServiceError(
                         422,
-                        "incompatible_content_background",
-                        "A selected background is not registered for this content plan",
+                        "incompatible_content_scene",
+                        "A selected scene is not registered for this content script",
                     )
-                selected_ids = requested.background_preset_ids
-            backgrounds = [
+                selected_ids = requested.scene_ids
+            scenes = [
                 self._required(
                     session,
-                    VideoBackgroundPreset,
-                    background_id,
-                    "videoBackgroundPreset",
+                    Scene,
+                    scene_id,
+                    "scene",
                 )
-                for background_id in selected_ids
+                for scene_id in selected_ids
             ]
-            if any(background.status is not ResourceStatus.ACTIVE for background in backgrounds):
+            if any(scene.status is not ResourceStatus.ACTIVE for scene in scenes):
                 raise ServiceError(
                     422,
                     "validation_error",
-                    "A selected background preset is not active",
+                    "A selected scene is not active",
                 )
             selections.append(
                 DraftContentSelection(
                     content=content,
-                    backgrounds=backgrounds,
-                    compatible_backgrounds=compatible_backgrounds,
+                    scenes=scenes,
+                    compatible_scenes=compatible_scenes,
                     content_revision=content.revision,
-                    background_revisions={
-                        background.id: background.revision for background in backgrounds
+                    scene_revisions={
+                        scene.id: scene.revision for scene in scenes
                     },
                 )
             )
@@ -853,32 +860,32 @@ class BatchService:
         draft_id: int,
         payload: BatchDraftCreate | BatchDraftUpdate,
         selections: list[DraftContentSelection],
-        preset: PromptPreset,
+        preset: PromptTemplateVersion,
     ) -> None:
         for position, selection in enumerate(selections):
             session.add(
-                BatchDraftContentSelection(
+                BatchDraftScriptSelection(
                     batch_draft_id=draft_id,
-                    content_plan_id=selection.content.id,
+                    content_script_id=selection.content.id,
                     position=position,
                     source_revision=selection.content_revision,
                 )
             )
             session.flush()
-            for background_position, background in enumerate(selection.backgrounds):
+            for scene_position, scene in enumerate(selection.scenes):
                 session.add(
-                    BatchDraftContentBackground(
+                    BatchDraftContentScene(
                         batch_draft_id=draft_id,
-                        content_plan_id=selection.content.id,
-                        background_preset_id=background.id,
-                        position=background_position,
-                        source_revision=selection.background_revisions[background.id],
+                        content_script_id=selection.content.id,
+                        scene_id=scene.id,
+                        position=scene_position,
+                        source_revision=selection.scene_revisions[scene.id],
                     )
                 )
         session.add(
-            BatchDraftPromptPreset(
+            BatchDraftPromptTemplateVersion(
                 batch_draft_id=draft_id,
-                prompt_preset_id=preset.id,
+                prompt_template_version_id=preset.id,
                 position=0,
                 source_revision=preset.revision,
             )
@@ -899,9 +906,9 @@ class BatchService:
     @staticmethod
     def _delete_links(session: Session, draft_id: int) -> None:
         for model in (
-            BatchDraftContentBackground,
-            BatchDraftContentSelection,
-            BatchDraftPromptPreset,
+            BatchDraftContentScene,
+            BatchDraftScriptSelection,
+            BatchDraftPromptTemplateVersion,
             BatchDraftDemographic,
             BatchDraftGpuSlot,
         ):
@@ -916,21 +923,21 @@ class BatchService:
         if dataset is None:
             raise not_found("dataset", draft.dataset_id)
         content_links = session.exec(
-            select(BatchDraftContentSelection)
-            .where(BatchDraftContentSelection.batch_draft_id == draft_id)
-            .order_by(BatchDraftContentSelection.position)
+            select(BatchDraftScriptSelection)
+            .where(BatchDraftScriptSelection.batch_draft_id == draft_id)
+            .order_by(BatchDraftScriptSelection.position)
         ).all()
         preset_links = session.exec(
-            select(BatchDraftPromptPreset)
-            .where(BatchDraftPromptPreset.batch_draft_id == draft_id)
-            .order_by(BatchDraftPromptPreset.position)
+            select(BatchDraftPromptTemplateVersion)
+            .where(BatchDraftPromptTemplateVersion.batch_draft_id == draft_id)
+            .order_by(BatchDraftPromptTemplateVersion.position)
         ).all()
-        background_links = session.exec(
-            select(BatchDraftContentBackground)
-            .where(BatchDraftContentBackground.batch_draft_id == draft_id)
+        scene_links = session.exec(
+            select(BatchDraftContentScene)
+            .where(BatchDraftContentScene.batch_draft_id == draft_id)
             .order_by(
-                BatchDraftContentBackground.content_plan_id,
-                BatchDraftContentBackground.position,
+                BatchDraftContentScene.content_script_id,
+                BatchDraftContentScene.position,
             )
         ).all()
         demographics = session.exec(
@@ -947,40 +954,40 @@ class BatchService:
         for content_link in content_links:
             content = self._required(
                 session,
-                ContentPlan,
-                content_link.content_plan_id,
-                "contentPlan",
+                ContentScript,
+                content_link.content_script_id,
+                "contentScript",
             )
             selected_links = [
                 link
-                for link in background_links
-                if link.content_plan_id == content.id
+                for link in scene_links
+                if link.content_script_id == content.id
             ]
-            backgrounds = [
+            scenes = [
                 self._required(
                     session,
-                    VideoBackgroundPreset,
-                    link.background_preset_id,
-                    "videoBackgroundPreset",
+                    Scene,
+                    link.scene_id,
+                    "scene",
                 )
                 for link in selected_links
             ]
             compatible_links = session.exec(
-                select(ContentPlanBackground)
-                .where(ContentPlanBackground.content_plan_id == content.id)
-                .order_by(ContentPlanBackground.position)
+                select(ContentScriptScene)
+                .where(ContentScriptScene.content_script_id == content.id)
+                .order_by(ContentScriptScene.position)
             ).all()
-            compatible_backgrounds = [
+            compatible_scenes = [
                 self._required(
                     session,
-                    VideoBackgroundPreset,
-                    link.background_preset_id,
-                    "videoBackgroundPreset",
+                    Scene,
+                    link.scene_id,
+                    "scene",
                 )
                 for link in compatible_links
             ]
-            compatible_ids = {background.id for background in compatible_backgrounds}
-            if any(background.id not in compatible_ids for background in backgrounds):
+            compatible_ids = {scene.id for scene in compatible_scenes}
+            if any(scene.id not in compatible_ids for scene in scenes):
                 raise state_conflict(
                     "batchDraft",
                     draft_id,
@@ -989,11 +996,11 @@ class BatchService:
             selections.append(
                 DraftContentSelection(
                     content=content,
-                    backgrounds=backgrounds,
-                    compatible_backgrounds=compatible_backgrounds,
+                    scenes=scenes,
+                    compatible_scenes=compatible_scenes,
                     content_revision=content_link.source_revision,
-                    background_revisions={
-                        link.background_preset_id: link.source_revision
+                    scene_revisions={
+                        link.scene_id: link.source_revision
                         for link in selected_links
                     },
                 )
@@ -1002,20 +1009,15 @@ class BatchService:
             raise ServiceError(
                 409,
                 "state_conflict",
-                "The batch draft requires exactly one prompt preset",
+                "The batch draft requires exactly one prompt template version",
             )
         preset_link = preset_links[0]
         preset = self._required(
             session,
-            PromptPreset,
-            preset_link.prompt_preset_id,
-            "promptPreset",
+            PromptTemplateVersion,
+            preset_link.prompt_template_version_id,
+            "promptTemplateVersion",
         )
-        rows = session.exec(
-            select(PromptExample)
-            .where(PromptExample.preset_id == preset.id)
-            .order_by(PromptExample.kind, PromptExample.position)
-        ).all()
         aggregate = DraftAggregate(
             draft=draft,
             dataset=dataset,
@@ -1023,8 +1025,8 @@ class BatchService:
             preset=preset,
             preset_revision=preset_link.source_revision,
             preset_examples=(
-                [row.text for row in rows if row.kind is ExampleKind.POSITIVE],
-                [row.text for row in rows if row.kind is ExampleKind.NEGATIVE],
+                json.loads(preset.positive_examples_json),
+                json.loads(preset.negative_examples_json),
             ),
             demographics=demographics,
             gpu_slots=[link.gpu_slot for link in gpu_links],
@@ -1034,7 +1036,7 @@ class BatchService:
     @staticmethod
     def _ensure_complete_aggregate(aggregate: DraftAggregate) -> None:
         if not aggregate.selections or any(
-            not selection.backgrounds for selection in aggregate.selections
+            not selection.scenes for selection in aggregate.selections
         ):
             raise ServiceError(409, "state_conflict", "The batch draft has incomplete source selections")
         if not aggregate.demographics or not aggregate.gpu_slots:
@@ -1052,22 +1054,23 @@ class BatchService:
             self._source_changed("dataset", aggregate.dataset.id)
         if (
             aggregate.preset.revision != aggregate.preset_revision
-            or aggregate.preset.status is not ResourceStatus.ACTIVE
+            or aggregate.preset.verification_status
+            is not TemplateVersionStatus.VERIFIED
         ):
-            self._source_changed("promptPreset", aggregate.preset.id)
+            self._source_changed("promptTemplateVersion", aggregate.preset.id)
         for selection in aggregate.selections:
             if (
                 selection.content.revision != selection.content_revision
                 or selection.content.status is not ContentStatus.ACTIVE
             ):
-                self._source_changed("contentPlan", selection.content.id)
-            for background in selection.backgrounds:
+                self._source_changed("contentScript", selection.content.id)
+            for scene in selection.scenes:
                 if (
-                    background.revision
-                    != selection.background_revisions[background.id]
-                    or background.status is not ResourceStatus.ACTIVE
+                    scene.revision
+                    != selection.scene_revisions[scene.id]
+                    or scene.status is not ResourceStatus.ACTIVE
                 ):
-                    self._source_changed("videoBackgroundPreset", background.id)
+                    self._source_changed("scene", scene.id)
 
     def _build_allocations(self, aggregate: DraftAggregate) -> list[Allocation]:
         seed_source = random.Random(aggregate.draft.seed_base)
@@ -1077,19 +1080,20 @@ class BatchService:
             aggregate.demographics,
             aggregate.draft.quantity,
         )
-        for offset, (content, background, demographic) in enumerate(inputs):
+        for offset, (content, scene, demographic) in enumerate(inputs):
             preset = aggregate.preset
             positive, negative = aggregate.preset_examples
             prepared = self.prompts.prepare(
                 PromptContext(
                     content=content,
-                    preset=preset,
+                    template_version=preset,
                     positive_examples=positive,
                     negative_examples=negative,
-                    background=background,
+                    scene=scene,
                     age=demographic.age,
                     gender=demographic.gender,
                     ethnicity=demographic.ethnicity,
+                    model=aggregate.draft.model,
                 )
             )
             values.append(
@@ -1097,7 +1101,7 @@ class BatchService:
                     sequence=offset + 1,
                     content=content,
                     preset=preset,
-                    background=background,
+                    scene=scene,
                     demographic=demographic,
                     gpu_slot=aggregate.gpu_slots[offset % len(aggregate.gpu_slots)],
                     model=aggregate.draft.model,
@@ -1113,22 +1117,22 @@ class BatchService:
         fixed = allocation.prepared.fixed_output
         return BatchAllocationRead(
             sequence=allocation.sequence,
-            content_plan=BilingualSelectionRead(
+            content_script=BilingualSelectionRead(
                 id=allocation.content.id,
                 name_zh=allocation.content.name_zh,
                 name_en=allocation.content.name_en,
                 revision=allocation.content.revision,
             ),
-            prompt_preset=SelectionRead(
+            prompt_template_version=SelectionRead(
                 id=allocation.preset.id,
                 name=allocation.preset.name,
                 revision=allocation.preset.revision,
             ),
-            background_preset=BilingualSelectionRead(
-                id=allocation.background.id,
-                name_zh=allocation.background.name_zh,
-                name_en=allocation.background.name_en,
-                revision=allocation.background.revision,
+            scene=BilingualSelectionRead(
+                id=allocation.scene.id,
+                name_zh=allocation.scene.name_zh,
+                name_en=allocation.scene.name_en,
+                revision=allocation.scene.revision,
             ),
             demographic=DemographicInput(
                 age=allocation.demographic.age,
@@ -1143,7 +1147,7 @@ class BatchService:
             system_input=allocation.prepared.system_input,
             user_input=allocation.prepared.user_input,
             final_positive_prompt=fixed.positive_prompt if fixed else None,
-            final_negative_prompt=allocation.prepared.final_negative_prompt,
+            negative_prompt=allocation.prepared.negative_prompt,
         )
 
     def _validate_gpu_request(
@@ -1206,35 +1210,35 @@ class BatchService:
             status=aggregate.draft.status,
             content_selections=[
                 BatchContentSelectionRead(
-                    content_plan=BilingualSelectionRead(
+                    content_script=BilingualSelectionRead(
                         id=selection.content.id,
                         name_zh=selection.content.name_zh,
                         name_en=selection.content.name_en,
                         revision=selection.content_revision,
                     ),
                     mode=selection.content.mode,
-                    background_presets=[
+                    scenes=[
                         BilingualSelectionRead(
-                            id=background.id,
-                            name_zh=background.name_zh,
-                            name_en=background.name_en,
-                            revision=selection.background_revisions[background.id],
+                            id=scene.id,
+                            name_zh=scene.name_zh,
+                            name_en=scene.name_en,
+                            revision=selection.scene_revisions[scene.id],
                         )
-                        for background in selection.backgrounds
+                        for scene in selection.scenes
                     ],
-                    compatible_backgrounds=[
+                    compatible_scenes=[
                         BilingualSelectionRead(
-                            id=background.id,
-                            name_zh=background.name_zh,
-                            name_en=background.name_en,
-                            revision=background.revision,
+                            id=scene.id,
+                            name_zh=scene.name_zh,
+                            name_en=scene.name_en,
+                            revision=scene.revision,
                         )
-                        for background in selection.compatible_backgrounds
+                        for scene in selection.compatible_scenes
                     ],
                 )
                 for selection in aggregate.selections
             ],
-            prompt_preset=SelectionRead(
+            prompt_template_version=SelectionRead(
                 id=aggregate.preset.id,
                 name=aggregate.preset.name,
                 revision=aggregate.preset_revision,
@@ -1268,10 +1272,10 @@ class BatchService:
                     selection.content_revision,
                     [
                         (
-                            background.id,
-                            selection.background_revisions[background.id],
+                            scene.id,
+                            selection.scene_revisions[scene.id],
                         )
-                        for background in selection.backgrounds
+                        for scene in selection.scenes
                     ],
                 )
                 for selection in before.selections
@@ -1282,10 +1286,10 @@ class BatchService:
                     selection.content_revision,
                     [
                         (
-                            background.id,
-                            selection.background_revisions[background.id],
+                            scene.id,
+                            selection.scene_revisions[scene.id],
                         )
-                        for background in selection.backgrounds
+                        for scene in selection.scenes
                     ],
                 )
                 for selection in after.selections

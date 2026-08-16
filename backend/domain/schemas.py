@@ -30,12 +30,13 @@ from .enums import (
     ReviewDecision,
     ResourceStatus,
     TestExecutionMode,
+    TemplateVersionStatus,
     relation_for,
     validate_direction,
     validate_model_precision,
 )
 from .display_names import EnglishDisplayName
-from .prompt_policy import validate_background_policy_text
+from .prompt_policy import validate_scene_policy_text
 
 
 def to_camel(value: str) -> str:
@@ -98,15 +99,19 @@ EmotionDescription = Annotated[
 ]
 
 
-def validate_content_background_ids(values: list[int], mode: ContentMode) -> None:
+def validate_content_scene_ids(
+    values: list[int],
+    mode: ContentMode,
+    status: ContentStatus,
+) -> None:
     if len(values) != len(set(values)):
-        raise ValueError("A background preset can be registered only once")
+        raise ValueError("A scene can be registered only once")
     if any(identifier <= 0 for identifier in values):
-        raise ValueError("Background preset ids must be positive")
+        raise ValueError("Scene ids must be positive")
     if mode is ContentMode.FIXED and len(values) != 1:
-        raise ValueError("Fixed content requires exactly one source background")
-    if mode is ContentMode.GENERATIVE and not values:
-        raise ValueError("Generative content requires at least one compatible background")
+        raise ValueError("Fixed content script requires exactly one scene")
+    if mode is ContentMode.GENERATIVE and status is ContentStatus.ACTIVE and not values:
+        raise ValueError("Active generative content script requires at least one scene")
 
 
 class ErrorValue(ApiModel):
@@ -191,7 +196,7 @@ class DatasetRead(ApiModel):
     updated_at: str
 
 
-class ContentPlanFields(ApiModel):
+class ContentScriptFields(ApiModel):
     name_zh: Name
     name_en: EnglishDisplayName
     category: Category
@@ -245,17 +250,17 @@ class ContentPlanFields(ApiModel):
         return self
 
 
-class ContentPlanCreate(ContentPlanFields):
-    background_preset_ids: list[int] = Field(min_length=1)
+class ContentScriptCreate(ContentScriptFields):
+    scene_ids: list[int] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_backgrounds(self) -> Self:
-        validate_content_background_ids(self.background_preset_ids, self.mode)
+    def validate_scenes(self) -> Self:
+        validate_content_scene_ids(self.scene_ids, self.mode, self.status)
         return self
 
 
-class ContentPlanUpdate(UpdateWithChanges):
-    background_preset_ids: list[int] = Field(min_length=1)
+class ContentScriptUpdate(UpdateWithChanges):
+    scene_ids: list[int] = Field(default_factory=list)
     name_zh: Name | None = None
     name_en: EnglishDisplayName | None = None
     conflict_direction: ConflictDirection | None = None
@@ -281,10 +286,10 @@ class ContentPlanUpdate(UpdateWithChanges):
     @model_validator(mode="after")
     def reject_null_fields(self) -> Self:
         self.reject_explicit_nulls(frozenset({"conflict_direction", "dialogue", "display_text"}))
-        if len(self.background_preset_ids) != len(set(self.background_preset_ids)):
-            raise ValueError("A background preset can be registered only once")
-        if any(identifier <= 0 for identifier in self.background_preset_ids):
-            raise ValueError("Background preset ids must be positive")
+        if len(self.scene_ids) != len(set(self.scene_ids)):
+            raise ValueError("A scene can be registered only once")
+        if any(identifier <= 0 for identifier in self.scene_ids):
+            raise ValueError("Scene ids must be positive")
         return self
 
     @field_validator("base_video_prompt")
@@ -295,61 +300,47 @@ class ContentPlanUpdate(UpdateWithChanges):
         return validate_english_video_prompt(value, "baseVideoPrompt")
 
 
-class ContentPlanRead(ContentPlanFields):
+class ContentScriptRead(ContentScriptFields):
     id: int
-    background_preset_ids: list[int]
+    scene_ids: list[int]
     revision: int
     created_at: str
     updated_at: str
 
 
-class PromptPresetFields(ApiModel):
+class PromptTemplateVersionFields(ApiModel):
     name: EnglishDisplayName
     category: Category
+    version: int = Field(ge=1)
     style_instruction: str = Field(default="", alias="styleGuidance")
     positive_examples: list[TextValue] = Field(default_factory=list, max_length=20)
     negative_examples: list[TextValue] = Field(default_factory=list, max_length=20)
-    final_negative_prompt: TextValue = Field(alias="finalRenderNegativeConstraints")
-    status: ResourceStatus = ResourceStatus.ACTIVE
+    ltx_negative_prompt: TextValue = Field(alias="ltxNegativePrompt")
+    h3_negative_prompt: TextValue = Field(alias="h3NegativePrompt")
+    verification_status: TemplateVersionStatus = TemplateVersionStatus.DRAFT
 
-    @field_validator("final_negative_prompt")
+    @field_validator("ltx_negative_prompt", "h3_negative_prompt")
     @classmethod
-    def validate_final_negative_prompt(cls, value: str) -> str:
-        return validate_english_video_prompt(value, "finalRenderNegativeConstraints")
+    def validate_negative_prompt(cls, value: str, info: ValidationInfo) -> str:
+        return validate_english_video_prompt(value, to_camel(info.field_name))
 
 
-class PromptPresetCreate(PromptPresetFields):
+class PromptTemplateVersionCreate(PromptTemplateVersionFields):
     pass
 
 
-class PromptPresetUpdate(UpdateWithChanges):
-    name: EnglishDisplayName | None = None
-    style_instruction: str | None = Field(default=None, alias="styleGuidance")
-    positive_examples: list[TextValue] | None = Field(default=None, max_length=20)
-    negative_examples: list[TextValue] | None = Field(default=None, max_length=20)
-    final_negative_prompt: TextValue | None = Field(default=None, alias="finalRenderNegativeConstraints")
-    status: ResourceStatus | None = None
-
-    @model_validator(mode="after")
-    def reject_null_fields(self) -> Self:
-        return self.reject_explicit_nulls()
-
-    @field_validator("final_negative_prompt")
-    @classmethod
-    def validate_final_negative_prompt(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return validate_english_video_prompt(value, "finalRenderNegativeConstraints")
+class PromptTemplateVersionVerify(ExpectedRevision):
+    pass
 
 
-class PromptPresetRead(PromptPresetFields):
+class PromptTemplateVersionRead(PromptTemplateVersionFields):
     id: int
     revision: int
     created_at: str
     updated_at: str
 
 
-class VideoBackgroundPresetFields(ApiModel):
+class SceneFields(ApiModel):
     name_zh: Name
     name_en: EnglishDisplayName
     scene_zh: TextValue
@@ -366,15 +357,15 @@ class VideoBackgroundPresetFields(ApiModel):
 
     @field_validator("scene_en", "ambient_sound_en", "participant_relationship_en", "lighting_en", "framing_en")
     @classmethod
-    def validate_background_text(cls, value: str, info: ValidationInfo) -> str:
-        return validate_background_policy_text(value, info.field_name)
+    def validate_scene_text(cls, value: str, info: ValidationInfo) -> str:
+        return validate_scene_policy_text(value, info.field_name)
 
 
-class VideoBackgroundPresetCreate(VideoBackgroundPresetFields):
+class SceneCreate(SceneFields):
     pass
 
 
-class VideoBackgroundPresetUpdate(UpdateWithChanges):
+class SceneUpdate(UpdateWithChanges):
     name_zh: Name | None = None
     name_en: EnglishDisplayName | None = None
     scene_zh: TextValue | None = None
@@ -395,13 +386,13 @@ class VideoBackgroundPresetUpdate(UpdateWithChanges):
 
     @field_validator("scene_en", "ambient_sound_en", "participant_relationship_en", "lighting_en", "framing_en")
     @classmethod
-    def validate_background_text(cls, value: str | None, info: ValidationInfo) -> str | None:
+    def validate_scene_text(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
             return None
-        return validate_background_policy_text(value, info.field_name)
+        return validate_scene_policy_text(value, info.field_name)
 
 
-class VideoBackgroundPresetRead(VideoBackgroundPresetFields):
+class SceneRead(SceneFields):
     id: int
     revision: int
     created_at: str
@@ -426,15 +417,15 @@ class DemographicInput(ApiModel):
 
 
 class BatchContentSelectionInput(ApiModel):
-    content_plan_id: int = Field(gt=0)
-    background_preset_ids: list[int] = Field(default_factory=list)
+    content_script_id: int = Field(gt=0)
+    scene_ids: list[int] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def reject_duplicate_backgrounds(self) -> Self:
-        if len(self.background_preset_ids) != len(set(self.background_preset_ids)):
-            raise ValueError("A background preset can be selected only once per content plan")
-        if any(identifier <= 0 for identifier in self.background_preset_ids):
-            raise ValueError("Background preset ids must be positive")
+    def reject_duplicate_scenes(self) -> Self:
+        if len(self.scene_ids) != len(set(self.scene_ids)):
+            raise ValueError("A scene can be selected only once per content script")
+        if any(identifier <= 0 for identifier in self.scene_ids):
+            raise ValueError("Scene ids must be positive")
         return self
 
 
@@ -447,7 +438,7 @@ class BatchDraftFields(ApiModel):
     quantity: int = Field(gt=0, le=10000)
     seed: int | None = Field(default=None, ge=0, lt=2**31)
     content_selections: list[BatchContentSelectionInput] = Field(min_length=1)
-    prompt_preset_id: int = Field(gt=0)
+    prompt_template_version_id: int = Field(gt=0)
     demographics: list[DemographicInput] = Field(min_length=1)
     gpu_slots: list[GpuSlotName] = Field(min_length=1, max_length=2)
 
@@ -466,9 +457,9 @@ class BatchDraftFields(ApiModel):
             raise ValueError("Conflict direction does not match the category")
         if not validate_model_precision(self.model, self.precision):
             raise ValueError("LTX-2.5 requires BF16 or INT8 precision; older models require null precision")
-        identifiers = [value.content_plan_id for value in self.content_selections]
+        identifiers = [value.content_script_id for value in self.content_selections]
         if len(identifiers) != len(set(identifiers)):
-            raise ValueError("Duplicate content plan selection")
+            raise ValueError("Duplicate content script selection")
         if len(self.gpu_slots) != len(set(self.gpu_slots)):
             raise ValueError("Duplicate GPU selection")
         return self
@@ -495,17 +486,17 @@ class BilingualSelectionRead(ApiModel):
     revision: int
 
 
-class ContentPlanBackgroundRead(ApiModel):
-    content_plan_id: int
-    content_plan_revision: int
-    backgrounds: list[BilingualSelectionRead]
+class ContentScriptSceneRead(ApiModel):
+    content_script_id: int
+    content_script_revision: int
+    scenes: list[BilingualSelectionRead]
 
 
 class BatchContentSelectionRead(ApiModel):
-    content_plan: BilingualSelectionRead
+    content_script: BilingualSelectionRead
     mode: ContentMode
-    background_presets: list[BilingualSelectionRead]
-    compatible_backgrounds: list[BilingualSelectionRead]
+    scenes: list[BilingualSelectionRead]
+    compatible_scenes: list[BilingualSelectionRead]
 
 
 class BatchDraftRead(ApiModel):
@@ -520,7 +511,7 @@ class BatchDraftRead(ApiModel):
     seed: int
     status: BatchDraftStatus
     content_selections: list[BatchContentSelectionRead]
-    prompt_preset: SelectionRead
+    prompt_template_version: SelectionRead
     demographics: list[DemographicInput]
     gpu_slots: list[GpuSlotName]
     revision: int
@@ -543,9 +534,9 @@ class JobCancelRequest(ExpectedRevision):
 
 class BatchAllocationRead(ApiModel):
     sequence: int
-    content_plan: BilingualSelectionRead
-    prompt_preset: SelectionRead
-    background_preset: BilingualSelectionRead
+    content_script: BilingualSelectionRead
+    prompt_template_version: SelectionRead
+    scene: BilingualSelectionRead
     demographic: DemographicInput
     gpu_slot: GpuSlotName
     model: ModelName
@@ -555,7 +546,7 @@ class BatchAllocationRead(ApiModel):
     system_input: str
     user_input: str
     final_positive_prompt: str | None
-    final_negative_prompt: str
+    negative_prompt: str
 
 
 class BatchPreviewRead(ApiModel):
@@ -566,16 +557,17 @@ class BatchPreviewRead(ApiModel):
 
 
 class PromptPreviewRequest(ApiModel):
-    content_plan: SourceSelection
-    prompt_preset: SourceSelection
-    background_preset: SourceSelection
+    content_script: SourceSelection
+    prompt_template_version: SourceSelection
+    scene: SourceSelection
     demographic: DemographicInput
+    model: ModelName
 
 
 class PromptPreviewRead(ApiModel):
-    content_plan: BilingualSelectionRead
-    prompt_preset: SelectionRead
-    background_preset: BilingualSelectionRead
+    content_script: BilingualSelectionRead
+    prompt_template_version: SelectionRead
+    scene: BilingualSelectionRead
     category: Category
     conflict_direction: ConflictDirection | None
     demographic: DemographicInput
@@ -583,7 +575,7 @@ class PromptPreviewRead(ApiModel):
     system_input: str
     user_input: str
     final_positive_prompt: str | None
-    final_negative_prompt: str
+    negative_prompt: str
 
 
 class TestComparisonInput(ApiModel):
@@ -599,9 +591,9 @@ class TestComparisonInput(ApiModel):
 
 
 class TestRunCreate(ApiModel):
-    content_plan: SourceSelection
-    prompt_preset: SourceSelection
-    background_preset: SourceSelection
+    content_script: SourceSelection
+    prompt_template_version: SourceSelection
+    scene: SourceSelection
     demographic: DemographicInput
     seed: int | None = Field(default=None, ge=0, lt=2**31)
     comparisons: list[TestComparisonInput] = Field(min_length=1, max_length=2)
@@ -631,12 +623,12 @@ class SnapshotRead(ApiModel):
     sequence: int
     dataset_id: int | None
     dataset_revision: int | None
-    content_plan_id: int
-    content_plan_revision: int
-    prompt_preset_id: int
-    prompt_preset_revision: int
-    background_preset_id: int
-    background_preset_revision: int
+    content_script_id: int
+    content_script_revision: int
+    prompt_template_version_id: int
+    prompt_template_version_revision: int
+    scene_id: int
+    scene_revision: int
     policy_version: str
     category: Category
     conflict_direction: ConflictDirection | None
@@ -656,7 +648,7 @@ class SnapshotRead(ApiModel):
     derive_silent_primary: bool
     system_input: str
     user_input: str
-    final_negative_prompt: str
+    negative_prompt: str
     fixed_positive_prompt: str | None
     fixed_dialogue: str | None
     fixed_vt_text: str | None
@@ -674,7 +666,7 @@ class JobItemPromptResultRead(ApiModel):
     user_input: str
     raw_structured_response: str
     final_positive_prompt: str
-    final_negative_prompt: str
+    negative_prompt: str
     dialogue: str | None
     vt_text: str | None
     true_emotion_description: str
@@ -882,9 +874,9 @@ class SampleRead(ApiModel):
     actual_scene_summary: BilingualSelectionRead
     generation_compatibility: GenerationCompatibility
     gpu_slot: GpuSlotName
-    content_plan_id: int
-    content_plan_revision: int
-    prompt_preset_id: int
+    content_script_id: int
+    content_script_revision: int
+    prompt_template_version_id: int
     source_asset_id: int | None
     source_asset_url: str | None
     primary_asset_id: int
@@ -896,8 +888,8 @@ class SampleRead(ApiModel):
     true_emotion_description: str
     true_emotion: str
     apparent_emotion: str
-    content_plan_name_zh: str
-    content_plan_name_en: str
+    content_script_name_zh: str
+    content_script_name_en: str
     scene_zh: str
     scene_en: str
     trigger_event_zh: str

@@ -22,10 +22,10 @@ from backend.domain.schemas import (
     BatchPreviewRead,
     BatchPreviewRequest,
     BatchSubmitRequest,
-    ContentPlanCreate,
-    ContentPlanBackgroundRead,
-    ContentPlanRead,
-    ContentPlanUpdate,
+    ContentScriptCreate,
+    ContentScriptSceneRead,
+    ContentScriptRead,
+    ContentScriptUpdate,
     DatasetCreate,
     DatasetRead,
     DatasetUpdate,
@@ -38,9 +38,9 @@ from backend.domain.schemas import (
     JobSummaryRead,
     KeepTestResultRequest,
     PageRead,
-    PromptPresetCreate,
-    PromptPresetRead,
-    PromptPresetUpdate,
+    PromptTemplateVersionCreate,
+    PromptTemplateVersionRead,
+    PromptTemplateVersionVerify,
     PromptPreviewRead,
     PromptPreviewRequest,
     ReviewBatchCreate,
@@ -53,9 +53,9 @@ from backend.domain.schemas import (
     SampleClassificationUpdate,
     SampleRead,
     TestRunCreate,
-    VideoBackgroundPresetCreate,
-    VideoBackgroundPresetRead,
-    VideoBackgroundPresetUpdate,
+    SceneCreate,
+    SceneRead,
+    SceneUpdate,
 )
 from backend.api.gpu_contracts import GpuMemoryRead, GpuReleaseRequest, GpuSlotRead
 from backend.services.assets import AssetService
@@ -170,127 +170,137 @@ def delete_dataset(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/content-plans", response_model=PageRead[ContentPlanRead])
-def list_content_plans(
+@router.get("/content-scripts", response_model=PageRead[ContentScriptRead])
+def list_content_scripts(
     request: Request,
     page: int = Query(default=1, ge=1),
-) -> PageRead[ContentPlanRead]:
-    return catalog(request).list_content_plans(page)
+) -> PageRead[ContentScriptRead]:
+    return catalog(request).list_content_scripts(page)
 
 
-@router.post("/content-plans", response_model=ContentPlanRead, status_code=status.HTTP_201_CREATED)
-def create_content_plan(payload: ContentPlanCreate, request: Request) -> ContentPlanRead:
-    return catalog(request).create_content_plan(payload)
+@router.post("/content-scripts", response_model=ContentScriptRead, status_code=status.HTTP_201_CREATED)
+def create_content_script(payload: ContentScriptCreate, request: Request) -> ContentScriptRead:
+    return catalog(request).create_content_script(payload)
 
 
-@router.get("/content-plans/{content_id}", response_model=ContentPlanRead)
-def get_content_plan(content_id: int, request: Request) -> ContentPlanRead:
-    return catalog(request).get_content_plan(content_id)
+@router.get("/content-scripts/{content_id}", response_model=ContentScriptRead)
+def get_content_script(content_id: int, request: Request) -> ContentScriptRead:
+    return catalog(request).get_content_script(content_id)
 
 
-@router.patch("/content-plans/{content_id}", response_model=ContentPlanRead)
-def update_content_plan(content_id: int, payload: ContentPlanUpdate, request: Request) -> ContentPlanRead:
-    return catalog(request).update_content_plan(content_id, payload)
+@router.patch("/content-scripts/{content_id}", response_model=ContentScriptRead)
+def update_content_script(content_id: int, payload: ContentScriptUpdate, request: Request) -> ContentScriptRead:
+    return catalog(request).update_content_script(content_id, payload)
 
 
 @router.get(
-    "/content-plans/{content_id}/backgrounds",
-    response_model=ContentPlanBackgroundRead,
+    "/content-scripts/{content_id}/scenes",
+    response_model=ContentScriptSceneRead,
 )
-def get_content_backgrounds(
+def get_content_scenes(
     content_id: int,
     request: Request,
-) -> ContentPlanBackgroundRead:
-    return catalog(request).get_content_backgrounds(content_id)
+) -> ContentScriptSceneRead:
+    return catalog(request).get_content_scenes(content_id)
 
 
-@router.delete("/content-plans/{content_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_content_plan(
+@router.delete("/content-scripts/{content_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_content_script(
     content_id: int,
     request: Request,
     expected_revision: int = Query(alias="expectedRevision", ge=1),
 ) -> Response:
-    catalog(request).delete_content_plan(content_id, expected_revision)
+    catalog(request).delete_content_script(content_id, expected_revision)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/prompt-presets", response_model=PageRead[PromptPresetRead])
-def list_prompt_presets(
+@router.get("/prompt-template-versions", response_model=PageRead[PromptTemplateVersionRead])
+def list_prompt_template_versions(
     request: Request,
     page: int = Query(default=1, ge=1),
-) -> PageRead[PromptPresetRead]:
-    return catalog(request).list_prompt_presets(page)
-
-
-@router.post("/prompt-presets", response_model=PromptPresetRead, status_code=status.HTTP_201_CREATED)
-def create_prompt_preset(payload: PromptPresetCreate, request: Request) -> PromptPresetRead:
-    return catalog(request).create_prompt_preset(payload)
-
-
-@router.get("/prompt-presets/{preset_id}", response_model=PromptPresetRead)
-def get_prompt_preset(preset_id: int, request: Request) -> PromptPresetRead:
-    return catalog(request).get_prompt_preset(preset_id)
-
-
-@router.patch("/prompt-presets/{preset_id}", response_model=PromptPresetRead)
-def update_prompt_preset(preset_id: int, payload: PromptPresetUpdate, request: Request) -> PromptPresetRead:
-    return catalog(request).update_prompt_preset(preset_id, payload)
-
-
-@router.delete("/prompt-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_prompt_preset(
-    preset_id: int,
-    request: Request,
-    expected_revision: int = Query(alias="expectedRevision", ge=1),
-) -> Response:
-    catalog(request).delete_prompt_preset(preset_id, expected_revision)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get(
-    "/video-background-presets",
-    response_model=PageRead[VideoBackgroundPresetRead],
-)
-def list_background_presets(
-    request: Request,
-    page: int = Query(default=1, ge=1),
-) -> PageRead[VideoBackgroundPresetRead]:
-    return catalog(request).list_background_presets(page)
+) -> PageRead[PromptTemplateVersionRead]:
+    return catalog(request).list_prompt_template_versions(page)
 
 
 @router.post(
-    "/video-background-presets",
-    response_model=VideoBackgroundPresetRead,
+    "/prompt-template-versions",
+    response_model=PromptTemplateVersionRead,
     status_code=status.HTTP_201_CREATED,
 )
-def create_background_preset(
-    payload: VideoBackgroundPresetCreate,
+def create_prompt_template_version(
+    payload: PromptTemplateVersionCreate,
     request: Request,
-) -> VideoBackgroundPresetRead:
-    return catalog(request).create_background_preset(payload)
+) -> PromptTemplateVersionRead:
+    return catalog(request).create_prompt_template_version(payload)
 
 
-@router.get("/video-background-presets/{preset_id}", response_model=VideoBackgroundPresetRead)
-def get_background_preset(preset_id: int, request: Request) -> VideoBackgroundPresetRead:
-    return catalog(request).get_background_preset(preset_id)
+@router.get(
+    "/prompt-template-versions/{version_id}",
+    response_model=PromptTemplateVersionRead,
+)
+def get_prompt_template_version(
+    version_id: int,
+    request: Request,
+) -> PromptTemplateVersionRead:
+    return catalog(request).get_prompt_template_version(version_id)
 
 
-@router.patch("/video-background-presets/{preset_id}", response_model=VideoBackgroundPresetRead)
-def update_background_preset(
+@router.post(
+    "/prompt-template-versions/{version_id}/verify",
+    response_model=PromptTemplateVersionRead,
+)
+def verify_prompt_template_version(
+    version_id: int,
+    payload: PromptTemplateVersionVerify,
+    request: Request,
+) -> PromptTemplateVersionRead:
+    return catalog(request).verify_prompt_template_version(version_id, payload)
+
+
+@router.get(
+    "/scenes",
+    response_model=PageRead[SceneRead],
+)
+def list_scenes(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[SceneRead]:
+    return catalog(request).list_scenes(page)
+
+
+@router.post(
+    "/scenes",
+    response_model=SceneRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_scene(
+    payload: SceneCreate,
+    request: Request,
+) -> SceneRead:
+    return catalog(request).create_scene(payload)
+
+
+@router.get("/scenes/{preset_id}", response_model=SceneRead)
+def get_scene(preset_id: int, request: Request) -> SceneRead:
+    return catalog(request).get_scene(preset_id)
+
+
+@router.patch("/scenes/{preset_id}", response_model=SceneRead)
+def update_scene(
     preset_id: int,
-    payload: VideoBackgroundPresetUpdate,
+    payload: SceneUpdate,
     request: Request,
-) -> VideoBackgroundPresetRead:
-    return catalog(request).update_background_preset(preset_id, payload)
+) -> SceneRead:
+    return catalog(request).update_scene(preset_id, payload)
 
 
-@router.delete("/video-background-presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_background_preset(
+@router.delete("/scenes/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_scene(
     preset_id: int,
     request: Request,
     expected_revision: int = Query(alias="expectedRevision", ge=1),
 ) -> Response:
-    catalog(request).delete_background_preset(preset_id, expected_revision)
+    catalog(request).delete_scene(preset_id, expected_revision)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

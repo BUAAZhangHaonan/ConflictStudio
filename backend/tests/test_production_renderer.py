@@ -44,11 +44,11 @@ from backend.domain.schemas import (
     BatchDraftCreate,
     BatchContentSelectionInput,
     BatchSubmitRequest,
-    ContentPlanCreate,
+    ContentScriptCreate,
     DatasetCreate,
     DemographicInput,
-    PromptPresetCreate,
-    VideoBackgroundPresetCreate,
+    PromptTemplateVersionCreate,
+    SceneCreate,
 )
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
@@ -189,8 +189,8 @@ async def create_running_request(
     dataset = catalog.create_dataset(
         DatasetCreate(name="Renderer gateway", note="")
     )
-    background = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
+    background = catalog.create_scene(
+        SceneCreate(
             nameZh="私人办公室",
             nameEn="Private office",
             sceneZh="一间有一把椅子和一张书桌的私人办公室。",
@@ -205,8 +205,8 @@ async def create_running_request(
             framingEn="Use a static eye-level medium shot.",
         )
     )
-    content = catalog.create_content_plan(
-        ContentPlanCreate(
+    content = catalog.create_content_script(
+        ContentScriptCreate(
             nameZh="单人",
             nameEn="One subject",
             category=category,
@@ -224,18 +224,21 @@ async def create_running_request(
             contentRequirementsEn="Describe one adult responding alone in the room.",
             sceneSupplementZh="",
             sceneSupplementEn="",
-            backgroundPresetIds=[background.id],
+            sceneIds=[background.id],
         )
     )
-    preset = catalog.create_prompt_preset(
-        PromptPresetCreate(
+    preset = catalog.create_prompt_template_version(
+        PromptTemplateVersionCreate(
             name="Static portrait",
             category=category,
             styleGuidance="Use a static eye-level medium shot.",
-            finalRenderNegativeConstraints="subtitles, captions, distortion",
+            ltxNegativePrompt="subtitles, captions, distortion",
+            h3NegativePrompt="subtitles, captions, distortion",
+            version=1,
+            verificationStatus="Verified",
         )
     )
-    content = catalog.get_content_plan(content.id)
+    content = catalog.get_content_script(content.id)
     prompts = PromptService(UnconfiguredPromptModel())
     batches = BatchService(database, prompts, ReservationRenderer())  # type: ignore[arg-type]
     draft = batches.create_batch_draft(
@@ -248,11 +251,11 @@ async def create_running_request(
             seed=1208,
             contentSelections=[
                 BatchContentSelectionInput(
-                    contentPlanId=content.id,
-                    backgroundPresetIds=[background.id],
+                    contentScriptId=content.id,
+                    sceneIds=[background.id],
                 )
             ],
-            promptPresetId=preset.id,
+            promptTemplateVersionId=preset.id,
             demographics=[
                 DemographicInput(age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN)
             ],

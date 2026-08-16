@@ -561,8 +561,8 @@ def validate_generated_component(value: str, field_name: str) -> str:
     return value
 
 
-def validate_background_policy_text(value: str, field_name: str = "background") -> str:
-    """Validate one background-preset text field and return it unchanged."""
+def validate_scene_policy_text(value: str, field_name: str = "scene") -> str:
+    """Validate one shooting-scene text field and return it unchanged."""
 
     if not isinstance(value, str):
         raise TypeError(f"{field_name} must be a string")
@@ -594,9 +594,9 @@ def validate_background_policy_text(value: str, field_name: str = "background") 
     return value
 
 
-def validate_background_policy_fields(values: Mapping[str, str]) -> None:
+def validate_scene_policy_fields(values: Mapping[str, str]) -> None:
     for field_name, value in values.items():
-        validate_background_policy_text(value, field_name)
+        validate_scene_policy_text(value, field_name)
 
 
 def _validate_spoken_text(spoken_text: str, violations: list[str]) -> str:

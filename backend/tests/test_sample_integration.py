@@ -40,20 +40,20 @@ from backend.domain.models import (
     Asset,
     BatchDraft,
     BatchVideoInputSnapshot,
-    ContentPlan,
-    ContentPlanBackground,
+    ContentScript,
+    ContentScriptScene,
     Dataset,
     GenerationAttempt,
     Job,
     JobItem,
     JobItemPromptResult,
-    PromptPreset,
+    PromptTemplateVersion,
     RENDERER_PROFILE_VERSION,
     Sample,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
-    VideoBackgroundPreset,
+    Scene,
     utc_now,
 )
 
@@ -207,7 +207,7 @@ def create_api_sources(
     client: TestClient,
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
     background = client.post(
-        "/api/video-background-presets",
+        "/api/scenes",
         json={
             "nameZh": "私人办公室",
             "nameEn": "Private office",
@@ -224,7 +224,7 @@ def create_api_sources(
         },
     ).json()
     content = client.post(
-        "/api/content-plans",
+        "/api/content-scripts",
         json={
             "nameZh": "一致回应",
             "nameEn": "Aligned response",
@@ -243,16 +243,19 @@ def create_api_sources(
             "contentRequirementsEn": "One adult responds calmly to the current event.",
             "sceneSupplementZh": "",
             "sceneSupplementEn": "",
-            "backgroundPresetIds": [background["id"]],
+            "sceneIds": [background["id"]],
         },
     ).json()
     prompt = client.post(
-        "/api/prompt-presets",
+        "/api/prompt-template-versions",
         json={
             "name": "Natural shot",
             "category": "A-VA",
             "styleGuidance": "Use a static medium shot.",
-            "finalRenderNegativeConstraints": "subtitles, captions, distortion",
+            "ltxNegativePrompt": "subtitles, captions, distortion",
+            "h3NegativePrompt": "subtitles, captions, distortion",
+            "version": 1,
+            "verificationStatus": "Verified",
         },
     ).json()
     return content, prompt, background
@@ -266,15 +269,15 @@ def test_post_test_runs_creates_real_test_job_and_items(tmp_path: Path) -> None:
         response = client.post(
             "/api/test-runs",
             json={
-                "contentPlan": {
+                "contentScript": {
                     "id": content["id"],
                     "expectedRevision": content["revision"],
                 },
-                "promptPreset": {
+                "promptTemplateVersion": {
                     "id": prompt["id"],
                     "expectedRevision": prompt["revision"],
                 },
-                "backgroundPreset": {
+                "scene": {
                     "id": background["id"],
                     "expectedRevision": background["revision"],
                 },
@@ -314,15 +317,15 @@ def test_invalid_generative_prompt_creates_no_job_or_generation_records(
         response = client.post(
             "/api/test-runs",
             json={
-                "contentPlan": {
+                "contentScript": {
                     "id": content["id"],
                     "expectedRevision": content["revision"],
                 },
-                "promptPreset": {
+                "promptTemplateVersion": {
                     "id": prompt["id"],
                     "expectedRevision": prompt["revision"],
                 },
-                "backgroundPreset": {
+                "scene": {
                     "id": background["id"],
                     "expectedRevision": background["revision"],
                 },
@@ -376,15 +379,15 @@ def test_prompt_response_errors_keep_distinct_api_codes_and_safe_details(
         response = client.post(
             "/api/test-runs",
             json={
-                "contentPlan": {
+                "contentScript": {
                     "id": content["id"],
                     "expectedRevision": content["revision"],
                 },
-                "promptPreset": {
+                "promptTemplateVersion": {
                     "id": prompt["id"],
                     "expectedRevision": prompt["revision"],
                 },
-                "backgroundPreset": {
+                "scene": {
                     "id": background["id"],
                     "expectedRevision": background["revision"],
                 },
@@ -437,10 +440,10 @@ def test_historical_dirty_scene_is_blocked_before_prompt_generation(
         content, prompt, background = create_api_sources(client)
         with app.state.database.engine.begin() as connection:
             connection.exec_driver_sql(
-                "DROP TRIGGER reject_video_background_presets_update"
+                "DROP TRIGGER reject_scenes_update"
             )
             connection.exec_driver_sql(
-                "UPDATE video_background_presets "
+                "UPDATE scenes "
                 "SET participant_relationship_en = ? WHERE id = ?",
                 ("One other person remains off-frame.", int(background["id"])),
             )
@@ -449,15 +452,15 @@ def test_historical_dirty_scene_is_blocked_before_prompt_generation(
         response = client.post(
             "/api/test-runs",
             json={
-                "contentPlan": {
+                "contentScript": {
                     "id": content["id"],
                     "expectedRevision": content["revision"],
                 },
-                "promptPreset": {
+                "promptTemplateVersion": {
                     "id": prompt["id"],
                     "expectedRevision": prompt["revision"],
                 },
-                "backgroundPreset": {
+                "scene": {
                     "id": background["id"],
                     "expectedRevision": background["revision"],
                 },
@@ -504,7 +507,7 @@ def add_completed_result(
             purpose="Production",
             status=ResourceStatus.ACTIVE,
         )
-        content = ContentPlan(
+        content = ContentScript(
             id=content_id,
             name_zh="一致回应",
             name_zh_key="一致回应",
@@ -512,7 +515,7 @@ def add_completed_result(
             name_en_key="aligned response",
             category=Category.A_VA,
             mode=ContentMode.FIXED,
-            status=ContentStatus.ACTIVE,
+            status=ContentStatus.DRAFT,
             true_emotion="calm",
             apparent_emotion="calm",
             scene_zh="一间办公室。",
@@ -525,13 +528,16 @@ def add_completed_result(
             true_emotion_description="说话者保持平静。",
             base_video_prompt="An adult answers calmly.",
         )
-        prompt = PromptPreset(
+        prompt = PromptTemplateVersion(
             name="Natural",
             name_key="natural",
             category=Category.A_VA,
-            final_negative_prompt="subtitles",
+            version=1,
+            ltx_negative_prompt="subtitles",
+            h3_negative_prompt="subtitles",
+            verification_status="Verified",
         )
-        background = VideoBackgroundPreset(
+        background = Scene(
             id=actual_background_id,
             name_zh="办公室",
             name_zh_key="办公室",
@@ -545,7 +551,7 @@ def add_completed_result(
             registered_background_id is not None
             and registered_background_id != actual_background_id
         ):
-            registered_background = VideoBackgroundPreset(
+            registered_background = Scene(
                 id=registered_background_id,
                 name_zh="登记办公室",
                 name_zh_key="登记办公室",
@@ -560,12 +566,15 @@ def add_completed_result(
         session.flush()
         if register_background:
             session.add(
-                ContentPlanBackground(
-                    content_plan_id=content.id,
-                    background_preset_id=registered_background.id,
+                ContentScriptScene(
+                    content_script_id=content.id,
+                    scene_id=registered_background.id,
                     position=0,
                 )
             )
+            session.flush()
+            content.status = ContentStatus.ACTIVE
+            session.flush()
         draft = None
         if source is JobSource.PRODUCTION:
             draft = BatchDraft(
@@ -585,12 +594,12 @@ def add_completed_result(
             dataset_id=dataset.id if draft else None,
             dataset_revision=dataset.revision if draft else None,
             sequence=1,
-            content_plan_id=content.id,
-            content_plan_revision=content.revision,
-            prompt_preset_id=prompt.id,
-            prompt_preset_revision=prompt.revision,
-            background_preset_id=background.id,
-            background_preset_revision=background.revision,
+            content_script_id=content.id,
+            content_script_revision=content.revision,
+            prompt_template_version_id=prompt.id,
+            prompt_template_version_revision=prompt.revision,
+            scene_id=background.id,
+            scene_revision=background.revision,
             policy_version="test",
             category=Category.A_VA,
             age=25,
@@ -609,7 +618,7 @@ def add_completed_result(
             derive_silent_primary=False,
             system_input="system",
             user_input="user",
-            final_negative_prompt="subtitles",
+            negative_prompt="subtitles",
             fixed_positive_prompt="An adult answers calmly.",
             fixed_dialogue="我很好。",
             fixed_true_emotion_description="说话者保持平静。",
@@ -673,7 +682,7 @@ def add_completed_result(
                 user_input="user",
                 raw_structured_response="{}",
                 final_positive_prompt="An adult answers calmly.",
-                final_negative_prompt="subtitles",
+                negative_prompt="subtitles",
                 dialogue="我很好。",
                 true_emotion_description="说话者保持平静。",
             )

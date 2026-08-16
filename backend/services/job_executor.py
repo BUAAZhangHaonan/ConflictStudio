@@ -392,7 +392,7 @@ class JobExecutor:
                 fps=execution.fps,
                 frame_count=execution.frame_count,
                 positive_prompt=result.final_positive_prompt,
-                negative_prompt=result.final_negative_prompt,
+                negative_prompt=result.negative_prompt,
                 dialogue=result.dialogue,
                 vt_text=result.vt_text,
                 source_has_audio=execution.source_has_audio,
@@ -484,7 +484,7 @@ class JobExecutor:
             ethnicity=snapshot.ethnicity,
             system_input=snapshot.system_input,
             user_input=snapshot.user_input,
-            final_negative_prompt=snapshot.final_negative_prompt,
+            negative_prompt=snapshot.negative_prompt,
             fixed_output=fixed_output,
         )
 
@@ -505,7 +505,7 @@ class JobExecutor:
                     user_input=result.user_input,
                     raw_structured_response=result.raw_structured_response,
                     final_positive_prompt=result.final_positive_prompt,
-                    final_negative_prompt=result.final_negative_prompt,
+                    negative_prompt=result.negative_prompt,
                     dialogue=result.dialogue,
                     vt_text=result.vt_text,
                     true_emotion_description=result.true_emotion_description,

@@ -8,16 +8,18 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.adapters.database import Database
 from backend.adapters.llm import OpenAICompatiblePromptModel
-from backend.domain.enums import Category, ContentMode, ContentStatus, DatasetPurpose, Ethnicity, Gender, GpuSlotName, ModelName, ResourceStatus
-from backend.domain.models import BatchDraftContentSelection, ContentPlanBackground, Dataset
+from backend.domain.enums import Category, ContentMode, ContentStatus, DatasetPurpose, Ethnicity, Gender, GpuSlotName, ModelName, ResourceStatus, TemplateVersionStatus
+from backend.domain.models import BatchDraftScriptSelection, ContentScriptScene, Dataset, PromptTemplateVersion
 from backend.domain.schemas import (
     BatchContentSelectionInput,
     BatchDraftCreate,
-    ContentPlanCreate,
-    ContentPlanUpdate,
+    ContentScriptCreate,
+    ContentScriptUpdate,
     DemographicInput,
     DatasetUpdate,
-    VideoBackgroundPresetCreate,
+    SceneCreate,
+    PromptTemplateVersionCreate,
+    PromptTemplateVersionVerify,
 )
 from backend.services.batches import BatchService
 from backend.services.errors import ServiceError
@@ -25,9 +27,9 @@ from backend.services.prompts import PromptService
 from backend.tests.test_generation_services import _ConfiguredRendererGateway, fixed_resources
 
 
-def _generative_content(catalog, background_ids: list[int]) -> object:  # type: ignore[no-untyped-def]
-    return catalog.create_content_plan(
-        ContentPlanCreate(
+def _generative_content(catalog, scene_ids: list[int]) -> object:  # type: ignore[no-untyped-def]
+    return catalog.create_content_script(
+        ContentScriptCreate(
             nameZh="生成式回应",
             nameEn="Generative response",
             category=Category.A_VA,
@@ -45,7 +47,7 @@ def _generative_content(catalog, background_ids: list[int]) -> object:  # type: 
             contentRequirementsEn="Describe one adult giving a brief response.",
             sceneSupplementZh="",
             sceneSupplementEn="",
-            backgroundPresetIds=background_ids,
+            sceneIds=scene_ids,
         )
     )
 
@@ -53,35 +55,35 @@ def _generative_content(catalog, background_ids: list[int]) -> object:  # type: 
 def test_content_and_mapping_update_is_revisioned_atomic_and_database_constrained(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
-    catalog, _, content, _, background = fixed_resources(database)
+    catalog, _, content, _, scene = fixed_resources(database)
 
     with pytest.raises(ServiceError) as missing:
-        catalog.update_content_plan(
+        catalog.update_content_script(
             content.id,
-            ContentPlanUpdate(
+            ContentScriptUpdate(
                 expectedRevision=content.revision,
-                backgroundPresetIds=[99999],
+                sceneIds=[99999],
             ),
         )
     assert missing.value.status_code == 404
-    current = catalog.get_content_backgrounds(content.id)
-    assert current.content_plan_revision == content.revision
-    assert [row.id for row in current.backgrounds] == [background.id]
+    current = catalog.get_content_scenes(content.id)
+    assert current.content_script_revision == content.revision
+    assert [row.id for row in current.scenes] == [scene.id]
 
     with pytest.raises(ValidationError):
-        ContentPlanCreate(
+        ContentScriptCreate(
             **{
-                **content.model_dump(exclude={"id", "revision", "created_at", "updated_at", "background_preset_ids"}),
-                "backgroundPresetIds": [background.id, 99999],
+                **content.model_dump(exclude={"id", "revision", "created_at", "updated_at", "scene_ids"}),
+                "sceneIds": [scene.id, 99999],
             }
         )
 
     with pytest.raises(ServiceError) as stale:
-        catalog.update_content_plan(
+        catalog.update_content_script(
             content.id,
-            ContentPlanUpdate(
+            ContentScriptUpdate(
                 expectedRevision=content.revision + 1,
-                backgroundPresetIds=[background.id],
+                sceneIds=[scene.id],
             ),
         )
     assert stale.value.status_code == 409
@@ -89,9 +91,9 @@ def test_content_and_mapping_update_is_revisioned_atomic_and_database_constraine
     with pytest.raises(IntegrityError):
         with database.immediate_session() as session:
             session.add(
-                ContentPlanBackground(
-                    content_plan_id=content.id,
-                    background_preset_id=background.id,
+                ContentScriptScene(
+                    content_script_id=content.id,
+                    scene_id=scene.id,
                     position=1,
                 )
             )
@@ -99,21 +101,21 @@ def test_content_and_mapping_update_is_revisioned_atomic_and_database_constraine
     with pytest.raises(IntegrityError):
         with database.immediate_session() as session:
             session.add(
-                ContentPlanBackground(
-                    content_plan_id=99999,
-                    background_preset_id=background.id,
+                ContentScriptScene(
+                    content_script_id=99999,
+                    scene_id=scene.id,
                     position=0,
                 )
             )
             session.flush()
 
 
-def test_fixed_background_is_automatic_and_generative_uses_only_registered_choices(tmp_path: Path) -> None:
+def test_fixed_scene_is_automatic_and_generative_uses_only_registered_choices(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
-    catalog, dataset, fixed_content, preset, first = fixed_resources(database)
-    second = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
+    catalog, dataset, fixed_content, template_version, first = fixed_resources(database)
+    second = catalog.create_scene(
+        SceneCreate(
             nameZh="候车室",
             nameEn="Waiting room",
             sceneZh="一间安静的候车室。",
@@ -129,7 +131,7 @@ def test_fixed_background_is_automatic_and_generative_uses_only_registered_choic
         )
     )
     content = _generative_content(catalog, [first.id, second.id])
-    assert content.background_preset_ids == [first.id, second.id]
+    assert content.scene_ids == [first.id, second.id]
 
     service = BatchService(
         database,
@@ -142,7 +144,7 @@ def test_fixed_background_is_automatic_and_generative_uses_only_registered_choic
         model=ModelName.LTX,
         quantity=2,
         seed=7,
-        promptPresetId=preset.id,
+        promptTemplateVersionId=template_version.id,
         demographics=[
             DemographicInput(
                 age=25,
@@ -155,35 +157,35 @@ def test_fixed_background_is_automatic_and_generative_uses_only_registered_choic
     fixed = service.create_batch_draft(
         BatchDraftCreate(
             contentSelections=[
-                BatchContentSelectionInput(contentPlanId=fixed_content.id)
+                BatchContentSelectionInput(contentScriptId=fixed_content.id)
             ],
             **common,
         )
     )
     fixed_preview = asyncio.run(service.preview_batch(fixed.id, fixed.revision))
-    assert {row.background_preset.id for row in fixed_preview.allocations} == {first.id}
+    assert {row.scene.id for row in fixed_preview.allocations} == {first.id}
 
     generative = service.create_batch_draft(
         BatchDraftCreate(
             contentSelections=[
                 BatchContentSelectionInput(
-                    contentPlanId=content.id,
-                    backgroundPresetIds=[first.id, second.id],
+                    contentScriptId=content.id,
+                    sceneIds=[first.id, second.id],
                 )
             ],
             **common,
         )
     )
     preview = asyncio.run(service.preview_batch(generative.id, generative.revision))
-    assert [row.background_preset.id for row in preview.allocations] == [first.id, second.id]
+    assert [row.scene.id for row in preview.allocations] == [first.id, second.id]
 
     with pytest.raises(ServiceError) as fixed_explicit:
         service.create_batch_draft(
             BatchDraftCreate(
                 contentSelections=[
                     BatchContentSelectionInput(
-                        contentPlanId=fixed_content.id,
-                        backgroundPresetIds=[first.id],
+                        contentScriptId=fixed_content.id,
+                        sceneIds=[first.id],
                     )
                 ],
                 **common,
@@ -195,15 +197,15 @@ def test_fixed_background_is_automatic_and_generative_uses_only_registered_choic
         service.create_batch_draft(
             BatchDraftCreate(
                 contentSelections=[
-                    BatchContentSelectionInput(contentPlanId=content.id)
+                    BatchContentSelectionInput(contentScriptId=content.id)
                 ],
                 **common,
             )
         )
     assert generative_empty.value.status_code == 422
 
-    third = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
+    third = catalog.create_scene(
+        SceneCreate(
             nameZh="会议室",
             nameEn="Meeting room",
             sceneZh="一间小会议室。",
@@ -223,8 +225,8 @@ def test_fixed_background_is_automatic_and_generative_uses_only_registered_choic
             BatchDraftCreate(
                 contentSelections=[
                     BatchContentSelectionInput(
-                        contentPlanId=content.id,
-                        backgroundPresetIds=[third.id],
+                        contentScriptId=content.id,
+                        sceneIds=[third.id],
                     )
                 ],
                 **common,
@@ -233,12 +235,12 @@ def test_fixed_background_is_automatic_and_generative_uses_only_registered_choic
     assert incompatible.value.status_code == 422
 
 
-def test_mode_switch_and_background_mapping_commit_together(tmp_path: Path) -> None:
+def test_mode_switch_and_scene_mapping_commit_together(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
     catalog, _, _, _, first = fixed_resources(database)
-    second = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
+    second = catalog.create_scene(
+        SceneCreate(
             nameZh="第二场景",
             nameEn="Second scene",
             sceneZh="一间安静的候车室。",
@@ -256,53 +258,53 @@ def test_mode_switch_and_background_mapping_commit_together(tmp_path: Path) -> N
     content = _generative_content(catalog, [first.id, second.id])
 
     with pytest.raises(ServiceError) as invalid:
-        catalog.update_content_plan(
+        catalog.update_content_script(
             content.id,
-            ContentPlanUpdate(
+            ContentScriptUpdate(
                 expectedRevision=content.revision,
                 mode=ContentMode.FIXED,
                 baseVideoPrompt="An adult answers in a quiet room.",
                 dialogue="我知道了。",
                 trueEmotionDescription="说话内容和可见表现保持一致。",
-                backgroundPresetIds=[first.id, second.id],
+                sceneIds=[first.id, second.id],
             ),
         )
     assert invalid.value.status_code == 422
-    unchanged = catalog.get_content_plan(content.id)
+    unchanged = catalog.get_content_script(content.id)
     assert unchanged.mode is ContentMode.GENERATIVE
     assert unchanged.revision == content.revision
-    assert unchanged.background_preset_ids == [first.id, second.id]
+    assert unchanged.scene_ids == [first.id, second.id]
 
-    fixed = catalog.update_content_plan(
+    fixed = catalog.update_content_script(
         content.id,
-        ContentPlanUpdate(
+        ContentScriptUpdate(
             expectedRevision=content.revision,
             mode=ContentMode.FIXED,
             baseVideoPrompt="An adult answers in a quiet room.",
             dialogue="我知道了。",
             trueEmotionDescription="说话内容和可见表现保持一致。",
-            backgroundPresetIds=[first.id],
+            sceneIds=[first.id],
         ),
     )
     assert fixed.mode is ContentMode.FIXED
-    assert fixed.background_preset_ids == [first.id]
+    assert fixed.scene_ids == [first.id]
 
-    generative = catalog.update_content_plan(
+    generative = catalog.update_content_script(
         content.id,
-        ContentPlanUpdate(
+        ContentScriptUpdate(
             expectedRevision=fixed.revision,
             mode=ContentMode.GENERATIVE,
-            backgroundPresetIds=[first.id, second.id],
+            sceneIds=[first.id, second.id],
         ),
     )
     assert generative.mode is ContentMode.GENERATIVE
-    assert generative.background_preset_ids == [first.id, second.id]
+    assert generative.scene_ids == [first.id, second.id]
 
 
 def test_formal_batch_rejects_inactive_and_nonformal_datasets(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
-    catalog, dataset, content, preset, _ = fixed_resources(database)
+    catalog, dataset, content, template_version, _ = fixed_resources(database)
     service = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("test")),
@@ -314,8 +316,8 @@ def test_formal_batch_rejects_inactive_and_nonformal_datasets(tmp_path: Path) ->
         model=ModelName.LTX,
         quantity=1,
         seed=7,
-        contentSelections=[BatchContentSelectionInput(contentPlanId=content.id)],
-        promptPresetId=preset.id,
+        contentSelections=[BatchContentSelectionInput(contentScriptId=content.id)],
+        promptTemplateVersionId=template_version.id,
         demographics=[
             DemographicInput(
                 age=25,
@@ -347,7 +349,7 @@ def test_formal_batch_rejects_inactive_and_nonformal_datasets(tmp_path: Path) ->
 def test_incomplete_migrated_draft_can_be_reopened_but_not_previewed(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
-    _, dataset, content, preset, _ = fixed_resources(database)
+    _, dataset, content, template_version, _ = fixed_resources(database)
     service = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("test")),
@@ -360,8 +362,8 @@ def test_incomplete_migrated_draft_can_be_reopened_but_not_previewed(tmp_path: P
             model=ModelName.LTX,
             quantity=1,
             seed=7,
-            contentSelections=[BatchContentSelectionInput(contentPlanId=content.id)],
-            promptPresetId=preset.id,
+            contentSelections=[BatchContentSelectionInput(contentScriptId=content.id)],
+            promptTemplateVersionId=template_version.id,
             demographics=[
                 DemographicInput(
                     age=25,
@@ -374,8 +376,8 @@ def test_incomplete_migrated_draft_can_be_reopened_but_not_previewed(tmp_path: P
     )
     with database.immediate_session() as session:
         session.exec(
-            delete(BatchDraftContentSelection).where(
-                BatchDraftContentSelection.batch_draft_id == draft.id
+            delete(BatchDraftScriptSelection).where(
+                BatchDraftScriptSelection.batch_draft_id == draft.id
             )
         )
 
@@ -384,3 +386,66 @@ def test_incomplete_migrated_draft_can_be_reopened_but_not_previewed(tmp_path: P
     with pytest.raises(ServiceError, match="incomplete source selections") as incomplete:
         asyncio.run(service.preview_batch(draft.id, reopened.revision))
     assert incomplete.value.status_code == 409
+
+
+def test_template_versions_are_immutable_and_formal_batches_require_verified(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    catalog, dataset, content, _, _ = fixed_resources(database)
+    draft_version = catalog.create_prompt_template_version(
+        PromptTemplateVersionCreate(
+            name="Natural Interior",
+            category=Category.A_VA,
+            version=2,
+            styleGuidance="Use restrained natural performance.",
+            positiveExamples=["Keep behavior visible."],
+            negativeExamples=["Do not name emotions."],
+            ltxNegativePrompt="subtitles, captions",
+            h3NegativePrompt="subtitles, captions, visual artifacts",
+            verificationStatus=TemplateVersionStatus.DRAFT,
+        )
+    )
+    service = BatchService(
+        database,
+        PromptService(OpenAICompatiblePromptModel("test")),
+        _ConfiguredRendererGateway(),
+    )
+    payload = BatchDraftCreate(
+        targetDatasetId=dataset.id,
+        category=Category.A_VA,
+        model=ModelName.LTX,
+        quantity=1,
+        seed=7,
+        contentSelections=[
+            BatchContentSelectionInput(contentScriptId=content.id)
+        ],
+        promptTemplateVersionId=draft_version.id,
+        demographics=[
+            DemographicInput(
+                age=25,
+                gender=Gender.FEMALE,
+                ethnicity=Ethnicity.EAST_ASIAN,
+            )
+        ],
+        gpuSlots=[GpuSlotName.GPU0],
+    )
+    with pytest.raises(ServiceError) as unverified:
+        service.create_batch_draft(payload)
+    assert unverified.value.status_code == 422
+
+    verified = catalog.verify_prompt_template_version(
+        draft_version.id,
+        PromptTemplateVersionVerify(expectedRevision=draft_version.revision),
+    )
+    assert verified.verification_status is TemplateVersionStatus.VERIFIED
+    created = service.create_batch_draft(payload)
+    assert created.prompt_template_version.id == verified.id
+
+    with pytest.raises(IntegrityError):
+        with database.immediate_session() as session:
+            row = session.get(PromptTemplateVersion, verified.id)
+            assert row is not None
+            row.style_instruction = "Changed after verification"
+            session.flush()

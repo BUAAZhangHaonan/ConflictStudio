@@ -7,11 +7,11 @@ from sqlmodel import Session, select
 from backend.domain.enums import ContentMode, GenerationCompatibility
 from backend.domain.models import (
     BatchVideoInputSnapshot,
-    ContentPlan,
-    ContentPlanBackground,
+    ContentScript,
+    ContentScriptScene,
     JobItem,
     Sample,
-    VideoBackgroundPreset,
+    Scene,
 )
 
 from .errors import state_conflict
@@ -20,8 +20,8 @@ from .errors import state_conflict
 @dataclass(frozen=True)
 class GenerationCompatibilityResult:
     snapshot: BatchVideoInputSnapshot
-    content: ContentPlan
-    scene: VideoBackgroundPreset
+    content: ContentScript
+    scene: Scene
     status: GenerationCompatibility
 
 
@@ -37,18 +37,18 @@ def generation_compatibility(
     snapshot = session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
     if snapshot is None:
         raise state_conflict("sample", sample.id, "The sample generation input does not exist")
-    content = session.get(ContentPlan, snapshot.content_plan_id)
-    scene = session.get(VideoBackgroundPreset, snapshot.background_preset_id)
+    content = session.get(ContentScript, snapshot.content_script_id)
+    scene = session.get(Scene, snapshot.scene_id)
     if content is None or scene is None:
         raise state_conflict("sample", sample.id, "The sample generation sources do not exist")
 
     mappings = session.exec(
-        select(ContentPlanBackground)
-        .where(ContentPlanBackground.content_plan_id == snapshot.content_plan_id)
-        .order_by(ContentPlanBackground.position)
+        select(ContentScriptScene)
+        .where(ContentScriptScene.content_script_id == snapshot.content_script_id)
+        .order_by(ContentScriptScene.position)
     ).all()
     scene_is_mapped = any(
-        mapping.background_preset_id == snapshot.background_preset_id
+        mapping.scene_id == snapshot.scene_id
         for mapping in mappings
     )
     fixed_source_matches = content.mode is not ContentMode.FIXED or (

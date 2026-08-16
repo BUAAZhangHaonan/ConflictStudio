@@ -43,12 +43,12 @@ from backend.domain.schemas import (
     BatchDraftCreate,
     BatchContentSelectionInput,
     BatchSubmitRequest,
-    ContentPlanCreate,
+    ContentScriptCreate,
     DatasetCreate,
     DemographicInput,
     JobCancelRequest,
-    PromptPresetCreate,
-    VideoBackgroundPresetCreate,
+    PromptTemplateVersionCreate,
+    SceneCreate,
 )
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
@@ -202,8 +202,8 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
     dataset = catalog.create_dataset(
         DatasetCreate(name=f"Production {suffix}", note="")
     )
-    background = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
+    background = catalog.create_scene(
+        SceneCreate(
             nameZh=f"背景 {suffix}",
             nameEn=f"Background {suffix}",
             sceneZh="一间有一把椅子和一张书桌的私人办公室。",
@@ -218,8 +218,8 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
             framingEn="Use a static eye-level medium shot.",
         )
     )
-    content = catalog.create_content_plan(
-        ContentPlanCreate(
+    content = catalog.create_content_script(
+        ContentScriptCreate(
             nameZh=f"内容 {suffix}",
             nameEn=f"Content {suffix}",
             category=Category.A_VA,
@@ -237,15 +237,18 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
             contentRequirementsEn="Describe one adult answering a short question in the room.",
             sceneSupplementZh="",
             sceneSupplementEn="",
-            backgroundPresetIds=[background.id],
+            sceneIds=[background.id],
         )
     )
-    preset = catalog.create_prompt_preset(
-        PromptPresetCreate(
+    preset = catalog.create_prompt_template_version(
+        PromptTemplateVersionCreate(
             name=f"Preset {suffix}",
             category=Category.A_VA,
             styleGuidance="Use restrained movement and a static medium shot.",
-            finalRenderNegativeConstraints="subtitles, captions, distortion, exaggerated movement",
+            ltxNegativePrompt="subtitles, captions, distortion, exaggerated movement",
+            h3NegativePrompt="subtitles, captions, distortion, exaggerated movement",
+            version=1,
+            verificationStatus="Verified",
         )
     )
     return dataset, content, preset, background
@@ -269,11 +272,11 @@ def create_draft(
             seed=1208,
             contentSelections=[
                 BatchContentSelectionInput(
-                    contentPlanId=content.id,
-                    backgroundPresetIds=[background.id],
+                    contentScriptId=content.id,
+                    sceneIds=[background.id],
                 )
             ],
-            promptPresetId=preset.id,
+            promptTemplateVersionId=preset.id,
             demographics=[
                 DemographicInput(
                     age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
@@ -490,7 +493,7 @@ def test_concurrent_prompt_generation_releases_database_transactions(
                 )
             )
             assert created.name == "Catalog write during prompt generation"
-            assert catalog.list_content_plans(1).total == 2
+            assert catalog.list_content_scripts(1).total == 2
             model.release.set()
             completed = await asyncio.gather(
                 wait_for_status(batches, first_job.id, {JobStatus.COMPLETED}),

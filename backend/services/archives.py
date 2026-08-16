@@ -288,11 +288,11 @@ class ArchiveService:
             "trueEmotion": sample.true_emotion,
             "apparentEmotion": sample.apparent_emotion,
             "trueEmotionDescription": sample.true_emotion_description,
-            "contentPlan": {
-                "id": sample.content_plan_id,
-                "revision": sample.content_plan_revision,
-                "nameZh": sample.content_plan_name_zh,
-                "nameEn": sample.content_plan_name_en,
+            "contentScript": {
+                "id": sample.content_script_id,
+                "revision": sample.content_script_revision,
+                "nameZh": sample.content_script_name_zh,
+                "nameEn": sample.content_script_name_en,
                 "sceneZh": sample.scene_zh,
                 "sceneEn": sample.scene_en,
                 "triggerEventZh": sample.trigger_event_zh,

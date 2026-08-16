@@ -14,9 +14,10 @@ from backend.domain.enums import (
     ContentStatus,
     Ethnicity,
     Gender,
+    ModelName,
     ResourceStatus,
 )
-from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
+from backend.domain.models import ContentScript, PromptTemplateVersion, Scene
 from backend.domain.prompt_policy import (
     ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX,
     COMPONENT_WORD_LIMITS,
@@ -24,7 +25,7 @@ from backend.domain.prompt_policy import (
     PromptPolicyViolation,
     count_english_words,
     direction_rule,
-    validate_background_policy_text,
+    validate_scene_policy_text,
     validate_generated_component,
     validate_final_positive_prompt,
 )
@@ -133,7 +134,7 @@ def prompt_context(
     ethnicity: Ethnicity = Ethnicity.EAST_ASIAN,
 ) -> PromptContext:
     is_va = category in {Category.A_VA, Category.C_VA}
-    content = ContentPlan(
+    content = ContentScript(
         id=content_id,
         name_zh="严格提示词",
         name_zh_key="严格提示词",
@@ -164,15 +165,16 @@ def prompt_context(
         scene_supplement_zh="",
         scene_supplement_en="",
     )
-    preset = PromptPreset(
+    preset = PromptTemplateVersion(
         name="Natural camera",
         name_key="natural camera",
         category=category,
         style_instruction="Use restrained natural performance and a static close-up.",
-        final_negative_prompt="subtitles, captions, distorted face",
+        ltx_negative_prompt="subtitles, captions, distorted face",
+        h3_negative_prompt="subtitles, captions, distorted face",
         status=ResourceStatus.ACTIVE,
     )
-    background = VideoBackgroundPreset(
+    background = Scene(
         name_zh="私人办公室",
         name_zh_key="私人办公室",
         name_en="Private office",
@@ -191,13 +193,14 @@ def prompt_context(
     )
     return PromptContext(
         content=content,
-        preset=preset,
+        template_version=preset,
         positive_examples=[],
         negative_examples=[],
-        background=background,
+        scene=background,
         age=25,
         gender=gender,
         ethnicity=ethnicity,
+        model=ModelName.LTX,
     )
 
 
@@ -281,7 +284,7 @@ def test_strict_components_are_assembled_in_verified_order() -> None:
         assert result.final_positive_prompt.count(
             str(values[_component_alias(field_name)])
         ) == 1
-    assert result.final_negative_prompt == "subtitles, captions, distorted face"
+    assert result.negative_prompt == "subtitles, captions, distorted face"
     assert "Do not return positivePrompt" in prepared.user_input
 
 
@@ -633,7 +636,7 @@ def test_final_policy_rejects_repeated_or_unquoted_spoken_text() -> None:
         (46, Category.A_VA, None),
     ],
 )
-def test_required_content_plans_can_prepare(
+def test_required_content_scripts_can_prepare(
     content_id: int,
     category: Category,
     direction: ConflictDirection | None,
@@ -702,12 +705,12 @@ def test_background_policy_rejects_person_music_emotion_internal_and_protocol_co
     value: str,
 ) -> None:
     with pytest.raises(PromptPolicyViolation):
-        validate_background_policy_text(value, "scene")
+        validate_scene_policy_text(value, "scene")
 
 
 def test_background_policy_keeps_valid_text_unchanged() -> None:
     value = "Low room tone and steady ventilation remain audible."
-    assert validate_background_policy_text(value, "ambientAudio") is value
+    assert validate_scene_policy_text(value, "ambientAudio") is value
 
 
 @pytest.mark.parametrize(
@@ -718,13 +721,13 @@ def test_background_policy_keeps_valid_text_unchanged() -> None:
     ],
 )
 def test_background_policy_allows_direct_camera_address(value: str) -> None:
-    assert validate_background_policy_text(value, "framingEn") is value
+    assert validate_scene_policy_text(value, "framingEn") is value
 
 
 @pytest.mark.parametrize("mode", [ContentMode.GENERATIVE, ContentMode.FIXED])
 def test_prepare_revalidates_historical_background_text(mode: ContentMode) -> None:
     context = prompt_context(mode=mode, base_video_prompt=FIXED_PROMPT)
-    context.background.participant_relationship_en = (
+    context.scene.participant_relationship_en = (
         "One other person remains off frame."
     )
 
@@ -733,4 +736,4 @@ def test_prepare_revalidates_historical_background_text(mode: ContentMode) -> No
 
     assert error.value.status_code == 422
     assert error.value.code == "validation_error"
-    assert error.value.details["fields"][0]["path"] == "backgroundPreset"
+    assert error.value.details["fields"][0]["path"] == "scene"

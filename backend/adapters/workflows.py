@@ -104,19 +104,19 @@ class Ltx23WorkflowBuilder:
         self,
         *,
         final_positive_prompt: str,
-        final_negative_prompt: str,
+        negative_prompt: str,
         seed: int,
         job_id: int,
         sequence: int,
     ) -> dict[str, dict[str, Any]]:
         _require_prompt(final_positive_prompt, "final_positive_prompt")
-        _require_prompt(final_negative_prompt, "final_negative_prompt")
+        _require_prompt(negative_prompt, "negative_prompt")
         _require_integer(seed, "seed", minimum=0, maximum=MAX_SEED)
         prefix = _output_prefix(job_id, sequence)
 
         workflow = copy.deepcopy(self._template)
         workflow["enc_pos"]["inputs"]["text"] = final_positive_prompt
-        workflow["enc_neg"]["inputs"]["text"] = final_negative_prompt
+        workflow["enc_neg"]["inputs"]["text"] = negative_prompt
         workflow["noise"]["inputs"]["noise_seed"] = seed
         workflow["empty_video"]["inputs"].update(width=1344, height=768, length=121)
         workflow["empty_audio"]["inputs"].update(frames_number=121, frame_rate=24)
@@ -148,7 +148,7 @@ class Ltx25WorkflowBuilder:
         *,
         precision: Precision,
         final_positive_prompt: str,
-        final_negative_prompt: str,
+        negative_prompt: str,
         seed: int,
         job_id: int,
         sequence: int,
@@ -156,12 +156,12 @@ class Ltx25WorkflowBuilder:
         if precision not in self._templates:
             raise ValueError("LTX-2.5 requires BF16 or INT8 precision")
         _require_prompt(final_positive_prompt, "final_positive_prompt")
-        _require_prompt(final_negative_prompt, "final_negative_prompt")
+        _require_prompt(negative_prompt, "negative_prompt")
         _require_integer(seed, "seed", minimum=0, maximum=MAX_SEED)
 
         workflow = copy.deepcopy(self._templates[precision])
         workflow["5508"]["inputs"]["value"] = final_positive_prompt
-        workflow["5509"]["inputs"]["value"] = final_negative_prompt
+        workflow["5509"]["inputs"]["value"] = negative_prompt
         workflow["5516:4832"]["inputs"]["noise_seed"] = seed
         workflow["5014:4988"]["inputs"]["value"] = LTX25_FRAME_COUNT
         workflow["5511"]["inputs"]["value"] = LTX25_FPS
@@ -183,21 +183,21 @@ class H3WorkflowBuilder:
         self,
         *,
         final_positive_prompt: str,
-        final_negative_prompt: str,
+        negative_prompt: str,
         seed: int,
         job_id: int,
         sequence: int,
     ) -> dict[str, dict[str, Any]]:
         _require_prompt(final_positive_prompt, "final_positive_prompt")
-        _require_prompt(final_negative_prompt, "final_negative_prompt")
+        _require_prompt(negative_prompt, "negative_prompt")
         _require_integer(seed, "seed", minimum=0, maximum=MAX_SEED)
         prefix = _output_prefix(job_id, sequence)
 
         prompt = final_positive_prompt
-        if final_negative_prompt != "":
+        if negative_prompt != "":
             prompt = (
                 f"{prompt}\n\n"
-                f"{H3_NEGATIVE_PROMPT_SENTENCE.format(negative_prompt=final_negative_prompt)}"
+                f"{H3_NEGATIVE_PROMPT_SENTENCE.format(negative_prompt=negative_prompt)}"
             )
 
         workflow = copy.deepcopy(self._template)

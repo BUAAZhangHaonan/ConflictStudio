@@ -42,15 +42,15 @@ from backend.domain.schemas import (
     BatchDraftCreate,
     BatchSubmitRequest,
     BatchContentSelectionInput,
-    ContentPlanCreate,
+    ContentScriptCreate,
     DatasetCreate,
     DatasetUpdate,
     DemographicInput,
-    PromptPresetCreate,
+    PromptTemplateVersionCreate,
     SourceSelection,
     TestComparisonInput as ComparisonInput,
     TestRunCreate as RunCreate,
-    VideoBackgroundPresetCreate,
+    SceneCreate,
 )
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
@@ -160,8 +160,8 @@ def fixed_resources(
     dataset = catalog.create_dataset(
         DatasetCreate(name="正式生成集", note="第一批真实生成")
     )
-    background = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
+    background = catalog.create_scene(
+        SceneCreate(
             nameZh="安静办公室",
             nameEn="Quiet office",
             sceneZh="一间有书桌和中性墙面的小型私人办公室。",
@@ -176,8 +176,8 @@ def fixed_resources(
             framingEn="Static eye-level medium shot.",
         )
     )
-    content = catalog.create_content_plan(
-        ContentPlanCreate(
+    content = catalog.create_content_script(
+        ContentScriptCreate(
             nameZh="克制回应",
             nameEn="Restrained response",
             category=Category.A_VA,
@@ -202,11 +202,11 @@ def fixed_resources(
             contentRequirementsEn="",
             sceneSupplementZh="",
             sceneSupplementEn="",
-            backgroundPresetIds=[background.id],
+            sceneIds=[background.id],
         )
     )
-    preset = catalog.create_prompt_preset(
-        PromptPresetCreate(
+    preset = catalog.create_prompt_template_version(
+        PromptTemplateVersionCreate(
             name="Natural Interior",
             category=Category.A_VA,
             styleGuidance="Use restrained natural performance and a static medium shot.",
@@ -214,7 +214,10 @@ def fixed_resources(
                 "Observable behavior is specific and physically plausible."
             ],
             negativeExamples=["Do not name the target emotion."],
-            finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
+            ltxNegativePrompt="subtitles, captions, exaggerated acting, camera shake",
+            h3NegativePrompt="subtitles, captions, exaggerated acting, camera shake",
+            version=1,
+            verificationStatus="Verified",
         )
     )
     return catalog, dataset, content, preset, background
@@ -240,9 +243,9 @@ def make_batch(
             quantity=quantity,
             seed=1208,
             contentSelections=[
-                BatchContentSelectionInput(contentPlanId=content.id)
+                BatchContentSelectionInput(contentScriptId=content.id)
             ],
-            promptPresetId=preset.id,
+            promptTemplateVersionId=preset.id,
             demographics=[
                 DemographicInput(
                     age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
@@ -318,9 +321,9 @@ def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -
     live = asyncio.run(batches.list_gpu_slots())
     revisions = {value.slot: value.revision for value in live}
     payload = RunCreate(
-        contentPlan=SourceSelection(id=content.id, expectedRevision=content.revision),
-        promptPreset=SourceSelection(id=preset.id, expectedRevision=preset.revision),
-        backgroundPreset=SourceSelection(
+        contentScript=SourceSelection(id=content.id, expectedRevision=content.revision),
+        promptTemplateVersion=SourceSelection(id=preset.id, expectedRevision=preset.revision),
+        scene=SourceSelection(
             id=background.id, expectedRevision=background.revision
         ),
         demographic=DemographicInput(
@@ -355,7 +358,7 @@ def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -
     assert [item.input.precision for item in items] == [Precision.BF16, None]
     assert {item.input.seed for item in items} == {77}
     assert len({item.input.fixed_positive_prompt for item in items}) == 1
-    assert len({item.input.final_negative_prompt for item in items}) == 1
+    assert len({item.input.negative_prompt for item in items}) == 1
 
 
 def test_serial_test_requires_switch_confirmation_for_distinct_profiles(
@@ -372,11 +375,11 @@ def test_serial_test_requires_switch_confirmation_for_distinct_profiles(
     live = asyncio.run(batches.list_gpu_slots())
     revision = next(value.revision for value in live if value.slot is GpuSlotName.GPU0)
     values = {
-        "contentPlan": SourceSelection(
+        "contentScript": SourceSelection(
             id=content.id, expectedRevision=content.revision
         ),
-        "promptPreset": SourceSelection(id=preset.id, expectedRevision=preset.revision),
-        "backgroundPreset": SourceSelection(
+        "promptTemplateVersion": SourceSelection(id=preset.id, expectedRevision=preset.revision),
+        "scene": SourceSelection(
             id=background.id, expectedRevision=background.revision
         ),
         "demographic": DemographicInput(
@@ -604,7 +607,7 @@ def test_catalog_persists_records_and_rejects_stale_revision(tmp_path: Path) -> 
     assert error.value.code == "revision_conflict"
 
     with pytest.raises(ServiceError) as delete_error:
-        catalog.delete_content_plan(content.id, content.revision)
+        catalog.delete_content_script(content.id, content.revision)
     assert delete_error.value.code == "state_conflict"
 
     reopened = Database(tmp_path)
@@ -619,25 +622,26 @@ def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) ->
     _, _, content_read, preset_read, background_read = fixed_resources(database)
     with database.read_session() as session:
         from backend.domain.models import (
-            ContentPlan,
-            PromptPreset,
-            VideoBackgroundPreset,
+            ContentScript,
+            PromptTemplateVersion,
+            Scene,
         )
 
-        content = session.get(ContentPlan, content_read.id)
-        preset = session.get(PromptPreset, preset_read.id)
-        background = session.get(VideoBackgroundPreset, background_read.id)
+        content = session.get(ContentScript, content_read.id)
+        preset = session.get(PromptTemplateVersion, preset_read.id)
+        background = session.get(Scene, background_read.id)
         service = PromptService(OpenAICompatiblePromptModel("test"))
         prepared = service.prepare(
             PromptContext(
                 content=content,
-                preset=preset,
+                template_version=preset,
                 positive_examples=preset_read.positive_examples,
                 negative_examples=preset_read.negative_examples,
-                background=background,
+                scene=background,
                 age=25,
                 gender=Gender.FEMALE,
                 ethnicity=Ethnicity.EAST_ASIAN,
+                model=ModelName.LTX,
             )
         )
     result = asyncio.run(service.complete(prepared, Category.A_VA))
@@ -649,7 +653,7 @@ def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) ->
     assert "A small private office" not in result.final_positive_prompt
     assert result.dialogue == "我没事，只是需要一点时间。"
     assert (
-        result.final_negative_prompt
+        result.negative_prompt
         == "subtitles, captions, exaggerated acting, camera shake"
     )
 
@@ -658,8 +662,8 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     database = Database(tmp_path)
     database.initialize()
     catalog, _, _, _, background_read = fixed_resources(database)
-    content_read = catalog.create_content_plan(
-        ContentPlanCreate(
+    content_read = catalog.create_content_script(
+        ContentScriptCreate(
             nameZh="生成式冲突",
             nameEn="Generative conflict",
             category=Category.C_VA,
@@ -678,18 +682,21 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
             contentRequirementsEn="Create subtle conflicting visual and vocal evidence.",
             sceneSupplementZh="",
             sceneSupplementEn="",
-            backgroundPresetIds=[background_read.id],
+            sceneIds=[background_read.id],
         )
     )
-    preset_read = catalog.create_prompt_preset(
-        PromptPresetCreate(
+    preset_read = catalog.create_prompt_template_version(
+        PromptTemplateVersionCreate(
             name="Conflict Portrait",
             category=Category.C_VA,
             positiveExamples=[
                 "The person grips a ceramic cup with the right hand and lowers both shoulders."
             ],
             negativeExamples=["The person sits still with both hands on the table."],
-            finalRenderNegativeConstraints="subtitles, exaggerated movement",
+            ltxNegativePrompt="subtitles, exaggerated movement",
+            h3NegativePrompt="subtitles, exaggerated movement",
+            version=1,
+            verificationStatus="Verified",
         )
     )
     calls: list[dict] = []
@@ -743,21 +750,22 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     service = PromptService(model)
     with database.read_session() as session:
         from backend.domain.models import (
-            ContentPlan,
-            PromptPreset,
-            VideoBackgroundPreset,
+            ContentScript,
+            PromptTemplateVersion,
+            Scene,
         )
 
         prepared = service.prepare(
             PromptContext(
-                content=session.get(ContentPlan, content_read.id),
-                preset=session.get(PromptPreset, preset_read.id),
+                content=session.get(ContentScript, content_read.id),
+                template_version=session.get(PromptTemplateVersion, preset_read.id),
                 positive_examples=preset_read.positive_examples,
                 negative_examples=preset_read.negative_examples,
-                background=session.get(VideoBackgroundPreset, background_read.id),
+                scene=session.get(Scene, background_read.id),
                 age=45,
                 gender=Gender.FEMALE,
                 ethnicity=Ethnicity.EAST_ASIAN,
+                model=ModelName.LTX,
             )
         )
     result = asyncio.run(service.complete(prepared, Category.C_VA))
@@ -823,8 +831,8 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, content, preset, background = fixed_resources(database)
-    second = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
+    second = catalog.create_scene(
+        SceneCreate(
             nameZh="候车室",
             nameEn="Station waiting room",
             sceneZh="一间安静的车站候车室。",
@@ -857,9 +865,9 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
             quantity=4,
             seed=7,
             contentSelections=[
-                BatchContentSelectionInput(contentPlanId=content.id)
+                BatchContentSelectionInput(contentScriptId=content.id)
             ],
-            promptPresetId=preset.id,
+            promptTemplateVersionId=preset.id,
             demographics=[
                 DemographicInput(
                     age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.LATINO
@@ -869,7 +877,7 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
         )
     )
     preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
-    assert [item.background_preset.id for item in preview.allocations] == [
+    assert [item.scene.id for item in preview.allocations] == [
         background.id,
     ] * 4
 
@@ -1051,17 +1059,17 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
         dataset.id,
         dataset.revision,
     )
-    assert (first_input.content_plan_id, first_input.content_plan_revision) == (
+    assert (first_input.content_script_id, first_input.content_script_revision) == (
         content.id,
         content.revision,
     )
-    assert (first_input.prompt_preset_id, first_input.prompt_preset_revision) == (
+    assert (first_input.prompt_template_version_id, first_input.prompt_template_version_revision) == (
         preset.id,
         preset.revision,
     )
     assert (
-        first_input.background_preset_id,
-        first_input.background_preset_revision,
+        first_input.scene_id,
+        first_input.scene_revision,
     ) == (
         background.id,
         background.revision,
@@ -1081,7 +1089,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
     assert first_input.prompt_model == "deepseek-v4-flash"
     assert first_input.source_has_audio is True
     assert first_input.derive_silent_primary is False
-    assert first_input.final_negative_prompt == first_preview.final_negative_prompt
+    assert first_input.negative_prompt == first_preview.negative_prompt
     assert first_input.seed == first_preview.seed
     assert first_input.model is ModelName.LTX
     assert items[0].prompt_result is None
@@ -1097,7 +1105,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
             session.exec(
                 update(BatchVideoInputSnapshot)
                 .where(BatchVideoInputSnapshot.id == snapshot_id)
-                .values(final_negative_prompt="changed")
+                .values(negative_prompt="changed")
             )
     with pytest.raises(IntegrityError):
         with database.immediate_session() as session:
@@ -1120,7 +1128,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
             user_input="user",
             raw_structured_response="{}",
             final_positive_prompt="a good answer",
-            final_negative_prompt="no subtitles",
+            negative_prompt="no subtitles",
             dialogue="",
             vt_text=None,
             true_emotion_description="测试情绪描述",
@@ -1131,7 +1139,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
             session.exec(
                 update(JobItemPromptResult)
                 .where(JobItemPromptResult.id == prompt_result.id)
-                .values(final_negative_prompt="no music")
+                .values(negative_prompt="no music")
             )
             session.flush()
 
@@ -1146,8 +1154,8 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
     restored_items = restored_service.list_job_items(restored.id, 1).items
     assert len(restored_items) == 4
     assert (
-        restored_items[0].input.final_negative_prompt
-        == items[0].input.final_negative_prompt
+        restored_items[0].input.negative_prompt
+        == items[0].input.negative_prompt
     )
 
 
@@ -1159,8 +1167,8 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
     catalog, dataset, content_one, preset_one, background_one = fixed_resources(
         database
     )
-    background_two = catalog.create_background_preset(
-        VideoBackgroundPresetCreate(
+    background_two = catalog.create_scene(
+        SceneCreate(
             nameZh="安静办公室二",
             nameEn="Quiet office two",
             sceneZh="一间有书桌和中性墙面的紧凑私人办公室。",
@@ -1175,8 +1183,8 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             framingEn="Static eye-level medium shot.",
         )
     )
-    content_two = catalog.create_content_plan(
-        ContentPlanCreate(
+    content_two = catalog.create_content_script(
+        ContentScriptCreate(
             nameZh="一致回应二",
             nameEn="Aligned response two",
             category=Category.A_VA,
@@ -1199,7 +1207,7 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             contentRequirementsEn="",
             sceneSupplementZh="",
             sceneSupplementEn="",
-            backgroundPresetIds=[background_two.id],
+            sceneIds=[background_two.id],
         )
     )
     batches = BatchService(
@@ -1217,10 +1225,10 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
         "model": ModelName.LTX,
         "seed": 47,
         "contentSelections": [
-            BatchContentSelectionInput(contentPlanId=content_one.id),
-            BatchContentSelectionInput(contentPlanId=content_two.id),
+            BatchContentSelectionInput(contentScriptId=content_one.id),
+            BatchContentSelectionInput(contentScriptId=content_two.id),
         ],
-        "promptPresetId": preset_one.id,
+        "promptTemplateVersionId": preset_one.id,
         "demographics": demographics,
         "gpuSlots": [GpuSlotName.GPU0, GpuSlotName.GPU1],
     }
@@ -1268,9 +1276,9 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
     def preview_signatures(allocations: list[object]) -> list[tuple[object, ...]]:
         return [
             (
-                item.content_plan.id,
-                item.prompt_preset.id,
-                item.background_preset.id,
+                item.content_script.id,
+                item.prompt_template_version.id,
+                item.scene.id,
                 (
                     item.demographic.age,
                     item.demographic.gender,
@@ -1303,9 +1311,9 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
     items = batches.list_job_items(job.id, 1).items
     submitted_values = [
         (
-            item.input.content_plan_id,
-            item.input.prompt_preset_id,
-            item.input.background_preset_id,
+            item.input.content_script_id,
+            item.input.prompt_template_version_id,
+            item.input.scene_id,
             (item.input.age, item.input.gender, item.input.ethnicity),
         )
         for item in items
@@ -1328,8 +1336,8 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, _, _, background = fixed_resources(database)
-    content = catalog.create_content_plan(
-        ContentPlanCreate(
+    content = catalog.create_content_script(
+        ContentScriptCreate(
             nameZh="文字一致回应",
             nameEn="Aligned text response",
             category=Category.A_VT,
@@ -1353,15 +1361,18 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             contentRequirementsEn="",
             sceneSupplementZh="",
             sceneSupplementEn="",
-            backgroundPresetIds=[background.id],
+            sceneIds=[background.id],
         )
     )
-    preset = catalog.create_prompt_preset(
-        PromptPresetCreate(
+    preset = catalog.create_prompt_template_version(
+        PromptTemplateVersionCreate(
             name="Natural Text Interior",
             category=Category.A_VT,
             styleGuidance="Use restrained natural performance and a static medium shot.",
-            finalRenderNegativeConstraints="subtitles, captions, exaggerated acting, camera shake",
+            ltxNegativePrompt="subtitles, captions, exaggerated acting, camera shake",
+            h3NegativePrompt="subtitles, captions, exaggerated acting, camera shake",
+            version=1,
+            verificationStatus="Verified",
         )
     )
     batches = BatchService(
@@ -1377,9 +1388,9 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             quantity=1,
             seed=83,
             contentSelections=[
-                BatchContentSelectionInput(contentPlanId=content.id)
+                BatchContentSelectionInput(contentScriptId=content.id)
             ],
-            promptPresetId=preset.id,
+            promptTemplateVersionId=preset.id,
             demographics=[
                 DemographicInput(
                     age=45, gender=Gender.MALE, ethnicity=Ethnicity.SOUTH_ASIAN
@@ -1416,9 +1427,9 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
     assert snapshot.prompt_model == "deepseek-v4-flash"
     assert snapshot.source_has_audio is True
     assert snapshot.derive_silent_primary is True
-    assert snapshot.final_negative_prompt == preset.final_negative_prompt
+    assert snapshot.negative_prompt == preset.h3_negative_prompt
     assert (
-        snapshot.final_negative_prompt == preview.allocations[0].final_negative_prompt
+        snapshot.negative_prompt == preview.allocations[0].negative_prompt
     )
     assert snapshot.seed == preview.allocations[0].seed
     assert snapshot.model is ModelName.H3
@@ -1426,15 +1437,15 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
         dataset.id,
         dataset.revision,
     )
-    assert (snapshot.content_plan_id, snapshot.content_plan_revision) == (
+    assert (snapshot.content_script_id, snapshot.content_script_revision) == (
         content.id,
         content.revision,
     )
-    assert (snapshot.prompt_preset_id, snapshot.prompt_preset_revision) == (
+    assert (snapshot.prompt_template_version_id, snapshot.prompt_template_version_revision) == (
         preset.id,
         preset.revision,
     )
-    assert (snapshot.background_preset_id, snapshot.background_preset_revision) == (
+    assert (snapshot.scene_id, snapshot.scene_revision) == (
         background.id,
         background.revision,
     )

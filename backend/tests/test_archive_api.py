@@ -96,7 +96,7 @@ def test_manifest_contains_user_fields_and_excludes_runtime_details(tmp_path: Pa
     assert record["sampleId"] == sample["id"]
     assert record["primaryMedia"]["assetId"] == sample["primaryAssetId"]
     assert record["review"]["reviewerName"] == "Reviewer One"
-    assert record["contentPlan"]["nameEn"] == sample["contentPlanNameEn"]
+    assert record["contentScript"]["nameEn"] == sample["contentScriptNameEn"]
     assert record["sampleRevision"] == sample["revision"]
     serialized = response.text.casefold()
     assert "precision" not in serialized

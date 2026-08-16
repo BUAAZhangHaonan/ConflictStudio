@@ -20,7 +20,7 @@ from backend.domain.enums import (
 from backend.domain.models import (
     ArchiveItem,
     BatchVideoInputSnapshot,
-    ContentPlan,
+    ContentScript,
     Dataset,
     GenerationAttempt,
     Job,
@@ -61,7 +61,7 @@ def create_sample_for_completed_item(
     prompt = session.exec(
         select(JobItemPromptResult).where(JobItemPromptResult.job_item_id == item.id)
     ).one_or_none()
-    content = session.get(ContentPlan, snapshot.content_plan_id) if snapshot is not None else None
+    content = session.get(ContentScript, snapshot.content_script_id) if snapshot is not None else None
     if snapshot is None or prompt is None or content is None:
         raise state_conflict("jobItem", item.id, "The completed result has incomplete provenance")
     timestamp = utc_now()
@@ -72,20 +72,20 @@ def create_sample_for_completed_item(
         conflict_direction=snapshot.conflict_direction,
         model=snapshot.model,
         gpu_slot=item.gpu_slot,
-        content_plan_id=snapshot.content_plan_id,
-        content_plan_revision=snapshot.content_plan_revision,
-        prompt_preset_id=snapshot.prompt_preset_id,
+        content_script_id=snapshot.content_script_id,
+        content_script_revision=snapshot.content_script_revision,
+        prompt_template_version_id=snapshot.prompt_template_version_id,
         source_asset_id=item.source_asset_id,
         primary_asset_id=item.primary_asset_id,
         dialogue=prompt.dialogue,
         display_text=prompt.vt_text,
         video_prompt=prompt.final_positive_prompt,
-        negative_prompt=prompt.final_negative_prompt,
+        negative_prompt=prompt.negative_prompt,
         true_emotion_description=prompt.true_emotion_description,
         true_emotion=snapshot.true_emotion,
         apparent_emotion=snapshot.apparent_emotion,
-        content_plan_name_zh=content.name_zh,
-        content_plan_name_en=content.name_en,
+        content_script_name_zh=content.name_zh,
+        content_script_name_en=content.name_en,
         scene_zh=content.scene_zh,
         scene_en=content.scene_en,
         trigger_event_zh=content.trigger_event_zh,
@@ -249,16 +249,16 @@ class SampleService:
                 primary_asset_url=asset_content_url(attempt.primary_asset_id),
             ),
             actual_content_summary=BilingualSelectionRead(
-                id=compatibility.snapshot.content_plan_id,
-                name_zh=row.content_plan_name_zh,
-                name_en=row.content_plan_name_en,
-                revision=compatibility.snapshot.content_plan_revision,
+                id=compatibility.snapshot.content_script_id,
+                name_zh=row.content_script_name_zh,
+                name_en=row.content_script_name_en,
+                revision=compatibility.snapshot.content_script_revision,
             ),
             actual_scene_summary=BilingualSelectionRead(
-                id=compatibility.snapshot.background_preset_id,
+                id=compatibility.snapshot.scene_id,
                 name_zh=compatibility.scene.name_zh,
                 name_en=compatibility.scene.name_en,
-                revision=compatibility.snapshot.background_preset_revision,
+                revision=compatibility.snapshot.scene_revision,
             ),
             generation_compatibility=compatibility.status,
             current_review=review_read(session, current) if current is not None else None,

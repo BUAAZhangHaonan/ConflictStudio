@@ -19,16 +19,15 @@ from backend.domain.enums import (
     ModelName,
     Precision,
 )
-from backend.domain.models import BatchDraft, ContentPlan, Dataset, GpuSlot, Sample
+from backend.domain.models import BatchDraft, ContentScript, Dataset, GpuSlot, Sample
 from backend.domain.schemas import (
     BatchDraftCreate,
-    ContentPlanCreate,
-    ContentPlanUpdate,
+    ContentScriptCreate,
+    ContentScriptUpdate,
     DatasetUpdate,
-    PromptPresetUpdate,
-    PromptPresetCreate,
-    VideoBackgroundPresetCreate,
-    VideoBackgroundPresetUpdate,
+    PromptTemplateVersionCreate,
+    SceneCreate,
+    SceneUpdate,
 )
 
 
@@ -38,9 +37,9 @@ def batch_payload(**overrides: object) -> dict[str, object]:
         "category": "A-VA",
         "quantity": 1,
         "contentSelections": [
-            {"contentPlanId": 1, "backgroundPresetIds": [1]}
+            {"contentScriptId": 1, "sceneIds": [1]}
         ],
-        "promptPresetId": 1,
+        "promptTemplateVersionId": 1,
         "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
         "gpuSlots": ["GPU0"],
     }
@@ -51,33 +50,36 @@ def batch_payload(**overrides: object) -> dict[str, object]:
 def test_batch_contract_rejects_removed_global_selection_fields() -> None:
     payload = batch_payload()
     payload.pop("contentSelections")
-    payload.pop("promptPresetId")
+    payload.pop("promptTemplateVersionId")
     payload.update(
         {
             "datasetId": 1,
-            "contentPlans": [{"id": 1, "expectedRevision": 1}],
-            "promptPresets": [{"id": 1, "expectedRevision": 1}],
-            "backgroundPresets": [{"id": 1, "expectedRevision": 1}],
+            "contentScripts": [{"id": 1, "expectedRevision": 1}],
+            "promptTemplateVersions": [{"id": 1, "expectedRevision": 1}],
+            "scenes": [{"id": 1, "expectedRevision": 1}],
         }
     )
     with pytest.raises(ValidationError):
         BatchDraftCreate.model_validate(payload)
 
 
-def test_prompt_preset_rejects_removed_scene_supplement() -> None:
+def test_prompt_template_version_rejects_removed_scene_supplement() -> None:
     with pytest.raises(ValidationError):
-        PromptPresetCreate.model_validate(
+        PromptTemplateVersionCreate.model_validate(
             {
                 "name": "Natural",
                 "category": "A-VA",
                 "styleGuidance": "Use concise observable wording.",
                 "sceneSupplement": "Use a quiet office.",
-                "finalRenderNegativeConstraints": "subtitles",
+                "ltxNegativePrompt": "subtitles",
+                "h3NegativePrompt": "subtitles",
+                "version": 1,
+                "verificationStatus": "Verified",
             }
         )
 
 
-def content_plan_payload(**overrides: object) -> dict[str, object]:
+def content_script_payload(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "nameZh": "方案",
         "nameEn": "Plan",
@@ -95,7 +97,7 @@ def content_plan_payload(**overrides: object) -> dict[str, object]:
         "contentRequirementsEn": "Describe one adult responding in the room.",
         "sceneSupplementZh": "保持办公室环境清楚可见。",
         "sceneSupplementEn": "Keep the office setting clearly visible.",
-        "backgroundPresetIds": [1],
+        "sceneIds": [1],
     }
     values.update(overrides)
     return values
@@ -219,9 +221,9 @@ def test_clean_database_initializes_precision_schema(tmp_path: Path) -> None:
         (Category.C_VT, ConflictDirection.TEXT),
     ],
 )
-def test_content_plan_accepts_protocol_directions(category: Category, direction: ConflictDirection) -> None:
-    result = ContentPlanCreate.model_validate(
-        content_plan_payload(
+def test_content_script_accepts_protocol_directions(category: Category, direction: ConflictDirection) -> None:
+    result = ContentScriptCreate.model_validate(
+        content_script_payload(
             category=category,
             conflictDirection=direction,
             trueEmotion="calm",
@@ -231,15 +233,15 @@ def test_content_plan_accepts_protocol_directions(category: Category, direction:
     assert result.conflict_direction is direction
 
 
-def test_content_plan_normalizes_emotions_before_relation_validation() -> None:
-    aligned = ContentPlanCreate.model_validate(
-        content_plan_payload(trueEmotion=" Sadness ", apparentEmotion="sadness")
+def test_content_script_normalizes_emotions_before_relation_validation() -> None:
+    aligned = ContentScriptCreate.model_validate(
+        content_script_payload(trueEmotion=" Sadness ", apparentEmotion="sadness")
     )
     assert (aligned.true_emotion, aligned.apparent_emotion) == ("sadness", "sadness")
 
     with pytest.raises(ValidationError):
-        ContentPlanCreate.model_validate(
-            content_plan_payload(
+        ContentScriptCreate.model_validate(
+            content_script_payload(
                 category=Category.C_VA,
                 conflictDirection=ConflictDirection.AUDIO,
                 trueEmotion="Sadness",
@@ -261,14 +263,14 @@ def test_content_plan_normalizes_emotions_before_relation_validation() -> None:
         "psychologicalBackgroundEn",
     ],
 )
-def test_content_plan_requires_core_bilingual_values(field: str) -> None:
+def test_content_script_requires_core_bilingual_values(field: str) -> None:
     with pytest.raises(ValidationError):
-        ContentPlanCreate.model_validate(content_plan_payload(**{field: "   "}))
+        ContentScriptCreate.model_validate(content_script_payload(**{field: "   "}))
 
 
-def test_content_plan_allows_empty_optional_bilingual_values_for_fixed_content() -> None:
-    result = ContentPlanCreate.model_validate(
-        content_plan_payload(
+def test_content_script_allows_empty_optional_bilingual_values_for_fixed_content() -> None:
+    result = ContentScriptCreate.model_validate(
+        content_script_payload(
             mode=ContentMode.FIXED,
             dialogue="我会处理。",
             trueEmotionDescription="说话者保持平静并准备处理当前事件。",
@@ -289,7 +291,7 @@ def test_content_plan_allows_empty_optional_bilingual_values_for_fixed_content()
 @pytest.mark.parametrize("field", ["contentRequirementsZh", "contentRequirementsEn"])
 def test_generative_content_requires_bilingual_content_requirements(field: str) -> None:
     with pytest.raises(ValidationError, match="Chinese and English content requirements"):
-        ContentPlanCreate.model_validate(content_plan_payload(**{field: "   "}))
+        ContentScriptCreate.model_validate(content_script_payload(**{field: "   "}))
 
 
 def test_background_allows_empty_supplements_but_requires_bilingual_names_and_scenes() -> None:
@@ -307,41 +309,40 @@ def test_background_allows_empty_supplements_but_requires_bilingual_names_and_sc
         "framingZh": "",
         "framingEn": "",
     }
-    result = VideoBackgroundPresetCreate.model_validate(payload)
+    result = SceneCreate.model_validate(payload)
     assert result.ambient_sound_zh == result.ambient_sound_en == ""
 
     for field in ("nameZh", "nameEn", "sceneZh", "sceneEn"):
         with pytest.raises(ValidationError):
-            VideoBackgroundPresetCreate.model_validate({**payload, field: "   "})
+            SceneCreate.model_validate({**payload, field: "   "})
 
 
-def test_content_plan_rejects_removed_single_language_fields() -> None:
+def test_content_script_rejects_removed_single_language_fields() -> None:
     with pytest.raises(ValidationError):
-        ContentPlanCreate.model_validate({**content_plan_payload(), "scene": "Removed field"})
+        ContentScriptCreate.model_validate({**content_script_payload(), "scene": "Removed field"})
 
 
 @pytest.mark.parametrize(
     ("schema", "field"),
     [
         (DatasetUpdate, "name"),
-        (ContentPlanUpdate, "nameZh"),
-        (PromptPresetUpdate, "positiveExamples"),
-        (VideoBackgroundPresetUpdate, "ambientSoundEn"),
+        (ContentScriptUpdate, "nameZh"),
+        (SceneUpdate, "ambientSoundEn"),
     ],
 )
 def test_catalog_updates_reject_explicit_null_for_non_nullable_fields(
     schema: type[BaseModel], field: str
 ) -> None:
     payload = {"expectedRevision": 1, field: None}
-    if schema is ContentPlanUpdate:
-        payload["backgroundPresetIds"] = [1]
+    if schema is ContentScriptUpdate:
+        payload["sceneIds"] = [1]
     with pytest.raises(ValidationError, match="cannot be null"):
         schema.model_validate(payload)
 
 
-def test_content_plan_update_allows_clearing_nullable_fields() -> None:
-    update = ContentPlanUpdate.model_validate(
-        {"expectedRevision": 1, "backgroundPresetIds": [1], "conflictDirection": None, "dialogue": None, "displayText": None}
+def test_content_script_update_allows_clearing_nullable_fields() -> None:
+    update = ContentScriptUpdate.model_validate(
+        {"expectedRevision": 1, "sceneIds": [1], "conflictDirection": None, "dialogue": None, "displayText": None}
     )
     assert update.conflict_direction is None
 
@@ -352,11 +353,11 @@ def test_sqlite_uses_only_new_bilingual_catalog_columns(tmp_path: Path) -> None:
 
     with database.engine.connect() as connection:
         content_columns = {
-            row[1] for row in connection.exec_driver_sql("PRAGMA table_info(content_plans)")
+            row[1] for row in connection.exec_driver_sql("PRAGMA table_info(content_scripts)")
         }
         background_columns = {
             row[1]
-            for row in connection.exec_driver_sql("PRAGMA table_info(video_background_presets)")
+            for row in connection.exec_driver_sql("PRAGMA table_info(scenes)")
         }
 
     assert {
@@ -431,9 +432,9 @@ def test_sqlite_uses_only_new_bilingual_catalog_columns(tmp_path: Path) -> None:
         },
     ],
 )
-def test_content_plan_rejects_invalid_relation_or_protocol(overrides: dict[str, object]) -> None:
+def test_content_script_rejects_invalid_relation_or_protocol(overrides: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
-        ContentPlanCreate.model_validate(content_plan_payload(**overrides))
+        ContentScriptCreate.model_validate(content_script_payload(**overrides))
 
 
 @pytest.mark.parametrize(
@@ -457,7 +458,7 @@ def test_database_rejects_invalid_content_emotion_relation(
     database.initialize()
     with database.immediate_session() as session:
         session.add(
-            ContentPlan(
+            ContentScript(
                 name_zh="无效方案",
                 name_zh_key="无效方案",
                 name_en="Invalid plan",
@@ -488,7 +489,7 @@ def test_database_rejects_content_emotion_relation_update(tmp_path: Path) -> Non
     database = Database(tmp_path)
     database.initialize()
     with database.immediate_session() as session:
-        row = ContentPlan(
+        row = ContentScript(
             name_zh="有效方案",
             name_zh_key="有效方案",
             name_en="Valid plan",
@@ -516,7 +517,7 @@ def test_database_rejects_content_emotion_relation_update(tmp_path: Path) -> Non
     with pytest.raises(IntegrityError):
         with database.immediate_session() as session:
             session.exec(
-                update(ContentPlan)
-                .where(ContentPlan.id == identifier)
+                update(ContentScript)
+                .where(ContentScript.id == identifier)
                 .values(apparent_emotion="tense")
             )

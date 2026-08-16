@@ -61,7 +61,7 @@ def test_ltx25_builder_selects_validated_profile_and_maps_runtime_inputs(
     workflow = ltx25_builder().build(
         precision=precision,
         final_positive_prompt="A static portrait with audible room tone.",
-        final_negative_prompt="subtitles, distortion",
+        negative_prompt="subtitles, distortion",
         seed=MAX_SEED,
         job_id=15,
         sequence=4,
@@ -124,7 +124,7 @@ def test_ltx23_builder_maps_every_static_input_and_returns_only_nodes() -> None:
     builder = ltx_builder()
     workflow = builder.build(
         final_positive_prompt="final positive",
-        final_negative_prompt="final negative",
+        negative_prompt="final negative",
         seed=MAX_SEED,
         job_id=42,
         sequence=7,
@@ -158,7 +158,7 @@ def test_ltx23_builder_maps_every_static_input_and_returns_only_nodes() -> None:
 
     second = builder.build(
         final_positive_prompt="second",
-        final_negative_prompt="",
+        negative_prompt="",
         seed=0,
         job_id=1,
         sequence=1,
@@ -171,7 +171,7 @@ def test_h3_builder_maps_static_inputs_and_merges_one_negative_sentence() -> Non
     builder = h3_builder()
     workflow = builder.build(
         final_positive_prompt="A locked-off portrait.",
-        final_negative_prompt="subtitles, camera shake",
+        negative_prompt="subtitles, camera shake",
         seed=91,
         job_id=8,
         sequence=3,
@@ -200,7 +200,7 @@ def test_h3_builder_maps_static_inputs_and_merges_one_negative_sentence() -> Non
 def test_h3_builder_leaves_positive_prompt_alone_when_negative_is_empty() -> None:
     workflow = h3_builder().build(
         final_positive_prompt="One subject.",
-        final_negative_prompt="",
+        negative_prompt="",
         seed=0,
         job_id=1,
         sequence=1,
@@ -213,7 +213,7 @@ def test_builders_reject_invalid_31_bit_seeds(invalid_seed: object) -> None:
     with pytest.raises((TypeError, ValueError)):
         ltx_builder().build(
             final_positive_prompt="positive",
-            final_negative_prompt="negative",
+            negative_prompt="negative",
             seed=invalid_seed,  # type: ignore[arg-type]
             job_id=1,
             sequence=1,
@@ -251,7 +251,7 @@ def test_output_prefix_accepts_only_bounded_integer_job_and_sequence(
     with pytest.raises((TypeError, ValueError)):
         h3_builder().build(
             final_positive_prompt="positive",
-            final_negative_prompt="negative",
+            negative_prompt="negative",
             seed=1,
             job_id=values["job_id"],  # type: ignore[arg-type]
             sequence=values["sequence"],  # type: ignore[arg-type]

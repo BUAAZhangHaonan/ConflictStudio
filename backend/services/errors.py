@@ -92,7 +92,7 @@ def incompatible_generation(sample_id: int) -> ServiceError:
     return ServiceError(
         422,
         "generation_incompatible",
-        "The sample generation no longer matches its content plan",
+        "The sample generation no longer matches its content script",
         {
             "resource": "sample",
             "id": sample_id,

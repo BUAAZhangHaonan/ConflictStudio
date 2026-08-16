@@ -22,7 +22,7 @@ def client_for(tmp_path: Path) -> TestClient:
 
 def create_catalog_records(client: TestClient) -> dict[str, dict]:
     background = client.post(
-        "/api/video-background-presets",
+        "/api/scenes",
         json={
             "nameZh": "私人书房",
             "nameEn": "Private study",
@@ -44,7 +44,7 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
             json={"name": "Production", "note": "Initial"},
         ),
         "content": client.post(
-            "/api/content-plans",
+            "/api/content-scripts",
             json={
                 "nameZh": "平静回应",
                 "nameEn": "Calm response",
@@ -63,16 +63,19 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
                 "contentRequirementsEn": "Describe one adult responding in the room.",
                 "sceneSupplementZh": "",
                 "sceneSupplementEn": "",
-                "backgroundPresetIds": [background.json()["id"]],
+                "sceneIds": [background.json()["id"]],
             },
         ),
         "prompt": client.post(
-            "/api/prompt-presets",
+            "/api/prompt-template-versions",
             json={
                 "name": "Natural shot",
                 "category": "A-VA",
                 "styleGuidance": "Use a static medium shot.",
-                "finalRenderNegativeConstraints": "subtitles, captions, camera shake",
+                "ltxNegativePrompt": "subtitles, captions, camera shake",
+                "h3NegativePrompt": "subtitles, captions, camera shake",
+                "version": 1,
+                "verificationStatus": "Verified",
             },
         ),
         "background": background,
@@ -104,7 +107,7 @@ def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> 
     try:
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                f"INSERT INTO video_background_presets ({columns}) VALUES ({', '.join('?' for _ in range(18))})",
+                f"INSERT INTO scenes ({columns}) VALUES ({', '.join('?' for _ in range(18))})",
                 (
                     "无效背景",
                     "无效背景",
@@ -129,7 +132,7 @@ def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> 
 
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                f"INSERT INTO video_background_presets ({columns}) VALUES ({', '.join('?' for _ in range(18))})",
+                f"INSERT INTO scenes ({columns}) VALUES ({', '.join('?' for _ in range(18))})",
                 (
                     "无效情绪背景",
                     "无效情绪背景",
@@ -153,7 +156,7 @@ def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> 
             )
 
         connection.execute(
-            f"INSERT INTO video_background_presets ({columns}) VALUES ({', '.join('?' for _ in range(18))})",
+            f"INSERT INTO scenes ({columns}) VALUES ({', '.join('?' for _ in range(18))})",
             (
                 "有效背景",
                 "有效背景",
@@ -177,7 +180,7 @@ def test_background_policy_triggers_reject_direct_sql_writes(tmp_path: Path) -> 
         )
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                "UPDATE video_background_presets SET ambient_sound_en = ? WHERE name_en_key = ?",
+                "UPDATE scenes SET ambient_sound_en = ? WHERE name_en_key = ?",
                 ("An orchestra plays nearby.", "valid background"),
             )
     finally:
@@ -190,10 +193,9 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
 
     enum_columns = {
         "datasets": ("purpose", "status"),
-        "content_plans": ("category", "conflict_direction", "mode", "status"),
-        "prompt_presets": ("category", "status"),
-        "prompt_examples": ("kind",),
-        "video_background_presets": ("status",),
+        "content_scripts": ("category", "conflict_direction", "mode", "status"),
+        "prompt_template_versions": ("category", "verification_status"),
+        "scenes": ("status",),
         "batch_drafts": ("category", "conflict_direction", "model", "precision", "status"),
         "batch_draft_demographics": ("gender", "ethnicity"),
         "batch_draft_gpu_slots": ("gpu_slot",),
@@ -212,20 +214,19 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
 
     numeric_constraints = {
         "datasets": ("ck_datasets_revision",),
-        "content_plans": ("ck_content_plans_revision",),
-        "prompt_presets": ("ck_prompt_presets_revision",),
-        "prompt_examples": ("ck_prompt_examples_position",),
-        "video_background_presets": ("ck_background_presets_revision",),
-        "content_plan_backgrounds": ("ck_content_plan_background_position",),
+        "content_scripts": ("ck_content_scripts_revision",),
+        "prompt_template_versions": ("ck_prompt_template_versions_version", "ck_prompt_template_versions_revision"),
+        "scenes": ("ck_scenes_revision",),
+        "content_script_scenes": ("ck_content_script_scene_position",),
         "batch_drafts": ("ck_batch_drafts_dataset_revision", "ck_batch_drafts_revision", "ck_batch_drafts_model_precision"),
-        "batch_draft_content_selections": (
+        "batch_draft_script_selections": (
             "ck_batch_content_selection_position",
             "ck_batch_content_selection_revision",
         ),
-        "batch_draft_prompt_presets": ("ck_batch_single_prompt_preset", "ck_batch_preset_revision"),
-        "batch_draft_content_backgrounds": (
-            "ck_batch_content_background_position",
-            "ck_batch_content_background_revision",
+        "batch_draft_prompt_template_versions": ("ck_batch_single_prompt_template_version", "ck_batch_preset_revision"),
+        "batch_draft_content_scenes": (
+            "ck_batch_content_scene_position",
+            "ck_batch_content_scene_revision",
         ),
         "batch_draft_demographics": ("ck_batch_demographics_position",),
         "batch_draft_gpu_slots": ("ck_batch_gpu_position",),
@@ -234,7 +235,7 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
             "ck_batch_snapshots_dataset_revision",
             "ck_batch_snapshots_content_revision",
             "ck_batch_snapshots_preset_revision",
-            "ck_batch_snapshots_background_revision",
+            "ck_batch_snapshots_scene_revision",
             "ck_batch_snapshots_video_format",
             "ck_batch_snapshots_model_frames",
             "ck_batch_snapshots_silent_primary",
@@ -323,15 +324,18 @@ def test_write_lock_returns_stable_409_and_releases_connection(tmp_path: Path) -
         assert retried.status_code == 201
 
 
-def test_prompt_preset_reads_continue_during_sqlite_write(tmp_path: Path) -> None:
+def test_prompt_template_version_reads_continue_during_sqlite_write(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
         created = client.post(
-            "/api/prompt-presets",
+            "/api/prompt-template-versions",
             json={
                 "name": "Natural shot",
                 "category": "A-VA",
                 "styleGuidance": "Use a static medium shot.",
-                "finalRenderNegativeConstraints": "subtitles, captions, camera shake",
+                "ltxNegativePrompt": "subtitles, captions, camera shake",
+                "h3NegativePrompt": "subtitles, captions, camera shake",
+                "version": 1,
+                "verificationStatus": "Verified",
             },
         )
         assert created.status_code == 201
@@ -344,7 +348,7 @@ def test_prompt_preset_reads_continue_during_sqlite_write(tmp_path: Path) -> Non
         try:
             writer.execute("BEGIN EXCLUSIVE")
             writer.execute("UPDATE gpu_slots SET checked_at = checked_at WHERE slot = 'GPU0'")
-            response = client.get("/api/prompt-presets")
+            response = client.get("/api/prompt-template-versions")
         finally:
             writer.rollback()
             writer.close()
@@ -364,20 +368,14 @@ def test_expected_revision_only_updates_return_422_without_incrementing_revision
                 records["dataset"]["revision"],
             ),
             (
-                f"/api/content-plans/{records['content']['id']}",
-                f"/api/content-plans/{records['content']['id']}",
+                f"/api/content-scripts/{records['content']['id']}",
+                f"/api/content-scripts/{records['content']['id']}",
                 None,
                 records["content"]["revision"],
             ),
             (
-                f"/api/prompt-presets/{records['prompt']['id']}",
-                f"/api/prompt-presets/{records['prompt']['id']}",
-                None,
-                records["prompt"]["revision"],
-            ),
-            (
-                f"/api/video-background-presets/{records['background']['id']}",
-                f"/api/video-background-presets/{records['background']['id']}",
+                f"/api/scenes/{records['background']['id']}",
+                f"/api/scenes/{records['background']['id']}",
                 None,
                 records["background"]["revision"],
             ),
@@ -413,11 +411,11 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
                 "seed": 7,
                 "contentSelections": [
                     {
-                        "contentPlanId": records["content"]["id"],
-                        "backgroundPresetIds": [records["background"]["id"]],
+                        "contentScriptId": records["content"]["id"],
+                        "sceneIds": [records["background"]["id"]],
                     }
                 ],
-                "promptPresetId": records["prompt"]["id"],
+                "promptTemplateVersionId": records["prompt"]["id"],
                 "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
                 "gpuSlots": ["GPU0"],
             },
@@ -428,19 +426,15 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
         updates = (
             (f"/api/datasets/{records['dataset']['id']}", {"expectedRevision": 1, "note": "Changed"}),
             (
-                f"/api/content-plans/{records['content']['id']}",
+                f"/api/content-scripts/{records['content']['id']}",
                 {
                     "expectedRevision": 1,
                     "sceneEn": "A changed private study.",
-                    "backgroundPresetIds": [records["background"]["id"]],
+                    "sceneIds": [records["background"]["id"]],
                 },
             ),
             (
-                f"/api/prompt-presets/{records['prompt']['id']}",
-                {"expectedRevision": 1, "name": "Changed prompt"},
-            ),
-            (
-                f"/api/video-background-presets/{records['background']['id']}",
+                f"/api/scenes/{records['background']['id']}",
                 {"expectedRevision": 1, "nameEn": "Changed background"},
             ),
         )
@@ -453,8 +447,8 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
         assert saved.status_code == 200
         body = saved.json()
         assert body["datasetRevision"] == 1
-        assert body["contentSelections"][0]["contentPlan"]["revision"] == 1
+        assert body["contentSelections"][0]["contentScript"]["revision"] == 1
         assert body["contentSelections"][0]["mode"] == "Generative"
-        assert body["promptPreset"]["revision"] == 1
-        assert body["contentSelections"][0]["backgroundPresets"][0]["revision"] == 1
-        assert body["contentSelections"][0]["compatibleBackgrounds"][0]["id"] == records["background"]["id"]
+        assert body["promptTemplateVersion"]["revision"] == 1
+        assert body["contentSelections"][0]["scenes"][0]["revision"] == 1
+        assert body["contentSelections"][0]["compatibleScenes"][0]["id"] == records["background"]["id"]

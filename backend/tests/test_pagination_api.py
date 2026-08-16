@@ -22,9 +22,9 @@ def test_every_growing_collection_uses_the_same_page_contract(tmp_path: Path) ->
         job_item = client.get(f"/api/jobs/{job['id']}/items").json()["items"][0]
         routes = (
             "/api/datasets",
-            "/api/content-plans",
-            "/api/video-background-presets",
-            "/api/prompt-presets",
+            "/api/content-scripts",
+            "/api/scenes",
+            "/api/prompt-template-versions",
             "/api/jobs",
             f"/api/jobs/{job['id']}/items",
             f"/api/job-items/{job_item['id']}/attempts",

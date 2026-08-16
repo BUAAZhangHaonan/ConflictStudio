@@ -16,8 +16,8 @@ from pydantic import (
 )
 
 from backend.adapters.llm import PromptAdapterError, PromptModel
-from backend.domain.enums import Category, ContentMode, Ethnicity, Gender
-from backend.domain.models import ContentPlan, PromptPreset, VideoBackgroundPreset
+from backend.domain.enums import Category, ContentMode, Ethnicity, Gender, ModelName
+from backend.domain.models import ContentScript, PromptTemplateVersion, Scene
 from backend.domain.schemas import PromptFailureDetails, PromptSchemaFieldDetail
 from backend.domain.prompt_policy import (
     BANNED_CERTAINTY_MODIFIERS,
@@ -26,7 +26,7 @@ from backend.domain.prompt_policy import (
     POLICIES,
     PromptPolicyViolation,
     direction_rule,
-    validate_background_policy_fields,
+    validate_scene_policy_fields,
     validate_component_word_limit,
     validate_final_positive_prompt,
     validate_fixed_positive_prompt,
@@ -114,14 +114,15 @@ class FixedPrompt(BaseModel):
 
 @dataclass(frozen=True)
 class PromptContext:
-    content: ContentPlan
-    preset: PromptPreset
+    content: ContentScript
+    template_version: PromptTemplateVersion
     positive_examples: list[str]
     negative_examples: list[str]
-    background: VideoBackgroundPreset
+    scene: Scene
     age: int
     gender: Gender
     ethnicity: Ethnicity
+    model: ModelName
 
 
 @dataclass(frozen=True)
@@ -135,7 +136,7 @@ class PreparedPrompt:
     ethnicity: Ethnicity
     system_input: str
     user_input: str
-    final_negative_prompt: str
+    negative_prompt: str
     fixed_output: FixedPrompt | None
 
 
@@ -146,7 +147,7 @@ class PromptResult:
     user_input: str
     raw_structured_response: str
     final_positive_prompt: str
-    final_negative_prompt: str
+    negative_prompt: str
     dialogue: str | None
     vt_text: str | None
     true_emotion_description: str
@@ -167,15 +168,15 @@ class PromptService:
 
     def prepare(self, context: PromptContext) -> PreparedPrompt:
         try:
-            validate_background_policy_fields(
+            validate_scene_policy_fields(
                 {
-                    "sceneEn": context.background.scene_en,
-                    "ambientSoundEn": context.background.ambient_sound_en,
+                    "sceneEn": context.scene.scene_en,
+                    "ambientSoundEn": context.scene.ambient_sound_en,
                     "participantRelationshipEn": (
-                        context.background.participant_relationship_en
+                        context.scene.participant_relationship_en
                     ),
-                    "lightingEn": context.background.lighting_en,
-                    "framingEn": context.background.framing_en,
+                    "lightingEn": context.scene.lighting_en,
+                    "framingEn": context.scene.framing_en,
                 }
             )
         except PromptPolicyViolation as error:
@@ -186,7 +187,7 @@ class PromptService:
                 {
                     "fields": [
                         {
-                            "path": "backgroundPreset",
+                            "path": "scene",
                             "type": "prompt_policy",
                             "reason": str(error),
                         }
@@ -223,15 +224,15 @@ class PromptService:
                     else context.content.display_text
                 ),
                 content_scene_supplement=context.content.scene_supplement_en,
-                style_instruction=context.preset.style_instruction,
+                style_instruction=context.template_version.style_instruction,
                 positive_examples=context.positive_examples,
                 negative_examples=context.negative_examples,
-                background={
-                    "scene": context.background.scene_en,
-                    "ambient_audio": context.background.ambient_sound_en,
-                    "relationship": context.background.participant_relationship_en,
-                    "lighting": context.background.lighting_en,
-                    "framing_supplement": context.background.framing_en,
+                shooting_scene={
+                    "scene": context.scene.scene_en,
+                    "ambient_audio": context.scene.ambient_sound_en,
+                    "relationship": context.scene.participant_relationship_en,
+                    "lighting": context.scene.lighting_en,
+                    "framing_supplement": context.scene.framing_en,
                 },
                 age=context.age,
                 gender=context.gender.value,
@@ -247,7 +248,11 @@ class PromptService:
             ethnicity=context.ethnicity,
             system_input=system_input,
             user_input=user_input,
-            final_negative_prompt=context.preset.final_negative_prompt,
+            negative_prompt=(
+                context.template_version.h3_negative_prompt
+                if context.model is ModelName.H3
+                else context.template_version.ltx_negative_prompt
+            ),
             fixed_output=fixed_output,
         )
 
@@ -347,7 +352,7 @@ class PromptService:
             user_input=prepared.user_input,
             raw_structured_response=raw,
             final_positive_prompt=positive_prompt,
-            final_negative_prompt=prepared.final_negative_prompt,
+            negative_prompt=prepared.negative_prompt,
             dialogue=output.spoken_text if is_va else None,
             vt_text=None if is_va else output.spoken_text,
             true_emotion_description=output.true_emotion_description,
@@ -376,7 +381,7 @@ class PromptService:
             user_input=prepared.user_input,
             raw_structured_response=raw,
             final_positive_prompt=output.positive_prompt,
-            final_negative_prompt=prepared.final_negative_prompt,
+            negative_prompt=prepared.negative_prompt,
             dialogue=output.dialogue,
             vt_text=output.vt_text,
             true_emotion_description=output.true_emotion_description,

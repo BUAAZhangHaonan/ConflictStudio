@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
 from typing import Any
 
 from pydantic import ValidationError
@@ -8,43 +8,42 @@ from sqlalchemy import delete, func, or_
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
-from backend.domain.enums import ContentMode, ContentStatus, DatasetPurpose, ExampleKind, ResourceStatus
+from backend.domain.enums import ContentMode, ContentStatus, DatasetPurpose, ResourceStatus, TemplateVersionStatus
 from backend.domain.models import (
     Archive,
     ArchiveItem,
     BatchDraft,
-    BatchDraftContentBackground,
-    BatchDraftContentSelection,
-    BatchDraftPromptPreset,
+    BatchDraftContentScene,
+    BatchDraftScriptSelection,
+    BatchDraftPromptTemplateVersion,
     BatchVideoInputSnapshot,
-    ContentPlan,
-    ContentPlanBackground,
+    ContentScript,
+    ContentScriptScene,
     Dataset,
     Job,
-    PromptExample,
-    PromptPreset,
+    PromptTemplateVersion,
     Sample,
-    VideoBackgroundPreset,
+    Scene,
     utc_now,
 )
 from backend.domain.schemas import (
     BilingualSelectionRead,
-    ContentPlanBackgroundRead,
-    ContentPlanCreate,
-    ContentPlanFields,
-    ContentPlanRead,
-    ContentPlanUpdate,
+    ContentScriptSceneRead,
+    ContentScriptCreate,
+    ContentScriptFields,
+    ContentScriptRead,
+    ContentScriptUpdate,
     DatasetCreate,
     DatasetRead,
     DatasetUpdate,
-    PromptPresetCreate,
-    PromptPresetRead,
-    PromptPresetUpdate,
+    PromptTemplateVersionCreate,
+    PromptTemplateVersionRead,
+    PromptTemplateVersionVerify,
     PageRead,
-    VideoBackgroundPresetCreate,
-    VideoBackgroundPresetRead,
-    VideoBackgroundPresetUpdate,
-    validate_content_background_ids,
+    SceneCreate,
+    SceneRead,
+    SceneUpdate,
+    validate_content_scene_ids,
 )
 
 from .errors import ServiceError, invalid_request, not_found, revision_conflict, state_conflict
@@ -144,28 +143,28 @@ class CatalogService:
                 )
             session.delete(row)
 
-    def list_content_plans(self, page: int) -> PageRead[ContentPlanRead]:
+    def list_content_scripts(self, page: int) -> PageRead[ContentScriptRead]:
         with self.database.read_session() as session:
             return paginate(
                 session,
-                select(ContentPlan).order_by(
-                    ContentPlan.category,
-                    ContentPlan.name_zh,
-                    ContentPlan.name_en,
-                    ContentPlan.id,
+                select(ContentScript).order_by(
+                    ContentScript.category,
+                    ContentScript.name_zh,
+                    ContentScript.name_en,
+                    ContentScript.id,
                 ),
                 page,
-                lambda row: self._content_plan_read(session, row),
+                lambda row: self._content_script_read(session, row),
             )
 
-    def get_content_plan(self, content_id: int) -> ContentPlanRead:
+    def get_content_script(self, content_id: int) -> ContentScriptRead:
         with self.database.read_session() as session:
-            return self._content_plan_read(
+            return self._content_script_read(
                 session,
-                self._get(session, ContentPlan, content_id, "contentPlan"),
+                self._get(session, ContentScript, content_id, "contentScript"),
             )
 
-    def create_content_plan(self, payload: ContentPlanCreate) -> ContentPlanRead:
+    def create_content_script(self, payload: ContentScriptCreate) -> ContentScriptRead:
         with self.database.immediate_session() as session:
             self._ensure_content_names_available(
                 session,
@@ -173,35 +172,46 @@ class CatalogService:
                 payload.name_zh,
                 payload.name_en,
             )
-            backgrounds = self._content_background_rows(
+            scenes = self._content_scene_rows(
                 session,
-                payload.background_preset_ids,
+                payload.scene_ids,
                 payload.mode,
+                payload.status,
             )
-            row = ContentPlan(
-                **payload.model_dump(exclude={"background_preset_ids"}),
+            requested_status = payload.status
+            values = payload.model_dump(exclude={"scene_ids", "status"})
+            row = ContentScript(
+                **values,
+                status=(
+                    ContentStatus.DRAFT
+                    if requested_status is ContentStatus.ACTIVE
+                    else requested_status
+                ),
                 name_zh_key=name_key(payload.name_zh),
                 name_en_key=name_key(payload.name_en),
             )
             session.add(row)
             session.flush()
-            self._replace_content_background_links(session, row.id, backgrounds)
-            return self._content_plan_read(session, row)
+            self._replace_content_scene_links(session, row.id, scenes)
+            if requested_status is ContentStatus.ACTIVE:
+                row.status = ContentStatus.ACTIVE
+                session.flush()
+            return self._content_script_read(session, row)
 
-    def update_content_plan(self, content_id: int, payload: ContentPlanUpdate) -> ContentPlanRead:
+    def update_content_script(self, content_id: int, payload: ContentScriptUpdate) -> ContentScriptRead:
         with self.database.immediate_session() as session:
-            row = self._get(session, ContentPlan, content_id, "contentPlan")
-            self._check_revision(row, payload.expected_revision, "contentPlan")
+            row = self._get(session, ContentScript, content_id, "contentScript")
+            self._check_revision(row, payload.expected_revision, "contentScript")
             values = payload.model_dump(
                 exclude_unset=True,
-                exclude={"expected_revision", "background_preset_ids"},
+                exclude={"expected_revision", "scene_ids"},
             )
             try:
-                candidate = ContentPlanFields.model_validate(
-                    {**ContentPlanFields.model_validate(row).model_dump(), **values}
+                candidate = ContentScriptFields.model_validate(
+                    {**ContentScriptFields.model_validate(row).model_dump(), **values}
                 )
             except ValidationError as error:
-                raise ServiceError(422, "validation_error", "The content plan is not valid") from error
+                raise ServiceError(422, "validation_error", "The content script is not valid") from error
             self._ensure_content_names_available(
                 session,
                 row.category,
@@ -209,146 +219,182 @@ class CatalogService:
                 candidate.name_en,
                 content_id,
             )
-            backgrounds = self._content_background_rows(
+            scenes = self._content_scene_rows(
                 session,
-                payload.background_preset_ids,
+                payload.scene_ids,
                 candidate.mode,
+                candidate.status,
             )
             values = candidate.model_dump()
             values["name_zh_key"] = name_key(candidate.name_zh)
             values["name_en_key"] = name_key(candidate.name_en)
+            requested_status = candidate.status
+            if row.status is ContentStatus.ACTIVE:
+                row.status = ContentStatus.DRAFT
+                session.flush()
+            values["status"] = (
+                ContentStatus.DRAFT
+                if requested_status is ContentStatus.ACTIVE
+                else requested_status
+            )
             self._apply_update(row, values)
-            self._replace_content_background_links(session, row.id, backgrounds)
-            return self._content_plan_read(session, row)
+            self._replace_content_scene_links(session, row.id, scenes)
+            if requested_status is ContentStatus.ACTIVE:
+                row.status = ContentStatus.ACTIVE
+                session.flush()
+            return self._content_script_read(session, row)
 
-    def delete_content_plan(self, content_id: int, expected_revision: int) -> None:
+    def delete_content_script(self, content_id: int, expected_revision: int) -> None:
         with self.database.immediate_session() as session:
-            row = self._get(session, ContentPlan, content_id, "contentPlan")
-            self._check_revision(row, expected_revision, "contentPlan")
+            row = self._get(session, ContentScript, content_id, "contentScript")
+            self._check_revision(row, expected_revision, "contentScript")
             if row.status is not ContentStatus.DRAFT:
-                raise state_conflict("contentPlan", content_id, "Only an unused draft content plan can be deleted")
+                raise state_conflict("contentScript", content_id, "Only an unused draft content script can be deleted")
             if self._content_referenced(session, content_id):
-                raise state_conflict("contentPlan", content_id, "The content plan is already used by a batch")
+                raise state_conflict("contentScript", content_id, "The content script is already used by a batch")
             session.delete(row)
 
-    def get_content_backgrounds(self, content_id: int) -> ContentPlanBackgroundRead:
+    def get_content_scenes(self, content_id: int) -> ContentScriptSceneRead:
         with self.database.read_session() as session:
-            content = self._get(session, ContentPlan, content_id, "contentPlan")
-            return self._content_background_read(session, content)
+            content = self._get(session, ContentScript, content_id, "contentScript")
+            return self._content_scene_read(session, content)
 
-    def list_prompt_presets(self, page: int) -> PageRead[PromptPresetRead]:
+    def list_prompt_template_versions(self, page: int) -> PageRead[PromptTemplateVersionRead]:
         with self.database.read_session() as session:
             return paginate(
                 session,
-                select(PromptPreset).order_by(
-                    PromptPreset.category,
-                    PromptPreset.name,
-                    PromptPreset.id,
+                select(PromptTemplateVersion).order_by(
+                    PromptTemplateVersion.category,
+                    PromptTemplateVersion.name,
+                    PromptTemplateVersion.version.desc(),
+                    PromptTemplateVersion.id,
                 ),
                 page,
-                lambda row: self._prompt_preset_read(session, row),
+                self._prompt_template_version_read,
             )
 
-    def get_prompt_preset(self, preset_id: int) -> PromptPresetRead:
+    def get_prompt_template_version(self, version_id: int) -> PromptTemplateVersionRead:
         with self.database.read_session() as session:
-            return self._prompt_preset_read(session, self._get(session, PromptPreset, preset_id, "promptPreset"))
+            return self._prompt_template_version_read(
+                self._get(
+                    session,
+                    PromptTemplateVersion,
+                    version_id,
+                    "promptTemplateVersion",
+                )
+            )
 
-    def create_prompt_preset(self, payload: PromptPresetCreate) -> PromptPresetRead:
+    def create_prompt_template_version(
+        self,
+        payload: PromptTemplateVersionCreate,
+    ) -> PromptTemplateVersionRead:
         with self.database.immediate_session() as session:
-            self._ensure_preset_name_available(session, payload.category, payload.name)
-            row = PromptPreset(
+            self._ensure_template_version_available(
+                session,
+                payload.category,
+                payload.name,
+                payload.version,
+            )
+            row = PromptTemplateVersion(
                 name=payload.name,
                 name_key=name_key(payload.name),
                 category=payload.category,
+                version=payload.version,
                 style_instruction=payload.style_instruction.strip(),
-                final_negative_prompt=payload.final_negative_prompt,
-                status=payload.status,
+                positive_examples_json=json.dumps(
+                    payload.positive_examples,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                negative_examples_json=json.dumps(
+                    payload.negative_examples,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                ltx_negative_prompt=payload.ltx_negative_prompt,
+                h3_negative_prompt=payload.h3_negative_prompt,
+                verification_status=payload.verification_status,
             )
             session.add(row)
             session.flush()
-            self._replace_examples(session, row.id, payload.positive_examples, payload.negative_examples)
-            return self._prompt_preset_read(session, row)
+            return self._prompt_template_version_read(row)
 
-    def update_prompt_preset(self, preset_id: int, payload: PromptPresetUpdate) -> PromptPresetRead:
+    def verify_prompt_template_version(
+        self,
+        version_id: int,
+        payload: PromptTemplateVersionVerify,
+    ) -> PromptTemplateVersionRead:
         with self.database.immediate_session() as session:
-            row = self._get(session, PromptPreset, preset_id, "promptPreset")
-            self._check_revision(row, payload.expected_revision, "promptPreset")
-            values = payload.model_dump(exclude_unset=True, exclude={"expected_revision", "positive_examples", "negative_examples"})
-            if "name" in values:
-                self._ensure_preset_name_available(session, row.category, values["name"], preset_id)
-                values["name_key"] = name_key(values["name"])
-            self._apply_update(row, values)
-            if payload.positive_examples is not None or payload.negative_examples is not None:
-                current = self._prompt_preset_read(session, row)
-                self._replace_examples(
-                    session,
-                    preset_id,
-                    payload.positive_examples if payload.positive_examples is not None else current.positive_examples,
-                    payload.negative_examples if payload.negative_examples is not None else current.negative_examples,
+            row = self._get(
+                session,
+                PromptTemplateVersion,
+                version_id,
+                "promptTemplateVersion",
+            )
+            self._check_revision(
+                row,
+                payload.expected_revision,
+                "promptTemplateVersion",
+            )
+            if row.verification_status is TemplateVersionStatus.VERIFIED:
+                raise state_conflict(
+                    "promptTemplateVersion",
+                    version_id,
+                    "The prompt template version is already verified",
                 )
-            return self._prompt_preset_read(session, row)
+            row.verification_status = TemplateVersionStatus.VERIFIED
+            row.revision += 1
+            row.updated_at = utc_now()
+            session.flush()
+            return self._prompt_template_version_read(row)
 
-    def delete_prompt_preset(self, preset_id: int, expected_revision: int) -> None:
-        with self.database.immediate_session() as session:
-            row = self._get(session, PromptPreset, preset_id, "promptPreset")
-            self._check_revision(row, expected_revision, "promptPreset")
-            if row.status is not ResourceStatus.DISABLED:
-                raise state_conflict("promptPreset", preset_id, "Disable the prompt preset before deleting it")
-            if session.exec(
-                select(BatchDraftPromptPreset).where(
-                    BatchDraftPromptPreset.prompt_preset_id == preset_id
-                )
-            ).first():
-                raise state_conflict("promptPreset", preset_id, "The prompt preset is already used by a batch")
-            session.delete(row)
-
-    def list_background_presets(
+    def list_scenes(
         self,
         page: int,
-    ) -> PageRead[VideoBackgroundPresetRead]:
+    ) -> PageRead[SceneRead]:
         with self.database.read_session() as session:
             return paginate(
                 session,
-                select(VideoBackgroundPreset).order_by(
-                    VideoBackgroundPreset.name_zh,
-                    VideoBackgroundPreset.name_en,
-                    VideoBackgroundPreset.id,
+                select(Scene).order_by(
+                    Scene.name_zh,
+                    Scene.name_en,
+                    Scene.id,
                 ),
                 page,
-                VideoBackgroundPresetRead.model_validate,
+                SceneRead.model_validate,
             )
 
-    def get_background_preset(self, preset_id: int) -> VideoBackgroundPresetRead:
+    def get_scene(self, preset_id: int) -> SceneRead:
         with self.database.read_session() as session:
-            return VideoBackgroundPresetRead.model_validate(
-                self._get(session, VideoBackgroundPreset, preset_id, "videoBackgroundPreset")
+            return SceneRead.model_validate(
+                self._get(session, Scene, preset_id, "scene")
             )
 
-    def create_background_preset(self, payload: VideoBackgroundPresetCreate) -> VideoBackgroundPresetRead:
+    def create_scene(self, payload: SceneCreate) -> SceneRead:
         with self.database.immediate_session() as session:
-            self._ensure_background_names_available(session, payload.name_zh, payload.name_en)
-            row = VideoBackgroundPreset(
+            self._ensure_scene_names_available(session, payload.name_zh, payload.name_en)
+            row = Scene(
                 **payload.model_dump(),
                 name_zh_key=name_key(payload.name_zh),
                 name_en_key=name_key(payload.name_en),
             )
             session.add(row)
             session.flush()
-            return VideoBackgroundPresetRead.model_validate(row)
+            return SceneRead.model_validate(row)
 
-    def update_background_preset(
+    def update_scene(
         self,
         preset_id: int,
-        payload: VideoBackgroundPresetUpdate,
-    ) -> VideoBackgroundPresetRead:
+        payload: SceneUpdate,
+    ) -> SceneRead:
         with self.database.immediate_session() as session:
-            row = self._get(session, VideoBackgroundPreset, preset_id, "videoBackgroundPreset")
-            self._check_revision(row, payload.expected_revision, "videoBackgroundPreset")
+            row = self._get(session, Scene, preset_id, "scene")
+            self._check_revision(row, payload.expected_revision, "scene")
             values = payload.model_dump(exclude_unset=True, exclude={"expected_revision"})
-            candidate = VideoBackgroundPresetCreate.model_validate(
-                {**VideoBackgroundPresetCreate.model_validate(row).model_dump(), **values}
+            candidate = SceneCreate.model_validate(
+                {**SceneCreate.model_validate(row).model_dump(), **values}
             )
-            self._ensure_background_names_available(
+            self._ensure_scene_names_available(
                 session,
                 candidate.name_zh,
                 candidate.name_en,
@@ -358,24 +404,24 @@ class CatalogService:
             values["name_zh_key"] = name_key(candidate.name_zh)
             values["name_en_key"] = name_key(candidate.name_en)
             self._apply_update(row, values)
-            return VideoBackgroundPresetRead.model_validate(row)
+            return SceneRead.model_validate(row)
 
-    def delete_background_preset(self, preset_id: int, expected_revision: int) -> None:
+    def delete_scene(self, preset_id: int, expected_revision: int) -> None:
         with self.database.immediate_session() as session:
-            row = self._get(session, VideoBackgroundPreset, preset_id, "videoBackgroundPreset")
-            self._check_revision(row, expected_revision, "videoBackgroundPreset")
+            row = self._get(session, Scene, preset_id, "scene")
+            self._check_revision(row, expected_revision, "scene")
             if row.status is not ResourceStatus.DISABLED:
-                raise state_conflict("videoBackgroundPreset", preset_id, "Disable the background preset before deleting it")
+                raise state_conflict("scene", preset_id, "Disable the scene before deleting it")
             if session.exec(
-                select(BatchDraftContentBackground).where(
-                    BatchDraftContentBackground.background_preset_id == preset_id
+                select(BatchDraftContentScene).where(
+                    BatchDraftContentScene.scene_id == preset_id
                 )
             ).first() or session.exec(
-                select(ContentPlanBackground).where(
-                    ContentPlanBackground.background_preset_id == preset_id
+                select(ContentScriptScene).where(
+                    ContentScriptScene.scene_id == preset_id
                 )
             ).first():
-                raise state_conflict("videoBackgroundPreset", preset_id, "The background preset is already used by a batch")
+                raise state_conflict("scene", preset_id, "The scene is already used by a batch")
             session.delete(row)
 
     @staticmethod
@@ -430,29 +476,32 @@ class CatalogService:
         exclude_id: int | None = None,
     ) -> None:
         for column, value in (
-            (ContentPlan.name_zh_key, name_zh),
-            (ContentPlan.name_en_key, name_en),
+            (ContentScript.name_zh_key, name_zh),
+            (ContentScript.name_en_key, name_en),
         ):
-            statement = select(ContentPlan).where(ContentPlan.category == category, column == name_key(value))
+            statement = select(ContentScript).where(ContentScript.category == category, column == name_key(value))
             if exclude_id is not None:
-                statement = statement.where(ContentPlan.id != exclude_id)
+                statement = statement.where(ContentScript.id != exclude_id)
             if session.exec(statement).first():
-                self._raise_name_conflict("contentPlan")
+                self._raise_name_conflict("contentScript")
 
-    def _ensure_preset_name_available(
+    def _ensure_template_version_available(
         self,
         session: Session,
         category: Any,
         name: str,
-        exclude_id: int | None = None,
+        version: int,
     ) -> None:
-        statement = select(PromptPreset).where(PromptPreset.category == category, PromptPreset.name_key == name_key(name))
-        if exclude_id is not None:
-            statement = statement.where(PromptPreset.id != exclude_id)
-        if session.exec(statement).first():
-            self._raise_name_conflict("promptPreset")
+        if session.exec(
+            select(PromptTemplateVersion).where(
+                PromptTemplateVersion.category == category,
+                PromptTemplateVersion.name_key == name_key(name),
+                PromptTemplateVersion.version == version,
+            )
+        ).first():
+            self._raise_name_conflict("promptTemplateVersion")
 
-    def _ensure_background_names_available(
+    def _ensure_scene_names_available(
         self,
         session: Session,
         name_zh: str,
@@ -460,139 +509,128 @@ class CatalogService:
         exclude_id: int | None = None,
     ) -> None:
         for column, value in (
-            (VideoBackgroundPreset.name_zh_key, name_zh),
-            (VideoBackgroundPreset.name_en_key, name_en),
+            (Scene.name_zh_key, name_zh),
+            (Scene.name_en_key, name_en),
         ):
-            statement = select(VideoBackgroundPreset).where(column == name_key(value))
+            statement = select(Scene).where(column == name_key(value))
             if exclude_id is not None:
-                statement = statement.where(VideoBackgroundPreset.id != exclude_id)
+                statement = statement.where(Scene.id != exclude_id)
             if session.exec(statement).first():
-                self._raise_name_conflict("videoBackgroundPreset")
+                self._raise_name_conflict("scene")
 
     @staticmethod
-    def _replace_examples(
+    def _prompt_template_version_read(
+        row: PromptTemplateVersion,
+    ) -> PromptTemplateVersionRead:
+        return PromptTemplateVersionRead(
+            id=row.id,
+            name=row.name,
+            category=row.category,
+            version=row.version,
+            style_instruction=row.style_instruction,
+            positive_examples=json.loads(row.positive_examples_json),
+            negative_examples=json.loads(row.negative_examples_json),
+            ltx_negative_prompt=row.ltx_negative_prompt,
+            h3_negative_prompt=row.h3_negative_prompt,
+            verification_status=row.verification_status,
+            revision=row.revision,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @staticmethod
+    def _content_scene_rows(
         session: Session,
-        preset_id: int,
-        positive_examples: Sequence[str],
-        negative_examples: Sequence[str],
-    ) -> None:
-        for row in session.exec(select(PromptExample).where(PromptExample.preset_id == preset_id)).all():
-            session.delete(row)
-        session.flush()
-        for kind, examples in (
-            (ExampleKind.POSITIVE, positive_examples),
-            (ExampleKind.NEGATIVE, negative_examples),
-        ):
-            for position, value in enumerate(examples):
-                session.add(PromptExample(preset_id=preset_id, kind=kind, position=position, text=value.strip()))
-        session.flush()
-
-    @staticmethod
-    def _prompt_preset_read(session: Session, row: PromptPreset) -> PromptPresetRead:
-        examples = session.exec(
-            select(PromptExample)
-            .where(PromptExample.preset_id == row.id)
-            .order_by(PromptExample.kind, PromptExample.position)
-        ).all()
-        values = {
-            **PromptPresetRead.model_validate(row).model_dump(),
-            "positive_examples": [entry.text for entry in examples if entry.kind is ExampleKind.POSITIVE],
-            "negative_examples": [entry.text for entry in examples if entry.kind is ExampleKind.NEGATIVE],
-        }
-        return PromptPresetRead.model_validate(values)
-
-    @staticmethod
-    def _content_background_rows(
-        session: Session,
-        background_ids: list[int],
+        scene_ids: list[int],
         mode: ContentMode,
-    ) -> list[VideoBackgroundPreset]:
+        status: ContentStatus,
+    ) -> list[Scene]:
         try:
-            validate_content_background_ids(background_ids, mode)
+            validate_content_scene_ids(scene_ids, mode, status)
         except ValueError as error:
             raise invalid_request(str(error)) from error
-        return [
-            CatalogService._get(
-                session,
-                VideoBackgroundPreset,
-                background_id,
-                "videoBackgroundPreset",
-            )
-            for background_id in background_ids
+        scenes = [
+            CatalogService._get(session, Scene, scene_id, "scene")
+            for scene_id in scene_ids
         ]
+        if status is ContentStatus.ACTIVE and any(
+            scene.status is not ResourceStatus.ACTIVE for scene in scenes
+        ):
+            raise invalid_request("Active content scripts require active scenes")
+        return scenes
 
     @staticmethod
-    def _replace_content_background_links(
+    def _replace_content_scene_links(
         session: Session,
         content_id: int,
-        backgrounds: list[VideoBackgroundPreset],
+        scenes: list[Scene],
     ) -> None:
         session.exec(
-            delete(ContentPlanBackground).where(
-                ContentPlanBackground.content_plan_id == content_id
+            delete(ContentScriptScene).where(
+                ContentScriptScene.content_script_id == content_id
             )
         )
         session.flush()
         session.add_all(
             [
-                ContentPlanBackground(
-                    content_plan_id=content_id,
-                    background_preset_id=background.id,
+                ContentScriptScene(
+                    content_script_id=content_id,
+                    scene_id=scene.id,
                     position=position,
                 )
-                for position, background in enumerate(backgrounds)
+                for position, scene in enumerate(scenes)
             ]
         )
         session.flush()
 
     @staticmethod
-    def _content_plan_read(session: Session, content: ContentPlan) -> ContentPlanRead:
+    def _content_script_read(session: Session, content: ContentScript) -> ContentScriptRead:
         links = session.exec(
-            select(ContentPlanBackground)
-            .where(ContentPlanBackground.content_plan_id == content.id)
-            .order_by(ContentPlanBackground.position)
+            select(ContentScriptScene)
+            .where(ContentScriptScene.content_script_id == content.id)
+            .order_by(ContentScriptScene.position)
         ).all()
-        return ContentPlanRead(
-            **ContentPlanFields.model_validate(content).model_dump(),
+        return ContentScriptRead(
+            **ContentScriptFields.model_validate(content).model_dump(),
             id=content.id,
             revision=content.revision,
             created_at=content.created_at,
             updated_at=content.updated_at,
-            background_preset_ids=[link.background_preset_id for link in links],
+            scene_ids=[link.scene_id for link in links],
         )
 
     @staticmethod
-    def _content_background_read(
+    def _content_scene_read(
         session: Session,
-        content: ContentPlan,
-    ) -> ContentPlanBackgroundRead:
+        content: ContentScript,
+    ) -> ContentScriptSceneRead:
         links = session.exec(
-            select(ContentPlanBackground)
-            .where(ContentPlanBackground.content_plan_id == content.id)
-            .order_by(ContentPlanBackground.position)
+            select(ContentScriptScene)
+            .where(ContentScriptScene.content_script_id == content.id)
+            .order_by(ContentScriptScene.position)
         ).all()
-        backgrounds = [
-            session.get(VideoBackgroundPreset, link.background_preset_id)
+        scenes = [
+            session.get(Scene, link.scene_id)
             for link in links
         ]
-        if any(background is None for background in backgrounds):
+        if any(scene is None for scene in scenes):
             raise ServiceError(
                 409,
                 "state_conflict",
-                "A registered background no longer exists",
+                "A registered scene no longer exists",
             )
-        return ContentPlanBackgroundRead(
-            content_plan_id=content.id,
-            content_plan_revision=content.revision,
-            backgrounds=[
+        return ContentScriptSceneRead(
+            content_script_id=content.id,
+            content_script_revision=content.revision,
+            scenes=[
                 BilingualSelectionRead(
-                    id=background.id,
-                    name_zh=background.name_zh,
-                    name_en=background.name_en,
-                    revision=background.revision,
+                    id=scene.id,
+                    name_zh=scene.name_zh,
+                    name_en=scene.name_en,
+                    revision=scene.revision,
                 )
-                for background in backgrounds
-                if background is not None
+                for scene in scenes
+                if scene is not None
             ],
         )
 
@@ -600,11 +638,11 @@ class CatalogService:
     def _content_referenced(session: Session, content_id: int) -> bool:
         return bool(
             session.exec(
-                select(BatchDraftContentSelection).where(
-                    BatchDraftContentSelection.content_plan_id == content_id
+                select(BatchDraftScriptSelection).where(
+                    BatchDraftScriptSelection.content_script_id == content_id
                 )
             ).first()
             or session.exec(
-                select(BatchVideoInputSnapshot).where(BatchVideoInputSnapshot.content_plan_id == content_id)
+                select(BatchVideoInputSnapshot).where(BatchVideoInputSnapshot.content_script_id == content_id)
             ).first()
         )

@@ -59,100 +59,6 @@ class Database:
         with self.engine.begin() as connection:
             self._install_triggers(connection)
 
-    def rebuild_empty_generation_tables(self) -> None:
-        guarded_tables = (
-            "batch_draft_content_plans",
-            "batch_draft_prompt_presets",
-            "batch_draft_background_presets",
-            "batch_draft_demographics",
-            "batch_draft_gpu_slots",
-            "batch_video_input_snapshots",
-            "batch_drafts",
-            "job_item_prompt_results",
-            "generation_attempts",
-            "samples",
-            "reviews",
-            "archives",
-            "archive_items",
-            "job_events",
-            "job_items",
-            "jobs",
-            "assets",
-        )
-        drop_order = (
-            "archive_items",
-            "reviews",
-            "archives",
-            "samples",
-            "generation_attempts",
-            "jobs",
-            "batch_video_input_snapshots",
-            "batch_drafts",
-            "datasets",
-            "gpu_slots",
-        )
-        create_order = (
-            "datasets",
-            "reviewers",
-            "batch_drafts",
-            "batch_video_input_snapshots",
-            "jobs",
-            "gpu_slots",
-            "generation_attempts",
-            "samples",
-            "reviews",
-            "archives",
-            "archive_items",
-        )
-
-        connection = self.engine.connect()
-        transaction_started = False
-        try:
-            try:
-                connection.exec_driver_sql("BEGIN IMMEDIATE")
-                transaction_started = True
-            except OperationalError as error:
-                if self._is_write_lock(error):
-                    raise DatabaseBusyError("The database is busy with another write transaction") from error
-                raise
-
-            existing_tables = set(
-                connection.exec_driver_sql(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                ).scalars()
-            )
-            occupied_tables = [
-                table_name
-                for table_name in guarded_tables
-                if table_name in existing_tables
-                and connection.exec_driver_sql(
-                    f'SELECT EXISTS(SELECT 1 FROM "{table_name}" LIMIT 1)'
-                ).scalar_one()
-            ]
-            if occupied_tables:
-                names = ", ".join(occupied_tables)
-                raise RuntimeError(
-                    "Cannot rebuild generation tables while business data exists in: " + names
-                )
-
-            for table_name in drop_order:
-                if table_name in existing_tables:
-                    SQLModel.metadata.tables[table_name].drop(connection)
-            for table_name in create_order:
-                SQLModel.metadata.tables[table_name].create(connection, checkfirst=True)
-
-            with Session(bind=connection, expire_on_commit=False) as session:
-                self._initialize_gpu_slots(session)
-                session.flush()
-            self._install_triggers(connection)
-            connection.commit()
-        except BaseException:
-            if transaction_started:
-                connection.rollback()
-            raise
-        finally:
-            connection.close()
-
     @staticmethod
     def _initialize_gpu_slots(session: Session) -> None:
         existing = {row.slot for row in session.exec(select(GpuSlot)).all()}
@@ -199,6 +105,161 @@ class Database:
                 END
                 """
             )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS prevent_prompt_template_version_content_update"
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER prevent_prompt_template_version_content_update
+            BEFORE UPDATE ON prompt_template_versions
+            WHEN NEW.name != OLD.name
+              OR NEW.name_key != OLD.name_key
+              OR NEW.category != OLD.category
+              OR NEW.version != OLD.version
+              OR NEW.style_instruction != OLD.style_instruction
+              OR NEW.positive_examples_json != OLD.positive_examples_json
+              OR NEW.negative_examples_json != OLD.negative_examples_json
+              OR NEW.ltx_negative_prompt != OLD.ltx_negative_prompt
+              OR NEW.h3_negative_prompt != OLD.h3_negative_prompt
+              OR OLD.verification_status != 'Draft'
+              OR NEW.verification_status != 'Verified'
+              OR NEW.revision != OLD.revision + 1
+            BEGIN
+                SELECT RAISE(ABORT, 'prompt template version content is immutable');
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS prevent_prompt_template_version_delete"
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER prevent_prompt_template_version_delete
+            BEFORE DELETE ON prompt_template_versions
+            BEGIN
+                SELECT RAISE(ABORT, 'prompt template versions are immutable');
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS require_active_content_script_scenes_insert"
+        )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS require_active_content_script_scenes_update"
+        )
+        for operation in ("INSERT", "UPDATE"):
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER require_active_content_script_scenes_{operation.casefold()}
+                BEFORE {operation} ON content_scripts
+                WHEN NEW.status = 'Active'
+                  AND NOT (
+                    (
+                      NEW.mode = 'Fixed'
+                      AND 1 = (
+                        SELECT count(*)
+                        FROM content_script_scenes AS links
+                        JOIN scenes ON scenes.id = links.scene_id
+                        WHERE links.content_script_id = NEW.id
+                          AND scenes.status = 'Active'
+                      )
+                    )
+                    OR (
+                      NEW.mode = 'Generative'
+                      AND 1 <= (
+                        SELECT count(*)
+                        FROM content_script_scenes AS links
+                        JOIN scenes ON scenes.id = links.scene_id
+                        WHERE links.content_script_id = NEW.id
+                          AND scenes.status = 'Active'
+                      )
+                    )
+                  )
+                BEGIN
+                    SELECT RAISE(
+                        ABORT,
+                        'active content script requires its valid active scenes'
+                    );
+                END
+                """
+            )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS limit_fixed_content_script_scene"
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER limit_fixed_content_script_scene
+            BEFORE INSERT ON content_script_scenes
+            WHEN (
+                SELECT mode FROM content_scripts
+                WHERE id = NEW.content_script_id
+            ) = 'Fixed'
+              AND EXISTS (
+                SELECT 1 FROM content_script_scenes
+                WHERE content_script_id = NEW.content_script_id
+              )
+            BEGIN
+                SELECT RAISE(ABORT, 'fixed content script accepts exactly one scene');
+            END
+            """
+        )
+        for operation in ("DELETE", "UPDATE"):
+            connection.exec_driver_sql(
+                f"DROP TRIGGER IF EXISTS protect_active_content_script_scenes_{operation.casefold()}"
+            )
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER protect_active_content_script_scenes_{operation.casefold()}
+                BEFORE {operation} ON content_script_scenes
+                WHEN (
+                    SELECT status FROM content_scripts
+                    WHERE id = OLD.content_script_id
+                ) = 'Active'
+                BEGIN
+                    SELECT RAISE(
+                        ABORT,
+                        'active content script scene links cannot change'
+                    );
+                END
+                """
+            )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS protect_active_content_script_scene_availability"
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_active_content_script_scene_availability
+            BEFORE UPDATE OF status ON scenes
+            WHEN OLD.status = 'Active'
+              AND NEW.status != 'Active'
+              AND EXISTS (
+                SELECT 1
+                FROM content_script_scenes AS current_link
+                JOIN content_scripts AS scripts
+                  ON scripts.id = current_link.content_script_id
+                WHERE current_link.scene_id = OLD.id
+                  AND scripts.status = 'Active'
+                  AND (
+                    scripts.mode = 'Fixed'
+                    OR NOT EXISTS (
+                      SELECT 1
+                      FROM content_script_scenes AS other_link
+                      JOIN scenes AS other_scene
+                        ON other_scene.id = other_link.scene_id
+                      WHERE other_link.content_script_id = scripts.id
+                        AND other_link.scene_id != OLD.id
+                        AND other_scene.status = 'Active'
+                    )
+                  )
+              )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'scene is required by an active content script'
+                );
+            END
+            """
+        )
         connection.exec_driver_sql("DROP TRIGGER IF EXISTS require_reviews_sample_snapshot")
         connection.exec_driver_sql(
             """
@@ -270,36 +331,36 @@ class Database:
             END
             """
         )
-        background_columns = (
+        scene_columns = (
             "scene_en",
             "ambient_sound_en",
             "participant_relationship_en",
             "lighting_en",
             "framing_en",
         )
-        background_text = "lower(" + " || ' ' || ".join(
-            f"coalesce(NEW.{column}, '')" for column in background_columns
+        scene_text = "lower(" + " || ' ' || ".join(
+            f"coalesce(NEW.{column}, '')" for column in scene_columns
         ) + ")"
         forbidden_checks = [
-            f"instr({background_text}, '{phrase.casefold().replace(chr(39), chr(39) * 2)}') > 0"
+            f"instr({scene_text}, '{phrase.casefold().replace(chr(39), chr(39) * 2)}') > 0"
             for phrase in BACKGROUND_DATABASE_FORBIDDEN_PHRASES
         ]
         forbidden_checks.extend(
             f"lower(trim(coalesce(NEW.{column}, ''))) = '{label.casefold()}'"
-            for column in background_columns
+            for column in scene_columns
             for label in BANNED_EMOTION_LABELS
         )
-        invalid_background = " OR ".join(forbidden_checks)
+        invalid_scene = " OR ".join(forbidden_checks)
         for operation in ("INSERT", "UPDATE"):
-            trigger_name = f"reject_video_background_presets_{operation.casefold()}"
+            trigger_name = f"reject_scenes_{operation.casefold()}"
             connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
             connection.exec_driver_sql(
                 f"""
                 CREATE TRIGGER {trigger_name}
-                BEFORE {operation} ON video_background_presets
-                WHEN {invalid_background}
+                BEFORE {operation} ON scenes
+                WHEN {invalid_scene}
                 BEGIN
-                    SELECT RAISE(ABORT, 'video background preset violates prompt policy');
+                    SELECT RAISE(ABORT, 'video scene violates prompt policy');
                 END
                 """
             )

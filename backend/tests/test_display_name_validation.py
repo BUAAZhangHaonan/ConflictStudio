@@ -16,12 +16,11 @@ from backend.domain.display_names import (
     EnglishDisplayName,
 )
 from backend.domain.schemas import (
-    ContentPlanCreate,
-    ContentPlanUpdate,
-    PromptPresetCreate,
-    PromptPresetUpdate,
-    VideoBackgroundPresetCreate,
-    VideoBackgroundPresetUpdate,
+    ContentScriptCreate,
+    ContentScriptUpdate,
+    PromptTemplateVersionCreate,
+    SceneCreate,
+    SceneUpdate,
 )
 
 
@@ -67,7 +66,7 @@ def content_payload(background_ids: list[int], **overrides: object) -> dict[str,
         "contentRequirementsEn": "Describe one adult responding in the room.",
         "sceneSupplementZh": "",
         "sceneSupplementEn": "",
-        "backgroundPresetIds": background_ids,
+        "sceneIds": background_ids,
     }
     payload.update(overrides)
     return payload
@@ -78,7 +77,10 @@ def prompt_payload(**overrides: object) -> dict[str, object]:
         "name": "Natural Portrait",
         "category": "A-VA",
         "styleGuidance": "Use a static medium shot.",
-        "finalRenderNegativeConstraints": "subtitles, captions, distortion",
+        "ltxNegativePrompt": "subtitles, captions, distortion",
+        "h3NegativePrompt": "subtitles, captions, distortion",
+        "version": 1,
+        "verificationStatus": "Verified",
     }
     payload.update(overrides)
     return payload
@@ -121,8 +123,8 @@ def test_display_name_accepts_ui_names_categories_models_and_boundaries(name: st
         "scenario-12 Imported Interview",
         "YAML-42",
         "prototype-demo",
-        "background-001",
-        "background-001 Private Office",
+        "scene-001",
+        "scene-001 Private Office",
         "Interview v2",
         "V12",
         "natural_portrait",
@@ -144,38 +146,33 @@ def test_display_name_rejects_internal_or_non_ui_names_without_rewriting(name: s
     ("schema", "valid_payload", "invalid_payload"),
     [
         (
-            ContentPlanCreate,
+            ContentScriptCreate,
             content_payload([1], nameEn="LTX-2.5 Interview"),
             content_payload([1], nameEn="scenario-12"),
         ),
         (
-            ContentPlanUpdate,
-            {"expectedRevision": 1, "backgroundPresetIds": [1], "nameEn": "A-VA Interview"},
-            {"expectedRevision": 1, "backgroundPresetIds": [1], "nameEn": "content_plan_v2"},
+            ContentScriptUpdate,
+            {"expectedRevision": 1, "sceneIds": [1], "nameEn": "A-VA Interview"},
+            {"expectedRevision": 1, "sceneIds": [1], "nameEn": "content_script_v2"},
         ),
         (
-            PromptPresetCreate,
+            PromptTemplateVersionCreate,
             prompt_payload(name="Q&A: Natural Portrait"),
             prompt_payload(name="yaml-preset"),
         ),
         (
-            PromptPresetUpdate,
-            {"expectedRevision": 1, "name": "C-VT Portrait"},
-            {"expectedRevision": 1, "name": "Pending"},
-        ),
-        (
-            VideoBackgroundPresetCreate,
+            SceneCreate,
             background_payload(nameEn="State-of-the-Art Office"),
-            background_payload(nameEn="background-007"),
+            background_payload(nameEn="scene-007"),
         ),
         (
-            VideoBackgroundPresetUpdate,
+            SceneUpdate,
             {"expectedRevision": 1, "nameEn": "LTX-2.5 Studio"},
             {"expectedRevision": 1, "nameEn": "Office v3"},
         ),
     ],
 )
-def test_all_six_create_and_update_schemas_share_display_name_validation(
+def test_catalog_create_and_mutable_update_schemas_share_display_name_validation(
     schema: type[BaseModel],
     valid_payload: dict[str, object],
     invalid_payload: dict[str, object],
@@ -197,35 +194,35 @@ def assert_display_name_response(response: Any, expected_field: str) -> None:
     assert "regex" not in str(body).casefold()
 
 
-def test_all_six_create_and_update_apis_return_stable_display_name_422(tmp_path: Path) -> None:
+def test_catalog_create_and_mutable_update_apis_return_stable_display_name_422(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
-        background = client.post("/api/video-background-presets", json=background_payload(nameEn="B"))
+        background = client.post("/api/scenes", json=background_payload(nameEn="B"))
         assert background.status_code == 201
         background_id = background.json()["id"]
 
         content = client.post(
-            "/api/content-plans",
+            "/api/content-scripts",
             json=content_payload([background_id], nameEn="X" * 60),
         )
         assert content.status_code == 201
 
-        prompt = client.post("/api/prompt-presets", json=prompt_payload(name="A-VA"))
+        prompt = client.post("/api/prompt-template-versions", json=prompt_payload(name="A-VA"))
         assert prompt.status_code == 201
 
         invalid_responses = [
             (
                 client.post(
-                    "/api/content-plans",
+                    "/api/content-scripts",
                     json=content_payload([background_id], nameZh="无效内容", nameEn="scenario-8"),
                 ),
                 "nameEn",
             ),
             (
                 client.patch(
-                    f"/api/content-plans/{content.json()['id']}",
+                    f"/api/content-scripts/{content.json()['id']}",
                     json={
                         "expectedRevision": content.json()["revision"],
-                        "backgroundPresetIds": [background_id],
+                        "sceneIds": [background_id],
                         "nameEn": "Content_Plan",
                     },
                 ),
@@ -233,28 +230,21 @@ def test_all_six_create_and_update_apis_return_stable_display_name_422(tmp_path:
             ),
             (
                 client.post(
-                    "/api/prompt-presets",
+                    "/api/prompt-template-versions",
                     json=prompt_payload(name="prototype-prompt"),
                 ),
                 "name",
             ),
             (
-                client.patch(
-                    f"/api/prompt-presets/{prompt.json()['id']}",
-                    json={"expectedRevision": prompt.json()["revision"], "name": "Accepted"},
-                ),
-                "name",
-            ),
-            (
                 client.post(
-                    "/api/video-background-presets",
-                    json=background_payload(nameZh="无效背景", nameEn="background-099"),
+                    "/api/scenes",
+                    json=background_payload(nameZh="无效背景", nameEn="scene-099"),
                 ),
                 "nameEn",
             ),
             (
                 client.patch(
-                    f"/api/video-background-presets/{background_id}",
+                    f"/api/scenes/{background_id}",
                     json={"expectedRevision": background.json()["revision"], "nameEn": "Office v4"},
                 ),
                 "nameEn",

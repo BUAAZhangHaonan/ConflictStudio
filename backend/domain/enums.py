@@ -55,9 +55,9 @@ class ContentMode(ValueEnum):
     GENERATIVE = "Generative"
 
 
-class ExampleKind(ValueEnum):
-    POSITIVE = "Positive"
-    NEGATIVE = "Negative"
+class TemplateVersionStatus(ValueEnum):
+    DRAFT = "Draft"
+    VERIFIED = "Verified"
 
 
 class BatchDraftStatus(ValueEnum):
