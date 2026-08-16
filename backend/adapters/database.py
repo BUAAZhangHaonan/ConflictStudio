@@ -369,6 +369,122 @@ class Database:
             END
             """
         )
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS protect_job_ownership")
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_job_ownership
+            BEFORE UPDATE OF source, dataset_id, batch_draft_id ON jobs
+            WHEN NEW.source != OLD.source
+              OR NEW.dataset_id IS NOT OLD.dataset_id
+              OR NEW.batch_draft_id IS NOT OLD.batch_draft_id
+            BEGIN
+                SELECT RAISE(ABORT, 'job source and production ownership are immutable');
+            END
+            """
+        )
+        for operation in ("INSERT", "UPDATE"):
+            trigger_name = f"require_production_job_ownership_{operation.casefold()}"
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {operation} ON jobs
+                WHEN NEW.source = 'Production'
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM batch_drafts
+                    WHERE batch_drafts.id = NEW.batch_draft_id
+                      AND batch_drafts.dataset_id = NEW.dataset_id
+                      AND batch_drafts.category = NEW.category
+                      AND batch_drafts.conflict_direction IS NEW.conflict_direction
+                      AND batch_drafts.model = NEW.model
+                      AND batch_drafts.precision IS NEW.precision
+                  )
+                BEGIN
+                    SELECT RAISE(
+                        ABORT,
+                        'production job must match its batch draft and dataset'
+                    );
+                END
+                """
+            )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS protect_referenced_batch_draft_identity"
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_referenced_batch_draft_identity
+            BEFORE UPDATE OF dataset_id, dataset_revision, category,
+                conflict_direction, model, precision ON batch_drafts
+            WHEN EXISTS (
+                SELECT 1 FROM jobs WHERE jobs.batch_draft_id = OLD.id
+            ) AND (
+                NEW.dataset_id != OLD.dataset_id
+                OR NEW.dataset_revision != OLD.dataset_revision
+                OR NEW.category != OLD.category
+                OR NEW.conflict_direction IS NOT OLD.conflict_direction
+                OR NEW.model != OLD.model
+                OR NEW.precision IS NOT OLD.precision
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'referenced batch draft identity is immutable'
+                );
+            END
+            """
+        )
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS protect_job_item_parentage")
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_job_item_parentage
+            BEFORE UPDATE OF job_id, input_snapshot_id ON job_items
+            WHEN NEW.job_id != OLD.job_id
+              OR NEW.input_snapshot_id != OLD.input_snapshot_id
+            BEGIN
+                SELECT RAISE(ABORT, 'job item parentage is immutable');
+            END
+            """
+        )
+        for operation in ("INSERT", "UPDATE"):
+            trigger_name = f"require_job_item_parentage_{operation.casefold()}"
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {operation} ON job_items
+                WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM jobs
+                    JOIN batch_video_input_snapshots AS snapshots
+                      ON snapshots.id = NEW.input_snapshot_id
+                    WHERE jobs.id = NEW.job_id
+                      AND (
+                        (
+                          jobs.source = 'Production'
+                          AND snapshots.batch_draft_id = jobs.batch_draft_id
+                          AND snapshots.dataset_id = jobs.dataset_id
+                          AND snapshots.category = jobs.category
+                          AND snapshots.conflict_direction IS jobs.conflict_direction
+                          AND snapshots.model = jobs.model
+                          AND snapshots.precision IS jobs.precision
+                        ) OR (
+                          jobs.source IN ('PromptTest', 'VideoTest')
+                          AND snapshots.batch_draft_id IS NULL
+                          AND snapshots.dataset_id IS NULL
+                          AND snapshots.category = jobs.category
+                          AND snapshots.conflict_direction IS jobs.conflict_direction
+                        )
+                      )
+                )
+                BEGIN
+                    SELECT RAISE(
+                        ABORT,
+                        'job item snapshot must match its job source and ownership'
+                    );
+                END
+                """
+            )
         for operation in ("INSERT", "UPDATE"):
             trigger_name = f"protect_job_item_source_{operation.casefold()}"
             connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")

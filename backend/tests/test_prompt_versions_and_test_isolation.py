@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from backend.domain.enums import (
+    GpuSlotName,
     JobItemStage,
     JobSource,
     JobStatus,
@@ -59,6 +60,99 @@ def prompt_test_payload(
         "model": model.value,
         "precision": None,
     }
+
+
+def add_video_test_media(app) -> dict[str, int]:  # type: ignore[no-untyped-def]
+    timestamp = utc_now()
+    with app.state.database.immediate_session() as session:
+        sample = session.exec(select(Sample)).one()
+        production_item = session.get(JobItem, sample.job_item_id)
+        assert production_item is not None
+        production_snapshot = session.get(
+            BatchVideoInputSnapshot,
+            production_item.input_snapshot_id,
+        )
+        production_asset = session.get(Asset, sample.primary_asset_id)
+        assert production_snapshot is not None
+        assert production_asset is not None
+
+        test_job = Job(
+            display_name="A-VA-video-test",
+            source=JobSource.VIDEO_TEST,
+            dataset_id=None,
+            batch_draft_id=None,
+            category=production_snapshot.category,
+            conflict_direction=production_snapshot.conflict_direction,
+            model=None,
+            precision=None,
+            status=JobStatus.COMPLETED,
+            total_count=1,
+            prepared_count=1,
+            completed_count=1,
+            started_at=timestamp,
+            finished_at=timestamp,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        session.add(test_job)
+        session.flush()
+
+        snapshot_data = production_snapshot.model_dump(
+            exclude={"id", "batch_draft_id", "dataset_id", "dataset_revision", "sequence"}
+        )
+        test_snapshot = BatchVideoInputSnapshot(
+            **snapshot_data,
+            batch_draft_id=None,
+            dataset_id=None,
+            dataset_revision=None,
+            sequence=1,
+        )
+        session.add(test_snapshot)
+        session.flush()
+        test_item = JobItem(
+            job_id=test_job.id,
+            sequence=2,
+            input_snapshot_id=test_snapshot.id,
+            gpu_slot=GpuSlotName.GPU0,
+            stage=JobItemStage.COMPLETED,
+            status=JobStatus.COMPLETED,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        session.add(test_item)
+        session.flush()
+
+        relative_path = f"media/video-test-{test_item.id}.mp4"
+        media_path = app.state.database.data_root / relative_path
+        media_path.parent.mkdir(parents=True, exist_ok=True)
+        media_path.write_bytes(b"video-test")
+        test_asset = Asset(
+            origin_job_item_id=test_item.id,
+            storage_root=str(app.state.database.data_root),
+            relative_path=relative_path,
+            media_type=production_asset.media_type,
+            byte_size=media_path.stat().st_size,
+            width=production_asset.width,
+            height=production_asset.height,
+            fps=production_asset.fps,
+            frame_count=production_asset.frame_count,
+            duration_seconds=production_asset.duration_seconds,
+            has_audio=production_asset.has_audio,
+            created_at=timestamp,
+        )
+        session.add(test_asset)
+        session.flush()
+        test_item.source_asset_id = test_asset.id
+        test_item.primary_asset_id = test_asset.id
+        session.flush()
+
+        return {
+            "sample_id": sample.id,
+            "production_job_id": production_item.job_id,
+            "test_job_id": test_job.id,
+            "test_item_id": test_item.id,
+            "test_asset_id": test_asset.id,
+        }
 
 
 def test_template_identity_versions_are_revisioned_and_verified_versions_are_immutable(
@@ -282,6 +376,151 @@ def test_sqlite_rejects_changing_a_sample_to_a_test_job_item(
                 "UPDATE samples SET job_item_id = ? WHERE id = ?",
                 (test_item_id, sample_id),
             )
+
+
+@pytest.mark.parametrize(
+    ("column", "replacement"),
+    [
+        ("source", "'VideoTest'"),
+        ("dataset_id", "NULL"),
+        ("batch_draft_id", "NULL"),
+    ],
+)
+def test_sqlite_rejects_changing_job_source_or_production_ownership(
+    tmp_path: Path,
+    column: str,
+    replacement: str,
+) -> None:
+    app = sample_app(tmp_path)
+    with app.state.database.read_session() as session:
+        sample = session.exec(select(Sample)).one()
+        item = session.get(JobItem, sample.job_item_id)
+        assert item is not None
+        job_id = item.job_id
+
+    statement = (
+        "UPDATE jobs SET source = 'VideoTest', dataset_id = NULL, "
+        "batch_draft_id = NULL, model = NULL, precision = NULL WHERE id = ?"
+        if column == "source"
+        else f"UPDATE jobs SET {column} = {replacement} WHERE id = ?"
+    )
+    with pytest.raises(IntegrityError):
+        with app.state.database.engine.begin() as connection:
+            connection.exec_driver_sql(statement, (job_id,))
+
+
+def test_sqlite_rejects_job_item_reparenting_and_video_test_media_bypass(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    identifiers = add_video_test_media(app)
+
+    with pytest.raises(IntegrityError):
+        with app.state.database.engine.begin() as connection:
+            connection.exec_driver_sql(
+                """
+                UPDATE jobs
+                SET source = 'Production',
+                    dataset_id = (SELECT dataset_id FROM jobs WHERE id = ?),
+                    batch_draft_id = (SELECT batch_draft_id FROM jobs WHERE id = ?),
+                    model = (SELECT model FROM jobs WHERE id = ?),
+                    precision = (SELECT precision FROM jobs WHERE id = ?)
+                WHERE id = ?
+                """,
+                (
+                    identifiers["production_job_id"],
+                    identifiers["production_job_id"],
+                    identifiers["production_job_id"],
+                    identifiers["production_job_id"],
+                    identifiers["test_job_id"],
+                ),
+            )
+
+    with pytest.raises(IntegrityError):
+        with app.state.database.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE job_items SET job_id = ? WHERE id = ?",
+                (
+                    identifiers["production_job_id"],
+                    identifiers["test_item_id"],
+                ),
+            )
+
+    with pytest.raises(IntegrityError, match="samples require completed production media"):
+        with app.state.database.engine.begin() as connection:
+            connection.exec_driver_sql(
+                """
+                UPDATE samples
+                SET job_item_id = ?, source_asset_id = ?, primary_asset_id = ?
+                WHERE id = ?
+                """,
+                (
+                    identifiers["test_item_id"],
+                    identifiers["test_asset_id"],
+                    identifiers["test_asset_id"],
+                    identifiers["sample_id"],
+                ),
+            )
+
+    with app.state.database.read_session() as session:
+        sample = session.get(Sample, identifiers["sample_id"])
+        test_item = session.get(JobItem, identifiers["test_item_id"])
+        assert sample is not None
+        assert test_item is not None
+        assert sample.job_item_id != test_item.id
+        assert test_item.job_id == identifiers["test_job_id"]
+
+
+def test_sqlite_rejects_changing_referenced_batch_draft_ownership(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    with app.state.database.read_session() as session:
+        sample = session.exec(select(Sample)).one()
+        item = session.get(JobItem, sample.job_item_id)
+        assert item is not None
+        job = session.get(Job, item.job_id)
+        assert job is not None
+        assert job.batch_draft_id is not None
+        batch_draft_id = job.batch_draft_id
+
+    with pytest.raises(IntegrityError, match="referenced batch draft identity is immutable"):
+        with app.state.database.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE batch_drafts SET dataset_id = dataset_id + 1000 WHERE id = ?",
+                (batch_draft_id,),
+            )
+
+
+def test_valid_production_sample_keeps_one_consistent_parent_chain(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        response = client.get("/api/samples")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    with app.state.database.engine.connect() as connection:
+        valid_chain_count = connection.exec_driver_sql(
+            """
+            SELECT count(*)
+            FROM samples
+            JOIN job_items ON job_items.id = samples.job_item_id
+            JOIN jobs ON jobs.id = job_items.job_id
+            JOIN batch_drafts ON batch_drafts.id = jobs.batch_draft_id
+            JOIN batch_video_input_snapshots AS snapshots
+              ON snapshots.id = job_items.input_snapshot_id
+            JOIN assets ON assets.id = samples.primary_asset_id
+            WHERE jobs.source = 'Production'
+              AND jobs.dataset_id = samples.dataset_id
+              AND batch_drafts.dataset_id = jobs.dataset_id
+              AND snapshots.batch_draft_id = jobs.batch_draft_id
+              AND snapshots.dataset_id = jobs.dataset_id
+              AND assets.origin_job_item_id = job_items.id
+            """
+        ).scalar_one()
+    assert valid_chain_count == 1
 
 
 def test_test_result_filters_are_applied_before_fixed_pagination(
