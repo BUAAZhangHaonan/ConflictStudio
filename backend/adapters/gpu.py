@@ -13,7 +13,7 @@ from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName, Precis
 
 SERVICE_USER = "zhanghaonan"
 USER_UNIT_DIRECTORY = "/home/team/zhanghaonan/.config/systemd/user"
-DATA_ROOT = "/home/team/zhanghaonan/TAFFC/ConflictStudio-data"
+DATA_ROOT = "/home/team/zhanghaonan/ConflictStudio-data"
 
 
 @dataclass(frozen=True)
@@ -156,7 +156,7 @@ UNIT_DEFINITIONS = (
         "/home/team/zhanghaonan/LTX-2.5-ComfyUI",
         8188,
         Precision.BF16,
-        "/home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-bf16",
+        "/home/team/zhanghaonan/ConflictStudio-data/comfyui/gpu0/ltx25-bf16",
     ),
     UnitDefinition(
         "conflictstudio-ltx25-int8-gpu0.service",
@@ -166,7 +166,7 @@ UNIT_DEFINITIONS = (
         "/home/team/zhanghaonan/LTX-2.5-ComfyUI",
         8188,
         Precision.INT8,
-        "/home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu0/ltx25-int8",
+        "/home/team/zhanghaonan/ConflictStudio-data/comfyui/gpu0/ltx25-int8",
     ),
     UnitDefinition(
         "conflictstudio-ltx25-bf16-gpu1.service",
@@ -176,7 +176,7 @@ UNIT_DEFINITIONS = (
         "/home/team/zhanghaonan/LTX-2.5-ComfyUI",
         8189,
         Precision.BF16,
-        "/home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu1/ltx25-bf16",
+        "/home/team/zhanghaonan/ConflictStudio-data/comfyui/gpu1/ltx25-bf16",
     ),
     UnitDefinition(
         "conflictstudio-ltx25-int8-gpu1.service",
@@ -186,7 +186,7 @@ UNIT_DEFINITIONS = (
         "/home/team/zhanghaonan/LTX-2.5-ComfyUI",
         8189,
         Precision.INT8,
-        "/home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui/gpu1/ltx25-int8",
+        "/home/team/zhanghaonan/ConflictStudio-data/comfyui/gpu1/ltx25-int8",
     ),
 )
 

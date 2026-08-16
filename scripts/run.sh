@@ -2,11 +2,26 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATA_ROOT=/home/team/zhanghaonan/TAFFC/ConflictStudio-data
+PROJECT_ROOT=/home/team/zhanghaonan/ConflictStudio
+ENV_FILE="$PROJECT_ROOT/ConflictStudio.env"
+DATA_ROOT=/home/team/zhanghaonan/ConflictStudio-data
 LTX23_WORKFLOW_PATH=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json
 H3_WORKFLOW_PATH=/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json
+
+if [[ "$ROOT" != "$PROJECT_ROOT" ]]; then
+  echo "ConflictStudio must run from $PROJECT_ROOT" >&2
+  exit 1
+fi
+if [[ ! -r "$ENV_FILE" ]]; then
+  echo "$ENV_FILE is required and must be readable" >&2
+  exit 1
+fi
+set -a
+source "$ENV_FILE"
+set +a
+CONFLICTSTUDIO_DATA_ROOT="${CONFLICTSTUDIO_DATA_ROOT:-$DATA_ROOT}"
+
 required=(
-  CONFLICTSTUDIO_DATA_ROOT
   CONFLICTSTUDIO_HOST
   CONFLICTSTUDIO_PORT
   CONFLICTSTUDIO_PYTHON

@@ -8,7 +8,8 @@ from backend.adapters.gpu import UNIT_DEFINITIONS, UnitDefinition
 from backend.domain.enums import GpuSlotName
 
 
-DATA_ROOT_VALUE = "/home/team/zhanghaonan/TAFFC/ConflictStudio-data"
+DATA_ROOT_VALUE = "/home/team/zhanghaonan/ConflictStudio-data"
+ENV_FILE_VALUE = "/home/team/zhanghaonan/ConflictStudio/ConflictStudio.env"
 LTX23_WORKFLOW_PATH_VALUE = (
     "/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json"
 )
@@ -64,9 +65,7 @@ class Settings:
 
     @classmethod
     def from_environment(cls) -> "Settings":
-        value = os.environ.get("CONFLICTSTUDIO_DATA_ROOT", "")
-        if not value:
-            raise RuntimeError("CONFLICTSTUDIO_DATA_ROOT is required")
+        value = os.environ.get("CONFLICTSTUDIO_DATA_ROOT", DATA_ROOT_VALUE)
         if value != DATA_ROOT_VALUE:
             raise RuntimeError(f"CONFLICTSTUDIO_DATA_ROOT must equal {DATA_ROOT_VALUE}")
         data_root = Path(value)

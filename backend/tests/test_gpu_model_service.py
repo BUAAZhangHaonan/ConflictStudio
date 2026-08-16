@@ -501,7 +501,7 @@ def test_ltx25_profile_allowlist_has_exact_runtime_and_data_paths(
     assert any(value.endswith(profile_path + "/input") for value in unit.required_exec_tokens)
     assert unit.required_exec_tokens[-2:] == (
         "--database-url",
-        "sqlite:////home/team/zhanghaonan/TAFFC/ConflictStudio-data"
+        "sqlite:////home/team/zhanghaonan/ConflictStudio-data"
         f"{profile_path}/database/comfyui.sqlite3",
     )
 

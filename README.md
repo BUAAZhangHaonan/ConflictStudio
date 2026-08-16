@@ -25,11 +25,13 @@ python -m pytest -q backend/tests
 python -m compileall -q backend
 ```
 
-## Temporary Deployment
+## Runtime configuration
 
-Temporary runs require:
+Runtime configuration is loaded only from `/home/team/zhanghaonan/ConflictStudio/ConflictStudio.env`. The data root defaults to `/home/team/zhanghaonan/ConflictStudio-data`; any explicit `CONFLICTSTUDIO_DATA_ROOT` value must match that path.
 
-- a writable data root at `/home/team/zhanghaonan/TAFFC/ConflictStudio-data`
+Runtime runs require:
+
+- a writable data root at `/home/team/zhanghaonan/ConflictStudio-data`
 - `ffmpeg` and `ffprobe`
 - an existing Python environment
 - the fixed LTX-2.3 workflow file
@@ -39,28 +41,32 @@ Temporary runs require:
 Build the frontend first:
 
 ```bash
-npm run build
+npm --prefix frontend run build
 ```
 
-Then set the runtime variables and start the server:
+Create the fixed configuration file:
 
 ```bash
-export CONFLICTSTUDIO_DATA_ROOT=/home/team/zhanghaonan/TAFFC/ConflictStudio-data
-export CONFLICTSTUDIO_HOST=127.0.0.1
-export CONFLICTSTUDIO_PORT=8000
-export CONFLICTSTUDIO_PYTHON=/home/team/zhanghaonan/miniconda3/envs/mprisk/bin/python
-export CONFLICTSTUDIO_LTX23_WORKFLOW_PATH=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json
-export CONFLICTSTUDIO_H3_WORKFLOW_PATH=/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json
-export CONFLICTSTUDIO_GPU0_URL=http://127.0.0.1:8188
-export CONFLICTSTUDIO_GPU1_URL=http://127.0.0.1:8189
+CONFLICTSTUDIO_HOST=127.0.0.1
+CONFLICTSTUDIO_PORT=8000
+CONFLICTSTUDIO_PYTHON=/home/team/zhanghaonan/miniconda3/envs/mprisk/bin/python
+CONFLICTSTUDIO_LTX23_WORKFLOW_PATH=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json
+CONFLICTSTUDIO_H3_WORKFLOW_PATH=/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json
+CONFLICTSTUDIO_GPU0_URL=http://127.0.0.1:8188
+CONFLICTSTUDIO_GPU1_URL=http://127.0.0.1:8189
+```
+
+Then start the server from `/home/team/zhanghaonan/ConflictStudio`:
+
+```bash
 bash scripts/run.sh
 ```
 
-`scripts/run.sh` only validates these prerequisites and starts exactly one Uvicorn worker. It does not install dependencies, create directories, run migrations, or start the renderer services.
+`scripts/run.sh` loads that fixed file, validates the prerequisites, and starts exactly one Uvicorn worker. It does not install dependencies, create directories, run migrations, or start the renderer services.
 
 ### LTX-2.5 user services
 
-The four LTX-2.5 renderer units in `deploy/systemd` are separate BF16 and INT8 profiles for GPU0/port 8188 and GPU1/port 8189. They run `/home/team/zhanghaonan/LTX-2.5-ComfyUI` with its fixed Python 3.13 runtime. Each profile keeps its input, output, temp, user, cache, and SQLite data below `/home/team/zhanghaonan/TAFFC/ConflictStudio-data/comfyui`.
+The four LTX-2.5 renderer units in `deploy/systemd` are separate BF16 and INT8 profiles for GPU0/port 8188 and GPU1/port 8189. They run `/home/team/zhanghaonan/LTX-2.5-ComfyUI` with its fixed Python 3.13 runtime. Each profile keeps its input, output, temp, user, cache, and SQLite data below `/home/team/zhanghaonan/ConflictStudio-data/comfyui`.
 
 Install the unit files into the user's systemd directory and reload their definitions:
 

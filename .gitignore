@@ -7,6 +7,8 @@ output/
 playwright/
 .playwright-cli/
 test-results/
+browser-artifacts/
+screenshots/
 trace/
 *.trace.zip
 *.egg-info/
@@ -28,3 +30,5 @@ runtime/
 media/
 .env
 .env.*
+ConflictStudio-data/
+ConflictStudio.env

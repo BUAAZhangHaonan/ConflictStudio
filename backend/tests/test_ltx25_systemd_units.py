@@ -10,7 +10,7 @@ from backend.adapters.gpu import UNIT_DEFINITIONS
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SYSTEMD_ROOT = PROJECT_ROOT / "deploy" / "systemd"
-DATA_ROOT = "/home/team/zhanghaonan/TAFFC/ConflictStudio-data"
+DATA_ROOT = "/home/team/zhanghaonan/ConflictStudio-data"
 PROJECT_PATH = "/home/team/zhanghaonan/LTX-2.5-ComfyUI"
 PYTHON_PATH = (
     f"{PROJECT_PATH}/.uv-python/"

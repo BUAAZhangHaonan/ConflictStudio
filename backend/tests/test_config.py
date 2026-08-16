@@ -6,6 +6,7 @@ import pytest
 
 from backend.adapters.config import (
     DATA_ROOT_VALUE,
+    ENV_FILE_VALUE,
     GPU_URL_VALUES,
     H3_WORKFLOW_PATH_VALUE,
     LTX23_WORKFLOW_PATH_VALUE,
@@ -84,3 +85,14 @@ def test_renderer_settings_reject_arbitrary_ltx25_workflow_paths() -> None:
             slot_urls=tuple(GPU_URL_VALUES.items()),
             unit_definitions=UNIT_DEFINITIONS,
         )
+
+
+def test_runtime_paths_are_fixed_and_data_root_has_a_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CONFLICTSTUDIO_DATA_ROOT", raising=False)
+
+    settings = Settings.from_environment()
+
+    assert settings.data_root.as_posix() == "/home/team/zhanghaonan/ConflictStudio-data"
+    assert ENV_FILE_VALUE == "/home/team/zhanghaonan/ConflictStudio/ConflictStudio.env"
