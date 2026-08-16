@@ -35,6 +35,8 @@ from backend.domain.schemas import (
     ContentScriptRead,
     ContentScriptUpdate,
     DatasetCreate,
+    DatasetMergeRead,
+    DatasetMergeRequest,
     DatasetRead,
     DatasetUpdate,
     GenerationAttemptRead,
@@ -169,6 +171,15 @@ def create_dataset(payload: DatasetCreate, request: Request) -> DatasetRead:
 @router.patch("/datasets/{dataset_id}", response_model=DatasetRead)
 def update_dataset(dataset_id: int, payload: DatasetUpdate, request: Request) -> DatasetRead:
     return catalog(request).update_dataset(dataset_id, payload)
+
+
+@router.post("/datasets/{dataset_id}/merge", response_model=DatasetMergeRead)
+def merge_datasets(
+    dataset_id: int,
+    payload: DatasetMergeRequest,
+    request: Request,
+) -> DatasetMergeRead:
+    return catalog(request).merge_datasets(dataset_id, payload)
 
 
 @router.delete("/datasets/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -175,6 +175,72 @@ class Dataset(SQLModel, table=True):
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
+class DatasetMergeOperation(SQLModel, table=True):
+    __tablename__ = "dataset_merge_operations"
+    __table_args__ = (
+        CheckConstraint(
+            "target_revision_before >= 1",
+            name="ck_dataset_merge_operations_revision",
+        ),
+        CheckConstraint(
+            "source_count > 0",
+            name="ck_dataset_merge_operations_source_count",
+        ),
+        CheckConstraint(
+            "(executing = 0 AND executed_at IS NULL) OR "
+            "(executing = 1 AND executed_at IS NOT NULL)",
+            name="ck_dataset_merge_operations_state",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    target_dataset_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("datasets.id", ondelete="RESTRICT"),
+            nullable=False,
+        )
+    )
+    target_revision_before: int = Field(ge=1)
+    source_count: int = Field(gt=0)
+    executing: bool = False
+    executed_at: str | None = Field(
+        default=None,
+        sa_column=Column(String(32), nullable=True),
+    )
+
+
+class DatasetMergeSource(SQLModel, table=True):
+    __tablename__ = "dataset_merge_sources"
+    __table_args__ = (
+        CheckConstraint(
+            "source_revision_before >= 1",
+            name="ck_dataset_merge_sources_revision",
+        ),
+        CheckConstraint(
+            "sample_count >= 0",
+            name="ck_dataset_merge_sources_sample_count",
+        ),
+    )
+
+    operation_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("dataset_merge_operations.id", ondelete="CASCADE"),
+            primary_key=True,
+        )
+    )
+    source_dataset_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("datasets.id", ondelete="RESTRICT"),
+            primary_key=True,
+        )
+    )
+    source_revision_before: int = Field(ge=1)
+    sample_count: int = Field(ge=0)
+
+
 class ContentScript(SQLModel, table=True):
     __tablename__ = "content_scripts"
     __table_args__ = (
@@ -900,9 +966,6 @@ class Review(SQLModel, table=True):
     )
     reviewer_id: int = Field(
         sa_column=Column(Integer, ForeignKey("reviewers.id", ondelete="RESTRICT"), nullable=False)
-    )
-    dataset_id: int = Field(
-        sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=False)
     )
     protocol: Protocol = Field(sa_column=enum_column(Protocol))
     relation: Relation = Field(sa_column=enum_column(Relation))

@@ -1,10 +1,15 @@
+import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
+from sqlmodel import select
 
-from backend.domain.models import Archive, ArchiveItem, BatchDraft, Dataset, Job, Sample, utc_now
+from backend.domain.enums import BatchDraftStatus, DatasetPurpose, GenerationAttemptStatus, JobItemStage, JobSource, JobStatus
+from backend.domain.models import Archive, ArchiveItem, Asset, BatchDraft, BatchVideoInputSnapshot, Dataset, DatasetMergeOperation, DatasetMergeSource, GenerationAttempt, Job, JobItem, JobItemPromptResult, Review, Sample, utc_now
+from backend.services.samples import create_sample_for_completed_item
 from backend.tests.test_invariants import client_for
-from backend.tests.test_review_api import sample_app
+from backend.tests.test_review_api import create_reviewer, review_payload, sample_app
 
 
 def test_dataset_create_status_transitions_and_empty_delete(tmp_path: Path) -> None:
@@ -102,3 +107,381 @@ def test_dataset_delete_reports_every_reference_without_cascade(tmp_path: Path) 
         assert session.get(ArchiveItem, (dataset["id"], sample["id"])) is not None
         assert session.get(Job, 1) is not None
         assert session.get(BatchDraft, 1) is not None
+
+
+def test_dataset_merge_preserves_sample_media_review_and_job_history(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+        source = client.get(f"/api/datasets/{sample['datasetId']}").json()
+        reviewer = create_reviewer(client)
+        reviewed = client.post(
+            "/api/reviews",
+            json=review_payload(sample, reviewer),
+        ).json()
+        source_preview = client.post(
+            "/api/archives/preview",
+            json={"datasetId": source["id"]},
+        ).json()
+        client.post("/api/archives/sync", json=source_preview)
+        target = client.post(
+            "/api/datasets",
+            json={"name": "Combined formal set", "note": ""},
+        ).json()
+
+        stale = client.post(
+            f"/api/datasets/{target['id']}/merge",
+            json={
+                "targetExpectedRevision": target["revision"] + 1,
+                "sources": [
+                    {"id": source["id"], "expectedRevision": source["revision"]}
+                ],
+            },
+        )
+        stale_source = client.post(
+            f"/api/datasets/{target['id']}/merge",
+            json={
+                "targetExpectedRevision": target["revision"],
+                "sources": [
+                    {
+                        "id": source["id"],
+                        "expectedRevision": source["revision"] + 1,
+                    }
+                ],
+            },
+        )
+        unchanged = client.get(f"/api/samples/{sample['id']}").json()
+        merged = client.post(
+            f"/api/datasets/{target['id']}/merge",
+            json={
+                "targetExpectedRevision": target["revision"],
+                "sources": [
+                    {"id": source["id"], "expectedRevision": source["revision"]}
+                ],
+            },
+        )
+        assert merged.status_code == 200, merged.text
+        moved = client.get(f"/api/samples/{sample['id']}").json()
+        source_after = client.post(
+            "/api/archives/preview",
+            json={"datasetId": source["id"]},
+        ).json()
+        target_after = client.post(
+            "/api/archives/preview",
+            json={"datasetId": target["id"]},
+        ).json()
+        target_statistics = client.get(
+            f"/api/reviewers/{reviewer['id']}/statistics",
+            params={"datasetId": target["id"]},
+        ).json()
+        blocked_delete = client.delete(
+            f"/api/datasets/{source['id']}?expectedRevision="
+            f"{merged.json()['sourceDatasets'][0]['revision']}"
+        )
+
+    assert stale.status_code == 409
+    assert stale_source.status_code == 409
+    assert unchanged["datasetId"] == source["id"]
+    assert merged.status_code == 200
+    assert merged.json()["movedSampleCount"] == 1
+    assert merged.json()["targetDataset"]["revision"] == target["revision"] + 1
+    assert merged.json()["sourceDatasets"][0]["revision"] == source["revision"] + 1
+    assert moved["datasetId"] == target["id"]
+    assert moved["datasetName"] == target["name"]
+    assert moved["revision"] == reviewed["revision"] + 1
+    assert moved["primaryAssetId"] == reviewed["primaryAssetId"]
+    assert moved["sourceAssetId"] == reviewed["sourceAssetId"]
+    assert moved["reviewDecision"] == "Accepted"
+    assert moved["reviewRevision"] == reviewed["reviewRevision"]
+    assert moved["currentReview"]["id"] == reviewed["currentReview"]["id"]
+    assert "datasetId" not in moved["currentReview"]
+    assert [row["sampleId"] for row in source_after["removed"]] == [sample["id"]]
+    assert source_after["removed"][0]["datasetId"] == source["id"]
+    assert [row["sampleId"] for row in target_after["added"]] == [sample["id"]]
+    assert target_after["added"][0]["datasetId"] == target["id"]
+    assert target_statistics["uniqueReviewedCount"] == 1
+    assert blocked_delete.status_code == 409
+    assert blocked_delete.json()["error"]["details"]["references"] == {
+        "samples": 0,
+        "jobs": 1,
+        "archives": 1,
+        "archiveItems": 1,
+        "batchDrafts": 1,
+    }
+
+    with app.state.database.read_session() as session:
+        persisted_review = session.get(Review, reviewed["currentReview"]["id"])
+        job = session.get(Job, 1)
+        assert persisted_review is not None
+        assert persisted_review.sample_id == sample["id"]
+        assert persisted_review.decision.value == "Accepted"
+        assert session.get(Asset, reviewed["primaryAssetId"]) is not None
+        assert job is not None
+        assert job.dataset_id == source["id"]
+        assert job.dataset_name_snapshot == source["name"]
+        assert session.exec(select(DatasetMergeOperation)).all() == []
+        assert session.exec(select(DatasetMergeSource)).all() == []
+
+
+def test_sqlite_requires_both_dataset_revisions_for_sample_moves(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+        source = client.get(f"/api/datasets/{sample['datasetId']}").json()
+        target = client.post(
+            "/api/datasets",
+            json={"name": "Direct move target", "note": ""},
+        ).json()
+
+    connection = sqlite3.connect(app.state.database.database_path)
+    try:
+        connection.execute("PRAGMA foreign_keys=ON")
+
+        def begin_operation() -> None:
+            connection.execute("BEGIN")
+            cursor = connection.execute(
+                "INSERT INTO dataset_merge_operations "
+                "(target_dataset_id, target_revision_before, source_count, "
+                "executing, executed_at) VALUES (?, ?, 1, 0, NULL)",
+                (target["id"], target["revision"]),
+            )
+            connection.execute(
+                "INSERT INTO dataset_merge_sources "
+                "(operation_id, source_dataset_id, source_revision_before, sample_count) "
+                "VALUES (?, ?, ?, 1)",
+                (cursor.lastrowid, source["id"], source["revision"]),
+            )
+
+        connection.execute("BEGIN")
+        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
+            connection.execute(
+                "UPDATE samples SET dataset_id = ?, revision = revision + 1 WHERE id = ?",
+                (target["id"], sample["id"]),
+            )
+        connection.rollback()
+
+        begin_operation()
+        connection.execute(
+            "UPDATE datasets SET revision = revision + 1 WHERE id = ?",
+            (source["id"],),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
+            connection.execute(
+                "UPDATE samples SET dataset_id = ?, revision = revision + 1 WHERE id = ?",
+                (target["id"], sample["id"]),
+            )
+        connection.rollback()
+
+        begin_operation()
+        connection.execute(
+            "UPDATE datasets SET revision = revision + 1 WHERE id = ?",
+            (target["id"],),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
+            connection.execute(
+                "UPDATE samples SET dataset_id = ?, revision = revision + 1 WHERE id = ?",
+                (target["id"], sample["id"]),
+            )
+        connection.rollback()
+
+        begin_operation()
+        connection.execute(
+            "UPDATE datasets SET revision = revision + 1 WHERE id = ?",
+            (source["id"],),
+        )
+        connection.execute(
+            "UPDATE datasets SET revision = revision + 2 WHERE id = ?",
+            (target["id"],),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
+            connection.execute(
+                "UPDATE samples SET dataset_id = ?, revision = revision + 1 WHERE id = ?",
+                (target["id"], sample["id"]),
+            )
+        connection.rollback()
+
+        begin_operation()
+        connection.execute(
+            "UPDATE datasets SET revision = revision + 1 WHERE id IN (?, ?)",
+            (source["id"], target["id"]),
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
+            connection.execute(
+                "UPDATE samples SET dataset_id = ?, revision = revision + 2 WHERE id = ?",
+                (target["id"], sample["id"]),
+            )
+        connection.rollback()
+    finally:
+        connection.close()
+
+
+def test_incremental_production_appends_without_changing_existing_review(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        existing = client.get("/api/samples").json()["items"][0]
+        reviewer = create_reviewer(client)
+        reviewed = client.post(
+            "/api/reviews",
+            json=review_payload(existing, reviewer),
+        ).json()
+
+    timestamp = utc_now()
+    with app.state.database.immediate_session() as session:
+        original = session.get(Sample, existing["id"])
+        original_item = session.get(JobItem, original.job_item_id if original else 0)
+        original_job = session.get(Job, original_item.job_id if original_item else 0)
+        original_snapshot = session.get(
+            BatchVideoInputSnapshot,
+            original_item.input_snapshot_id if original_item else 0,
+        )
+        original_prompt = session.exec(
+            select(JobItemPromptResult).where(
+                JobItemPromptResult.job_item_id == (original_item.id if original_item else 0)
+            )
+        ).one()
+        original_attempt = session.exec(
+            select(GenerationAttempt).where(
+                GenerationAttempt.job_item_id == (original_item.id if original_item else 0)
+            )
+        ).one()
+        dataset = session.get(Dataset, original.dataset_id if original else 0)
+        assert original is not None
+        assert original_item is not None
+        assert original_job is not None
+        assert original_snapshot is not None
+        assert dataset is not None
+        dataset.purpose = DatasetPurpose.FORMAL
+
+        draft = BatchDraft(
+            dataset_id=dataset.id,
+            dataset_revision=dataset.revision,
+            category=original.category,
+            conflict_direction=original.conflict_direction,
+            model=original.model,
+            precision=original_attempt.precision,
+            status=BatchDraftStatus.SUBMITTED,
+        )
+        session.add(draft)
+        session.flush()
+        snapshot_values = original_snapshot.model_dump(
+            exclude={
+                "id",
+                "batch_draft_id",
+                "dataset_id",
+                "dataset_revision",
+                "dataset_name",
+                "sequence",
+                "seed",
+                "created_at",
+            }
+        )
+        snapshot = BatchVideoInputSnapshot(
+            **snapshot_values,
+            batch_draft_id=draft.id,
+            dataset_id=dataset.id,
+            dataset_revision=dataset.revision,
+            dataset_name=dataset.name,
+            sequence=1,
+            seed=78,
+            created_at=timestamp,
+        )
+        session.add(snapshot)
+        session.flush()
+        job = Job(
+            display_name="A-VA-incremental",
+            source=JobSource.PRODUCTION,
+            dataset_id=dataset.id,
+            dataset_name_snapshot=dataset.name,
+            batch_draft_id=draft.id,
+            category=original.category,
+            conflict_direction=original.conflict_direction,
+            model=original.model,
+            precision=original_attempt.precision,
+            status=JobStatus.COMPLETED,
+            total_count=1,
+            prepared_count=1,
+            completed_count=1,
+            started_at=timestamp,
+            finished_at=timestamp,
+        )
+        session.add(job)
+        session.flush()
+        item = JobItem(
+            job_id=job.id,
+            sequence=1,
+            input_snapshot_id=snapshot.id,
+            gpu_slot=original.gpu_slot,
+            stage=JobItemStage.COMPLETED,
+            status=JobStatus.COMPLETED,
+            renderer_prompt_id="incremental-prompt",
+        )
+        session.add(item)
+        session.flush()
+        relative_path = "media/incremental.mp4"
+        media_path = app.state.database.data_root / relative_path
+        media_path.parent.mkdir(parents=True, exist_ok=True)
+        media_path.write_bytes(b"video-2")
+        asset = Asset(
+            origin_job_item_id=item.id,
+            storage_root=str(app.state.database.data_root),
+            relative_path=relative_path,
+            media_type="video/mp4",
+            byte_size=7,
+            width=1344,
+            height=768,
+            fps=24,
+            frame_count=121,
+            duration_seconds=121 / 24,
+            has_audio=True,
+        )
+        session.add(asset)
+        session.flush()
+        item.source_asset_id = asset.id
+        item.primary_asset_id = asset.id
+        session.add(
+            JobItemPromptResult(
+                **original_prompt.model_dump(exclude={"id", "job_item_id", "created_at"}),
+                job_item_id=item.id,
+                created_at=timestamp,
+            )
+        )
+        session.add(
+            GenerationAttempt(
+                job_item_id=item.id,
+                attempt_number=1,
+                model=original.model,
+                precision=original_attempt.precision,
+                gpu_slot=original.gpu_slot,
+                seed=78,
+                source_asset_id=asset.id,
+                primary_asset_id=asset.id,
+                renderer_prompt_id=item.renderer_prompt_id,
+                status=GenerationAttemptStatus.COMPLETED,
+                started_at=timestamp,
+                finished_at=timestamp,
+            )
+        )
+        appended = create_sample_for_completed_item(session, job, item, dataset.id)
+        session.flush()
+        appended_id = appended.id
+
+    samples = app.state.sample_service.list_samples(
+        1,
+        dataset_id=existing["datasetId"],
+    )
+    unchanged = app.state.sample_service.get_sample(existing["id"])
+
+    assert samples.total == 2
+    assert appended_id != existing["id"]
+    assert unchanged.revision == reviewed["revision"]
+    assert unchanged.review_decision.value == reviewed["reviewDecision"]
+    assert unchanged.review_revision == reviewed["reviewRevision"]
+    assert unchanged.current_review is not None
+    assert unchanged.current_review.id == reviewed["currentReview"]["id"]
+    assert unchanged.primary_asset_id == reviewed["primaryAssetId"]

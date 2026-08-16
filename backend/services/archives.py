@@ -133,7 +133,12 @@ class ArchiveService:
 
     def _read_archive(self, session: Session, dataset_id: int) -> ArchiveRead:
         archive = session.get(Archive, dataset_id)
-        samples = session.exec(select(Sample).where(Sample.dataset_id == dataset_id)).all()
+        samples = {
+            row.id: row
+            for row in session.exec(
+                select(Sample).where(Sample.dataset_id == dataset_id)
+            ).all()
+        }
         items = {
             row.sample_id: row
             for row in session.exec(
@@ -142,8 +147,14 @@ class ArchiveService:
         }
         current_count = 0
         needs_update_count = 0
-        for sample in samples:
-            item = items.get(sample.id)
+        for sample_id in sorted(set(samples) | set(items)):
+            sample = samples.get(sample_id) or session.get(Sample, sample_id)
+            if sample is None:
+                raise RuntimeError("An archive item must reference a sample")
+            item = items.get(sample_id)
+            if sample.dataset_id != dataset_id:
+                needs_update_count += 1
+                continue
             status = archive_status_for(
                 sample.review_decision,
                 sample.revision,
@@ -182,8 +193,15 @@ class ArchiveService:
         updated: list[ArchiveChangeRead] = []
         removed: list[ArchiveChangeRead] = []
         unchanged_count = 0
-        for sample_id, sample in sorted(samples.items()):
+        for sample_id in sorted(set(samples) | set(items)):
+            sample = samples.get(sample_id) or session.get(Sample, sample_id)
+            if sample is None:
+                raise RuntimeError("An archive item must reference a sample")
             item = items.get(sample_id)
+            if sample.dataset_id != dataset_id:
+                if item is not None:
+                    removed.append(cls._archive_change(dataset, sample))
+                continue
             if sample.review_decision is ReviewDecision.ACCEPTED:
                 change = cls._archive_change(dataset, sample)
                 if item is None:

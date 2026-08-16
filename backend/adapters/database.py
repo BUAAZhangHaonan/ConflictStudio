@@ -306,7 +306,6 @@ class Database:
             WHEN NOT EXISTS (
                 SELECT 1 FROM samples
                 WHERE samples.id = NEW.sample_id
-                  AND samples.dataset_id = NEW.dataset_id
                   AND NEW.protocol = CASE
                       WHEN samples.category IN ('A-VA', 'C-VA') THEN 'VA'
                       ELSE 'VT'
@@ -712,46 +711,259 @@ class Database:
                 END
                 """
             )
-            trigger_name = f"protect_sample_source_{operation.casefold()}"
+        for trigger_name in (
+            "protect_sample_source_insert",
+            "protect_sample_source_update",
+            "require_sample_dataset_move",
+        ):
             connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
-            connection.exec_driver_sql(
-                f"""
-                CREATE TRIGGER {trigger_name}
-                BEFORE {operation} ON samples
-                WHEN NOT EXISTS (
-                    SELECT 1
-                    FROM job_items
-                    JOIN jobs ON jobs.id = job_items.job_id
-                    WHERE job_items.id = NEW.job_item_id
-                      AND jobs.source = 'Production'
-                      AND jobs.dataset_id = NEW.dataset_id
-                      AND job_items.status = 'Completed'
-                      AND job_items.primary_asset_id = NEW.primary_asset_id
-                      AND (
-                        job_items.source_asset_id IS NEW.source_asset_id
-                      )
-                      AND EXISTS (
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_sample_source_insert
+            BEFORE INSERT ON samples
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM job_items
+                JOIN jobs ON jobs.id = job_items.job_id
+                WHERE job_items.id = NEW.job_item_id
+                  AND jobs.source = 'Production'
+                  AND jobs.dataset_id = NEW.dataset_id
+                  AND job_items.status = 'Completed'
+                  AND job_items.primary_asset_id = NEW.primary_asset_id
+                  AND job_items.source_asset_id IS NEW.source_asset_id
+                  AND EXISTS (
+                    SELECT 1 FROM assets
+                    WHERE assets.id = NEW.primary_asset_id
+                      AND assets.origin_job_item_id = NEW.job_item_id
+                  )
+                  AND (
+                    NEW.source_asset_id IS NULL
+                    OR EXISTS (
                         SELECT 1 FROM assets
-                        WHERE assets.id = NEW.primary_asset_id
+                        WHERE assets.id = NEW.source_asset_id
                           AND assets.origin_job_item_id = NEW.job_item_id
-                      )
+                    )
+                  )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'samples require completed production media');
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_sample_source_update
+            BEFORE UPDATE ON samples
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM job_items
+                JOIN jobs ON jobs.id = job_items.job_id
+                WHERE job_items.id = NEW.job_item_id
+                  AND jobs.source = 'Production'
+                  AND job_items.status = 'Completed'
+                  AND job_items.primary_asset_id = NEW.primary_asset_id
+                  AND job_items.source_asset_id IS NEW.source_asset_id
+                  AND EXISTS (
+                    SELECT 1 FROM assets
+                    WHERE assets.id = NEW.primary_asset_id
+                      AND assets.origin_job_item_id = NEW.job_item_id
+                  )
+                  AND (
+                    NEW.source_asset_id IS NULL
+                    OR EXISTS (
+                        SELECT 1 FROM assets
+                        WHERE assets.id = NEW.source_asset_id
+                          AND assets.origin_job_item_id = NEW.job_item_id
+                    )
+                  )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'samples require completed production media');
+            END
+            """
+        )
+        for trigger_name in (
+            "validate_dataset_merge_operation_insert",
+            "validate_dataset_merge_source_insert",
+            "protect_dataset_merge_operation_update",
+            "protect_dataset_merge_source_update",
+            "validate_dataset_merge_operation_delete",
+            "execute_dataset_merge_operation",
+            "require_sample_dataset_move",
+            "count_sample_dataset_move",
+            "apply_dataset_merge_operation",
+        ):
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER validate_dataset_merge_operation_insert
+            BEFORE INSERT ON dataset_merge_operations
+            WHEN NEW.executing != 0
+              OR NEW.executed_at IS NOT NULL
+              OR NEW.target_revision_before != (
+                SELECT revision FROM datasets WHERE id = NEW.target_dataset_id
+              )
+              OR NOT EXISTS (
+                SELECT 1 FROM datasets
+                WHERE id = NEW.target_dataset_id
+                  AND purpose = 'Formal'
+                  AND status = 'Active'
+              )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'dataset merge target must match its expected active revision'
+                );
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER validate_dataset_merge_source_insert
+            BEFORE INSERT ON dataset_merge_sources
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM dataset_merge_operations AS operations
+                JOIN datasets AS sources
+                  ON sources.id = NEW.source_dataset_id
+                WHERE operations.id = NEW.operation_id
+                  AND operations.executing = 0
+                  AND NEW.source_dataset_id != operations.target_dataset_id
+                  AND sources.revision = NEW.source_revision_before
+                  AND NEW.sample_count = (
+                    SELECT COUNT(*) FROM samples
+                    WHERE dataset_id = NEW.source_dataset_id
+                  )
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'dataset merge source must match its expected revision and samples'
+                );
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_dataset_merge_source_update
+            BEFORE UPDATE ON dataset_merge_sources
+            BEGIN
+                SELECT RAISE(ABORT, 'dataset merge sources are immutable');
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER execute_dataset_merge_operation
+            BEFORE UPDATE ON dataset_merge_operations
+            WHEN NOT (
+                OLD.executing = 0
+                AND NEW.executing = 1
+                AND OLD.executed_at IS NULL
+                AND NEW.executed_at IS NOT NULL
+                AND NEW.id = OLD.id
+                AND NEW.target_dataset_id = OLD.target_dataset_id
+                AND NEW.target_revision_before = OLD.target_revision_before
+                AND NEW.source_count = OLD.source_count
+                AND NEW.source_count = (
+                    SELECT COUNT(*) FROM dataset_merge_sources
+                    WHERE operation_id = OLD.id
+                )
+                AND EXISTS (
+                    SELECT 1 FROM datasets
+                    WHERE id = NEW.target_dataset_id
+                      AND revision = NEW.target_revision_before
+                      AND purpose = 'Formal'
+                      AND status = 'Active'
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM dataset_merge_sources AS selected
+                    LEFT JOIN datasets AS sources
+                      ON sources.id = selected.source_dataset_id
+                    WHERE selected.operation_id = OLD.id
                       AND (
-                        NEW.source_asset_id IS NULL
-                        OR EXISTS (
-                            SELECT 1 FROM assets
-                            WHERE assets.id = NEW.source_asset_id
-                              AND assets.origin_job_item_id = NEW.job_item_id
+                        sources.id IS NULL
+                        OR sources.revision != selected.source_revision_before
+                        OR selected.sample_count != (
+                            SELECT COUNT(*) FROM samples
+                            WHERE dataset_id = selected.source_dataset_id
                         )
                       )
                 )
-                BEGIN
-                    SELECT RAISE(
-                        ABORT,
-                        'samples require completed production media'
-                    );
-                END
-                """
             )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'dataset merge revisions or source samples changed'
+                );
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER require_sample_dataset_move
+            BEFORE UPDATE OF dataset_id ON samples
+            WHEN NEW.dataset_id != OLD.dataset_id
+              AND NOT EXISTS (
+                SELECT 1
+                FROM dataset_merge_operations AS operations
+                JOIN dataset_merge_sources AS selected
+                  ON selected.operation_id = operations.id
+                 AND selected.source_dataset_id = OLD.dataset_id
+                JOIN datasets AS sources
+                  ON sources.id = selected.source_dataset_id
+                JOIN datasets AS targets
+                  ON targets.id = operations.target_dataset_id
+                WHERE operations.executing = 1
+                  AND operations.target_dataset_id = NEW.dataset_id
+                  AND sources.revision = selected.source_revision_before + 1
+                  AND targets.revision = operations.target_revision_before + 1
+                  AND NEW.revision = OLD.revision + 1
+              )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'sample dataset moves require both dataset revisions in one merge transaction'
+                );
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER apply_dataset_merge_operation
+            AFTER UPDATE OF executing ON dataset_merge_operations
+            WHEN OLD.executing = 0 AND NEW.executing = 1
+            BEGIN
+                UPDATE datasets
+                SET revision = revision + 1, updated_at = NEW.executed_at
+                WHERE id = NEW.target_dataset_id;
+
+                UPDATE datasets
+                SET revision = revision + 1, updated_at = NEW.executed_at
+                WHERE id IN (
+                    SELECT source_dataset_id
+                    FROM dataset_merge_sources
+                    WHERE operation_id = NEW.id
+                );
+
+                UPDATE samples
+                SET dataset_id = NEW.target_dataset_id,
+                    revision = revision + 1,
+                    updated_at = NEW.executed_at
+                WHERE dataset_id IN (
+                    SELECT source_dataset_id
+                    FROM dataset_merge_sources
+                    WHERE operation_id = NEW.id
+                );
+
+                DELETE FROM dataset_merge_sources
+                WHERE operation_id = NEW.id;
+                DELETE FROM dataset_merge_operations
+                WHERE id = NEW.id;
+            END
+            """
+        )
         connection.exec_driver_sql(
             "DROP TRIGGER IF EXISTS protect_job_item_asset_provenance"
         )

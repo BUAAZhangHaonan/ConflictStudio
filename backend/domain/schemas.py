@@ -196,6 +196,29 @@ class DatasetRead(ApiModel):
     updated_at: str
 
 
+class DatasetMergeSource(ApiModel):
+    id: int = Field(gt=0)
+    expected_revision: int = Field(ge=1)
+
+
+class DatasetMergeRequest(ApiModel):
+    target_expected_revision: int = Field(ge=1)
+    sources: list[DatasetMergeSource] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def reject_duplicate_sources(self) -> Self:
+        identifiers = [source.id for source in self.sources]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("A source dataset can be selected only once")
+        return self
+
+
+class DatasetMergeRead(ApiModel):
+    target_dataset: DatasetRead
+    source_datasets: list[DatasetRead]
+    moved_sample_count: int = Field(ge=0)
+
+
 class ContentScriptFields(ApiModel):
     name_zh: Name
     name_en: EnglishDisplayName
@@ -833,7 +856,6 @@ class ReviewRead(ApiModel):
     sample_id: int
     reviewer_id: int
     reviewer_name: str
-    dataset_id: int
     protocol: Protocol
     relation: Relation
     decision: ReviewDecision

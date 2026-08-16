@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import delete, func, or_
+from sqlalchemy import delete, func, or_, update
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
@@ -25,6 +25,8 @@ from backend.domain.models import (
     ContentScript,
     ContentScriptScene,
     Dataset,
+    DatasetMergeOperation,
+    DatasetMergeSource,
     Job,
     PromptTemplate,
     PromptTemplateExample,
@@ -41,6 +43,8 @@ from backend.domain.schemas import (
     ContentScriptRead,
     ContentScriptUpdate,
     DatasetCreate,
+    DatasetMergeRead,
+    DatasetMergeRequest,
     DatasetRead,
     DatasetUpdate,
     PromptTemplateCreate,
@@ -122,6 +126,92 @@ class CatalogService:
                 values["name_key"] = name_key(values["name"])
             self._apply_update(row, values)
             return DatasetRead.model_validate(row)
+
+    def merge_datasets(
+        self,
+        target_dataset_id: int,
+        payload: DatasetMergeRequest,
+    ) -> DatasetMergeRead:
+        with self.database.immediate_session() as session:
+            target = self._get(session, Dataset, target_dataset_id, "dataset")
+            self._check_revision(
+                target,
+                payload.target_expected_revision,
+                "dataset",
+            )
+            if (
+                target.purpose is not DatasetPurpose.FORMAL
+                or target.status is not ResourceStatus.ACTIVE
+            ):
+                raise ServiceError(
+                    422,
+                    "invalid_target_dataset",
+                    "The merge target must be an active formal dataset",
+                )
+
+            sources: list[Dataset] = []
+            for selected in payload.sources:
+                if selected.id == target_dataset_id:
+                    raise invalid_request("The target dataset cannot also be a source")
+                source = self._get(session, Dataset, selected.id, "dataset")
+                self._check_revision(
+                    source,
+                    selected.expected_revision,
+                    "dataset",
+                )
+                sources.append(source)
+
+            source_ids = [source.id for source in sources]
+            samples = session.exec(
+                select(Sample)
+                .where(Sample.dataset_id.in_(source_ids))
+                .order_by(Sample.id)
+            ).all()
+            sample_counts = {
+                source.id: sum(
+                    sample.dataset_id == source.id for sample in samples
+                )
+                for source in sources
+            }
+            operation = DatasetMergeOperation(
+                target_dataset_id=target.id,
+                target_revision_before=target.revision,
+                source_count=len(sources),
+            )
+            session.add(operation)
+            session.flush()
+            session.add_all(
+                [
+                    DatasetMergeSource(
+                        operation_id=operation.id,
+                        source_dataset_id=source.id,
+                        source_revision_before=source.revision,
+                        sample_count=sample_counts[source.id],
+                    )
+                    for source in sources
+                ]
+            )
+            session.flush()
+            timestamp = utc_now()
+            session.exec(
+                update(DatasetMergeOperation)
+                .where(DatasetMergeOperation.id == operation.id)
+                .values(executing=True, executed_at=timestamp)
+            )
+            session.flush()
+            session.expire_all()
+            target = self._get(session, Dataset, target_dataset_id, "dataset")
+            sources = [
+                self._get(session, Dataset, source_id, "dataset")
+                for source_id in source_ids
+            ]
+            return DatasetMergeRead(
+                target_dataset=DatasetRead.model_validate(target),
+                source_datasets=[
+                    DatasetRead.model_validate(source) for source in sources
+                ],
+                moved_sample_count=len(samples),
+            )
 
     def delete_dataset(self, dataset_id: int, expected_revision: int) -> None:
         with self.database.immediate_session() as session:

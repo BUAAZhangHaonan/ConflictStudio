@@ -111,7 +111,6 @@ class ReviewService:
         row = Review(
             sample_id=sample.id,
             reviewer_id=payload.reviewer_id,
-            dataset_id=sample.dataset_id,
             protocol=protocol_for(sample.category),
             relation=relation_for(sample.category),
             decision=payload.decision,

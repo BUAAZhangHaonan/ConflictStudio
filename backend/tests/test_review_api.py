@@ -485,27 +485,21 @@ def test_review_snapshot_must_match_current_sample_in_sqlite(tmp_path: Path) -> 
     with TestClient(app) as client:
         sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
-        other_dataset = client.post(
-            "/api/datasets",
-            json={"name": "Other", "note": ""},
-        ).json()
-
     statement = (
         "INSERT INTO reviews "
-        "(sample_id, reviewer_id, dataset_id, protocol, relation, decision, note, "
-        "sample_revision, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "(sample_id, reviewer_id, protocol, relation, decision, note, "
+        "sample_revision, revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     valid = (
-        sample["id"], reviewer["id"], sample["datasetId"], "VA", "Aligned",
+        sample["id"], reviewer["id"], "VA", "Aligned",
         "Accepted", "", sample["revision"], 1, "2026-08-14T00:00:00Z",
     )
     connection = sqlite3.connect(app.state.database.database_path)
     try:
         connection.execute("PRAGMA foreign_keys=ON")
         mismatches = (
-            (*valid[:2], other_dataset["id"], *valid[3:]),
-            (*valid[:3], "VT", *valid[4:]),
-            (*valid[:4], "Conflict", *valid[5:]),
+            (*valid[:2], "VT", *valid[3:]),
+            (*valid[:3], "Conflict", *valid[4:]),
         )
         for values in mismatches:
             with pytest.raises(sqlite3.IntegrityError, match="review snapshot must match its sample"):

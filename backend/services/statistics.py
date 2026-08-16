@@ -107,12 +107,12 @@ class StatisticsService:
         dataset_id: int | None,
         upper: str,
     ) -> list[Review]:
-        statement = select(Review).where(
+        statement = select(Review).join(Sample, Sample.id == Review.sample_id).where(
             Review.reviewer_id == reviewer_id,
             Review.created_at < upper,
         )
         if dataset_id is not None:
-            statement = statement.where(Review.dataset_id == dataset_id)
+            statement = statement.where(Sample.dataset_id == dataset_id)
         return list(session.exec(statement.order_by(Review.created_at, Review.id)).all())
 
     @staticmethod
@@ -120,14 +120,10 @@ class StatisticsService:
         if not sample_ids:
             return 0, 0
         samples = session.exec(select(Sample).where(Sample.id.in_(sample_ids))).all()
-        items = {
-            row.sample_id: row
-            for row in session.exec(select(ArchiveItem).where(ArchiveItem.sample_id.in_(sample_ids))).all()
-        }
         archived_current = 0
         needs_update = 0
         for sample in samples:
-            item = items.get(sample.id)
+            item = session.get(ArchiveItem, (sample.dataset_id, sample.id))
             status = archive_status_for(
                 sample.review_decision,
                 sample.revision,
