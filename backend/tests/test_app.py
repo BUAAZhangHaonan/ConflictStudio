@@ -29,6 +29,26 @@ def write_frontend(frontend: Path) -> None:
     (assets / "app.js").write_text("console.log('app')", encoding="utf-8")
 
 
+def create_verified_prompt(client: TestClient) -> dict[str, object]:
+    template = client.post(
+        "/api/prompt-templates",
+        json={"name": "Natural shot", "category": "A-VA"},
+    ).json()
+    version = client.post(
+        f"/api/prompt-templates/{template['id']}/versions",
+        json={
+            "expectedTemplateRevision": template["revision"],
+            "styleGuidance": "Use a static medium shot.",
+            "ltxNegativePrompt": "subtitles, captions, distortion",
+            "h3NegativePrompt": "subtitles, captions, distortion",
+        },
+    ).json()
+    return client.post(
+        f"/api/prompt-template-versions/{version['id']}/verify",
+        json={"expectedRevision": version["revision"]},
+    ).json()
+
+
 class _ConfiguredRendererGateway:
     configured = True
 
@@ -453,23 +473,12 @@ def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) ->
             "/api/content-scripts",
             json=content_script_request([background.json()["id"]]),
         )
-        prompt = client.post(
-            "/api/prompt-template-versions",
-            json={
-                "name": "Natural shot",
-                "category": "A-VA",
-                "styleGuidance": "Use a static medium shot.",
-                "ltxNegativePrompt": "subtitles, captions, distortion",
-                "h3NegativePrompt": "subtitles, captions, distortion",
-                "version": 1,
-                "verificationStatus": "Verified",
-            },
-        )
+        prompt = create_verified_prompt(client)
         response = client.post(
             "/api/prompt-preview",
             json={
                 "contentScript": {"id": content.json()["id"], "expectedRevision": content.json()["revision"]},
-                "promptTemplateVersion": {"id": prompt.json()["id"], "expectedRevision": prompt.json()["revision"]},
+                "promptTemplateVersion": {"id": prompt["id"], "expectedRevision": prompt["revision"]},
                 "scene": {"id": background.json()["id"], "expectedRevision": background.json()["revision"]},
                 "demographic": {"age": 25, "gender": "Female", "ethnicity": "EastAsian"},
                 "model": "LTX-2.3",
@@ -498,18 +507,7 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
             "/api/content-scripts",
             json=content_script_request([background.json()["id"]]),
         )
-        prompt = client.post(
-            "/api/prompt-template-versions",
-            json={
-                "name": "Natural shot",
-                "category": "A-VA",
-                "styleGuidance": "Use a static medium shot.",
-                "ltxNegativePrompt": "subtitles, captions, distortion",
-                "h3NegativePrompt": "subtitles, captions, distortion",
-                "version": 1,
-                "verificationStatus": "Verified",
-            },
-        )
+        prompt = create_verified_prompt(client)
         draft = client.post(
             "/api/batch-drafts",
             json={
@@ -524,7 +522,7 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
                             "sceneIds": [background.json()["id"]],
                         }
                     ],
-                "promptTemplateVersionId": prompt.json()["id"],
+                "promptTemplateVersionId": prompt["id"],
                 "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
                 "gpuSlots": ["GPU0"],
             },
@@ -542,13 +540,15 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
             },
         )
         assert submit.status_code == 202
-        assert submit.headers["Location"] == f"/api/jobs/{submit.json()['id']}"
+        assert submit.headers["Location"] == f"/api/generation-results/{submit.json()['id']}"
         assert draft.json()["precision"] == "INT8"
         assert preview.json()["allocations"][0]["model"] == "LTX-2.5"
         assert preview.json()["allocations"][0]["precision"] == "INT8"
         assert submit.json()["model"] == "LTX-2.5"
         assert submit.json()["precision"] == "INT8"
-        job_items = client.get(f"/api/jobs/{submit.json()['id']}/items").json()
+        job_items = client.get(
+            f"/api/generation-results/{submit.json()['id']}/items"
+        ).json()
         assert job_items["items"][0]["input"]["precision"] == "INT8"
         assert preview.json()["gpuRevisions"] == {"GPU0": 2}
 

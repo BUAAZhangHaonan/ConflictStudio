@@ -47,7 +47,9 @@ from backend.domain.schemas import (
     DatasetCreate,
     DemographicInput,
     JobCancelRequest,
+    PromptTemplateCreate,
     PromptTemplateVersionCreate,
+    PromptTemplateVersionVerify,
     SceneCreate,
 )
 from backend.services.batches import BatchService
@@ -240,16 +242,24 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
             sceneIds=[background.id],
         )
     )
-    preset = catalog.create_prompt_template_version(
-        PromptTemplateVersionCreate(
+    template = catalog.create_prompt_template(
+        PromptTemplateCreate(
             name=f"Preset {suffix}",
             category=Category.A_VA,
+        )
+    )
+    preset = catalog.create_prompt_template_version(
+        template.id,
+        PromptTemplateVersionCreate(
+            expectedTemplateRevision=template.revision,
             styleGuidance="Use restrained movement and a static medium shot.",
             ltxNegativePrompt="subtitles, captions, distortion, exaggerated movement",
             h3NegativePrompt="subtitles, captions, distortion, exaggerated movement",
-            version=1,
-            verificationStatus="Verified",
         )
+    )
+    preset = catalog.verify_prompt_template_version(
+        preset.id,
+        PromptTemplateVersionVerify(expectedRevision=preset.revision),
     )
     return dataset, content, preset, background
 
@@ -357,7 +367,7 @@ def test_executor_persists_results_and_runs_two_gpu_channels(tmp_path: Path) -> 
         job = await enqueue(batches, draft)
         items = {
             item.sequence: item.id
-            for item in batches.list_job_items(job.id, 1).items
+            for item in batches.list_production_result_items(job.id, 1).items
         }
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
         await executor.start()
@@ -387,7 +397,7 @@ def test_executor_persists_results_and_runs_two_gpu_channels(tmp_path: Path) -> 
             completed.completed_count,
             completed.failed_count,
         ) == (4, 4, 0)
-        completed_items = batches.list_job_items(completed.id, 1).items
+        completed_items = batches.list_production_result_items(completed.id, 1).items
         completed_events = batches.list_job_events(completed.id, 1).items
         assert all(item.prompt_result is not None for item in completed_items)
         assert all(item.prompt_result.final_positive_prompt for item in completed_items)
@@ -529,7 +539,7 @@ def test_single_item_failure_is_not_retried_and_other_items_continue(
         )
         make_available(database, [GpuSlotName.GPU0])
         job = await enqueue(batches, draft)
-        job_items = batches.list_job_items(job.id, 1).items
+        job_items = batches.list_production_result_items(job.id, 1).items
         failed_item_id = next(item.id for item in job_items if item.sequence == 2)
         renderer.fail_items.add(failed_item_id)
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
@@ -546,7 +556,7 @@ def test_single_item_failure_is_not_retried_and_other_items_continue(
             2,
             1,
         )
-        failed_items = batches.list_job_items(failed.id, 1).items
+        failed_items = batches.list_production_result_items(failed.id, 1).items
         failed_events = batches.list_job_events(failed.id, 1).items
         failed_item = next(item for item in failed_items if item.id == failed_item_id)
         assert failed_item.failure_code == "fake_render_failed"
@@ -638,7 +648,7 @@ def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(
             await recovered.stop()
         assert interrupted.status is JobStatus.FAILED
         assert interrupted.failure_code == "interrupted_by_restart"
-        interrupted_items = running_batches.list_job_items(interrupted.id, 1).items
+        interrupted_items = running_batches.list_production_result_items(interrupted.id, 1).items
         interrupted_events = running_batches.list_job_events(interrupted.id, 1).items
         assert all(
             item.failure_code == "interrupted_by_restart" for item in interrupted_items
@@ -699,7 +709,7 @@ def test_queued_and_running_cancellation_only_release_owned_slots(
 
         await executor.start()
         try:
-            second_item_id = batches.list_job_items(second_job.id, 1).items[0].id
+            second_item_id = batches.list_production_result_items(second_job.id, 1).items[0].id
             await wait_until(lambda: second_item_id in renderer.wait_started)
             running = batches.get_job(second_job.id)
             await executor.cancel_job(
@@ -715,7 +725,7 @@ def test_queued_and_running_cancellation_only_release_owned_slots(
         prompt_id = f"{second_job.id}:{second_item_id}"
         assert renderer.cancel_calls == [(GpuSlotName.GPU1, prompt_id)]
         assert cancelled_running.cancel_requested_at is not None
-        cancelled_items = batches.list_job_items(cancelled_running.id, 1).items
+        cancelled_items = batches.list_production_result_items(cancelled_running.id, 1).items
         cancelled_events = batches.list_job_events(cancelled_running.id, 1).items
         assert cancelled_items[0].status is JobStatus.CANCELLED
         event_types = [event.event_type for event in cancelled_events]
@@ -750,7 +760,7 @@ def test_cancel_race_keeps_an_already_completed_item(tmp_path: Path) -> None:
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
         await executor.start()
         try:
-            item_id = batches.list_job_items(job.id, 1).items[0].id
+            item_id = batches.list_production_result_items(job.id, 1).items[0].id
             await wait_until(lambda: item_id in renderer.wait_started)
             running = batches.get_job(job.id)
             await executor.cancel_job(
@@ -762,7 +772,7 @@ def test_cancel_race_keeps_an_already_completed_item(tmp_path: Path) -> None:
             await executor.stop()
 
         assert cancelled.completed_count == 1
-        cancelled_items = batches.list_job_items(cancelled.id, 1).items
+        cancelled_items = batches.list_production_result_items(cancelled.id, 1).items
         cancelled_events = batches.list_job_events(cancelled.id, 1).items
         assert cancelled_items[0].status is JobStatus.COMPLETED
         assert cancelled_items[0].stage is JobItemStage.COMPLETED

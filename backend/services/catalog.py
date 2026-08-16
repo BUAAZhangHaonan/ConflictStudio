@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from pydantic import ValidationError
@@ -8,7 +7,14 @@ from sqlalchemy import delete, func, or_
 from sqlmodel import Session, select
 
 from backend.adapters.database import Database
-from backend.domain.enums import ContentMode, ContentStatus, DatasetPurpose, ResourceStatus, TemplateVersionStatus
+from backend.domain.enums import (
+    ContentMode,
+    ContentStatus,
+    DatasetPurpose,
+    PromptExampleKind,
+    ResourceStatus,
+    TemplateVersionStatus,
+)
 from backend.domain.models import (
     Archive,
     ArchiveItem,
@@ -21,6 +27,8 @@ from backend.domain.models import (
     ContentScriptScene,
     Dataset,
     Job,
+    PromptTemplate,
+    PromptTemplateExample,
     PromptTemplateVersion,
     Sample,
     Scene,
@@ -36,6 +44,9 @@ from backend.domain.schemas import (
     DatasetCreate,
     DatasetRead,
     DatasetUpdate,
+    PromptTemplateCreate,
+    PromptTemplateRead,
+    PromptTemplateUpdate,
     PromptTemplateVersionCreate,
     PromptTemplateVersionRead,
     PromptTemplateVersionVerify,
@@ -259,65 +270,148 @@ class CatalogService:
             content = self._get(session, ContentScript, content_id, "contentScript")
             return self._content_scene_read(session, content)
 
-    def list_prompt_template_versions(self, page: int) -> PageRead[PromptTemplateVersionRead]:
+    def list_prompt_templates(self, page: int) -> PageRead[PromptTemplateRead]:
         with self.database.read_session() as session:
             return paginate(
                 session,
-                select(PromptTemplateVersion).order_by(
-                    PromptTemplateVersion.category,
-                    PromptTemplateVersion.name,
+                select(PromptTemplate).order_by(
+                    PromptTemplate.category,
+                    PromptTemplate.name,
+                    PromptTemplate.id,
+                ),
+                page,
+                PromptTemplateRead.model_validate,
+            )
+
+    def get_prompt_template(self, template_id: int) -> PromptTemplateRead:
+        with self.database.read_session() as session:
+            return PromptTemplateRead.model_validate(
+                self._get(session, PromptTemplate, template_id, "promptTemplate")
+            )
+
+    def create_prompt_template(
+        self,
+        payload: PromptTemplateCreate,
+    ) -> PromptTemplateRead:
+        with self.database.immediate_session() as session:
+            self._ensure_template_name_available(
+                session, payload.category, payload.name
+            )
+            row = PromptTemplate(
+                name=payload.name,
+                name_key=name_key(payload.name),
+                category=payload.category,
+            )
+            session.add(row)
+            session.flush()
+            return PromptTemplateRead.model_validate(row)
+
+    def update_prompt_template(
+        self,
+        template_id: int,
+        payload: PromptTemplateUpdate,
+    ) -> PromptTemplateRead:
+        with self.database.immediate_session() as session:
+            row = self._get(session, PromptTemplate, template_id, "promptTemplate")
+            self._check_revision(row, payload.expected_revision, "promptTemplate")
+            self._ensure_template_name_available(
+                session,
+                row.category,
+                payload.name,
+                exclude_id=template_id,
+            )
+            row.name = payload.name
+            row.name_key = name_key(payload.name)
+            row.revision += 1
+            row.updated_at = utc_now()
+            session.flush()
+            return PromptTemplateRead.model_validate(row)
+
+    def list_prompt_template_versions(
+        self,
+        template_id: int,
+        page: int,
+    ) -> PageRead[PromptTemplateVersionRead]:
+        with self.database.read_session() as session:
+            template = self._get(
+                session, PromptTemplate, template_id, "promptTemplate"
+            )
+            return paginate(
+                session,
+                select(PromptTemplateVersion)
+                .where(PromptTemplateVersion.template_id == template_id)
+                .order_by(
                     PromptTemplateVersion.version.desc(),
                     PromptTemplateVersion.id,
                 ),
                 page,
-                self._prompt_template_version_read,
+                lambda row: self._prompt_template_version_read(
+                    session, template, row
+                ),
             )
 
     def get_prompt_template_version(self, version_id: int) -> PromptTemplateVersionRead:
         with self.database.read_session() as session:
-            return self._prompt_template_version_read(
-                self._get(
-                    session,
-                    PromptTemplateVersion,
-                    version_id,
-                    "promptTemplateVersion",
-                )
+            row = self._get(
+                session,
+                PromptTemplateVersion,
+                version_id,
+                "promptTemplateVersion",
             )
+            template = self._get(
+                session,
+                PromptTemplate,
+                row.template_id,
+                "promptTemplate",
+            )
+            return self._prompt_template_version_read(session, template, row)
 
     def create_prompt_template_version(
         self,
+        template_id: int,
         payload: PromptTemplateVersionCreate,
     ) -> PromptTemplateVersionRead:
         with self.database.immediate_session() as session:
-            self._ensure_template_version_available(
-                session,
-                payload.category,
-                payload.name,
-                payload.version,
+            template = self._get(
+                session, PromptTemplate, template_id, "promptTemplate"
             )
+            self._check_revision(
+                template,
+                payload.expected_template_revision,
+                "promptTemplate",
+            )
+            latest = session.exec(
+                select(PromptTemplateVersion.version)
+                .where(PromptTemplateVersion.template_id == template_id)
+                .order_by(PromptTemplateVersion.version.desc())
+            ).first()
             row = PromptTemplateVersion(
-                name=payload.name,
-                name_key=name_key(payload.name),
-                category=payload.category,
-                version=payload.version,
+                template_id=template_id,
+                version=(latest or 0) + 1,
+                organization_instruction=payload.organization_instruction.strip(),
                 style_instruction=payload.style_instruction.strip(),
-                positive_examples_json=json.dumps(
-                    payload.positive_examples,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-                negative_examples_json=json.dumps(
-                    payload.negative_examples,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
                 ltx_negative_prompt=payload.ltx_negative_prompt,
                 h3_negative_prompt=payload.h3_negative_prompt,
-                verification_status=payload.verification_status,
             )
             session.add(row)
             session.flush()
-            return self._prompt_template_version_read(row)
+            for kind, values in (
+                (PromptExampleKind.POSITIVE, payload.positive_examples),
+                (PromptExampleKind.NEGATIVE, payload.negative_examples),
+            ):
+                for position, text in enumerate(values):
+                    session.add(
+                        PromptTemplateExample(
+                            prompt_template_version_id=row.id,
+                            kind=kind,
+                            position=position,
+                            text=text,
+                        )
+                    )
+            template.revision += 1
+            template.updated_at = utc_now()
+            session.flush()
+            return self._prompt_template_version_read(session, template, row)
 
     def verify_prompt_template_version(
         self,
@@ -344,9 +438,15 @@ class CatalogService:
                 )
             row.verification_status = TemplateVersionStatus.VERIFIED
             row.revision += 1
-            row.updated_at = utc_now()
+            row.verified_at = utc_now()
             session.flush()
-            return self._prompt_template_version_read(row)
+            template = self._get(
+                session,
+                PromptTemplate,
+                row.template_id,
+                "promptTemplate",
+            )
+            return self._prompt_template_version_read(session, template, row)
 
     def list_scenes(
         self,
@@ -485,21 +585,21 @@ class CatalogService:
             if session.exec(statement).first():
                 self._raise_name_conflict("contentScript")
 
-    def _ensure_template_version_available(
+    def _ensure_template_name_available(
         self,
         session: Session,
         category: Any,
         name: str,
-        version: int,
+        exclude_id: int | None = None,
     ) -> None:
-        if session.exec(
-            select(PromptTemplateVersion).where(
-                PromptTemplateVersion.category == category,
-                PromptTemplateVersion.name_key == name_key(name),
-                PromptTemplateVersion.version == version,
-            )
-        ).first():
-            self._raise_name_conflict("promptTemplateVersion")
+        statement = select(PromptTemplate).where(
+            PromptTemplate.category == category,
+            PromptTemplate.name_key == name_key(name),
+        )
+        if exclude_id is not None:
+            statement = statement.where(PromptTemplate.id != exclude_id)
+        if session.exec(statement).first():
+            self._raise_name_conflict("promptTemplate")
 
     def _ensure_scene_names_available(
         self,
@@ -520,22 +620,45 @@ class CatalogService:
 
     @staticmethod
     def _prompt_template_version_read(
+        session: Session,
+        template: PromptTemplate,
         row: PromptTemplateVersion,
     ) -> PromptTemplateVersionRead:
+        examples = session.exec(
+            select(PromptTemplateExample)
+            .where(
+                PromptTemplateExample.prompt_template_version_id == row.id
+            )
+            .order_by(
+                PromptTemplateExample.kind,
+                PromptTemplateExample.position,
+                PromptTemplateExample.id,
+            )
+        ).all()
         return PromptTemplateVersionRead(
             id=row.id,
-            name=row.name,
-            category=row.category,
+            template_id=template.id,
+            template_name=template.name,
+            category=template.category,
             version=row.version,
+            organization_instruction=row.organization_instruction,
             style_instruction=row.style_instruction,
-            positive_examples=json.loads(row.positive_examples_json),
-            negative_examples=json.loads(row.negative_examples_json),
+            positive_examples=[
+                example.text
+                for example in examples
+                if example.kind is PromptExampleKind.POSITIVE
+            ],
+            negative_examples=[
+                example.text
+                for example in examples
+                if example.kind is PromptExampleKind.NEGATIVE
+            ],
             ltx_negative_prompt=row.ltx_negative_prompt,
             h3_negative_prompt=row.h3_negative_prompt,
             verification_status=row.verification_status,
             revision=row.revision,
             created_at=row.created_at,
-            updated_at=row.updated_at,
+            verified_at=row.verified_at,
         )
 
     @staticmethod

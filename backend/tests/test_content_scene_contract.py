@@ -19,6 +19,7 @@ from backend.domain.schemas import (
     DatasetUpdate,
     SceneCreate,
     PromptTemplateVersionCreate,
+    PromptTemplateCreate,
     PromptTemplateVersionVerify,
 )
 from backend.services.batches import BatchService
@@ -394,17 +395,21 @@ def test_template_versions_are_immutable_and_formal_batches_require_verified(
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, content, _, _ = fixed_resources(database)
-    draft_version = catalog.create_prompt_template_version(
-        PromptTemplateVersionCreate(
-            name="Natural Interior",
+    template = catalog.create_prompt_template(
+        PromptTemplateCreate(
+            name="Draft Natural Interior",
             category=Category.A_VA,
-            version=2,
+        )
+    )
+    draft_version = catalog.create_prompt_template_version(
+        template.id,
+        PromptTemplateVersionCreate(
+            expectedTemplateRevision=template.revision,
             styleGuidance="Use restrained natural performance.",
             positiveExamples=["Keep behavior visible."],
             negativeExamples=["Do not name emotions."],
             ltxNegativePrompt="subtitles, captions",
             h3NegativePrompt="subtitles, captions, visual artifacts",
-            verificationStatus=TemplateVersionStatus.DRAFT,
         )
     )
     service = BatchService(

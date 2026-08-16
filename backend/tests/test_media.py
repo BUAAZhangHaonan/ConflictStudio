@@ -9,8 +9,14 @@ import pytest
 
 from backend.adapters.database import Database
 from backend.adapters.media import MediaError, MediaStore
-from backend.domain.enums import GenerationAttemptStatus, GpuSlotName, ModelName
+from backend.domain.enums import (
+    GenerationAttemptStatus,
+    GpuSlotName,
+    JobSource,
+    ModelName,
+)
 from backend.domain.models import GenerationAttempt
+from backend.tests.test_sample_integration import add_completed_result, make_app
 
 
 def compact_probe(*, frames: str | None = "121", width: int = 1344, height: int = 768, fps: str = "24/1", duration: str = "5.0416667", audio: bool = True, read_frames: str | None = None, wrapper: bool = False) -> str:
@@ -275,22 +281,25 @@ def test_va_and_vt_assets_preserve_rerender_attempt_history(tmp_path: Path, monk
 
 
 def test_asset_schema_has_checks_foreign_keys_and_immutability(tmp_path: Path) -> None:
-    database = Database(tmp_path)
-    database.initialize()
+    app = make_app(tmp_path)
+    _, origin_id, _ = add_completed_result(app, JobSource.PRODUCTION)
+    database = app.state.database
     connection = sqlite3.connect(database.database_path)
     connection.execute("PRAGMA foreign_keys=ON")
     try:
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                "INSERT INTO assets (storage_root, relative_path, media_type, byte_size, width, height, fps, frame_count, duration_seconds, has_audio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (str(tmp_path), "../escape.mp4", "video/mp4", 1, 1344, 768, 24, 121, 1.0, 1, "2026-08-12T00:00:00Z"),
+                "INSERT INTO assets (origin_job_item_id, storage_root, relative_path, media_type, byte_size, width, height, fps, frame_count, duration_seconds, has_audio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (origin_id, str(tmp_path), "../escape.mp4", "video/mp4", 1, 1344, 768, 24, 121, 1.0, 1, "2026-08-12T00:00:00Z"),
             )
         connection.execute(
-            "INSERT INTO assets (storage_root, relative_path, media_type, byte_size, width, height, fps, frame_count, duration_seconds, has_audio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(tmp_path), "media/source.mp4", "video/mp4", 1, 1344, 768, 24, 121, 1.0, 1, "2026-08-12T00:00:00Z"),
+            "INSERT INTO assets (origin_job_item_id, storage_root, relative_path, media_type, byte_size, width, height, fps, frame_count, duration_seconds, has_audio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (origin_id, str(tmp_path), "media/source-new.mp4", "video/mp4", 1, 1344, 768, 24, 121, 1.0, 1, "2026-08-12T00:00:00Z"),
         )
         with pytest.raises(sqlite3.IntegrityError):
-            connection.execute("UPDATE assets SET byte_size = 2 WHERE id = 1")
+            connection.execute(
+                "UPDATE assets SET byte_size = 2 WHERE relative_path = 'media/source-new.mp4'"
+            )
         foreign_keys = connection.execute("PRAGMA foreign_key_list(generation_attempts)").fetchall()
         assert {("job_items", "job_item_id"), ("assets", "source_asset_id"), ("assets", "primary_asset_id")} <= {(row[2], row[3]) for row in foreign_keys}
     finally:

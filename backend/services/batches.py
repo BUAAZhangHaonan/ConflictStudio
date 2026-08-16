@@ -25,6 +25,7 @@ from backend.domain.enums import (
     JobStatus,
     ModelName,
     Precision,
+    PromptExampleKind,
     ResourceStatus,
     TemplateVersionStatus,
 )
@@ -45,6 +46,8 @@ from backend.domain.models import (
     JobEvent,
     JobItem,
     JobItemPromptResult,
+    PromptTemplate,
+    PromptTemplateExample,
     PromptTemplateVersion,
     RENDERER_PROFILE_VERSION,
     Sample,
@@ -78,13 +81,14 @@ from backend.domain.schemas import (
     SelectionRead,
     SnapshotRead,
     SourceSelection,
-    TestRunCreate,
+    PromptTestCreate,
+    VideoTestCreate,
 )
 
 from .errors import ServiceError, not_found, revision_conflict, state_conflict
 from .assets import asset_content_url
 from .gpu_slots import GpuSlotService, GpuSlotSnapshot
-from .prompts import PreparedPrompt, PromptContext, PromptService
+from .prompts import PreparedPrompt, PromptContext, PromptResult, PromptService
 from .pagination import PAGE_SIZE, paginate
 
 
@@ -102,6 +106,7 @@ class DraftAggregate:
     draft: BatchDraft
     dataset: Dataset
     selections: list[DraftContentSelection]
+    template: PromptTemplate
     preset: PromptTemplateVersion
     preset_revision: int
     preset_examples: tuple[list[str], list[str]]
@@ -113,6 +118,7 @@ class DraftAggregate:
 class Allocation:
     sequence: int
     content: ContentScript
+    template: PromptTemplate
     preset: PromptTemplateVersion
     scene: Scene
     demographic: BatchDraftDemographic
@@ -126,6 +132,7 @@ class Allocation:
 @dataclass(frozen=True)
 class PromptSelection:
     content: ContentScript
+    template: PromptTemplate
     preset: PromptTemplateVersion
     scene: Scene
     prepared: PreparedPrompt
@@ -250,9 +257,9 @@ class BatchService:
                 payload.model,
             )
             content = selection.content
+            template = selection.template
             preset = selection.preset
             scene = selection.scene
-            fixed = selection.prepared.fixed_output
             return PromptPreviewRead(
                 content_script=BilingualSelectionRead(
                     id=content.id,
@@ -260,7 +267,11 @@ class BatchService:
                     name_en=content.name_en,
                     revision=content.revision,
                 ),
-                prompt_template_version=SelectionRead(id=preset.id, name=preset.name, revision=preset.revision),
+                prompt_template_version=SelectionRead(
+                    id=preset.id,
+                    name=f"{template.name} v{preset.version}",
+                    revision=preset.revision,
+                ),
                 scene=BilingualSelectionRead(
                     id=scene.id,
                     name_zh=scene.name_zh,
@@ -270,14 +281,94 @@ class BatchService:
                 category=content.category,
                 conflict_direction=content.conflict_direction,
                 demographic=payload.demographic,
-                requires_prompt_generation=fixed is None,
+                requires_prompt_generation=True,
                 system_input=selection.prepared.system_input,
                 user_input=selection.prepared.user_input,
-                final_positive_prompt=fixed.positive_prompt if fixed else None,
+                final_positive_prompt=None,
                 negative_prompt=selection.prepared.negative_prompt,
             )
 
-    async def submit_test_run(self, payload: TestRunCreate) -> JobDetailRead:
+    async def submit_prompt_test(self, payload: PromptTestCreate) -> JobDetailRead:
+        with self.database.read_session() as session:
+            selection = self._prepare_prompt_selection(
+                session,
+                payload.content_script,
+                payload.prompt_template_version,
+                payload.scene,
+                payload.demographic,
+                payload.model,
+            )
+        prompt_result = await self.prompts.complete(
+            selection.prepared,
+            selection.content.category,
+        )
+        timestamp = utc_now()
+        seed = random.SystemRandom().randrange(0, 2**31)
+        with self.database.immediate_session() as session:
+            current = self._prepare_prompt_selection(
+                session,
+                payload.content_script,
+                payload.prompt_template_version,
+                payload.scene,
+                payload.demographic,
+                payload.model,
+            )
+            job = Job(
+                display_name=self._job_name(current.content.category),
+                source=JobSource.PROMPT_TEST,
+                dataset_id=None,
+                batch_draft_id=None,
+                category=current.content.category,
+                conflict_direction=current.content.conflict_direction,
+                model=None,
+                precision=None,
+                status=JobStatus.COMPLETED,
+                total_count=1,
+                prepared_count=1,
+                completed_count=1,
+                started_at=timestamp,
+                finished_at=timestamp,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            session.add(job)
+            session.flush()
+            snapshot = self._test_snapshot(
+                current,
+                payload.demographic,
+                payload.model,
+                payload.precision,
+                seed,
+                prompt_result,
+                1,
+                timestamp,
+            )
+            session.add(snapshot)
+            session.flush()
+            item = JobItem(
+                job_id=job.id,
+                sequence=1,
+                input_snapshot_id=snapshot.id,
+                gpu_slot=None,
+                stage=JobItemStage.COMPLETED,
+                status=JobStatus.COMPLETED,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            session.add(item)
+            session.flush()
+            self._add_prompt_result(
+                session,
+                item.id,
+                prompt_result,
+                self._negative_prompt(current.preset, payload.model),
+                timestamp,
+            )
+            self._append_job_event(session, job, "JobCompleted", item)
+            session.flush()
+            return self._job_detail(session, job)
+
+    async def submit_video_test(self, payload: VideoTestCreate) -> JobDetailRead:
         if not self.renderer.configured:
             raise ServiceError(
                 503,
@@ -325,7 +416,7 @@ class BatchService:
                 timestamp = utc_now()
                 job = Job(
                     display_name=self._job_name(current.content.category),
-                    source=JobSource.TEST,
+                    source=JobSource.VIDEO_TEST,
                     dataset_id=None,
                     batch_draft_id=None,
                     category=current.content.category,
@@ -375,14 +466,8 @@ class BatchService:
                         system_input=prompt_result.system_input,
                         user_input=prompt_result.user_input,
                         negative_prompt=(
-                            current.preset.h3_negative_prompt
-                            if comparison.model is ModelName.H3
-                            else current.preset.ltx_negative_prompt
+                            self._negative_prompt(current.preset, comparison.model)
                         ),
-                        fixed_positive_prompt=prompt_result.final_positive_prompt,
-                        fixed_dialogue=prompt_result.dialogue,
-                        fixed_vt_text=prompt_result.vt_text,
-                        fixed_true_emotion_description=prompt_result.true_emotion_description,
                         true_emotion=current.content.true_emotion,
                         apparent_emotion=current.content.apparent_emotion,
                         created_at=timestamp,
@@ -395,18 +480,26 @@ class BatchService:
                     zip(payload.comparisons, snapshots, strict=True),
                     start=1,
                 ):
-                    session.add(
-                        JobItem(
-                            job_id=job.id,
-                            sequence=sequence,
-                            input_snapshot_id=snapshot.id,
-                            gpu_slot=comparison.gpu_slot,
-                            stage=JobItemStage.PROMPT_QUEUED,
-                            status=JobStatus.QUEUED,
-                            created_at=timestamp,
-                            updated_at=timestamp,
-                        )
+                    item = JobItem(
+                        job_id=job.id,
+                        sequence=sequence,
+                        input_snapshot_id=snapshot.id,
+                        gpu_slot=comparison.gpu_slot,
+                        stage=JobItemStage.PROMPT_READY,
+                        status=JobStatus.QUEUED,
+                        created_at=timestamp,
+                        updated_at=timestamp,
                     )
+                    session.add(item)
+                    session.flush()
+                    self._add_prompt_result(
+                        session,
+                        item.id,
+                        prompt_result,
+                        self._negative_prompt(current.preset, comparison.model),
+                        timestamp,
+                    )
+                job.prepared_count = len(payload.comparisons)
                 session.add(
                     JobEvent(
                         job_id=job.id,
@@ -476,7 +569,6 @@ class BatchService:
                     for selection in current.selections
                 }
                 for allocation in allocations:
-                    fixed = allocation.prepared.fixed_output
                     selection = selections_by_content[allocation.content.id]
                     snapshot = BatchVideoInputSnapshot(
                         batch_draft_id=draft_id,
@@ -511,12 +603,6 @@ class BatchService:
                         system_input=allocation.prepared.system_input,
                         user_input=allocation.prepared.user_input,
                         negative_prompt=allocation.prepared.negative_prompt,
-                        fixed_positive_prompt=fixed.positive_prompt if fixed is not None else None,
-                        fixed_dialogue=fixed.dialogue if fixed is not None else None,
-                        fixed_vt_text=fixed.vt_text if fixed is not None else None,
-                        fixed_true_emotion_description=(
-                            fixed.true_emotion_description if fixed is not None else None
-                        ),
                         true_emotion=allocation.content.true_emotion,
                         apparent_emotion=allocation.content.apparent_emotion,
                         created_at=timestamp,
@@ -560,13 +646,25 @@ class BatchService:
                 session.flush()
                 return self._job_detail(session, job)
 
-    def list_jobs(
+    def list_test_results(
         self,
         page: int,
+        source: JobSource | None = None,
         statuses: list[JobStatus] | None = None,
     ) -> PageRead[JobSummaryRead]:
+        if source is JobSource.PRODUCTION:
+            raise ServiceError(
+                422,
+                "validation_error",
+                "Test results can only contain prompt tests or video tests",
+            )
+        sources = (
+            [source]
+            if source is not None
+            else [JobSource.PROMPT_TEST, JobSource.VIDEO_TEST]
+        )
         with self.database.read_session() as session:
-            statement = select(Job)
+            statement = select(Job).where(Job.source.in_(sources))
             if statuses:
                 statement = statement.where(Job.status.in_(statuses))
             return paginate(
@@ -575,6 +673,28 @@ class BatchService:
                 page,
                 JobSummaryRead.model_validate,
             )
+
+    def list_production_results(
+        self,
+        page: int,
+        statuses: list[JobStatus] | None = None,
+    ) -> PageRead[JobSummaryRead]:
+        with self.database.read_session() as session:
+            statement = select(Job).where(Job.source == JobSource.PRODUCTION)
+            if statuses:
+                statement = statement.where(Job.status.in_(statuses))
+            return paginate(
+                session,
+                statement.order_by(Job.created_at.desc(), Job.id.desc()),
+                page,
+                JobSummaryRead.model_validate,
+            )
+
+    def get_test_result(self, job_id: int) -> JobDetailRead:
+        return self._get_result(job_id, {JobSource.PROMPT_TEST, JobSource.VIDEO_TEST})
+
+    def get_production_result(self, job_id: int) -> JobDetailRead:
+        return self._get_result(job_id, {JobSource.PRODUCTION})
 
     def get_job(self, job_id: int) -> JobDetailRead:
         with self.database.read_session() as session:
@@ -587,9 +707,34 @@ class BatchService:
         with self.database.read_session() as session:
             return session.get(Job, job_id) is not None
 
-    def list_job_items(self, job_id: int, page: int) -> PageRead[JobItemRead]:
+    def list_test_result_items(
+        self,
+        job_id: int,
+        page: int,
+    ) -> PageRead[JobItemRead]:
+        return self._list_result_items(
+            job_id,
+            page,
+            {JobSource.PROMPT_TEST, JobSource.VIDEO_TEST},
+        )
+
+    def list_production_result_items(
+        self,
+        job_id: int,
+        page: int,
+    ) -> PageRead[JobItemRead]:
+        return self._list_result_items(job_id, page, {JobSource.PRODUCTION})
+
+    def _list_result_items(
+        self,
+        job_id: int,
+        page: int,
+        sources: set[JobSource],
+    ) -> PageRead[JobItemRead]:
         with self.database.read_session() as session:
-            self._required(session, Job, job_id, "job")
+            job = self._required(session, Job, job_id, "job")
+            if job.source not in sources:
+                raise not_found("job", job_id)
             rows = paginate(
                 session,
                 select(JobItem)
@@ -605,6 +750,17 @@ class BatchService:
                 total=rows.total,
                 total_pages=rows.total_pages,
             )
+
+    def _get_result(
+        self,
+        job_id: int,
+        sources: set[JobSource],
+    ) -> JobDetailRead:
+        with self.database.read_session() as session:
+            job = session.get(Job, job_id)
+            if job is None or job.source not in sources:
+                raise not_found("job", job_id)
+            return self._job_detail(session, job)
 
     def list_job_attempts(
         self,
@@ -676,6 +832,12 @@ class BatchService:
     ) -> PromptSelection:
         content = self._required(session, ContentScript, content_selection.id, "contentScript")
         preset = self._required(session, PromptTemplateVersion, preset_selection.id, "promptTemplateVersion")
+        template = self._required(
+            session,
+            PromptTemplate,
+            preset.template_id,
+            "promptTemplate",
+        )
         scene = self._required(
             session,
             Scene,
@@ -687,19 +849,13 @@ class BatchService:
         self._check_source(scene, scene_selection.expected_revision, "scene")
         if content.status is not ContentStatus.ACTIVE:
             raise state_conflict("contentScript", content.id, "The selected content script is not active")
-        if preset.verification_status is not TemplateVersionStatus.VERIFIED:
-            raise state_conflict(
-                "promptTemplateVersion",
-                preset.id,
-                "The selected prompt template version is not verified",
-            )
         if scene.status is not ResourceStatus.ACTIVE:
             raise state_conflict(
                 "scene",
                 scene.id,
                 "The selected scene is disabled",
             )
-        if preset.category is not content.category:
+        if template.category is not content.category:
             raise ServiceError(422, "validation_error", "The prompt template version category does not match the content")
         if session.exec(
             select(ContentScriptScene).where(
@@ -712,12 +868,13 @@ class BatchService:
                 "incompatible_content_scene",
                 "The selected scene is not registered for this content script",
             )
+        positive_examples, negative_examples = self._version_examples(session, preset.id)
         prepared = self.prompts.prepare(
             PromptContext(
                 content=content,
                 template_version=preset,
-                positive_examples=json.loads(preset.positive_examples_json),
-                negative_examples=json.loads(preset.negative_examples_json),
+                positive_examples=positive_examples,
+                negative_examples=negative_examples,
                 scene=scene,
                 age=demographic.age,
                 gender=demographic.gender,
@@ -725,7 +882,7 @@ class BatchService:
                 model=model,
             )
         )
-        return PromptSelection(content, preset, scene, prepared)
+        return PromptSelection(content, template, preset, scene, prepared)
 
     def _resolve_selections(
         self,
@@ -751,7 +908,13 @@ class BatchService:
         preset = session.get(PromptTemplateVersion, payload.prompt_template_version_id)
         if preset is None:
             raise not_found("promptTemplateVersion", payload.prompt_template_version_id)
-        if preset.category is not payload.category:
+        template = self._required(
+            session,
+            PromptTemplate,
+            preset.template_id,
+            "promptTemplate",
+        )
+        if template.category is not payload.category:
             raise ServiceError(
                 422,
                 "validation_error",
@@ -1018,16 +1181,20 @@ class BatchService:
             preset_link.prompt_template_version_id,
             "promptTemplateVersion",
         )
+        template = self._required(
+            session,
+            PromptTemplate,
+            preset.template_id,
+            "promptTemplate",
+        )
         aggregate = DraftAggregate(
             draft=draft,
             dataset=dataset,
             selections=selections,
+            template=template,
             preset=preset,
             preset_revision=preset_link.source_revision,
-            preset_examples=(
-                json.loads(preset.positive_examples_json),
-                json.loads(preset.negative_examples_json),
-            ),
+            preset_examples=self._version_examples(session, preset.id),
             demographics=demographics,
             gpu_slots=[link.gpu_slot for link in gpu_links],
         )
@@ -1100,6 +1267,7 @@ class BatchService:
                 Allocation(
                     sequence=offset + 1,
                     content=content,
+                    template=aggregate.template,
                     preset=preset,
                     scene=scene,
                     demographic=demographic,
@@ -1114,7 +1282,6 @@ class BatchService:
 
     @staticmethod
     def _allocation_read(allocation: Allocation) -> BatchAllocationRead:
-        fixed = allocation.prepared.fixed_output
         return BatchAllocationRead(
             sequence=allocation.sequence,
             content_script=BilingualSelectionRead(
@@ -1125,7 +1292,7 @@ class BatchService:
             ),
             prompt_template_version=SelectionRead(
                 id=allocation.preset.id,
-                name=allocation.preset.name,
+                name=f"{allocation.template.name} v{allocation.preset.version}",
                 revision=allocation.preset.revision,
             ),
             scene=BilingualSelectionRead(
@@ -1143,10 +1310,10 @@ class BatchService:
             model=allocation.model,
             precision=allocation.precision,
             seed=allocation.seed,
-            requires_prompt_generation=fixed is None,
+            requires_prompt_generation=True,
             system_input=allocation.prepared.system_input,
             user_input=allocation.prepared.user_input,
-            final_positive_prompt=fixed.positive_prompt if fixed else None,
+            final_positive_prompt=None,
             negative_prompt=allocation.prepared.negative_prompt,
         )
 
@@ -1240,7 +1407,7 @@ class BatchService:
             ],
             prompt_template_version=SelectionRead(
                 id=aggregate.preset.id,
-                name=aggregate.preset.name,
+                name=f"{aggregate.template.name} v{aggregate.preset.version}",
                 revision=aggregate.preset_revision,
             ),
             demographics=[
@@ -1301,6 +1468,149 @@ class BatchService:
     def _job_name(category: Category) -> str:
         local = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Shanghai"))
         return f"{category.value}-{local:%Y%m%d-%H%M%S}"
+
+    @staticmethod
+    def _negative_prompt(
+        preset: PromptTemplateVersion,
+        model: ModelName,
+    ) -> str:
+        return (
+            preset.h3_negative_prompt
+            if model is ModelName.H3
+            else preset.ltx_negative_prompt
+        )
+
+    @staticmethod
+    def _version_examples(
+        session: Session,
+        version_id: int,
+    ) -> tuple[list[str], list[str]]:
+        rows = session.exec(
+            select(PromptTemplateExample)
+            .where(
+                PromptTemplateExample.prompt_template_version_id == version_id
+            )
+            .order_by(
+                PromptTemplateExample.kind,
+                PromptTemplateExample.position,
+            )
+        ).all()
+        return (
+            [
+                row.text
+                for row in rows
+                if row.kind is PromptExampleKind.POSITIVE
+            ],
+            [
+                row.text
+                for row in rows
+                if row.kind is PromptExampleKind.NEGATIVE
+            ],
+        )
+
+    @classmethod
+    def _test_snapshot(
+        cls,
+        selection: PromptSelection,
+        demographic: DemographicInput,
+        model: ModelName,
+        precision: Precision | None,
+        seed: int,
+        prompt_result: PromptResult,
+        sequence: int,
+        timestamp: str,
+    ) -> BatchVideoInputSnapshot:
+        return BatchVideoInputSnapshot(
+            batch_draft_id=None,
+            dataset_id=None,
+            dataset_revision=None,
+            sequence=sequence,
+            content_script_id=selection.content.id,
+            content_script_revision=selection.content.revision,
+            prompt_template_version_id=selection.preset.id,
+            prompt_template_version_revision=selection.preset.revision,
+            scene_id=selection.scene.id,
+            scene_revision=selection.scene.revision,
+            policy_version=prompt_result.policy_version,
+            category=selection.content.category,
+            conflict_direction=selection.content.conflict_direction,
+            age=demographic.age,
+            gender=demographic.gender,
+            ethnicity=demographic.ethnicity,
+            model=model,
+            precision=precision,
+            seed=seed,
+            width=VIDEO_WIDTH,
+            height=VIDEO_HEIGHT,
+            fps=VIDEO_FPS,
+            frame_count=124 if model is ModelName.H3 else 121,
+            renderer_profile_version=RENDERER_PROFILE_VERSION,
+            prompt_model=PROMPT_MODEL,
+            source_has_audio=True,
+            derive_silent_primary=selection.content.category
+            in {Category.A_VT, Category.C_VT},
+            system_input=prompt_result.system_input,
+            user_input=prompt_result.user_input,
+            negative_prompt=cls._negative_prompt(selection.preset, model),
+            true_emotion=selection.content.true_emotion,
+            apparent_emotion=selection.content.apparent_emotion,
+            created_at=timestamp,
+        )
+
+    @staticmethod
+    def _add_prompt_result(
+        session: Session,
+        item_id: int,
+        result: PromptResult,
+        negative_prompt: str,
+        timestamp: str,
+    ) -> None:
+        session.add(
+            JobItemPromptResult(
+                job_item_id=item_id,
+                policy_version=result.policy_version,
+                system_input=result.system_input,
+                user_input=result.user_input,
+                raw_structured_response=result.raw_structured_response,
+                final_positive_prompt=result.final_positive_prompt,
+                negative_prompt=negative_prompt,
+                dialogue=result.dialogue,
+                vt_text=result.vt_text,
+                true_emotion_description=result.true_emotion_description,
+                created_at=timestamp,
+            )
+        )
+
+    @staticmethod
+    def _append_job_event(
+        session: Session,
+        job: Job,
+        event_type: str,
+        item: JobItem | None = None,
+    ) -> None:
+        session.add(
+            JobEvent(
+                job_id=job.id,
+                item_id=item.id if item is not None else None,
+                event_type=event_type,
+                payload_json=json.dumps(
+                    {
+                        "preparedCount": job.prepared_count,
+                        "completedCount": job.completed_count,
+                        "failedCount": job.failed_count,
+                        "totalCount": job.total_count,
+                        **(
+                            {"sequence": item.sequence}
+                            if item is not None
+                            else {}
+                        ),
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                created_at=utc_now(),
+            )
+        )
 
     @staticmethod
     def _job_detail(session: Session, job: Job) -> JobDetailRead:

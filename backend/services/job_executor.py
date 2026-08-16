@@ -47,7 +47,7 @@ from .errors import (
     revision_conflict,
     state_conflict,
 )
-from .prompts import FixedPrompt, PreparedPrompt, PromptResult, PromptService
+from .prompts import PreparedPrompt, PromptResult, PromptService
 from .samples import create_sample_for_completed_item
 
 
@@ -70,6 +70,7 @@ class _ItemExecution:
     source_has_audio: bool
     derive_silent_primary: bool
     prepared_prompt: PreparedPrompt
+    prompt_result: PromptResult | None
 
 
 @dataclass(frozen=True)
@@ -348,6 +349,10 @@ class JobExecutor:
                 ).all()
                 channels: dict[GpuSlotName, list[int]] = defaultdict(list)
                 for item in items:
+                    if item.gpu_slot is None:
+                        raise RuntimeError(
+                            "A queued video job item must have a GPU slot"
+                        )
                     channels[item.gpu_slot].append(item.id)
             await asyncio.gather(
                 *(self._run_channel(job_id, item_ids) for item_ids in channels.values())
@@ -372,10 +377,12 @@ class JobExecutor:
         try:
             execution = self._begin_item(job_id, item_id)
             gpu_slot = execution.gpu_slot
-            result = await self.prompts.complete(
-                execution.prepared_prompt, execution.category
-            )
-            self._store_prompt_result(job_id, item_id, result)
+            result = execution.prompt_result
+            if result is None:
+                result = await self.prompts.complete(
+                    execution.prepared_prompt, execution.category
+                )
+                self._store_prompt_result(job_id, item_id, result)
 
             request = RenderRequest(
                 job_id=job_id,
@@ -440,12 +447,25 @@ class JobExecutor:
             snapshot = session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
             if snapshot is None:
                 raise RuntimeError("The immutable job input no longer exists")
+            if item.gpu_slot is None:
+                raise RuntimeError("A video job item must have a GPU slot")
+            stored_prompt = session.exec(
+                select(JobItemPromptResult).where(
+                    JobItemPromptResult.job_item_id == item.id
+                )
+            ).one_or_none()
             timestamp = utc_now()
             item.status = JobStatus.RUNNING
-            item.stage = JobItemStage.PROMPT_GENERATING
+            if stored_prompt is None:
+                if item.stage is not JobItemStage.PROMPT_QUEUED:
+                    raise RuntimeError("The queued prompt is in an invalid stage")
+                item.stage = JobItemStage.PROMPT_GENERATING
+            elif item.stage is not JobItemStage.PROMPT_READY:
+                raise RuntimeError("The prepared prompt is in an invalid stage")
             item.updated_at = timestamp
             item.revision += 1
-            self._append_event(session, job, "ItemPromptStarted", item=item)
+            if stored_prompt is None:
+                self._append_event(session, job, "ItemPromptStarted", item=item)
             session.flush()
             return _ItemExecution(
                 sequence=item.sequence,
@@ -462,18 +482,15 @@ class JobExecutor:
                 source_has_audio=snapshot.source_has_audio,
                 derive_silent_primary=snapshot.derive_silent_primary,
                 prepared_prompt=self._prepared_prompt(snapshot),
+                prompt_result=(
+                    self._prompt_result(stored_prompt)
+                    if stored_prompt is not None
+                    else None
+                ),
             )
 
     @staticmethod
     def _prepared_prompt(snapshot: BatchVideoInputSnapshot) -> PreparedPrompt:
-        fixed_output: FixedPrompt | None = None
-        if snapshot.fixed_positive_prompt is not None:
-            fixed_output = FixedPrompt(
-                positivePrompt=snapshot.fixed_positive_prompt,
-                dialogue=snapshot.fixed_dialogue,
-                vtText=snapshot.fixed_vt_text,
-                trueEmotionDescription=snapshot.fixed_true_emotion_description,
-            )
         return PreparedPrompt(
             policy_version=snapshot.policy_version,
             category=snapshot.category,
@@ -485,7 +502,20 @@ class JobExecutor:
             system_input=snapshot.system_input,
             user_input=snapshot.user_input,
             negative_prompt=snapshot.negative_prompt,
-            fixed_output=fixed_output,
+        )
+
+    @staticmethod
+    def _prompt_result(row: JobItemPromptResult) -> PromptResult:
+        return PromptResult(
+            policy_version=row.policy_version,
+            system_input=row.system_input,
+            user_input=row.user_input,
+            raw_structured_response=row.raw_structured_response,
+            final_positive_prompt=row.final_positive_prompt,
+            negative_prompt=row.negative_prompt,
+            dialogue=row.dialogue,
+            vt_text=row.vt_text,
+            true_emotion_description=row.true_emotion_description,
         )
 
     def _store_prompt_result(
@@ -744,7 +774,11 @@ class JobExecutor:
         items = session.exec(
             select(JobItem).where(JobItem.job_id == job_id).order_by(JobItem.sequence)
         ).all()
-        return list(dict.fromkeys(item.gpu_slot for item in items))
+        return list(
+            dict.fromkeys(
+                item.gpu_slot for item in items if item.gpu_slot is not None
+            )
+        )
 
     def _cancel_requested(self, job_id: int) -> bool:
         with self.database.read_session() as session:
@@ -845,7 +879,8 @@ class JobExecutor:
         }
         if item is not None:
             payload["sequence"] = item.sequence
-            payload["gpuSlot"] = item.gpu_slot.value
+            if item.gpu_slot is not None:
+                payload["gpuSlot"] = item.gpu_slot.value
         if code is not None:
             payload["failureCode"] = code
         if reason is not None:

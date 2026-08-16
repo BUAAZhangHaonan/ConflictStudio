@@ -166,13 +166,12 @@ def prompt_context(
         scene_supplement_en="",
     )
     preset = PromptTemplateVersion(
-        name="Natural camera",
-        name_key="natural camera",
-        category=category,
+        template_id=1,
+        version=1,
+        organization_instruction="Keep the selected records in component order.",
         style_instruction="Use restrained natural performance and a static close-up.",
         ltx_negative_prompt="subtitles, captions, distorted face",
         h3_negative_prompt="subtitles, captions, distorted face",
-        status=ResourceStatus.ACTIVE,
     )
     background = Scene(
         name_zh="私人办公室",
@@ -655,19 +654,19 @@ def test_required_content_scripts_can_prepare(
     assert "vocalDelivery" in prepared.system_input
 
 
-def test_fixed_prompt_path_replaces_only_demographic_and_skips_llm() -> None:
-    model = StaticPromptModel("must not be used")
+def test_fixed_content_uses_the_same_strict_deepseek_path() -> None:
+    model = StaticPromptModel(component_json())
     service = PromptService(model)
     prepared = service.prepare(
         prompt_context(mode=ContentMode.FIXED, base_video_prompt=FIXED_PROMPT)
     )
     result = asyncio.run(service.complete(prepared, Category.A_VA))
 
-    assert model.calls == 0
-    assert prepared.system_input == ""
-    assert prepared.user_input == ""
-    assert result.final_positive_prompt == FIXED_PROMPT.replace(
-        "{demographic}", "A 25-year-old East Asian woman"
+    assert model.calls == 1
+    assert "spokenText" in prepared.system_input
+    assert FIXED_PROMPT in prepared.user_input
+    assert result.final_positive_prompt.startswith(
+        "A 25-year-old East Asian woman"
     )
 
 

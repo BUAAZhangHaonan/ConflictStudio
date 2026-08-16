@@ -5,13 +5,16 @@ from pathlib import Path
 import pytest
 from fastapi import Request, Response
 from fastapi.testclient import TestClient
+from sqlmodel import select
 
 from backend.adapters.config import Settings
 from backend.adapters.llm import UnconfiguredPromptModel
 from backend.api import routes
 from backend.app import create_app
 from backend.domain.models import Asset, JobItem
+from backend.domain.enums import JobSource
 from backend.tests.test_job_event_api import create_queued_job
+from backend.tests.test_sample_integration import add_completed_result
 
 
 def create_client(tmp_path: Path) -> TestClient:
@@ -28,7 +31,17 @@ def add_asset(client: TestClient, relative_path: str, content: bytes) -> Asset:
     path = client.app.state.database.data_root / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
+    with client.app.state.database.read_session() as session:
+        origin = session.exec(select(JobItem).order_by(JobItem.id)).first()
+    if origin is None:
+        _, origin_id, _ = add_completed_result(
+            client.app,
+            JobSource.PRODUCTION,
+        )
+    else:
+        origin_id = origin.id
     asset = Asset(
+        origin_job_item_id=origin_id,
         storage_root=str(client.app.state.database.data_root),
         relative_path=relative_path,
         media_type="video/mp4",
@@ -170,7 +183,9 @@ def test_media_rejects_malformed_multiple_and_unsatisfiable_ranges(
 
 def test_media_rejects_root_escape_and_missing_records(tmp_path: Path) -> None:
     client = create_client(tmp_path)
+    _, origin_id, _ = add_completed_result(client.app, JobSource.PRODUCTION)
     missing_file = Asset(
+        origin_job_item_id=origin_id,
         storage_root=str(client.app.state.database.data_root),
         relative_path="media/missing.mp4",
         media_type="video/mp4",
@@ -190,11 +205,12 @@ def test_media_rejects_root_escape_and_missing_records(tmp_path: Path) -> None:
         cursor = connection.exec_driver_sql(
             """
             INSERT INTO assets (
-                storage_root, relative_path, media_type, byte_size, width, height,
+                origin_job_item_id, storage_root, relative_path, media_type, byte_size, width, height,
                 fps, frame_count, duration_seconds, has_audio, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                origin_id,
                 str(client.app.state.database.data_root),
                 "../outside.mp4",
                 "video/mp4",
@@ -231,14 +247,14 @@ def test_job_item_maps_existing_asset_ids_to_content_urls_without_flattening_pro
     app, job = create_queued_job(tmp_path, quantity=1)
     client = TestClient(app)
     asset = add_asset(client, "media/jobs/1/items/1/attempts/1/source.mp4", b"video")
-    job_item = app.state.batch_service.list_job_items(job.id, 1).items[0]
+    job_item = app.state.batch_service.list_production_result_items(job.id, 1).items[0]
     with app.state.database.immediate_session() as session:
         item = session.get(JobItem, job_item.id)
         assert item is not None
         item.source_asset_id = asset.id
         item.primary_asset_id = asset.id
     try:
-        response = client.get(f"/api/jobs/{job.id}/items")
+        response = client.get(f"/api/generation-results/{job.id}/items")
     finally:
         client.close()
 

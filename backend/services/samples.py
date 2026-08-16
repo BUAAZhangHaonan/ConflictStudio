@@ -12,7 +12,6 @@ from backend.domain.enums import (
     JobStatus,
     Relation,
     Protocol,
-    ResourceStatus,
     ReviewDecision,
     protocol_for,
     relation_for,
@@ -33,7 +32,6 @@ from backend.domain.schemas import (
     BilingualSelectionRead,
     emotion_key,
     GenerationAttemptRead,
-    KeepTestResultRequest,
     PageRead,
     SampleRead,
     SampleClassificationUpdate,
@@ -55,7 +53,13 @@ def create_sample_for_completed_item(
     existing = session.exec(select(Sample).where(Sample.job_item_id == item.id)).one_or_none()
     if existing is not None:
         return existing
-    if item.status is not JobStatus.COMPLETED or item.primary_asset_id is None:
+    if (
+        job.source is not JobSource.PRODUCTION
+        or job.dataset_id != dataset_id
+        or item.status is not JobStatus.COMPLETED
+        or item.primary_asset_id is None
+        or item.gpu_slot is None
+    ):
         raise state_conflict("jobItem", item.id, "Only a completed result can become a formal sample")
     snapshot = session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
     prompt = session.exec(
@@ -153,25 +157,6 @@ class SampleService:
             if row is None:
                 raise not_found("sample", sample_id)
             return self._read(session, row)
-
-    def keep_test_result(self, item_id: int, payload: KeepTestResultRequest) -> SampleRead:
-        with self.database.immediate_session() as session:
-            item = session.get(JobItem, item_id)
-            if item is None:
-                raise not_found("jobItem", item_id)
-            if item.revision != payload.expected_revision:
-                raise revision_conflict("jobItem", item_id, payload.expected_revision, item.revision)
-            job = session.get(Job, item.job_id)
-            if job is None or job.source is not JobSource.TEST:
-                raise state_conflict("jobItem", item_id, "Only a test result can be kept manually")
-            dataset = session.get(Dataset, payload.dataset_id)
-            if dataset is None:
-                raise not_found("dataset", payload.dataset_id)
-            if dataset.status is not ResourceStatus.ACTIVE:
-                raise state_conflict("dataset", dataset.id, "The destination dataset is not active")
-            if session.exec(select(Sample).where(Sample.job_item_id == item.id)).one_or_none() is not None:
-                raise state_conflict("jobItem", item.id, "The test result is already a formal sample")
-            return self._read(session, create_sample_for_completed_item(session, job, item, dataset.id))
 
     def update_classification(
         self,

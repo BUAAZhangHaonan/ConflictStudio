@@ -34,6 +34,7 @@ from .enums import (
     JobStatus,
     ModelName,
     Precision,
+    PromptExampleKind,
     Protocol,
     Relation,
     ReviewDecision,
@@ -105,10 +106,17 @@ JOB_SOURCE_CHECK = """
   AND batch_draft_id IS NOT NULL
   AND model IS NOT NULL
 ) OR (
-  source = 'Test'
+  source = 'PromptTest'
   AND dataset_id IS NULL
   AND batch_draft_id IS NULL
   AND model IS NULL
+  AND precision IS NULL
+) OR (
+  source = 'VideoTest'
+  AND dataset_id IS NULL
+  AND batch_draft_id IS NULL
+  AND model IS NULL
+  AND precision IS NULL
 )
 """
 
@@ -217,15 +225,26 @@ class ContentScript(SQLModel, table=True):
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
+class PromptTemplate(SQLModel, table=True):
+    __tablename__ = "prompt_templates"
+    __table_args__ = (
+        UniqueConstraint("category", "name_key", name="uq_prompt_templates_category_name"),
+        CheckConstraint("revision >= 1", name="ck_prompt_templates_revision"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(sa_column=Column(String(160), nullable=False))
+    name_key: str = Field(sa_column=Column(String(160), nullable=False))
+    category: Category = Field(sa_column=enum_column(Category))
+    revision: int = Field(default=1, ge=1)
+    created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+    updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
 class PromptTemplateVersion(SQLModel, table=True):
     __tablename__ = "prompt_template_versions"
     __table_args__ = (
-        UniqueConstraint(
-            "category",
-            "name_key",
-            "version",
-            name="uq_prompt_template_versions_category_name_version",
-        ),
+        UniqueConstraint("template_id", "version", name="uq_prompt_template_versions_template_version"),
         CheckConstraint("version >= 1", name="ck_prompt_template_versions_version"),
         CheckConstraint("revision >= 1", name="ck_prompt_template_versions_revision"),
         CheckConstraint(
@@ -233,16 +252,24 @@ class PromptTemplateVersion(SQLModel, table=True):
             "length(trim(h3_negative_prompt)) > 0",
             name="ck_prompt_template_versions_negative_prompts",
         ),
+        CheckConstraint(
+            "(verification_status = 'Draft' AND verified_at IS NULL) OR "
+            "(verification_status = 'Verified' AND verified_at IS NOT NULL)",
+            name="ck_prompt_template_versions_verification",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
-    name: str = Field(sa_column=Column(String(160), nullable=False))
-    name_key: str = Field(sa_column=Column(String(160), nullable=False))
-    category: Category = Field(sa_column=enum_column(Category))
+    template_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("prompt_templates.id", ondelete="RESTRICT"),
+            nullable=False,
+        )
+    )
     version: int = Field(ge=1)
+    organization_instruction: str = Field(default="", sa_column=Column(Text, nullable=False))
     style_instruction: str = Field(default="", sa_column=Column(Text, nullable=False))
-    positive_examples_json: str = Field(default="[]", sa_column=Column(Text, nullable=False))
-    negative_examples_json: str = Field(default="[]", sa_column=Column(Text, nullable=False))
     ltx_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
     h3_negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
     verification_status: TemplateVersionStatus = Field(
@@ -251,7 +278,33 @@ class PromptTemplateVersion(SQLModel, table=True):
     )
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
-    updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+    verified_at: str | None = Field(default=None, sa_column=Column(String(32), nullable=True))
+
+
+class PromptTemplateExample(SQLModel, table=True):
+    __tablename__ = "prompt_template_examples"
+    __table_args__ = (
+        UniqueConstraint(
+            "prompt_template_version_id",
+            "kind",
+            "position",
+            name="uq_prompt_template_examples_position",
+        ),
+        CheckConstraint("position >= 0", name="ck_prompt_template_examples_position"),
+        CheckConstraint("length(trim(text)) > 0", name="ck_prompt_template_examples_text"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    prompt_template_version_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("prompt_template_versions.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    kind: PromptExampleKind = Field(sa_column=enum_column(PromptExampleKind))
+    position: int = Field(ge=0)
+    text: str = Field(sa_column=Column(Text, nullable=False))
 
 
 class Scene(SQLModel, table=True):
@@ -507,14 +560,6 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
             f"renderer_profile_version = '{RENDERER_PROFILE_VERSION}'",
             name="ck_batch_snapshots_renderer_profile",
         ),
-        CheckConstraint(
-            "(fixed_positive_prompt IS NULL AND fixed_dialogue IS NULL AND fixed_vt_text IS NULL "
-            "AND fixed_true_emotion_description IS NULL) OR "
-            "(fixed_positive_prompt IS NOT NULL AND fixed_true_emotion_description IS NOT NULL AND "
-            "((category IN ('A-VA', 'C-VA') AND fixed_dialogue IS NOT NULL AND fixed_vt_text IS NULL) OR "
-            "(category IN ('A-VT', 'C-VT') AND fixed_dialogue IS NULL AND fixed_vt_text IS NOT NULL)))",
-            name="ck_batch_snapshots_fixed_prompt",
-        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -554,10 +599,6 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     system_input: str = Field(sa_column=Column(Text, nullable=False))
     user_input: str = Field(sa_column=Column(Text, nullable=False))
     negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
-    fixed_positive_prompt: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    fixed_dialogue: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    fixed_vt_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    fixed_true_emotion_description: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     true_emotion: str = Field(sa_column=Column(String(120), nullable=False))
     apparent_emotion: str = Field(sa_column=Column(String(120), nullable=False))
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
@@ -623,9 +664,11 @@ class JobItem(SQLModel, table=True):
     job_id: int = Field(sa_column=Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False))
     sequence: int = Field(gt=0)
     input_snapshot_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_video_input_snapshots.id", ondelete="RESTRICT"), nullable=False))
-    gpu_slot: GpuSlotName = Field(
+    gpu_slot: GpuSlotName | None = Field(
+        default=None,
         sa_column=enum_column(
             GpuSlotName,
+            nullable=True,
             foreign_key="gpu_slots.slot",
             ondelete="RESTRICT",
         )
@@ -690,6 +733,13 @@ class Asset(SQLModel, table=True):
     )
 
     id: int | None = Field(default=None, primary_key=True)
+    origin_job_item_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("job_items.id", ondelete="RESTRICT"),
+            nullable=False,
+        )
+    )
     storage_root: str = Field(sa_column=Column(String(1024), nullable=False))
     relative_path: str = Field(sa_column=Column(String(1024), nullable=False))
     media_type: str = Field(sa_column=Column(String(80), nullable=False))

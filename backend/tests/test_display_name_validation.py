@@ -18,7 +18,7 @@ from backend.domain.display_names import (
 from backend.domain.schemas import (
     ContentScriptCreate,
     ContentScriptUpdate,
-    PromptTemplateVersionCreate,
+    PromptTemplateCreate,
     SceneCreate,
     SceneUpdate,
 )
@@ -76,11 +76,6 @@ def prompt_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "name": "Natural Portrait",
         "category": "A-VA",
-        "styleGuidance": "Use a static medium shot.",
-        "ltxNegativePrompt": "subtitles, captions, distortion",
-        "h3NegativePrompt": "subtitles, captions, distortion",
-        "version": 1,
-        "verificationStatus": "Verified",
     }
     payload.update(overrides)
     return payload
@@ -156,7 +151,7 @@ def test_display_name_rejects_internal_or_non_ui_names_without_rewriting(name: s
             {"expectedRevision": 1, "sceneIds": [1], "nameEn": "content_script_v2"},
         ),
         (
-            PromptTemplateVersionCreate,
+            PromptTemplateCreate,
             prompt_payload(name="Q&A: Natural Portrait"),
             prompt_payload(name="yaml-preset"),
         ),
@@ -206,7 +201,7 @@ def test_catalog_create_and_mutable_update_apis_return_stable_display_name_422(t
         )
         assert content.status_code == 201
 
-        prompt = client.post("/api/prompt-template-versions", json=prompt_payload(name="A-VA"))
+        prompt = client.post("/api/prompt-templates", json=prompt_payload(name="A-VA"))
         assert prompt.status_code == 201
 
         invalid_responses = [
@@ -230,7 +225,7 @@ def test_catalog_create_and_mutable_update_apis_return_stable_display_name_422(t
             ),
             (
                 client.post(
-                    "/api/prompt-template-versions",
+                    "/api/prompt-templates",
                     json=prompt_payload(name="prototype-prompt"),
                 ),
                 "name",

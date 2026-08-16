@@ -335,13 +335,6 @@ _PAST_TENSE_MARKERS: tuple[str, ...] = (
 _ENGLISH_WORD_RE = re.compile(r"\b[A-Za-z]+(?:[-'][A-Za-z]+)*\b")
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _BULLET_RE = re.compile(r"(?:^|\s)(?:[-*\u2022]|\d+\.)\s")
-_UNRESOLVED_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
-_AUDIBLE_SPEECH_RE = re.compile(
-    r"\b(?:audible|aloud|dialogue|says|speaks|speech|talks|voice|vocal|whispers|murmurs|utters)\b",
-    re.IGNORECASE,
-)
-
-
 def count_english_words(value: str) -> int:
     return len(_ENGLISH_WORD_RE.findall(value))
 
@@ -362,33 +355,6 @@ class PromptPolicyViolation(ValueError):
     def __init__(self, violations: Sequence[str]) -> None:
         self.violations = tuple(violations)
         super().__init__("; ".join(self.violations))
-
-
-def validate_fixed_positive_prompt(prompt: str, *, category: Category) -> None:
-    """Validate a complete human-authored render prompt without rewriting it."""
-
-    violations: list[str] = []
-    if not prompt.strip():
-        violations.append("fixed positivePrompt must not be blank")
-    unresolved = sorted(set(_UNRESOLVED_PLACEHOLDER_RE.findall(prompt)))
-    if unresolved:
-        violations.append(
-            f"fixed positivePrompt contains unresolved placeholders: {', '.join(unresolved)}"
-        )
-    if not _AUDIBLE_SPEECH_RE.search(prompt):
-        protocol = "VA" if category in {Category.A_VA, Category.C_VA} else "VT source"
-        violations.append(
-            f"fixed {protocol} positivePrompt must describe audible speech"
-        )
-    if category in {Category.A_VT, Category.C_VT}:
-        rendered_text = _find_phrases(prompt, FORBIDDEN_RENDERED_TEXT_PHRASES)
-        if rendered_text:
-            violations.append(
-                "fixed VT positivePrompt must not render the independent text on screen: "
-                f"{', '.join(rendered_text)}"
-            )
-    if violations:
-        raise PromptPolicyViolation(violations)
 
 
 def direction_rule(category: Category, direction: ConflictDirection | None) -> str:

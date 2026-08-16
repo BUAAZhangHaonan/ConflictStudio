@@ -10,7 +10,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from backend.adapters.renderer import RendererInstallationStatus
-from backend.domain.enums import Category, GpuSlotName, JobStatus, Protocol, ResourceStatus, ReviewDecision
+from backend.domain.enums import (
+    Category,
+    GpuSlotName,
+    JobSource,
+    JobStatus,
+    Protocol,
+    ResourceStatus,
+    ReviewDecision,
+)
 from backend.domain.schemas import (
     ArchivePreviewRead,
     ArchivePreviewRequest,
@@ -36,8 +44,10 @@ from backend.domain.schemas import (
     JobEventRead,
     JobItemRead,
     JobSummaryRead,
-    KeepTestResultRequest,
     PageRead,
+    PromptTemplateCreate,
+    PromptTemplateRead,
+    PromptTemplateUpdate,
     PromptTemplateVersionCreate,
     PromptTemplateVersionRead,
     PromptTemplateVersionVerify,
@@ -52,7 +62,8 @@ from backend.domain.schemas import (
     ReviewRead,
     SampleClassificationUpdate,
     SampleRead,
-    TestRunCreate,
+    PromptTestCreate,
+    VideoTestCreate,
     SceneCreate,
     SceneRead,
     SceneUpdate,
@@ -214,24 +225,66 @@ def delete_content_script(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/prompt-template-versions", response_model=PageRead[PromptTemplateVersionRead])
-def list_prompt_template_versions(
+@router.get("/prompt-templates", response_model=PageRead[PromptTemplateRead])
+def list_prompt_templates(
     request: Request,
     page: int = Query(default=1, ge=1),
-) -> PageRead[PromptTemplateVersionRead]:
-    return catalog(request).list_prompt_template_versions(page)
+) -> PageRead[PromptTemplateRead]:
+    return catalog(request).list_prompt_templates(page)
 
 
 @router.post(
-    "/prompt-template-versions",
+    "/prompt-templates",
+    response_model=PromptTemplateRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_prompt_template(
+    payload: PromptTemplateCreate,
+    request: Request,
+) -> PromptTemplateRead:
+    return catalog(request).create_prompt_template(payload)
+
+
+@router.get("/prompt-templates/{template_id}", response_model=PromptTemplateRead)
+def get_prompt_template(
+    template_id: int,
+    request: Request,
+) -> PromptTemplateRead:
+    return catalog(request).get_prompt_template(template_id)
+
+
+@router.patch("/prompt-templates/{template_id}", response_model=PromptTemplateRead)
+def update_prompt_template(
+    template_id: int,
+    payload: PromptTemplateUpdate,
+    request: Request,
+) -> PromptTemplateRead:
+    return catalog(request).update_prompt_template(template_id, payload)
+
+
+@router.get(
+    "/prompt-templates/{template_id}/versions",
+    response_model=PageRead[PromptTemplateVersionRead],
+)
+def list_prompt_template_versions(
+    template_id: int,
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[PromptTemplateVersionRead]:
+    return catalog(request).list_prompt_template_versions(template_id, page)
+
+
+@router.post(
+    "/prompt-templates/{template_id}/versions",
     response_model=PromptTemplateVersionRead,
     status_code=status.HTTP_201_CREATED,
 )
 def create_prompt_template_version(
+    template_id: int,
     payload: PromptTemplateVersionCreate,
     request: Request,
 ) -> PromptTemplateVersionRead:
-    return catalog(request).create_prompt_template_version(payload)
+    return catalog(request).create_prompt_template_version(template_id, payload)
 
 
 @router.get(
@@ -309,13 +362,34 @@ def preview_prompt(payload: PromptPreviewRequest, request: Request) -> PromptPre
     return batches(request).preview_prompt(payload)
 
 
-@router.post("/test-runs", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)
-async def submit_test_run(payload: TestRunCreate, request: Request) -> Response:
-    job = await batches(request).submit_test_run(payload)
+@router.post(
+    "/test-runs/prompt",
+    response_model=JobDetailRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_prompt_test(
+    payload: PromptTestCreate,
+    request: Request,
+) -> Response:
+    job = await batches(request).submit_prompt_test(payload)
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content=job.model_dump(mode="json", by_alias=True),
+        headers={"Location": f"/api/test-results/{job.id}"},
+    )
+
+
+@router.post(
+    "/test-runs/video",
+    response_model=JobDetailRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def submit_video_test(payload: VideoTestCreate, request: Request) -> Response:
+    job = await batches(request).submit_video_test(payload)
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content=job.model_dump(mode="json", by_alias=True),
-        headers={"Location": f"/api/jobs/{job.id}"},
+        headers={"Location": f"/api/test-results/{job.id}"},
         background=BackgroundTask(notify_executor, executor(request)),
     )
 
@@ -364,32 +438,59 @@ async def submit_batch(draft_id: int, payload: BatchSubmitRequest, request: Requ
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content=job.model_dump(mode="json", by_alias=True),
-        headers={"Location": f"/api/jobs/{job.id}"},
+        headers={"Location": f"/api/generation-results/{job.id}"},
         background=BackgroundTask(notify_executor, executor(request)),
     )
 
 
-@router.get("/jobs", response_model=PageRead[JobSummaryRead])
-def list_jobs(
+@router.get("/test-results", response_model=PageRead[JobSummaryRead])
+def list_test_results(
     request: Request,
     page: int = Query(default=1, ge=1),
+    source: JobSource | None = Query(default=None),
     status_filter: list[JobStatus] | None = Query(default=None, alias="status"),
 ) -> PageRead[JobSummaryRead]:
-    return batches(request).list_jobs(page, status_filter)
+    return batches(request).list_test_results(page, source, status_filter)
 
 
-@router.get("/jobs/{job_id}", response_model=JobDetailRead)
-def get_job(job_id: int, request: Request) -> JobDetailRead:
-    return batches(request).get_job(job_id)
+@router.get("/test-results/{job_id}", response_model=JobDetailRead)
+def get_test_result(job_id: int, request: Request) -> JobDetailRead:
+    return batches(request).get_test_result(job_id)
 
 
-@router.get("/jobs/{job_id}/items", response_model=PageRead[JobItemRead])
-def list_job_items(
+@router.get("/test-results/{job_id}/items", response_model=PageRead[JobItemRead])
+def list_test_result_items(
     job_id: int,
     request: Request,
     page: int = Query(default=1, ge=1),
 ) -> PageRead[JobItemRead]:
-    return batches(request).list_job_items(job_id, page)
+    return batches(request).list_test_result_items(job_id, page)
+
+
+@router.get("/generation-results", response_model=PageRead[JobSummaryRead])
+def list_production_results(
+    request: Request,
+    page: int = Query(default=1, ge=1),
+    status_filter: list[JobStatus] | None = Query(default=None, alias="status"),
+) -> PageRead[JobSummaryRead]:
+    return batches(request).list_production_results(page, status_filter)
+
+
+@router.get("/generation-results/{job_id}", response_model=JobDetailRead)
+def get_production_result(job_id: int, request: Request) -> JobDetailRead:
+    return batches(request).get_production_result(job_id)
+
+
+@router.get(
+    "/generation-results/{job_id}/items",
+    response_model=PageRead[JobItemRead],
+)
+def list_production_result_items(
+    job_id: int,
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[JobItemRead]:
+    return batches(request).list_production_result_items(job_id, page)
 
 
 @router.get(
@@ -402,11 +503,6 @@ def list_job_attempts(
     page: int = Query(default=1, ge=1),
 ) -> PageRead[GenerationAttemptRead]:
     return batches(request).list_job_attempts(item_id, page)
-
-
-@router.post("/job-items/{item_id}/keep", response_model=SampleRead, status_code=status.HTTP_201_CREATED)
-def keep_test_result(item_id: int, payload: KeepTestResultRequest, request: Request) -> SampleRead:
-    return samples(request).keep_test_result(item_id, payload)
 
 
 @router.get("/samples", response_model=PageRead[SampleRead])
@@ -563,7 +659,7 @@ def _read_media_asset(asset_id: int, request: Request, *, include_body: bool) ->
             start, end = _parse_byte_range(range_header, evidence.st_size)
         except _MalformedRangeError:
             return Response(
-                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
                 headers=_media_headers(
                     media_type,
                     0,
@@ -572,7 +668,7 @@ def _read_media_asset(asset_id: int, request: Request, *, include_body: bool) ->
             )
         except _UnsatisfiableRangeError:
             return Response(
-                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
                 headers=_media_headers(
                     media_type,
                     0,

@@ -38,6 +38,23 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
             "framingEn": "Use a static eye-level medium shot.",
         },
     )
+    template = client.post(
+        "/api/prompt-templates",
+        json={"name": "Natural shot", "category": "A-VA"},
+    )
+    prompt = client.post(
+        f"/api/prompt-templates/{template.json()['id']}/versions",
+        json={
+            "expectedTemplateRevision": template.json()["revision"],
+            "styleGuidance": "Use a static medium shot.",
+            "ltxNegativePrompt": "subtitles, captions, camera shake",
+            "h3NegativePrompt": "subtitles, captions, camera shake",
+        },
+    )
+    prompt = client.post(
+        f"/api/prompt-template-versions/{prompt.json()['id']}/verify",
+        json={"expectedRevision": prompt.json()["revision"]},
+    )
     records = {
         "dataset": client.post(
             "/api/datasets",
@@ -66,21 +83,15 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
                 "sceneIds": [background.json()["id"]],
             },
         ),
-        "prompt": client.post(
-            "/api/prompt-template-versions",
-            json={
-                "name": "Natural shot",
-                "category": "A-VA",
-                "styleGuidance": "Use a static medium shot.",
-                "ltxNegativePrompt": "subtitles, captions, camera shake",
-                "h3NegativePrompt": "subtitles, captions, camera shake",
-                "version": 1,
-                "verificationStatus": "Verified",
-            },
-        ),
+        "prompt": prompt,
         "background": background,
     }
-    assert all(response.status_code == 201 for response in records.values())
+    assert records["prompt"].status_code == 200
+    assert all(
+        response.status_code == 201
+        for name, response in records.items()
+        if name != "prompt"
+    )
     values = {name: response.json() for name, response in records.items()}
     return values
 
@@ -194,7 +205,9 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
     enum_columns = {
         "datasets": ("purpose", "status"),
         "content_scripts": ("category", "conflict_direction", "mode", "status"),
-        "prompt_template_versions": ("category", "verification_status"),
+        "prompt_templates": ("category",),
+        "prompt_template_versions": ("verification_status",),
+        "prompt_template_examples": ("kind",),
         "scenes": ("status",),
         "batch_drafts": ("category", "conflict_direction", "model", "precision", "status"),
         "batch_draft_demographics": ("gender", "ethnicity"),
@@ -215,6 +228,7 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
     numeric_constraints = {
         "datasets": ("ck_datasets_revision",),
         "content_scripts": ("ck_content_scripts_revision",),
+        "prompt_templates": ("ck_prompt_templates_revision",),
         "prompt_template_versions": ("ck_prompt_template_versions_version", "ck_prompt_template_versions_revision"),
         "scenes": ("ck_scenes_revision",),
         "content_script_scenes": ("ck_content_script_scene_position",),
@@ -326,16 +340,17 @@ def test_write_lock_returns_stable_409_and_releases_connection(tmp_path: Path) -
 
 def test_prompt_template_version_reads_continue_during_sqlite_write(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
+        template = client.post(
+            "/api/prompt-templates",
+            json={"name": "Natural shot", "category": "A-VA"},
+        ).json()
         created = client.post(
-            "/api/prompt-template-versions",
+            f"/api/prompt-templates/{template['id']}/versions",
             json={
-                "name": "Natural shot",
-                "category": "A-VA",
+                "expectedTemplateRevision": template["revision"],
                 "styleGuidance": "Use a static medium shot.",
                 "ltxNegativePrompt": "subtitles, captions, camera shake",
                 "h3NegativePrompt": "subtitles, captions, camera shake",
-                "version": 1,
-                "verificationStatus": "Verified",
             },
         )
         assert created.status_code == 201
@@ -348,7 +363,9 @@ def test_prompt_template_version_reads_continue_during_sqlite_write(tmp_path: Pa
         try:
             writer.execute("BEGIN EXCLUSIVE")
             writer.execute("UPDATE gpu_slots SET checked_at = checked_at WHERE slot = 'GPU0'")
-            response = client.get("/api/prompt-template-versions")
+            response = client.get(
+                f"/api/prompt-templates/{template['id']}/versions"
+            )
         finally:
             writer.rollback()
             writer.close()
@@ -449,6 +466,6 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
         assert body["datasetRevision"] == 1
         assert body["contentSelections"][0]["contentScript"]["revision"] == 1
         assert body["contentSelections"][0]["mode"] == "Generative"
-        assert body["promptTemplateVersion"]["revision"] == 1
+        assert body["promptTemplateVersion"]["revision"] == records["prompt"]["revision"]
         assert body["contentSelections"][0]["scenes"][0]["revision"] == 1
         assert body["contentSelections"][0]["compatibleScenes"][0]["id"] == records["background"]["id"]

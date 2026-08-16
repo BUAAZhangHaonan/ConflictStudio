@@ -309,15 +309,12 @@ class ContentScriptRead(ContentScriptFields):
 
 
 class PromptTemplateVersionFields(ApiModel):
-    name: EnglishDisplayName
-    category: Category
-    version: int = Field(ge=1)
+    organization_instruction: str = Field(default="", alias="organizationRules")
     style_instruction: str = Field(default="", alias="styleGuidance")
     positive_examples: list[TextValue] = Field(default_factory=list, max_length=20)
     negative_examples: list[TextValue] = Field(default_factory=list, max_length=20)
     ltx_negative_prompt: TextValue = Field(alias="ltxNegativePrompt")
     h3_negative_prompt: TextValue = Field(alias="h3NegativePrompt")
-    verification_status: TemplateVersionStatus = TemplateVersionStatus.DRAFT
 
     @field_validator("ltx_negative_prompt", "h3_negative_prompt")
     @classmethod
@@ -325,8 +322,26 @@ class PromptTemplateVersionFields(ApiModel):
         return validate_english_video_prompt(value, to_camel(info.field_name))
 
 
+class PromptTemplateCreate(ApiModel):
+    name: EnglishDisplayName
+    category: Category
+
+
+class PromptTemplateUpdate(ExpectedRevision):
+    name: EnglishDisplayName
+
+
+class PromptTemplateRead(ApiModel):
+    id: int
+    name: str
+    category: Category
+    revision: int
+    created_at: str
+    updated_at: str
+
+
 class PromptTemplateVersionCreate(PromptTemplateVersionFields):
-    pass
+    expected_template_revision: int = Field(ge=1)
 
 
 class PromptTemplateVersionVerify(ExpectedRevision):
@@ -335,9 +350,14 @@ class PromptTemplateVersionVerify(ExpectedRevision):
 
 class PromptTemplateVersionRead(PromptTemplateVersionFields):
     id: int
+    template_id: int
+    template_name: str
+    category: Category
+    version: int
+    verification_status: TemplateVersionStatus
     revision: int
     created_at: str
-    updated_at: str
+    verified_at: str | None
 
 
 class SceneFields(ApiModel):
@@ -590,7 +610,22 @@ class TestComparisonInput(ApiModel):
         return self
 
 
-class TestRunCreate(ApiModel):
+class PromptTestCreate(ApiModel):
+    content_script: SourceSelection
+    prompt_template_version: SourceSelection
+    scene: SourceSelection
+    demographic: DemographicInput
+    model: ModelName
+    precision: Precision | None = None
+
+    @model_validator(mode="after")
+    def validate_profile(self) -> Self:
+        if not validate_model_precision(self.model, self.precision):
+            raise ValueError("Model and precision do not match")
+        return self
+
+
+class VideoTestCreate(ApiModel):
     content_script: SourceSelection
     prompt_template_version: SourceSelection
     scene: SourceSelection
@@ -649,10 +684,6 @@ class SnapshotRead(ApiModel):
     system_input: str
     user_input: str
     negative_prompt: str
-    fixed_positive_prompt: str | None
-    fixed_dialogue: str | None
-    fixed_vt_text: str | None
-    fixed_true_emotion_description: str | None
     true_emotion: str
     apparent_emotion: str
     created_at: str
@@ -694,7 +725,7 @@ class GenerationAttemptRead(ApiModel):
 class JobItemRead(ApiModel):
     id: int
     sequence: int
-    gpu_slot: GpuSlotName
+    gpu_slot: GpuSlotName | None
     stage: JobItemStage
     status: JobStatus
     failure_code: str | None
@@ -713,10 +744,6 @@ class JobItemRead(ApiModel):
     latest_attempt: GenerationAttemptRead | None = None
     attempt_count: int = 0
     sample_id: int | None = None
-
-
-class KeepTestResultRequest(ExpectedRevision):
-    dataset_id: int = Field(gt=0)
 
 
 class ReviewerCreate(ApiModel):

@@ -16,7 +16,7 @@ from pydantic import (
 )
 
 from backend.adapters.llm import PromptAdapterError, PromptModel
-from backend.domain.enums import Category, ContentMode, Ethnicity, Gender, ModelName
+from backend.domain.enums import Category, Ethnicity, Gender, ModelName
 from backend.domain.models import ContentScript, PromptTemplateVersion, Scene
 from backend.domain.schemas import PromptFailureDetails, PromptSchemaFieldDetail
 from backend.domain.prompt_policy import (
@@ -29,7 +29,6 @@ from backend.domain.prompt_policy import (
     validate_scene_policy_fields,
     validate_component_word_limit,
     validate_final_positive_prompt,
-    validate_fixed_positive_prompt,
     validate_generated_component,
 )
 
@@ -103,15 +102,6 @@ class GeneratedPrompt(BaseModel):
             raise ValueError(str(error)) from error
 
 
-class FixedPrompt(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    positive_prompt: str = Field(alias="positivePrompt", min_length=1)
-    dialogue: str | None
-    vt_text: str | None = Field(alias="vtText")
-    true_emotion_description: str = Field(alias="trueEmotionDescription", min_length=1)
-
-
 @dataclass(frozen=True)
 class PromptContext:
     content: ContentScript
@@ -137,7 +127,6 @@ class PreparedPrompt:
     system_input: str
     user_input: str
     negative_prompt: str
-    fixed_output: FixedPrompt | None
 
 
 @dataclass(frozen=True)
@@ -195,49 +184,47 @@ class PromptService:
                 },
             ) from error
 
-        fixed_output = None
-        system_input = ""
-        user_input = ""
-        if context.content.mode is ContentMode.FIXED:
-            fixed_output = self._fixed_output(context)
-        else:
-            policy = POLICIES[context.content.category]
-            system_input = self.system_template.render(
-                policy=policy,
-                direction_rule=direction_rule(
-                    context.content.category, context.content.conflict_direction
-                ),
-                banned_certainty_modifiers=BANNED_CERTAINTY_MODIFIERS,
-                component_word_limits=COMPONENT_WORD_LIMITS,
-            ).strip()
-            user_input = self.user_template.render(
-                policy=policy,
-                content_instruction=context.content.content_requirements_en,
-                scene=context.content.scene_en,
-                trigger_event=context.content.trigger_event_en,
-                psychological_background=context.content.psychological_background_en,
-                true_emotion=context.content.true_emotion,
-                apparent_emotion=context.content.apparent_emotion,
-                requested_spoken_text=(
-                    context.content.dialogue
-                    if context.content.category in {Category.A_VA, Category.C_VA}
-                    else context.content.display_text
-                ),
-                content_scene_supplement=context.content.scene_supplement_en,
-                style_instruction=context.template_version.style_instruction,
-                positive_examples=context.positive_examples,
-                negative_examples=context.negative_examples,
-                shooting_scene={
-                    "scene": context.scene.scene_en,
-                    "ambient_audio": context.scene.ambient_sound_en,
-                    "relationship": context.scene.participant_relationship_en,
-                    "lighting": context.scene.lighting_en,
-                    "framing_supplement": context.scene.framing_en,
-                },
-                age=context.age,
-                gender=context.gender.value,
-                ethnicity=context.ethnicity.value,
-            ).strip()
+        policy = POLICIES[context.content.category]
+        system_input = self.system_template.render(
+            policy=policy,
+            direction_rule=direction_rule(
+                context.content.category, context.content.conflict_direction
+            ),
+            banned_certainty_modifiers=BANNED_CERTAINTY_MODIFIERS,
+            component_word_limits=COMPONENT_WORD_LIMITS,
+        ).strip()
+        user_input = self.user_template.render(
+            policy=policy,
+            content_instruction=(
+                context.content.content_requirements_en
+                or context.content.base_video_prompt
+            ),
+            scene=context.content.scene_en,
+            trigger_event=context.content.trigger_event_en,
+            psychological_background=context.content.psychological_background_en,
+            true_emotion=context.content.true_emotion,
+            apparent_emotion=context.content.apparent_emotion,
+            requested_spoken_text=(
+                context.content.dialogue
+                if context.content.category in {Category.A_VA, Category.C_VA}
+                else context.content.display_text
+            ),
+            content_scene_supplement=context.content.scene_supplement_en,
+            organization_instruction=context.template_version.organization_instruction,
+            style_instruction=context.template_version.style_instruction,
+            positive_examples=context.positive_examples,
+            negative_examples=context.negative_examples,
+            shooting_scene={
+                "scene": context.scene.scene_en,
+                "ambient_audio": context.scene.ambient_sound_en,
+                "relationship": context.scene.participant_relationship_en,
+                "lighting": context.scene.lighting_en,
+                "framing_supplement": context.scene.framing_en,
+            },
+            age=context.age,
+            gender=context.gender.value,
+            ethnicity=context.ethnicity.value,
+        ).strip()
         return PreparedPrompt(
             policy_version=POLICY_VERSION,
             category=context.content.category,
@@ -253,7 +240,6 @@ class PromptService:
                 if context.model is ModelName.H3
                 else context.template_version.ltx_negative_prompt
             ),
-            fixed_output=fixed_output,
         )
 
     async def complete(
@@ -265,58 +251,53 @@ class PromptService:
                 "validation_error",
                 "The prepared prompt category does not match the request",
             )
-        if prepared.fixed_output is None:
-            try:
-                response = await self.model.generate(
-                    prepared.system_input, prepared.user_input
-                )
-            except PromptAdapterError as error:
-                status = 503 if error.code == "external_configuration_missing" else 502
-                raise PromptServiceError(
-                    status,
-                    error.code,
-                    error.message,
-                    PromptFailureDetails.model_validate(error.details)
-                    if error.metadata is not None
-                    else None,
-                ) from error
-            raw = response.content
-            transport_details = response.metadata.as_details()
-            try:
-                payload = _load_unique_json(raw)
-            except DuplicatePromptKeyError as error:
-                raise PromptServiceError(
-                    502,
-                    "duplicate_prompt_key",
-                    "The prompt service returned JSON with a duplicate key",
-                    PromptFailureDetails.model_validate(transport_details),
-                ) from error
-            except json.JSONDecodeError as error:
-                raise PromptServiceError(
-                    502,
-                    "invalid_prompt_json",
-                    "The prompt service returned invalid JSON",
-                    PromptFailureDetails.model_validate(transport_details),
-                ) from error
-            try:
-                output = GeneratedPrompt.model_validate(payload)
-            except ValidationError as error:
-                raise PromptServiceError(
-                    502,
-                    "invalid_prompt_schema",
-                    "The prompt service returned JSON that does not match the required schema",
-                    PromptFailureDetails(
-                        **transport_details,
-                        fields=[
-                            PromptSchemaFieldDetail.model_validate(field)
-                            for field in _pydantic_error_fields(error)
-                        ],
-                    ),
-                ) from error
-        else:
-            output = prepared.fixed_output
-            raw = output.model_dump_json(by_alias=True)
-            return self._fixed_result(prepared, category, output, raw)
+        try:
+            response = await self.model.generate(
+                prepared.system_input, prepared.user_input
+            )
+        except PromptAdapterError as error:
+            status = 503 if error.code == "external_configuration_missing" else 502
+            raise PromptServiceError(
+                status,
+                error.code,
+                error.message,
+                PromptFailureDetails.model_validate(error.details)
+                if error.metadata is not None
+                else None,
+            ) from error
+        raw = response.content
+        transport_details = response.metadata.as_details()
+        try:
+            payload = _load_unique_json(raw)
+        except DuplicatePromptKeyError as error:
+            raise PromptServiceError(
+                502,
+                "duplicate_prompt_key",
+                "The prompt service returned JSON with a duplicate key",
+                PromptFailureDetails.model_validate(transport_details),
+            ) from error
+        except json.JSONDecodeError as error:
+            raise PromptServiceError(
+                502,
+                "invalid_prompt_json",
+                "The prompt service returned invalid JSON",
+                PromptFailureDetails.model_validate(transport_details),
+            ) from error
+        try:
+            output = GeneratedPrompt.model_validate(payload)
+        except ValidationError as error:
+            raise PromptServiceError(
+                502,
+                "invalid_prompt_schema",
+                "The prompt service returned JSON that does not match the required schema",
+                PromptFailureDetails(
+                    **transport_details,
+                    fields=[
+                        PromptSchemaFieldDetail.model_validate(field)
+                        for field in _pydantic_error_fields(error)
+                    ],
+                ),
+            ) from error
         return self._generated_result(prepared, category, output, raw)
 
     @classmethod
@@ -357,85 +338,6 @@ class PromptService:
             vt_text=None if is_va else output.spoken_text,
             true_emotion_description=output.true_emotion_description,
         )
-
-    @classmethod
-    def _fixed_result(
-        cls,
-        prepared: PreparedPrompt,
-        category: Category,
-        output: FixedPrompt,
-        raw: str,
-    ) -> PromptResult:
-        cls._validate_fixed_output(category, output)
-        try:
-            validate_fixed_positive_prompt(output.positive_prompt, category=category)
-        except PromptPolicyViolation as error:
-            raise ServiceError(
-                502,
-                "invalid_prompt_response",
-                f"The final positive prompt violates the prompt policy: {error}",
-            ) from error
-        return PromptResult(
-            policy_version=prepared.policy_version,
-            system_input=prepared.system_input,
-            user_input=prepared.user_input,
-            raw_structured_response=raw,
-            final_positive_prompt=output.positive_prompt,
-            negative_prompt=prepared.negative_prompt,
-            dialogue=output.dialogue,
-            vt_text=output.vt_text,
-            true_emotion_description=output.true_emotion_description,
-        )
-
-    def _fixed_output(self, context: PromptContext) -> FixedPrompt:
-        content = context.content
-        demographic = self._fixed_demographic_text(
-            context.age, context.ethnicity, context.gender
-        )
-        positive = content.base_video_prompt.replace("{demographic}", demographic)
-        return FixedPrompt(
-            positivePrompt=positive,
-            dialogue=content.dialogue,
-            vtText=content.display_text,
-            trueEmotionDescription=content.true_emotion_description,
-        )
-
-    @staticmethod
-    def _validate_fixed_output(category: Category, output: FixedPrompt) -> None:
-        is_va = category in {Category.A_VA, Category.C_VA}
-        if is_va and (not output.dialogue or output.vt_text is not None):
-            raise ServiceError(
-                502,
-                "invalid_prompt_response",
-                "VA prompt output must contain dialogue and no VT text",
-            )
-        if not is_va and (not output.vt_text or output.dialogue is not None):
-            raise ServiceError(
-                502,
-                "invalid_prompt_response",
-                "VT prompt output must contain VT text and no dialogue",
-            )
-        chinese_values = [
-            output.dialogue if is_va else output.vt_text,
-            output.true_emotion_description,
-        ]
-        if any(
-            not value or not re.search(r"[\u4e00-\u9fff]", value)
-            for value in chinese_values
-        ):
-            raise ServiceError(
-                502,
-                "invalid_prompt_response",
-                "Dialogue, VT text and the true emotion description must use Chinese where required",
-            )
-        try:
-            _validate_true_emotion_description(output.true_emotion_description)
-        except ValueError as error:
-            raise ServiceError(
-                502,
-                "invalid_prompt_response",
-                str(error),
-            ) from error
 
     @staticmethod
     def _validate_generated_output(output: GeneratedPrompt) -> None:
@@ -489,13 +391,6 @@ class PromptService:
             Ethnicity.SOUTH_ASIAN: "South Asian",
             Ethnicity.LATINO: "Latino",
         }[value]
-
-    @classmethod
-    def _fixed_demographic_text(
-        cls, age: int, ethnicity: Ethnicity, gender: Gender
-    ) -> str:
-        person = "woman" if gender is Gender.FEMALE else "man"
-        return f"A {age}-year-old {cls._ethnicity_text(ethnicity)} {person}"
 
 
 class DuplicatePromptKeyError(ValueError):

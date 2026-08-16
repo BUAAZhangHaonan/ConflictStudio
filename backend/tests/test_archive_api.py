@@ -7,8 +7,18 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
-from backend.domain.enums import Category
-from backend.domain.models import Archive, ArchiveItem, Asset, Sample, VIDEO_FPS, VIDEO_HEIGHT, VIDEO_WIDTH
+from backend.domain.enums import Category, GenerationAttemptStatus
+from backend.domain.models import (
+    Archive,
+    ArchiveItem,
+    Asset,
+    GenerationAttempt,
+    JobItem,
+    Sample,
+    VIDEO_FPS,
+    VIDEO_HEIGHT,
+    VIDEO_WIDTH,
+)
 from backend.tests.test_review_api import (
     classification_payload,
     create_reviewer,
@@ -18,7 +28,9 @@ from backend.tests.test_review_api import (
 
 
 def accept_sample(client: TestClient) -> tuple[dict, dict]:
-    sample = client.get("/api/samples").json()["items"][0]
+    response = client.get("/api/samples")
+    assert response.status_code == 200, response.text
+    sample = response.json()["items"][0]
     reviewer = create_reviewer(client)
     reviewed = client.post("/api/reviews", json=review_payload(sample, reviewer))
     assert reviewed.status_code == 201
@@ -186,6 +198,7 @@ def test_vt_manifest_uses_only_silent_primary_media(tmp_path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"silent")
         asset = Asset(
+            origin_job_item_id=sample.job_item_id,
             storage_root=str(app.state.database.data_root),
             relative_path=relative_path,
             media_type="video/mp4",
@@ -199,6 +212,28 @@ def test_vt_manifest_uses_only_silent_primary_media(tmp_path: Path) -> None:
         )
         session.add(asset)
         session.flush()
+        item = session.get(JobItem, sample.job_item_id)
+        assert item is not None
+        item.primary_asset_id = asset.id
+        session.flush()
+        previous_attempt = session.get(GenerationAttempt, 1)
+        assert previous_attempt is not None
+        session.add(
+            GenerationAttempt(
+                job_item_id=item.id,
+                attempt_number=2,
+                model=previous_attempt.model,
+                precision=previous_attempt.precision,
+                gpu_slot=previous_attempt.gpu_slot,
+                seed=previous_attempt.seed,
+                source_asset_id=previous_attempt.source_asset_id,
+                primary_asset_id=asset.id,
+                renderer_prompt_id=item.renderer_prompt_id,
+                status=GenerationAttemptStatus.COMPLETED,
+                started_at=previous_attempt.started_at,
+                finished_at=previous_attempt.finished_at,
+            )
+        )
         sample.category = Category.A_VT
         sample.primary_asset_id = asset.id
         sample.dialogue = None

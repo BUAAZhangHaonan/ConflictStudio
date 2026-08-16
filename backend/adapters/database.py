@@ -71,6 +71,7 @@ class Database:
             ("batch_video_input_snapshots", "batch video input snapshots are immutable"),
             ("job_events", "job events are immutable"),
             ("job_item_prompt_results", "job item prompt results are immutable"),
+            ("prompt_template_examples", "prompt template examples are immutable"),
             ("assets", "assets are immutable"),
             ("reviews", "reviews are immutable"),
         )
@@ -112,20 +113,57 @@ class Database:
             """
             CREATE TRIGGER prevent_prompt_template_version_content_update
             BEFORE UPDATE ON prompt_template_versions
-            WHEN NEW.name != OLD.name
-              OR NEW.name_key != OLD.name_key
-              OR NEW.category != OLD.category
+            WHEN NEW.template_id != OLD.template_id
               OR NEW.version != OLD.version
+              OR NEW.organization_instruction != OLD.organization_instruction
               OR NEW.style_instruction != OLD.style_instruction
-              OR NEW.positive_examples_json != OLD.positive_examples_json
-              OR NEW.negative_examples_json != OLD.negative_examples_json
               OR NEW.ltx_negative_prompt != OLD.ltx_negative_prompt
               OR NEW.h3_negative_prompt != OLD.h3_negative_prompt
+              OR NEW.created_at != OLD.created_at
               OR OLD.verification_status != 'Draft'
               OR NEW.verification_status != 'Verified'
               OR NEW.revision != OLD.revision + 1
+              OR OLD.verified_at IS NOT NULL
+              OR NEW.verified_at IS NULL
             BEGIN
                 SELECT RAISE(ABORT, 'prompt template version content is immutable');
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS require_draft_prompt_template_example"
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER require_draft_prompt_template_example
+            BEFORE INSERT ON prompt_template_examples
+            WHEN (
+                SELECT verification_status
+                FROM prompt_template_versions
+                WHERE id = NEW.prompt_template_version_id
+            ) != 'Draft'
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'examples can only be added to a draft prompt template version'
+                );
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS protect_prompt_template_identity"
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_prompt_template_identity
+            BEFORE UPDATE ON prompt_templates
+            WHEN NEW.category != OLD.category
+              OR NEW.created_at != OLD.created_at
+              OR NEW.revision != OLD.revision + 1
+              OR length(trim(NEW.name)) = 0
+              OR length(trim(NEW.name_key)) = 0
+            BEGIN
+                SELECT RAISE(ABORT, 'prompt template identity update is not allowed');
             END
             """
         )
@@ -328,6 +366,171 @@ class Database:
             BEFORE DELETE ON generation_attempts
             BEGIN
                 SELECT RAISE(ABORT, 'generation attempts cannot be deleted');
+            END
+            """
+        )
+        for operation in ("INSERT", "UPDATE"):
+            trigger_name = f"protect_job_item_source_{operation.casefold()}"
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {operation} ON job_items
+                WHEN (
+                    (
+                        SELECT source FROM jobs WHERE id = NEW.job_id
+                    ) = 'PromptTest'
+                    AND (
+                        NEW.gpu_slot IS NOT NULL
+                        OR NEW.renderer_prompt_id IS NOT NULL
+                        OR NEW.source_asset_id IS NOT NULL
+                        OR NEW.primary_asset_id IS NOT NULL
+                    )
+                ) OR (
+                    (
+                        SELECT source FROM jobs WHERE id = NEW.job_id
+                    ) IN ('VideoTest', 'Production')
+                    AND NEW.gpu_slot IS NULL
+                )
+                BEGIN
+                    SELECT RAISE(ABORT, 'job item resources do not match the job source');
+                END
+                """
+            )
+            trigger_name = f"protect_generation_attempt_source_{operation.casefold()}"
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {operation} ON generation_attempts
+                WHEN (
+                    SELECT jobs.source
+                    FROM job_items
+                    JOIN jobs ON jobs.id = job_items.job_id
+                    WHERE job_items.id = NEW.job_item_id
+                ) = 'PromptTest'
+                BEGIN
+                    SELECT RAISE(
+                        ABORT,
+                        'prompt tests cannot create generation attempts'
+                    );
+                END
+                """
+            )
+            trigger_name = f"protect_asset_source_{operation.casefold()}"
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {operation} ON assets
+                WHEN (
+                    SELECT jobs.source
+                    FROM job_items
+                    JOIN jobs ON jobs.id = job_items.job_id
+                    WHERE job_items.id = NEW.origin_job_item_id
+                ) NOT IN ('VideoTest', 'Production')
+                BEGIN
+                    SELECT RAISE(
+                        ABORT,
+                        'assets require a video test or production job item'
+                    );
+                END
+                """
+            )
+            trigger_name = f"protect_sample_source_{operation.casefold()}"
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {operation} ON samples
+                WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM job_items
+                    JOIN jobs ON jobs.id = job_items.job_id
+                    WHERE job_items.id = NEW.job_item_id
+                      AND jobs.source = 'Production'
+                      AND jobs.dataset_id = NEW.dataset_id
+                      AND job_items.status = 'Completed'
+                      AND job_items.primary_asset_id = NEW.primary_asset_id
+                      AND (
+                        job_items.source_asset_id IS NEW.source_asset_id
+                      )
+                      AND EXISTS (
+                        SELECT 1 FROM assets
+                        WHERE assets.id = NEW.primary_asset_id
+                          AND assets.origin_job_item_id = NEW.job_item_id
+                      )
+                      AND (
+                        NEW.source_asset_id IS NULL
+                        OR EXISTS (
+                            SELECT 1 FROM assets
+                            WHERE assets.id = NEW.source_asset_id
+                              AND assets.origin_job_item_id = NEW.job_item_id
+                        )
+                      )
+                )
+                BEGIN
+                    SELECT RAISE(
+                        ABORT,
+                        'samples require completed production media'
+                    );
+                END
+                """
+            )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS protect_job_item_asset_provenance"
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_job_item_asset_provenance
+            BEFORE UPDATE OF source_asset_id, primary_asset_id ON job_items
+            WHEN (
+                NEW.source_asset_id IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM assets
+                    WHERE id = NEW.source_asset_id
+                      AND origin_job_item_id = NEW.id
+                )
+            ) OR (
+                NEW.primary_asset_id IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM assets
+                    WHERE id = NEW.primary_asset_id
+                      AND origin_job_item_id = NEW.id
+                )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'job item assets must originate from that item');
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            "DROP TRIGGER IF EXISTS protect_generation_attempt_asset_provenance"
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_generation_attempt_asset_provenance
+            BEFORE UPDATE OF source_asset_id, primary_asset_id ON generation_attempts
+            WHEN (
+                NEW.source_asset_id IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM assets
+                    WHERE id = NEW.source_asset_id
+                      AND origin_job_item_id = NEW.job_item_id
+                )
+            ) OR (
+                NEW.primary_asset_id IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM assets
+                    WHERE id = NEW.primary_asset_id
+                      AND origin_job_item_id = NEW.job_item_id
+                )
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'generation attempt assets must originate from that item'
+                );
             END
             """
         )

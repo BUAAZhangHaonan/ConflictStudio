@@ -60,6 +60,11 @@ class TemplateVersionStatus(ValueEnum):
     VERIFIED = "Verified"
 
 
+class PromptExampleKind(ValueEnum):
+    POSITIVE = "Positive"
+    NEGATIVE = "Negative"
+
+
 class BatchDraftStatus(ValueEnum):
     DRAFT = "Draft"
     SUBMITTED = "Submitted"
@@ -67,7 +72,8 @@ class BatchDraftStatus(ValueEnum):
 
 class JobSource(ValueEnum):
     PRODUCTION = "Production"
-    TEST = "Test"
+    PROMPT_TEST = "PromptTest"
+    VIDEO_TEST = "VideoTest"
 
 
 class TestExecutionMode(ValueEnum):

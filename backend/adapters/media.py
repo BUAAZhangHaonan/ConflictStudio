@@ -279,11 +279,19 @@ class MediaStore:
     ) -> tuple[Asset, Asset]:
         if attempt.status is not GenerationAttemptStatus.RUNNING:
             raise MediaError("Generation attempt is not running")
-        source_asset = self._asset(prepared.source_path, prepared.source_evidence)
+        source_asset = self._asset(
+            attempt.job_item_id,
+            prepared.source_path,
+            prepared.source_evidence,
+        )
         session.add(source_asset)
         session.flush()
         if prepared.derived_primary:
-            primary_asset = self._asset(prepared.primary_path, prepared.primary_evidence)
+            primary_asset = self._asset(
+                attempt.job_item_id,
+                prepared.primary_path,
+                prepared.primary_evidence,
+            )
             session.add(primary_asset)
             session.flush()
         else:
@@ -299,8 +307,14 @@ class MediaStore:
         if prepared.derived_primary:
             prepared.primary_path.unlink(missing_ok=True)
 
-    def _asset(self, path: Path, evidence: ProbeEvidence) -> Asset:
+    def _asset(
+        self,
+        origin_job_item_id: int,
+        path: Path,
+        evidence: ProbeEvidence,
+    ) -> Asset:
         return Asset(
+            origin_job_item_id=origin_job_item_id,
             storage_root=str(self.data_root),
             relative_path=self.relative_path(path),
             media_type=MEDIA_TYPE_MP4,

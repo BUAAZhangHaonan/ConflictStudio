@@ -18,15 +18,19 @@ def test_every_growing_collection_uses_the_same_page_contract(tmp_path: Path) ->
         )
         assert reviewed.status_code == 201
 
-        job = client.get("/api/jobs").json()["items"][0]
-        job_item = client.get(f"/api/jobs/{job['id']}/items").json()["items"][0]
+        job = client.get("/api/generation-results").json()["items"][0]
+        job_item = client.get(
+            f"/api/generation-results/{job['id']}/items"
+        ).json()["items"][0]
+        template = client.get("/api/prompt-templates").json()["items"][0]
         routes = (
             "/api/datasets",
             "/api/content-scripts",
             "/api/scenes",
-            "/api/prompt-template-versions",
-            "/api/jobs",
-            f"/api/jobs/{job['id']}/items",
+            "/api/prompt-templates",
+            f"/api/prompt-templates/{template['id']}/versions",
+            "/api/generation-results",
+            f"/api/generation-results/{job['id']}/items",
             f"/api/job-items/{job_item['id']}/attempts",
             f"/api/jobs/{job['id']}/events",
             "/api/samples",
@@ -79,13 +83,13 @@ def test_dataset_and_reviewer_context_remains_addressable_after_page_twenty(
             "/api/datasets",
             params={"search": datasets[-1]["name"]},
         )
-        job_status = client.get("/api/jobs").json()["items"][0]["status"]
+        job_status = client.get("/api/generation-results").json()["items"][0]["status"]
         matching_jobs = client.get(
-            "/api/jobs",
+            "/api/generation-results",
             params={"status": job_status},
         )
         nonmatching_jobs = client.get(
-            "/api/jobs",
+            "/api/generation-results",
             params={"status": "Cancelled" if job_status != "Cancelled" else "Failed"},
         )
 

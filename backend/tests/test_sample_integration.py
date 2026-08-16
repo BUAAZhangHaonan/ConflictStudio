@@ -47,6 +47,7 @@ from backend.domain.models import (
     Job,
     JobItem,
     JobItemPromptResult,
+    PromptTemplate,
     PromptTemplateVersion,
     RENDERER_PROFILE_VERSION,
     Sample,
@@ -246,17 +247,25 @@ def create_api_sources(
             "sceneIds": [background["id"]],
         },
     ).json()
-    prompt = client.post(
-        "/api/prompt-template-versions",
+    template = client.post(
+        "/api/prompt-templates",
         json={
             "name": "Natural shot",
             "category": "A-VA",
+        },
+    ).json()
+    prompt = client.post(
+        f"/api/prompt-templates/{template['id']}/versions",
+        json={
+            "expectedTemplateRevision": template["revision"],
             "styleGuidance": "Use a static medium shot.",
             "ltxNegativePrompt": "subtitles, captions, distortion",
             "h3NegativePrompt": "subtitles, captions, distortion",
-            "version": 1,
-            "verificationStatus": "Verified",
         },
+    ).json()
+    prompt = client.post(
+        f"/api/prompt-template-versions/{prompt['id']}/verify",
+        json={"expectedRevision": prompt["revision"]},
     ).json()
     return content, prompt, background
 
@@ -267,7 +276,7 @@ def test_post_test_runs_creates_real_test_job_and_items(tmp_path: Path) -> None:
         content, prompt, background = create_api_sources(client)
         gpu = client.get("/api/gpu-slots").json()[0]
         response = client.post(
-            "/api/test-runs",
+            "/api/test-runs/video",
             json={
                 "contentScript": {
                     "id": content["id"],
@@ -296,11 +305,11 @@ def test_post_test_runs_creates_real_test_job_and_items(tmp_path: Path) -> None:
             },
         )
         payload = response.json()
-        items = client.get(f"/api/jobs/{payload['id']}/items").json()
+        items = client.get(f"/api/test-results/{payload['id']}/items").json()
 
     assert response.status_code == 202
-    assert response.headers["Location"] == f"/api/jobs/{payload['id']}"
-    assert payload["source"] == "Test"
+    assert response.headers["Location"] == f"/api/test-results/{payload['id']}"
+    assert payload["source"] == "VideoTest"
     assert payload["datasetId"] is None and payload["batchDraftId"] is None
     assert payload["model"] is None and payload["precision"] is None
     assert items["total"] == 1
@@ -315,7 +324,7 @@ def test_invalid_generative_prompt_creates_no_job_or_generation_records(
         content, prompt, background = create_api_sources(client)
         gpu = client.get("/api/gpu-slots").json()[0]
         response = client.post(
-            "/api/test-runs",
+            "/api/test-runs/video",
             json={
                 "contentScript": {
                     "id": content["id"],
@@ -377,7 +386,7 @@ def test_prompt_response_errors_keep_distinct_api_codes_and_safe_details(
         content, prompt, background = create_api_sources(client)
         gpu = client.get("/api/gpu-slots").json()[0]
         response = client.post(
-            "/api/test-runs",
+            "/api/test-runs/video",
             json={
                 "contentScript": {
                     "id": content["id"],
@@ -450,7 +459,7 @@ def test_historical_dirty_scene_is_blocked_before_prompt_generation(
 
         gpu = client.get("/api/gpu-slots").json()[0]
         response = client.post(
-            "/api/test-runs",
+            "/api/test-runs/video",
             json={
                 "contentScript": {
                     "id": content["id"],
@@ -528,14 +537,20 @@ def add_completed_result(
             true_emotion_description="说话者保持平静。",
             base_video_prompt="An adult answers calmly.",
         )
-        prompt = PromptTemplateVersion(
+        prompt_identity = PromptTemplate(
             name="Natural",
             name_key="natural",
             category=Category.A_VA,
+        )
+        session.add(prompt_identity)
+        session.flush()
+        prompt = PromptTemplateVersion(
+            template_id=prompt_identity.id,
             version=1,
             ltx_negative_prompt="subtitles",
             h3_negative_prompt="subtitles",
             verification_status="Verified",
+            verified_at=timestamp,
         )
         background = Scene(
             id=actual_background_id,
@@ -619,9 +634,6 @@ def add_completed_result(
             system_input="system",
             user_input="user",
             negative_prompt="subtitles",
-            fixed_positive_prompt="An adult answers calmly.",
-            fixed_dialogue="我很好。",
-            fixed_true_emotion_description="说话者保持平静。",
             true_emotion="calm",
             apparent_emotion="calm",
         )
@@ -642,12 +654,24 @@ def add_completed_result(
         )
         session.add(job)
         session.flush()
+        item = JobItem(
+            job_id=job.id,
+            sequence=1,
+            input_snapshot_id=snapshot.id,
+            gpu_slot=GpuSlotName.GPU0,
+            stage=JobItemStage.MEDIA_PROCESSING,
+            status=JobStatus.RUNNING,
+            renderer_prompt_id="prompt-1",
+        )
+        session.add(item)
+        session.flush()
         relative_path = f"media/{source.value.casefold()}.mp4"
         (app.state.database.data_root / relative_path).parent.mkdir(
             parents=True, exist_ok=True
         )
         (app.state.database.data_root / relative_path).write_bytes(b"video")
         asset = Asset(
+            origin_job_item_id=item.id,
             storage_root=str(app.state.database.data_root),
             relative_path=relative_path,
             media_type="video/mp4",
@@ -661,18 +685,8 @@ def add_completed_result(
         )
         session.add(asset)
         session.flush()
-        item = JobItem(
-            job_id=job.id,
-            sequence=1,
-            input_snapshot_id=snapshot.id,
-            gpu_slot=GpuSlotName.GPU0,
-            stage=JobItemStage.MEDIA_PROCESSING,
-            status=JobStatus.RUNNING,
-            source_asset_id=asset.id,
-            primary_asset_id=asset.id,
-            renderer_prompt_id="prompt-1",
-        )
-        session.add(item)
+        item.source_asset_id = asset.id
+        item.primary_asset_id = asset.id
         session.flush()
         session.add(
             JobItemPromptResult(
@@ -716,7 +730,7 @@ def test_completed_production_result_enters_pending_review_queue(
 
     with TestClient(app) as client:
         queue = client.get("/api/samples", params={"decision": "Pending"})
-        item = client.get(f"/api/jobs/{job_id}/items").json()["items"][0]
+        item = client.get(f"/api/generation-results/{job_id}/items").json()["items"][0]
 
     assert queue.status_code == 200
     assert queue.json()["total"] == 1
@@ -758,44 +772,21 @@ def test_sample_api_reads_precision_only_from_current_successful_attempt(
     assert sample["generationRecord"]["id"] > 0
 
 
-def test_test_result_keep_reuses_assets_and_review_history_is_revisioned(
+def test_video_test_result_never_creates_a_sample(
     tmp_path: Path,
 ) -> None:
     app = make_app(tmp_path)
-    job_id, item_id, dataset_id = add_completed_result(app, JobSource.TEST)
+    job_id, item_id, _ = add_completed_result(app, JobSource.VIDEO_TEST)
     app.state.job_executor._complete_item(job_id, item_id)
 
     with TestClient(app) as client:
-        item = client.get(f"/api/jobs/{job_id}/items").json()["items"][0]
+        item = client.get(f"/api/test-results/{job_id}/items").json()["items"][0]
         attempts = client.get(f"/api/job-items/{item_id}/attempts").json()
-        kept = client.post(
-            f"/api/job-items/{item_id}/keep",
-            json={"datasetId": dataset_id, "expectedRevision": item["revision"]},
-        )
-        reviewer = client.post("/api/reviewers", json={"name": "Reviewer One"})
-        reviewed = client.post(
-            "/api/reviews",
-            json={
-                "sampleId": kept.json()["id"],
-                "reviewerId": reviewer.json()["id"],
-                "expectedRevision": kept.json()["revision"],
-                "expectedReviewRevision": kept.json()["reviewRevision"],
-                "decision": "Accepted",
-                "note": "",
-            },
-        )
 
-    assert kept.status_code == 201
     assert item["attemptCount"] == 1
     assert item["latestAttempt"]["status"] == "Completed"
     assert attempts["total"] == 1
     assert attempts["items"][0]["primaryAssetUrl"] == item["primaryAssetUrl"]
-    assert kept.json()["primaryAssetId"] == item["primaryAssetId"]
-    assert kept.json()["sourceAssetId"] == item["sourceAssetId"]
-    assert reviewer.status_code == 201
-    assert reviewed.status_code == 201
-    assert reviewed.json()["reviewDecision"] == "Accepted"
-    assert reviewed.json()["reviewRevision"] == 1
     with app.state.database.read_session() as session:
         assert len(session.exec(select(Asset)).all()) == 1
-        assert len(session.exec(select(Sample)).all()) == 1
+        assert session.exec(select(Sample)).all() == []

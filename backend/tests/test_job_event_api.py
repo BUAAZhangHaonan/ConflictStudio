@@ -125,7 +125,9 @@ def test_prompt_failure_details_persist_and_replay_without_sensitive_payloads(
     failed_event = next(event for event in events if event.event_type == "ItemFailed")
     previous_event_id = max(event.id for event in events if event.id < failed_event.id)
     with TestClient(app) as client:
-        item_payload = client.get(f"/api/jobs/{job.id}/items").json()["items"][0]
+        item_payload = client.get(
+            f"/api/generation-results/{job.id}/items"
+        ).json()["items"][0]
         event_payload = client.get(f"/api/jobs/{job.id}/events").json()["items"]
         api_failed_event = next(
             event for event in event_payload if event["eventType"] == "ItemFailed"
@@ -205,10 +207,10 @@ def test_job_items_and_events_are_stably_paginated_and_validated(tmp_path: Path)
 
     client = TestClient(app)
     try:
-        first_page = client.get(f"/api/jobs/{job.id}/items", params={"page": 1})
-        repeated_page = client.get(f"/api/jobs/{job.id}/items", params={"page": 1})
-        last_page = client.get(f"/api/jobs/{job.id}/items", params={"page": 2})
-        empty_page = client.get(f"/api/jobs/{job.id}/items", params={"page": 3})
+        first_page = client.get(f"/api/generation-results/{job.id}/items", params={"page": 1})
+        repeated_page = client.get(f"/api/generation-results/{job.id}/items", params={"page": 1})
+        last_page = client.get(f"/api/generation-results/{job.id}/items", params={"page": 2})
+        empty_page = client.get(f"/api/generation-results/{job.id}/items", params={"page": 3})
         event_page = client.get(f"/api/jobs/{job.id}/events", params={"page": 1})
 
         assert first_page.status_code == 200
@@ -242,14 +244,14 @@ def test_job_items_and_events_are_stably_paginated_and_validated(tmp_path: Path)
         )
         assert [event["id"] for event in final_page.json()["items"]] == added_ids[17:]
         assert final_page.json()["total"] == 23
-        assert client.get(f"/api/jobs/{job.id}").json().keys().isdisjoint({"items", "events"})
+        assert client.get(f"/api/generation-results/{job.id}").json().keys().isdisjoint({"items", "events"})
 
         invalid_requests = [
-            client.get(f"/api/jobs/{job.id}/items", params={"page": 0}),
+            client.get(f"/api/generation-results/{job.id}/items", params={"page": 0}),
             client.get(f"/api/jobs/{job.id}/events", params={"page": 0}),
         ]
         assert all(response.status_code == 422 for response in invalid_requests)
-        assert client.get("/api/jobs/999999/items").status_code == 404
+        assert client.get("/api/generation-results/999999/items").status_code == 404
         assert client.get("/api/jobs/999999/events").status_code == 404
     finally:
         client.close()
@@ -429,7 +431,7 @@ def test_websocket_unknown_job_uses_explicit_close(tmp_path: Path) -> None:
 
 def test_generation_attempts_are_paginated_independently(tmp_path: Path) -> None:
     app, job = create_queued_job(tmp_path, quantity=1)
-    item = app.state.batch_service.list_job_items(job.id, 1).items[0]
+    item = app.state.batch_service.list_production_result_items(job.id, 1).items[0]
     with app.state.database.immediate_session() as session:
         for attempt_number in range(1, 22):
             session.add(

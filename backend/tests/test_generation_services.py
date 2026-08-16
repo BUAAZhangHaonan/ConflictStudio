@@ -46,16 +46,19 @@ from backend.domain.schemas import (
     DatasetCreate,
     DatasetUpdate,
     DemographicInput,
+    PromptTemplateCreate,
     PromptTemplateVersionCreate,
+    PromptTemplateVersionVerify,
     SourceSelection,
     TestComparisonInput as ComparisonInput,
-    TestRunCreate as RunCreate,
+    VideoTestCreate as RunCreate,
     SceneCreate,
 )
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.errors import ServiceError
 from backend.services.prompts import PromptContext, PromptService
+from backend.tests.test_sample_integration import ApiPromptModel
 
 
 class _ConfiguredRendererGateway:
@@ -205,10 +208,14 @@ def fixed_resources(
             sceneIds=[background.id],
         )
     )
+    template = catalog.create_prompt_template(
+        PromptTemplateCreate(name="Natural Interior", category=Category.A_VA)
+    )
     preset = catalog.create_prompt_template_version(
+        template.id,
         PromptTemplateVersionCreate(
-            name="Natural Interior",
-            category=Category.A_VA,
+            expectedTemplateRevision=template.revision,
+            organizationRules="Keep the selected records in a clear component order.",
             styleGuidance="Use restrained natural performance and a static medium shot.",
             positiveExamples=[
                 "Observable behavior is specific and physically plausible."
@@ -216,9 +223,11 @@ def fixed_resources(
             negativeExamples=["Do not name the target emotion."],
             ltxNegativePrompt="subtitles, captions, exaggerated acting, camera shake",
             h3NegativePrompt="subtitles, captions, exaggerated acting, camera shake",
-            version=1,
-            verificationStatus="Verified",
         )
+    )
+    preset = catalog.verify_prompt_template_version(
+        preset.id,
+        PromptTemplateVersionVerify(expectedRevision=preset.revision),
     )
     return catalog, dataset, content, preset, background
 
@@ -276,7 +285,7 @@ def test_ltx25_precision_reaches_draft_preview_job_and_snapshot(tmp_path: Path) 
     _, dataset, content, preset, background = fixed_resources(database)
     batches = BatchService(
         database,
-        PromptService(OpenAICompatiblePromptModel("test")),
+        PromptService(ApiPromptModel()),
         _ConfiguredRendererGateway(),
     )
     draft = make_batch(
@@ -300,7 +309,7 @@ def test_ltx25_precision_reaches_draft_preview_job_and_snapshot(tmp_path: Path) 
             ),
         )
     )
-    items = batches.list_job_items(job.id, 1).items
+    items = batches.list_production_result_items(job.id, 1).items
 
     assert draft.precision is Precision.INT8
     assert preview.allocations[0].precision is Precision.INT8
@@ -315,7 +324,7 @@ def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -
     _, _, content, preset, background = fixed_resources(database)
     batches = BatchService(
         database,
-        PromptService(OpenAICompatiblePromptModel("test")),
+        PromptService(ApiPromptModel()),
         _ConfiguredRendererGateway(),
     )
     live = asyncio.run(batches.list_gpu_slots())
@@ -348,16 +357,16 @@ def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -
         expectedGpuRevisions=revisions,
     )
 
-    job = asyncio.run(batches.submit_test_run(payload))
-    items = batches.list_job_items(job.id, 1).items
+    job = asyncio.run(batches.submit_video_test(payload))
+    items = batches.list_test_result_items(job.id, 1).items
 
-    assert job.source is JobSource.TEST
+    assert job.source is JobSource.VIDEO_TEST
     assert job.model is None and job.precision is None
     assert job.dataset_id is None and job.batch_draft_id is None
     assert [item.input.model for item in items] == [ModelName.LTX_25, ModelName.H3]
     assert [item.input.precision for item in items] == [Precision.BF16, None]
     assert {item.input.seed for item in items} == {77}
-    assert len({item.input.fixed_positive_prompt for item in items}) == 1
+    assert len({item.prompt_result.final_positive_prompt for item in items}) == 1
     assert len({item.input.negative_prompt for item in items}) == 1
 
 
@@ -369,7 +378,7 @@ def test_serial_test_requires_switch_confirmation_for_distinct_profiles(
     _, _, content, preset, background = fixed_resources(database)
     batches = BatchService(
         database,
-        PromptService(OpenAICompatiblePromptModel("test")),
+        PromptService(ApiPromptModel()),
         _ConfiguredRendererGateway(),
     )
     live = asyncio.run(batches.list_gpu_slots())
@@ -404,11 +413,11 @@ def test_serial_test_requires_switch_confirmation_for_distinct_profiles(
         "expectedGpuRevisions": {GpuSlotName.GPU0: revision},
     }
     with pytest.raises(ServiceError) as error:
-        asyncio.run(batches.submit_test_run(RunCreate(**values)))
+        asyncio.run(batches.submit_video_test(RunCreate(**values)))
     assert error.value.code == "model_switch_confirmation_required"
 
     job = asyncio.run(
-        batches.submit_test_run(RunCreate(**values, confirmModelSwitch=True))
+        batches.submit_video_test(RunCreate(**values, confirmModelSwitch=True))
     )
     assert job.confirm_model_switch is True
 
@@ -616,7 +625,9 @@ def test_catalog_persists_records_and_rejects_stale_revision(tmp_path: Path) -> 
     assert reopened and CatalogService(reopened).list_datasets(1).items[0].note == "已更新"
 
 
-def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) -> None:
+def test_fixed_content_uses_deepseek_and_keeps_examples_out_of_video_input(
+    tmp_path: Path,
+) -> None:
     database = Database(tmp_path)
     database.initialize()
     _, _, content_read, preset_read, background_read = fixed_resources(database)
@@ -630,7 +641,7 @@ def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) ->
         content = session.get(ContentScript, content_read.id)
         preset = session.get(PromptTemplateVersion, preset_read.id)
         background = session.get(Scene, background_read.id)
-        service = PromptService(OpenAICompatiblePromptModel("test"))
+        service = PromptService(ApiPromptModel())
         prepared = service.prepare(
             PromptContext(
                 content=content,
@@ -646,7 +657,9 @@ def test_fixed_prompt_keeps_examples_out_of_final_video_input(tmp_path: Path) ->
         )
     result = asyncio.run(service.complete(prepared, Category.A_VA))
 
-    assert result.user_input == ""
+    assert "sits alone at a desk" in result.user_input
+    assert "Observable behavior" in result.user_input
+    assert "Do not name" in result.user_input
     assert "Observable behavior" not in result.final_positive_prompt
     assert "Do not name" not in result.final_positive_prompt
     assert result.final_positive_prompt.startswith("A 25-year-old East Asian woman")
@@ -685,19 +698,24 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
             sceneIds=[background_read.id],
         )
     )
+    template_read = catalog.create_prompt_template(
+        PromptTemplateCreate(name="Conflict Portrait", category=Category.C_VA)
+    )
     preset_read = catalog.create_prompt_template_version(
+        template_read.id,
         PromptTemplateVersionCreate(
-            name="Conflict Portrait",
-            category=Category.C_VA,
+            expectedTemplateRevision=template_read.revision,
             positiveExamples=[
                 "The person grips a ceramic cup with the right hand and lowers both shoulders."
             ],
             negativeExamples=["The person sits still with both hands on the table."],
             ltxNegativePrompt="subtitles, exaggerated movement",
             h3NegativePrompt="subtitles, exaggerated movement",
-            version=1,
-            verificationStatus="Verified",
         )
+    )
+    preset_read = catalog.verify_prompt_template_version(
+        preset_read.id,
+        PromptTemplateVersionVerify(expectedRevision=preset_read.revision),
     )
     calls: list[dict] = []
 
@@ -1043,7 +1061,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
             ),
         )
     )
-    items = batches.list_job_items(job.id, 1).items
+    items = batches.list_production_result_items(job.id, 1).items
     events = batches.list_job_events(job.id, 1).items
 
     assert [item.gpu_slot for item in items] == [
@@ -1151,7 +1169,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
         _ConfiguredRendererGateway(),
     )
     restored = restored_service.get_job(job.id)
-    restored_items = restored_service.list_job_items(restored.id, 1).items
+    restored_items = restored_service.list_production_result_items(restored.id, 1).items
     assert len(restored_items) == 4
     assert (
         restored_items[0].input.negative_prompt
@@ -1308,7 +1326,7 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             ),
         )
     )
-    items = batches.list_job_items(job.id, 1).items
+    items = batches.list_production_result_items(job.id, 1).items
     submitted_values = [
         (
             item.input.content_script_id,
@@ -1364,16 +1382,24 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             sceneIds=[background.id],
         )
     )
-    preset = catalog.create_prompt_template_version(
-        PromptTemplateVersionCreate(
+    template = catalog.create_prompt_template(
+        PromptTemplateCreate(
             name="Natural Text Interior",
             category=Category.A_VT,
+        )
+    )
+    preset = catalog.create_prompt_template_version(
+        template.id,
+        PromptTemplateVersionCreate(
+            expectedTemplateRevision=template.revision,
             styleGuidance="Use restrained natural performance and a static medium shot.",
             ltxNegativePrompt="subtitles, captions, exaggerated acting, camera shake",
             h3NegativePrompt="subtitles, captions, exaggerated acting, camera shake",
-            version=1,
-            verificationStatus="Verified",
         )
+    )
+    preset = catalog.verify_prompt_template_version(
+        preset.id,
+        PromptTemplateVersionVerify(expectedRevision=preset.revision),
     )
     batches = BatchService(
         database,
@@ -1414,7 +1440,7 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             ),
         )
     )
-    items = batches.list_job_items(job.id, 1).items
+    items = batches.list_production_result_items(job.id, 1).items
 
     snapshot = items[0].input
     assert (snapshot.width, snapshot.height, snapshot.fps, snapshot.frame_count) == (

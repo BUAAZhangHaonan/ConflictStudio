@@ -47,7 +47,9 @@ from backend.domain.schemas import (
     ContentScriptCreate,
     DatasetCreate,
     DemographicInput,
+    PromptTemplateCreate,
     PromptTemplateVersionCreate,
+    PromptTemplateVersionVerify,
     SceneCreate,
 )
 from backend.services.batches import BatchService
@@ -227,16 +229,21 @@ async def create_running_request(
             sceneIds=[background.id],
         )
     )
+    template = catalog.create_prompt_template(
+        PromptTemplateCreate(name="Static portrait", category=category)
+    )
     preset = catalog.create_prompt_template_version(
+        template.id,
         PromptTemplateVersionCreate(
-            name="Static portrait",
-            category=category,
+            expectedTemplateRevision=template.revision,
             styleGuidance="Use a static eye-level medium shot.",
             ltxNegativePrompt="subtitles, captions, distortion",
             h3NegativePrompt="subtitles, captions, distortion",
-            version=1,
-            verificationStatus="Verified",
         )
+    )
+    preset = catalog.verify_prompt_template_version(
+        preset.id,
+        PromptTemplateVersionVerify(expectedRevision=preset.revision),
     )
     content = catalog.get_content_script(content.id)
     prompts = PromptService(UnconfiguredPromptModel())
