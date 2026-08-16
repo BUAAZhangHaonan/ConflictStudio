@@ -19,10 +19,10 @@ const statisticsSource = read('../frontend/src/pages/StatisticsPage.tsx');
 const workspaceSource = read('../frontend/src/pages/WorkspacePage.tsx');
 const workspaceCss = read('../frontend/src/pages/WorkspacePage.css');
 const batchesSource = read('../frontend/src/pages/generate/BatchesPage.tsx');
-const backgroundsSource = read('../frontend/src/pages/generate/BackgroundsPage.tsx');
+const scenesSource = read('../frontend/src/pages/generate/ScenesPage.tsx');
 const contentSource = read('../frontend/src/pages/generate/ContentPage.tsx');
 const jobsSource = read('../frontend/src/pages/generate/JobsPage.tsx');
-const presetsSource = read('../frontend/src/pages/generate/PresetsPage.tsx');
+const templateVersionsSource = read('../frontend/src/pages/generate/PromptTemplateVersionsPage.tsx');
 const generationCss = read('../frontend/src/pages/generate/GenerationPage.css');
 const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
 const gpuStatusSource = read('../frontend/src/gpuStatus.ts');
@@ -93,7 +93,7 @@ test('display name failures have plain bilingual messages without backend detail
   }));
 
   await assert.rejects(
-    () => client.apiRequest('/api/content-plans', { method: 'POST', body: '{}' }),
+    () => client.apiRequest('/api/content-scripts', { method: 'POST', body: '{}' }),
     error => {
       assert.equal(client.apiErrorMessage(error, 'en-US'), 'Use a clear English name of 1 to 60 characters. Do not use import labels, slugs, statuses, or version tags.');
       assert.equal(client.apiErrorMessage(error, 'zh-CN'), '请输入 1 至 60 个字符的清晰英文名称。不要使用导入标记、短标识、状态值或版本号。');
@@ -103,10 +103,12 @@ test('display name failures have plain bilingual messages without backend detail
     },
   );
 
-  for (const editorSource of [contentSource, presetsSource, backgroundsSource]) {
+  for (const editorSource of [contentSource, scenesSource]) {
     assert.match(editorSource, /const error = createMutation\.error \?\? updateMutation\.error/u);
     assert.match(editorSource, /<OperationFeedback error=\{error\}/u);
   }
+  assert.match(templateVersionsSource, /const error = query\.error \?\? createMutation\.error \?\? verifyMutation\.error/u);
+  assert.match(templateVersionsSource, /<OperationFeedback error=\{error\}/u);
 });
 
 test('frontend contracts include the exact reviewer, review, statistics, archive, health and sample fields', () => {
@@ -125,10 +127,12 @@ test('frontend contracts include the exact reviewer, review, statistics, archive
 });
 
 test('queries and mutations use only the current backend endpoints', () => {
-  for (const endpoint of ['/api/reviewers', '/api/reviews', '/api/reviews/batch', '/statistics', '/classification', '/api/archives', '/api/archives/preview', '/api/archives/sync', '/api/health', '/api/gpu-slots']) {
+  for (const endpoint of ['/api/content-scripts', '/api/prompt-template-versions', '/api/scenes', '/api/reviewers', '/api/reviews', '/api/reviews/batch', '/statistics', '/classification', '/api/archives', '/api/archives/preview', '/api/archives/sync', '/api/health', '/api/gpu-slots']) {
     assert.equal(querySource.includes(endpoint), true, endpoint);
   }
   assert.doesNotMatch(querySource, /\/api\/samples\/\$\{id\}\/review/u);
+  assert.doesNotMatch(querySource, /content-plans|prompt-presets|video-background-presets/u);
+  assert.match(querySource, /\/api\/prompt-template-versions\/' \+ id \+ '\/verify/u);
   assert.match(querySource, /invalidateQueries\(\{ queryKey: \['reviewerStatistics'\]/u);
   assert.match(querySource, /client\.invalidateQueries\(\{ queryKey: roots\.archives \}\)/u);
 });
@@ -150,8 +154,8 @@ test('review uses persistent reviews and a revisioned classification form with c
   assert.match(reviewSource, /disabled=\{preferences\.currentReviewerId === null \|\| selectedNeedsRegeneration\}/u);
   assert.match(reviewSource, /disabled=\{preferences\.currentReviewerId === null \|\| batchAcceptBlocked\}/u);
   assert.match(reviewSource, /reviewer\.readOnlyHint/u);
-  assert.match(localeSource, /actualVideoScene: 'Actual video scene'/u);
-  assert.match(localeSource, /actualVideoScene: '实际视频场景'/u);
+  assert.match(localeSource, /actualScene: 'Actual shooting scene'/u);
+  assert.match(localeSource, /actualScene: '实际拍摄场景'/u);
 });
 
 test('statistics reads one real reviewer statistics response and renders only eight metrics plus activity', () => {
@@ -198,7 +202,7 @@ test('workspace is a card list through 1024px and keeps every action visible', (
 
 test('batch scene selection and result prompts use explicit independent controls', () => {
   assert.match(batchesSource, /contentSelections: form\.contentSelections\.map/u);
-  assert.match(batchesSource, /selection\.contentPlan\.mode === 'Generative'/u);
+  assert.match(batchesSource, /selection\.contentScript\.mode === 'Generative'/u);
   assert.match(batchesSource, /batches\.selectCompatibleScenes/u);
   assert.match(batchesSource, /batches\.clearCompatibleScenes/u);
   assert.match(batchesSource, /selected && next\.contentSelections\.length > 0 \? next : null/u);
@@ -218,7 +222,7 @@ test('batch scene selection and result prompts use explicit independent controls
   assert.match(localeSource, /regenerateAction: '使用已登记场景重新生成'/u);
   assert.match(localeSource, /'batches\.correctedPrefill': '\{\{sample\}\} has been copied into a new unsaved batch/u);
   assert.match(localeSource, /'batches\.correctedPrefill': '已将 \{\{sample\}\} 和登记场景预填/u);
-  assert.match(batchesSource, /useQueries\(\{ queries: selectedContentDetailIds\.map\(id => generationQueries\.contentPlan\(id\)\) \}\)/u);
+  assert.match(batchesSource, /useQueries\(\{ queries: selectedContentDetailIds\.map\(id => generationQueries\.contentScript\(id\)\) \}\)/u);
   assert.match(batchesSource, /batches\.noContentOnPage/u);
   assert.doesNotMatch(localeSource, /No active content matches this category and direction\.|没有与当前类别和方向匹配的已启用内容。/u);
   assert.equal((jobsSource.match(/className="generation-current-input__prompt"/gu) ?? []).length, 2);
@@ -228,13 +232,13 @@ test('batch scene selection and result prompts use explicit independent controls
   assert.match(generationCss, /\.generation-current-input__prompt pre \{[\s\S]*white-space: pre-wrap/u);
 });
 
-test('content plans save fields and compatible scenes in one request', () => {
-  assert.doesNotMatch(contentSource, /useReplaceContentBackgroundsMutation|\/backgrounds.*method: 'PUT'/u);
-  assert.match(contentSource, /backgroundPresetIds: \[\]/u);
+test('content scripts save fields and compatible scenes in one request', () => {
+  assert.doesNotMatch(contentSource, /useReplaceContentScenesMutation|\/scenes.*method: 'PUT'/u);
+  assert.match(contentSource, /sceneIds: \[\]/u);
   assert.match(contentSource, /await updateMutation\.mutateAsync/u);
   assert.match(contentSource, /draft\.mode === 'Fixed' && !creating \? \(/u);
   assert.match(contentSource, /className="generation-fixed-scene"/u);
-  assert.match(contentSource, /useContentBackgroundsQuery\(!creating && draft\.mode === 'Fixed'/u);
+  assert.match(contentSource, /useContentScenesQuery\(!creating && draft\.mode === 'Fixed'/u);
 });
 
 test('production reviewer identity comes only from the Reviewer API and user selection', () => {

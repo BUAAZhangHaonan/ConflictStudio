@@ -1,22 +1,22 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BatchesPage } from './generate/BatchesPage';
-import { BackgroundsPage } from './generate/BackgroundsPage';
+import { ScenesPage } from './generate/ScenesPage';
 import { ContentPage } from './generate/ContentPage';
 import { JobsPage } from './generate/JobsPage';
-import { PresetsPage } from './generate/PresetsPage';
+import { PromptTemplateVersionsPage } from './generate/PromptTemplateVersionsPage';
 import { TestPage } from './generate/TestPage';
 import { useGenerationCopy } from './generate/shared';
 import './generate/GenerationPage.css';
 
-type GenerateSection = 'batches' | 'test' | 'content' | 'backgrounds' | 'presets' | 'jobs';
+type GenerateSection = 'batches' | 'test' | 'content' | 'scenes' | 'templateVersions' | 'jobs';
 
 const generateSections = [
   { section: 'batches', to: '/generate/batches', label: 'generate.sectionBatches' as const },
   { section: 'test', to: '/generate/test', label: 'generate.sectionTest' as const },
   { section: 'content', to: '/generate/content', label: 'generate.sectionContent' as const },
-  { section: 'backgrounds', to: '/generate/backgrounds', label: 'generate.sectionBackgrounds' as const },
-  { section: 'presets', to: '/generate/presets', label: 'generate.sectionPresets' as const },
+  { section: 'scenes', to: '/generate/scenes', label: 'generate.sectionScenes' as const },
+  { section: 'templateVersions', to: '/generate/template-versions', label: 'generate.sectionTemplateVersions' as const },
   { section: 'jobs', to: '/generate/jobs', label: 'generate.sectionJobs' as const },
 ] as const;
 
@@ -50,8 +50,8 @@ export function GeneratePage({ section }: { section: GenerateSection }) {
       {section === 'batches' ? <BatchesPage /> : null}
       {section === 'test' ? <TestPage /> : null}
       {section === 'content' ? <ContentPage /> : null}
-      {section === 'backgrounds' ? <BackgroundsPage /> : null}
-      {section === 'presets' ? <PresetsPage /> : null}
+      {section === 'scenes' ? <ScenesPage /> : null}
+      {section === 'templateVersions' ? <PromptTemplateVersionsPage /> : null}
       {section === 'jobs' ? <JobsPage /> : null}
     </>
   );

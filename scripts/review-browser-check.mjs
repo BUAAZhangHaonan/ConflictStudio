@@ -155,7 +155,7 @@ try {
   const prefillRequestsBefore = api.state.requests.length;
   await open(prefillPage, '/review?sampleId=1', 'en-US');
   const generationFacts = await prefillPage.locator('.review-context__facts--generation').innerText();
-  for (const value of ['Content plan', 'Corrected restrained reply', 'Actual video scene', 'Quiet office']) {
+  for (const value of ['Content script', 'Corrected restrained reply', 'Actual shooting scene', 'Quiet office']) {
     assert.equal(generationFacts.includes(value), true, `Review must show ${value}.`);
   }
   const compatibilityWarning = prefillPage.locator('.review-compatibility-warning');
@@ -170,9 +170,9 @@ try {
     sourceDisplayId: 'CS-000002',
     category: 'C-VA',
     conflictDirection: 'Audio',
-    contentPlan: { id: 22, nameZh: '修正后的克制回应', nameEn: 'Corrected restrained reply', revision: 1, mode: 'Fixed' },
-    backgroundPreset: { id: 22, nameZh: '安静会客室', nameEn: 'Quiet reception room', revision: 1 },
-    promptPresetId: 22,
+    contentScript: { id: 22, nameZh: '修正后的克制回应', nameEn: 'Corrected restrained reply', revision: 1, mode: 'Fixed' },
+    scene: { id: 22, nameZh: '安静会客室', nameEn: 'Quiet reception room', revision: 1 },
+    promptTemplateVersionId: 22,
     model: 'LTX-2.5',
     precision: 'BF16',
     demographic: { age: 35, gender: 'Female', ethnicity: 'EastAsian' },
@@ -184,15 +184,15 @@ try {
   assert.equal(await prefillPage.locator('#batch-model').inputValue(), 'LTX-2.5');
   assert.equal(await prefillPage.locator('#batch-precision').inputValue(), 'BF16');
   assert.equal(await prefillPage.locator('#batch-quantity').inputValue(), '1');
-  const correctedContent = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '2. Content plans and video scenes' }) });
+  const correctedContent = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '2. Content scripts and shooting scenes' }) });
   assert.equal(await correctedContent.locator(':scope > .generation-choice-grid label').filter({ hasText: 'Corrected restrained reply' }).locator('input').isChecked(), true);
   await correctedContent.getByText('This page has no other active content matching the selected category and direction.').waitFor();
   assert.equal((await correctedContent.innerText()).includes('No active content matches this category and direction.'), false, 'The current-page empty state must not deny the selected cross-page content.');
   assert.match(await correctedContent.locator('.generation-content-scene').innerText(), /Corrected restrained reply.*Quiet reception room/su);
-  const prefillContentRequests = api.state.requests.slice(prefillRequestsBefore).filter(request => request.method === 'GET' && request.path.startsWith('/api/content-plans'));
-  assert.equal(prefillContentRequests.some(request => request.path === '/api/content-plans/22'), true, 'The selected cross-page content must load through the single-item endpoint.');
-  assert.equal(prefillContentRequests.some(request => request.path === '/api/content-plans' && request.query.page === '2'), false, 'The prefill must not scan later content pages.');
-  const correctedPrompt = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '3. Prompt preset' }) });
+  const prefillContentRequests = api.state.requests.slice(prefillRequestsBefore).filter(request => request.method === 'GET' && request.path.startsWith('/api/content-scripts'));
+  assert.equal(prefillContentRequests.some(request => request.path === '/api/content-scripts/22'), true, 'The selected cross-page content must load through the single-item endpoint.');
+  assert.equal(prefillContentRequests.some(request => request.path === '/api/content-scripts' && request.query.page === '2'), false, 'The prefill must not scan later content pages.');
+  const correctedPrompt = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '3. Prompt template version' }) });
   assert.equal(await correctedPrompt.locator('label').filter({ hasText: 'Restrained conflict' }).locator('input').isChecked(), true);
   const correctedPeople = prefillPage.locator('.generation-workflow-section').filter({ has: prefillPage.getByRole('heading', { name: '4. Person attributes' }) });
   const checkedPeople = await correctedPeople.locator('label:has(input:checked)').allTextContents();
@@ -207,7 +207,7 @@ try {
   await api.install(noScenePage);
   api.state.contentRelations.set(22, []);
   await open(noScenePage, '/review?sampleId=1', 'en-US');
-  assert.match(await noScenePage.locator('.review-compatibility-warning').innerText(), /no registered compatible video scene.*Register one/su);
+  assert.match(await noScenePage.locator('.review-compatibility-warning').innerText(), /no registered compatible shooting scene.*Register one/su);
   assert.equal(await noScenePage.getByRole('button', { name: 'Regenerate with the registered scene', exact: true }).count(), 0, 'No regeneration shortcut is available before a scene is registered.');
   api.state.contentRelations.set(22, [22]);
   await noScenePage.close();
@@ -216,7 +216,7 @@ try {
   await api.install(chineseCompatibilityPage);
   await open(chineseCompatibilityPage, '/review?sampleId=1', 'zh-CN');
   const chineseCompatibilityText = await chineseCompatibilityPage.locator('.review-detail').innerText();
-  for (const value of ['内容方案', '修正后的克制回应', '实际视频场景', '安静办公室', '这个视频需要重新生成', '使用已登记场景重新生成']) {
+  for (const value of ['内容脚本', '修正后的克制回应', '实际拍摄场景', '安静办公室', '这个视频需要重新生成', '使用已登记场景重新生成']) {
     assert.equal(chineseCompatibilityText.includes(value), true, `Chinese review must show ${value}.`);
   }
   await chineseCompatibilityPage.close();

@@ -13,9 +13,9 @@ export interface CorrectedSampleBatchPrefill {
   sourceDisplayId: string;
   category: Category;
   conflictDirection: ConflictDirection | null;
-  contentPlan: BilingualSelection & { mode: 'Fixed' | 'Generative' };
-  backgroundPreset: BilingualSelection;
-  promptPresetId: number;
+  contentScript: BilingualSelection & { mode: 'Fixed' | 'Generative' };
+  scene: BilingualSelection;
+  promptTemplateVersionId: number;
   model: ModelName;
   precision: ModelPrecision | null;
   demographic: Demographic;
@@ -29,7 +29,7 @@ interface RegenerationSample {
   displayId: string;
   category: Category;
   conflictDirection: ConflictDirection | null;
-  promptPresetId: number;
+  promptTemplateVersionId: number;
   generationRecord: {
     model: ModelName;
     precision: ModelPrecision | null;
@@ -41,16 +41,16 @@ interface RegenerationSample {
 
 export function buildCorrectedSampleBatchPrefill(
   sample: RegenerationSample,
-  contentPlan: CorrectedSampleBatchPrefill['contentPlan'],
-  backgroundPreset: BilingualSelection,
+  contentScript: CorrectedSampleBatchPrefill['contentScript'],
+  scene: BilingualSelection,
 ): CorrectedSampleBatchPrefill {
   return {
     sourceDisplayId: sample.displayId,
     category: sample.category,
     conflictDirection: sample.conflictDirection,
-    contentPlan,
-    backgroundPreset,
-    promptPresetId: sample.promptPresetId,
+    contentScript,
+    scene,
+    promptTemplateVersionId: sample.promptTemplateVersionId,
     model: sample.generationRecord.model,
     precision: sample.generationRecord.precision,
     demographic: {

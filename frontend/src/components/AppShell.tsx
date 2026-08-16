@@ -15,7 +15,8 @@ const generateNavigation = [
   { to: '/generate/batches', key: 'batches' },
   { to: '/generate/test', key: 'test' },
   { to: '/generate/content', key: 'content' },
-  { to: '/generate/presets', key: 'presets' },
+  { to: '/generate/scenes', key: 'scenes' },
+  { to: '/generate/template-versions', key: 'templateVersions' },
   { to: '/generate/jobs', key: 'jobs' },
 ] as const;
 

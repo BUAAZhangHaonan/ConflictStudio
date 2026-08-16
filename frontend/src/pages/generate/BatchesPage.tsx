@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 import { apiErrorMessage, isModelSwitchConfirmationRequired } from '../../api/client';
-import { generationQueries, useBatchDraftsQuery, useContentPlansQuery, useCreateDatasetMutation, useDatasetsQuery, useGpuSlotsQuery, usePreviewBatchMutation, usePromptPresetsQuery, useSaveBatchDraftMutation, useSubmitBatchMutation } from '../../api/queries';
+import { generationQueries, useBatchDraftsQuery, useContentScriptsQuery, useCreateDatasetMutation, useDatasetsQuery, useGpuSlotsQuery, usePreviewBatchMutation, usePromptTemplateVersionsQuery, useSaveBatchDraftMutation, useSubmitBatchMutation } from '../../api/queries';
 import type { Age, BatchDraft, BatchDraftCreate, BatchPreview, BilingualSelection, Demographic, Ethnicity, Gender, GpuSlotName } from '../../api/contracts';
 import { buildGenerationProfile, ltx25Precisions, precisionForModel } from '../../generationProfile';
 import { readCorrectedSampleBatchPrefill, type CorrectedSampleBatchPrefill } from '../../generationPrefill';
@@ -11,9 +11,9 @@ import { Button, ConfirmDialog, Dialog, Field, Pagination, TableShell, useToast 
 import { ages, categories, categoryLabel, directionLabel, ethnicities, genders, GenerationScaffold, GpuPanel, localizedName, modelSpecLabel, models, OperationFeedback, parseSeed, readGenerationDraft, toggleArrayValue, useGenerationCopy, useGenerationDraft, useGenerationLocale, useUnsavedChanges } from './shared';
 
 interface SelectedContent {
-  contentPlan: BilingualSelection & { mode: 'Fixed' | 'Generative' };
-  availableBackgrounds: BilingualSelection[];
-  backgroundPresetIds: number[];
+  contentScript: BilingualSelection & { mode: 'Fixed' | 'Generative' };
+  availableScenes: BilingualSelection[];
+  sceneIds: number[];
 }
 
 interface BatchForm {
@@ -25,7 +25,7 @@ interface BatchForm {
   quantity: number;
   seed: string;
   contentSelections: SelectedContent[];
-  promptPresetId: number | null;
+  promptTemplateVersionId: number | null;
   selectedAges: Age[];
   selectedGenders: Gender[];
   selectedEthnicities: Ethnicity[];
@@ -46,7 +46,7 @@ function emptyBatchForm(): BatchForm {
     quantity: 8,
     seed: '',
     contentSelections: [],
-    promptPresetId: null,
+    promptTemplateVersionId: null,
     selectedAges: [25],
     selectedGenders: ['Female'],
     selectedEthnicities: ['EastAsian'],
@@ -64,11 +64,11 @@ function formFromDraft(value: BatchDraft): BatchForm {
     quantity: value.quantity,
     seed: String(value.seed),
     contentSelections: value.contentSelections.map(selection => ({
-      contentPlan: { ...selection.contentPlan, mode: selection.mode },
-      availableBackgrounds: selection.compatibleBackgrounds,
-      backgroundPresetIds: selection.backgroundPresets.map(background => background.id),
+      contentScript: { ...selection.contentScript, mode: selection.mode },
+      availableScenes: selection.compatibleScenes,
+      sceneIds: selection.scenes.map(scene => scene.id),
     })),
-    promptPresetId: value.promptPreset.id,
+    promptTemplateVersionId: value.promptTemplateVersion.id,
     selectedAges: [...new Set(value.demographics.map(item => item.age))],
     selectedGenders: [...new Set(value.demographics.map(item => item.gender))],
     selectedEthnicities: [...new Set(value.demographics.map(item => item.ethnicity))],
@@ -86,11 +86,11 @@ export function batchFormFromPrefill(value: CorrectedSampleBatchPrefill): BatchF
     quantity: 1,
     seed: '',
     contentSelections: [{
-      contentPlan: value.contentPlan,
-      availableBackgrounds: [value.backgroundPreset],
-      backgroundPresetIds: [value.backgroundPreset.id],
+      contentScript: value.contentScript,
+      availableScenes: [value.scene],
+      sceneIds: [value.scene.id],
     }],
-    promptPresetId: value.promptPresetId,
+    promptTemplateVersionId: value.promptTemplateVersionId,
     selectedAges: [value.demographic.age],
     selectedGenders: [value.demographic.gender],
     selectedEthnicities: [value.demographic.ethnicity],
@@ -106,8 +106,8 @@ export function batchFormIsValid(form: BatchForm): boolean {
     && form.quantity <= 10_000
     && (seed === null || (Number.isInteger(seed) && seed >= 0 && seed < 2 ** 31))
     && form.contentSelections.length > 0
-    && form.contentSelections.every(item => item.backgroundPresetIds.length > 0)
-    && form.promptPresetId
+    && form.contentSelections.every(item => item.sceneIds.length > 0)
+    && form.promptTemplateVersionId
     && form.selectedAges.length
     && form.selectedGenders.length
     && form.selectedEthnicities.length
@@ -126,11 +126,11 @@ export function BatchesPage() {
   const prefill = useState(() => readCorrectedSampleBatchPrefill(location.state))[0];
   const [datasetPage, setDatasetPage] = useState(1);
   const [contentPage, setContentPage] = useState(1);
-  const [presetPage, setPresetPage] = useState(1);
+  const [templateVersionPage, setTemplateVersionPage] = useState(1);
   const [draftPage, setDraftPage] = useState(1);
   const datasetsQuery = useDatasetsQuery(datasetPage);
-  const contentQuery = useContentPlansQuery(contentPage);
-  const presetsQuery = usePromptPresetsQuery(presetPage);
+  const contentQuery = useContentScriptsQuery(contentPage);
+  const templateVersionsQuery = usePromptTemplateVersionsQuery(templateVersionPage);
   const draftsQuery = useBatchDraftsQuery(draftPage);
   const gpuQuery = useGpuSlotsQuery();
   const createDatasetMutation = useCreateDatasetMutation();
@@ -141,8 +141,8 @@ export function BatchesPage() {
   const [selectedId, setSelectedId] = useState<number | null>(stored?.selectedId ?? null);
   const [form, setForm] = useState<BatchForm>(prefill ? batchFormFromPrefill(prefill) : stored?.form ?? emptyBatchForm());
   const currentContentIds = new Set((contentQuery.data?.items ?? []).map(item => item.id));
-  const selectedContentDetailIds = [...new Set(form.contentSelections.map(selection => selection.contentPlan.id).filter(id => !currentContentIds.has(id)))];
-  const selectedContentQueries = useQueries({ queries: selectedContentDetailIds.map(id => generationQueries.contentPlan(id)) });
+  const selectedContentDetailIds = [...new Set(form.contentSelections.map(selection => selection.contentScript.id).filter(id => !currentContentIds.has(id)))];
+  const selectedContentQueries = useQueries({ queries: selectedContentDetailIds.map(id => generationQueries.contentScript(id)) });
   const [baseline, setBaseline] = useState<BatchForm | null>(null);
   const [preview, setPreview] = useState<BatchPreview | null>(null);
   const [previewPage, setPreviewPage] = useState(1);
@@ -160,7 +160,7 @@ export function BatchesPage() {
   const prefillGpuInitialized = useRef(prefill === null);
   const draftItems = draftsQuery.data?.items ?? [];
   const savedDraft = draftItems.find(item => item.id === selectedId) ?? null;
-  const queries = [datasetsQuery, contentQuery, presetsQuery, draftsQuery, gpuQuery];
+  const queries = [datasetsQuery, contentQuery, templateVersionsQuery, draftsQuery, gpuQuery];
   const queryError = queries.find(query => query.isError)?.error ?? selectedContentQueries.find(query => query.isError)?.error ?? null;
   const mutationError = contentLoadError ?? createDatasetMutation.error ?? saveMutation.error ?? previewMutation.error ?? submitMutation.error ?? null;
 
@@ -187,14 +187,14 @@ export function BatchesPage() {
   const selectedContentDetails = selectedContentQueries.flatMap(query => query.data ? [query.data] : []);
   const selectedContentIds = new Set(selectedContentDetails.map(item => item.id));
   const contentChoices = [...selectedContentDetails, ...matchingContent.filter(item => !selectedContentIds.has(item.id))];
-  const matchingPresets = useMemo(() => (presetsQuery.data?.items ?? []).filter(item => item.status === 'Active' && item.category === form.category), [form.category, presetsQuery.data]);
+  const matchingTemplateVersions = useMemo(() => (templateVersionsQuery.data?.items ?? []).filter(item => item.verificationStatus === 'Verified' && item.category === form.category), [form.category, templateVersionsQuery.data]);
   const targetDatasets = (datasetsQuery.data?.items ?? []).filter(item => item.status === 'Active' && item.purpose === 'Formal');
   const dirty = baseline === null || JSON.stringify(form) !== JSON.stringify(baseline);
   const isSavedCurrent = savedDraft !== null && !dirty;
-  const combinations = useMemo(() => form.contentSelections.flatMap(selection => selection.backgroundPresetIds.map(backgroundId => ({
-    content: selection.contentPlan,
-    background: selection.availableBackgrounds.find(item => item.id === backgroundId),
-  })).filter((item): item is { content: SelectedContent['contentPlan']; background: BilingualSelection } => item.background !== undefined)), [form.contentSelections]);
+  const combinations = useMemo(() => form.contentSelections.flatMap(selection => selection.sceneIds.map(sceneId => ({
+    content: selection.contentScript,
+    scene: selection.availableScenes.find(item => item.id === sceneId),
+  })).filter((item): item is { content: SelectedContent['contentScript']; scene: BilingualSelection } => item.scene !== undefined)), [form.contentSelections]);
   const combinationTotalPages = Math.ceil(combinations.length / 20);
   const visibleCombinations = combinations.slice((combinationPage - 1) * 20, combinationPage * 20);
   const previewTotalPages = preview ? Math.ceil(preview.allocations.length / 20) : 0;
@@ -216,16 +216,16 @@ export function BatchesPage() {
   };
 
   const changeCategory = (category: Category) => {
-    setForm(current => ({ ...current, category, conflictDirection: allowedDirections(category)[0] ?? null, contentSelections: [], promptPresetId: null }));
+    setForm(current => ({ ...current, category, conflictDirection: allowedDirections(category)[0] ?? null, contentSelections: [], promptTemplateVersionId: null }));
     setContentPage(1);
-    setPresetPage(1);
+    setTemplateVersionPage(1);
     setPreview(null);
   };
 
   const toggleContent = async (contentId: number) => {
     setContentLoadError(null);
-    if (form.contentSelections.some(item => item.contentPlan.id === contentId)) {
-      setForm(current => ({ ...current, contentSelections: current.contentSelections.filter(item => item.contentPlan.id !== contentId) }));
+    if (form.contentSelections.some(item => item.contentScript.id === contentId)) {
+      setForm(current => ({ ...current, contentSelections: current.contentSelections.filter(item => item.contentScript.id !== contentId) }));
       setCombinationPage(1);
       return;
     }
@@ -233,14 +233,14 @@ export function BatchesPage() {
     if (!content) return;
     setLoadingContentId(contentId);
     try {
-      const relation = await client.fetchQuery(generationQueries.contentBackgrounds(contentId));
-      const selectedBackgrounds = content.mode === 'Fixed' ? relation.backgrounds.map(item => item.id) : [];
+      const relation = await client.fetchQuery(generationQueries.contentScenes(contentId));
+      const selectedScenes = content.mode === 'Fixed' ? relation.scenes.map(item => item.id) : [];
       setForm(current => ({
         ...current,
         contentSelections: [...current.contentSelections, {
-          contentPlan: { id: content.id, nameZh: content.nameZh, nameEn: content.nameEn, revision: relation.contentPlanRevision, mode: content.mode },
-          availableBackgrounds: relation.backgrounds,
-          backgroundPresetIds: selectedBackgrounds,
+          contentScript: { id: content.id, nameZh: content.nameZh, nameEn: content.nameEn, revision: relation.contentScriptRevision, mode: content.mode },
+          availableScenes: relation.scenes,
+          sceneIds: selectedScenes,
         }],
       }));
       setCombinationPage(1);
@@ -254,14 +254,14 @@ export function BatchesPage() {
   const changeScenes = (contentId: number, ids: number[]) => {
     setForm(current => ({
       ...current,
-      contentSelections: current.contentSelections.map(item => item.contentPlan.id === contentId ? { ...item, backgroundPresetIds: ids } : item),
+      contentSelections: current.contentSelections.map(item => item.contentScript.id === contentId ? { ...item, sceneIds: ids } : item),
     }));
     setCombinationPage(1);
   };
 
   const payload = (): BatchDraftCreate | null => {
     const profile = buildGenerationProfile(form.model, form.precision);
-    if (!batchFormIsValid(form) || form.targetDatasetId === null || form.promptPresetId === null || !profile) return null;
+    if (!batchFormIsValid(form) || form.targetDatasetId === null || form.promptTemplateVersionId === null || !profile) return null;
     return {
       targetDatasetId: form.targetDatasetId,
       category: form.category,
@@ -270,10 +270,10 @@ export function BatchesPage() {
       quantity: form.quantity,
       seed: parseSeed(form.seed),
       contentSelections: form.contentSelections.map(item => ({
-        contentPlanId: item.contentPlan.id,
-        backgroundPresetIds: item.contentPlan.mode === 'Fixed' ? [] : item.backgroundPresetIds,
+        contentScriptId: item.contentScript.id,
+        sceneIds: item.contentScript.mode === 'Fixed' ? [] : item.sceneIds,
       })),
-      promptPresetId: form.promptPresetId,
+      promptTemplateVersionId: form.promptTemplateVersionId,
       demographics: demographicCombinations(form.selectedAges, form.selectedGenders, form.selectedEthnicities),
       gpuSlots: form.gpuSlots,
     };
@@ -359,27 +359,27 @@ export function BatchesPage() {
               <Field label={g('batches.category')} htmlFor="batch-category" required><select id="batch-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
               <Field label={g('batches.direction')} htmlFor="batch-direction" required={directions.length > 0}><select id="batch-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentSelections: [] }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
             </div>
-            {contentChoices.length > 0 ? <div className="generation-choice-grid">{contentChoices.map(item => <label key={item.id}><input type="checkbox" disabled={loadingContentId === item.id} checked={form.contentSelections.some(value => value.contentPlan.id === item.id)} onChange={() => void toggleContent(item.id)} /><span>{localizedName(locale, item)}<small>{g(`content.mode.${item.mode}`)}</small></span></label>)}</div> : null}
+            {contentChoices.length > 0 ? <div className="generation-choice-grid">{contentChoices.map(item => <label key={item.id}><input type="checkbox" disabled={loadingContentId === item.id} checked={form.contentSelections.some(value => value.contentScript.id === item.id)} onChange={() => void toggleContent(item.id)} /><span>{localizedName(locale, item)}<small>{g(`content.mode.${item.mode}`)}</small></span></label>)}</div> : null}
             {matchingContent.length === 0 ? <p className="generation-empty-note">{g('batches.noContentOnPage')}</p> : null}
             <Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} />
             <div className="generation-content-scenes">
               {form.contentSelections.map(selection => {
-                const currentScenePage = scenePages[selection.contentPlan.id] ?? 1;
-                const sceneTotalPages = Math.ceil(selection.availableBackgrounds.length / 20);
-                const visibleScenes = selection.availableBackgrounds.slice((currentScenePage - 1) * 20, currentScenePage * 20);
-                return <article className="generation-content-scene" key={selection.contentPlan.id}><div className="section-header"><div><h3>{localizedName(locale, selection.contentPlan)}</h3><p>{selection.contentPlan.mode === 'Fixed' ? g('batches.fixedSceneNote') : g('batches.sceneRole')}</p></div>{selection.contentPlan.mode === 'Generative' ? <div className="generation-fieldset__toolbar"><Button type="button" variant="quiet" disabled={selection.availableBackgrounds.length === 0 || selection.backgroundPresetIds.length === selection.availableBackgrounds.length} onClick={() => changeScenes(selection.contentPlan.id, selection.availableBackgrounds.map(item => item.id))}>{g('batches.selectCompatibleScenes')}</Button><Button type="button" variant="quiet" disabled={selection.backgroundPresetIds.length === 0} onClick={() => changeScenes(selection.contentPlan.id, [])}>{g('batches.clearCompatibleScenes')}</Button></div> : null}</div>
-                  {selection.availableBackgrounds.length === 0 ? <p className="field__error">{g('batches.noCompatibleScenes')}</p> : selection.contentPlan.mode === 'Fixed' ? <p className="generation-fixed-scene">{localizedName(locale, selection.availableBackgrounds[0])}</p> : <div className="generation-choice-grid">{visibleScenes.map(background => <label key={background.id}><input type="checkbox" checked={selection.backgroundPresetIds.includes(background.id)} onChange={() => changeScenes(selection.contentPlan.id, toggleArrayValue(selection.backgroundPresetIds, background.id))} /><span>{localizedName(locale, background)}</span></label>)}</div>}
-                  {selection.contentPlan.mode === 'Generative' && selection.backgroundPresetIds.length === 0 ? <p className="field__error" role="status">{g('batches.sceneSelectionRequired')}</p> : null}
-                  <Pagination page={currentScenePage} totalPages={sceneTotalPages} total={selection.availableBackgrounds.length} onPageChange={page => setScenePages(current => ({ ...current, [selection.contentPlan.id]: page }))} />
+                const currentScenePage = scenePages[selection.contentScript.id] ?? 1;
+                const sceneTotalPages = Math.ceil(selection.availableScenes.length / 20);
+                const visibleScenes = selection.availableScenes.slice((currentScenePage - 1) * 20, currentScenePage * 20);
+                return <article className="generation-content-scene" key={selection.contentScript.id}><div className="section-header"><div><h3>{localizedName(locale, selection.contentScript)}</h3><p>{selection.contentScript.mode === 'Fixed' ? g('batches.fixedSceneNote') : g('batches.sceneRole')}</p></div>{selection.contentScript.mode === 'Generative' ? <div className="generation-fieldset__toolbar"><Button type="button" variant="quiet" disabled={selection.availableScenes.length === 0 || selection.sceneIds.length === selection.availableScenes.length} onClick={() => changeScenes(selection.contentScript.id, selection.availableScenes.map(item => item.id))}>{g('batches.selectCompatibleScenes')}</Button><Button type="button" variant="quiet" disabled={selection.sceneIds.length === 0} onClick={() => changeScenes(selection.contentScript.id, [])}>{g('batches.clearCompatibleScenes')}</Button></div> : null}</div>
+                  {selection.availableScenes.length === 0 ? <p className="field__error">{g('batches.noCompatibleScenes')}</p> : selection.contentScript.mode === 'Fixed' ? <p className="generation-fixed-scene">{localizedName(locale, selection.availableScenes[0])}</p> : <div className="generation-choice-grid">{visibleScenes.map(scene => <label key={scene.id}><input type="checkbox" checked={selection.sceneIds.includes(scene.id)} onChange={() => changeScenes(selection.contentScript.id, toggleArrayValue(selection.sceneIds, scene.id))} /><span>{localizedName(locale, scene)}</span></label>)}</div>}
+                  {selection.contentScript.mode === 'Generative' && selection.sceneIds.length === 0 ? <p className="field__error" role="status">{g('batches.sceneSelectionRequired')}</p> : null}
+                  <Pagination page={currentScenePage} totalPages={sceneTotalPages} total={selection.availableScenes.length} onPageChange={page => setScenePages(current => ({ ...current, [selection.contentScript.id]: page }))} />
                 </article>;
               })}
             </div>
           </section>
 
-          <section className="generation-workflow-section" aria-labelledby="batch-preset-title">
-            <div className="section-header"><div><h2 id="batch-preset-title">{g('batches.stepPrompt')}</h2><p className="generation-section-note">{g('batches.promptRole')}</p></div></div>
-            {matchingPresets.length === 0 ? <p className="generation-empty-note">{g('batches.noPreset')}</p> : <div className="generation-choice-grid">{matchingPresets.map(item => <label key={item.id}><input type="radio" name="prompt-preset" checked={form.promptPresetId === item.id} onChange={() => setForm(current => ({ ...current, promptPresetId: item.id }))} /><span>{item.name}</span></label>)}</div>}
-            <Pagination page={presetsQuery.data?.page ?? presetPage} totalPages={presetsQuery.data?.totalPages ?? 0} total={presetsQuery.data?.total ?? 0} onPageChange={setPresetPage} />
+          <section className="generation-workflow-section" aria-labelledby="batch-template-version-title">
+            <div className="section-header"><div><h2 id="batch-template-version-title">{g('batches.stepPrompt')}</h2><p className="generation-section-note">{g('batches.promptRole')}</p></div></div>
+            {matchingTemplateVersions.length === 0 ? <p className="generation-empty-note">{g('batches.noTemplateVersion')}</p> : <div className="generation-choice-grid">{matchingTemplateVersions.map(item => <label key={item.id}><input type="radio" name="prompt-template-version" checked={form.promptTemplateVersionId === item.id} onChange={() => setForm(current => ({ ...current, promptTemplateVersionId: item.id }))} /><span>{item.name}</span></label>)}</div>}
+            <Pagination page={templateVersionsQuery.data?.page ?? templateVersionPage} totalPages={templateVersionsQuery.data?.totalPages ?? 0} total={templateVersionsQuery.data?.total ?? 0} onPageChange={setTemplateVersionPage} />
           </section>
 
           <section className="generation-workflow-section" aria-labelledby="batch-demographics-title">
@@ -402,7 +402,7 @@ export function BatchesPage() {
 
           <section className="generation-workflow-section" aria-labelledby="batch-combinations-title">
             <div className="section-header"><div><h2 id="batch-combinations-title">{g('batches.stepPreview')}</h2><p className="generation-section-note">{g('batches.combinationNote')}</p></div></div>
-            {visibleCombinations.length === 0 ? <p className="generation-empty-note">{g('batches.noCombinations')}</p> : <ol className="generation-combination-list" start={(combinationPage - 1) * 20 + 1}>{visibleCombinations.map(item => <li key={`${item.content.id}-${item.background.id}`}><strong>{localizedName(locale, item.content)}</strong><span>{localizedName(locale, item.background)}</span></li>)}</ol>}
+            {visibleCombinations.length === 0 ? <p className="generation-empty-note">{g('batches.noCombinations')}</p> : <ol className="generation-combination-list" start={(combinationPage - 1) * 20 + 1}>{visibleCombinations.map(item => <li key={`${item.content.id}-${item.scene.id}`}><strong>{localizedName(locale, item.content)}</strong><span>{localizedName(locale, item.scene)}</span></li>)}</ol>}
             <Pagination page={combinationPage} totalPages={combinationTotalPages} total={combinations.length} onPageChange={setCombinationPage} />
           </section>
 
@@ -413,7 +413,7 @@ export function BatchesPage() {
       </div>
       {unsavedDialog}
       <Dialog open={datasetDialogOpen} title={g('batches.createDataset')} closeLabel={g('common.close')} onClose={() => setDatasetDialogOpen(false)} footer={<><Button onClick={() => setDatasetDialogOpen(false)}>{g('common.cancel')}</Button><Button type="submit" form="batch-create-dataset" variant="primary" busy={createDatasetMutation.isPending}>{g('common.create')}</Button></>}><form id="batch-create-dataset" className="generation-dialog-form" onSubmit={event => void createDataset(event)}><Field label={g('batches.datasetName')} htmlFor="batch-dataset-name" required><input id="batch-dataset-name" autoFocus value={datasetName} onChange={event => setDatasetName(event.target.value)} /></Field><Field label={g('batches.datasetNoteLabel')} htmlFor="batch-dataset-note"><textarea id="batch-dataset-note" value={datasetNote} onChange={event => setDatasetNote(event.target.value)} /></Field>{createDatasetMutation.error ? <p className="field__error" role="alert">{apiErrorMessage(createDatasetMutation.error, locale)}</p> : null}</form></Dialog>
-      <Dialog open={preview !== null} title={g('batches.previewTitle')} closeLabel={g('common.close')} onClose={() => setPreview(null)} size="wide" footer={<><Button onClick={() => setPreview(null)}>{g('common.cancel')}</Button><Button variant="primary" onClick={() => setSubmitConfirmOpen(true)}>{g('batches.submit')}</Button></>}>{preview ? <><p>{g('batches.previewIntro', { count: preview.allocations.length })}</p><TableShell caption={g('batches.allocationCaption')} columns={[{ key: 'row', label: g('batches.sequence') }, { key: 'content', label: g('batches.contentName') }, { key: 'background', label: g('batches.background') }, { key: 'person', label: g('batches.allocation') }, { key: 'model', label: g('batches.model') }, { key: 'gpu', label: g('batches.gpu') }]}>{visiblePreview.map(row => <tr key={row.sequence}><th scope="row">{row.sequence}/{preview.allocations.length}</th><td>{localizedName(locale, row.contentPlan)}</td><td>{localizedName(locale, row.backgroundPreset)}</td><td>{row.demographic.age} {g(`demographic.gender.${row.demographic.gender}`)} {g(`demographic.ethnicity.${row.demographic.ethnicity}`)}</td><td>{row.model}{row.precision ? ` ${row.precision}` : ''}</td><td>{row.gpuSlot}</td></tr>)}</TableShell><Pagination page={previewPage} totalPages={previewTotalPages} total={preview.allocations.length} onPageChange={setPreviewPage} /></> : null}</Dialog>
+      <Dialog open={preview !== null} title={g('batches.previewTitle')} closeLabel={g('common.close')} onClose={() => setPreview(null)} size="wide" footer={<><Button onClick={() => setPreview(null)}>{g('common.cancel')}</Button><Button variant="primary" onClick={() => setSubmitConfirmOpen(true)}>{g('batches.submit')}</Button></>}>{preview ? <><p>{g('batches.previewIntro', { count: preview.allocations.length })}</p><TableShell caption={g('batches.allocationCaption')} columns={[{ key: 'row', label: g('batches.sequence') }, { key: 'content', label: g('batches.contentName') }, { key: 'scene', label: g('batches.scene') }, { key: 'person', label: g('batches.allocation') }, { key: 'model', label: g('batches.model') }, { key: 'gpu', label: g('batches.gpu') }]}>{visiblePreview.map(row => <tr key={row.sequence}><th scope="row">{row.sequence}/{preview.allocations.length}</th><td>{localizedName(locale, row.contentScript)}</td><td>{localizedName(locale, row.scene)}</td><td>{row.demographic.age} {g(`demographic.gender.${row.demographic.gender}`)} {g(`demographic.ethnicity.${row.demographic.ethnicity}`)}</td><td>{row.model}{row.precision ? ` ${row.precision}` : ''}</td><td>{row.gpuSlot}</td></tr>)}</TableShell><Pagination page={previewPage} totalPages={previewTotalPages} total={preview.allocations.length} onPageChange={setPreviewPage} /></> : null}</Dialog>
       <ConfirmDialog open={submitConfirmOpen} title={g('batches.submitConfirmTitle')} body={preview ? g('batches.submitConfirmBody', { count: preview.allocations.length }) : g('batches.confirmBody')} confirmLabel={g('common.yes')} cancelLabel={g('common.no')} closeLabel={g('common.close')} onConfirm={() => void submit(false)} onClose={() => setSubmitConfirmOpen(false)} />
       <ConfirmDialog open={switchConfirmOpen} title={g('batches.releaseModelTitle')} body={g('batches.modelSwitchConfirmation')} confirmLabel={g('common.yes')} cancelLabel={g('common.no')} closeLabel={g('common.close')} onConfirm={() => void submit(true)} onClose={() => setSwitchConfirmOpen(false)} />
     </GenerationScaffold>

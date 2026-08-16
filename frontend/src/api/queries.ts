@@ -2,12 +2,12 @@ import { queryOptions, useMutation, useQuery, useQueryClient, type QueryClient }
 import { apiRequest } from './client';
 import type {
   Archive, ArchivePreview, ArchivePreviewRequest, ArchiveSyncRequest,
-  BackgroundPreset, BackgroundPresetCreate, BackgroundPresetUpdate,
+  Scene, SceneCreate, SceneUpdate,
   BatchDraft, BatchDraftCreate, BatchDraftUpdate, BatchPreview,
-  ContentPlan, ContentPlanBackgrounds, ContentPlanCreate, ContentPlanUpdate,
+  ContentScript, ContentScriptScenes, ContentScriptCreate, ContentScriptUpdate,
   Dataset, DatasetCreate, DatasetUpdate, GenerationAttempt, GpuSlot, Health,
   JobDetail, JobEvent, JobItem, JobSummary, KeepTestResultRequest, Page,
-  PromptPreset, PromptPresetCreate, PromptPresetUpdate, PromptPreview, PromptPreviewRequest,
+  PromptTemplateVersion, PromptTemplateVersionCreate, PromptTemplateVersionVerify, PromptPreview, PromptPreviewRequest,
   Review, ReviewBatchCreate, ReviewCreate, ReviewDecision, Reviewer, ReviewerCreate,
   ReviewerRename, ReviewerStatistics, ReviewerStatisticsFilter, Sample,
   SampleClassificationUpdate, TestRunCreate,
@@ -33,9 +33,9 @@ export interface SampleQueryFilter {
 
 const roots = {
   datasets: ['datasets'] as const,
-  contentPlans: ['contentPlans'] as const,
-  promptPresets: ['promptPresets'] as const,
-  backgroundPresets: ['backgroundPresets'] as const,
+  contentScripts: ['contentScripts'] as const,
+  promptTemplateVersions: ['promptTemplateVersions'] as const,
+  scenes: ['scenes'] as const,
   batchDrafts: ['batchDrafts'] as const,
   jobs: ['jobs'] as const,
   reviewers: ['reviewers'] as const,
@@ -48,11 +48,11 @@ export const queryKeys = {
   ...roots,
   datasetsPage: (filter: DatasetQueryFilter, page: number) => [...roots.datasets, filter, page] as const,
   dataset: (id: number) => [...roots.datasets, 'detail', id] as const,
-  contentPlansPage: (page: number) => [...roots.contentPlans, page] as const,
-  contentPlan: (id: number) => [...roots.contentPlans, 'detail', id] as const,
-  contentBackgrounds: (id: number) => [...roots.contentPlans, id, 'backgrounds'] as const,
-  promptPresetsPage: (page: number) => [...roots.promptPresets, page] as const,
-  backgroundPresetsPage: (page: number) => [...roots.backgroundPresets, page] as const,
+  contentScriptsPage: (page: number) => [...roots.contentScripts, page] as const,
+  contentScript: (id: number) => [...roots.contentScripts, 'detail', id] as const,
+  contentScenes: (id: number) => [...roots.contentScripts, id, 'scenes'] as const,
+  promptTemplateVersionsPage: (page: number) => [...roots.promptTemplateVersions, page] as const,
+  scenesPage: (page: number) => [...roots.scenes, page] as const,
   batchDraftsPage: (page: number) => [...roots.batchDrafts, page] as const,
   batchDraft: (id: number) => [...roots.batchDrafts, id] as const,
   jobsPage: (filter: JobQueryFilter, page: number) => [...roots.jobs, 'page', filter, page] as const,
@@ -84,11 +84,11 @@ export const generationQueries = {
     return queryOptions({ queryKey: queryKeys.datasetsPage(filter, page), queryFn: () => apiRequest<Page<Dataset>>(pagePath('/api/datasets', page, params)) });
   },
   dataset: (id: number) => queryOptions({ queryKey: queryKeys.dataset(id), queryFn: () => apiRequest<Dataset>(`/api/datasets/${id}`) }),
-  contentPlans: (page: number) => queryOptions({ queryKey: queryKeys.contentPlansPage(page), queryFn: () => apiRequest<Page<ContentPlan>>(pagePath('/api/content-plans', page)) }),
-  contentPlan: (id: number) => queryOptions({ queryKey: queryKeys.contentPlan(id), queryFn: () => apiRequest<ContentPlan>(`/api/content-plans/${id}`) }),
-  contentBackgrounds: (id: number) => queryOptions({ queryKey: queryKeys.contentBackgrounds(id), queryFn: () => apiRequest<ContentPlanBackgrounds>(`/api/content-plans/${id}/backgrounds`) }),
-  promptPresets: (page: number) => queryOptions({ queryKey: queryKeys.promptPresetsPage(page), queryFn: () => apiRequest<Page<PromptPreset>>(pagePath('/api/prompt-presets', page)) }),
-  backgroundPresets: (page: number) => queryOptions({ queryKey: queryKeys.backgroundPresetsPage(page), queryFn: () => apiRequest<Page<BackgroundPreset>>(pagePath('/api/video-background-presets', page)) }),
+  contentScripts: (page: number) => queryOptions({ queryKey: queryKeys.contentScriptsPage(page), queryFn: () => apiRequest<Page<ContentScript>>(pagePath('/api/content-scripts', page)) }),
+  contentScript: (id: number) => queryOptions({ queryKey: queryKeys.contentScript(id), queryFn: () => apiRequest<ContentScript>(`/api/content-scripts/${id}`) }),
+  contentScenes: (id: number) => queryOptions({ queryKey: queryKeys.contentScenes(id), queryFn: () => apiRequest<ContentScriptScenes>(`/api/content-scripts/${id}/scenes`) }),
+  promptTemplateVersions: (page: number) => queryOptions({ queryKey: queryKeys.promptTemplateVersionsPage(page), queryFn: () => apiRequest<Page<PromptTemplateVersion>>(pagePath('/api/prompt-template-versions', page)) }),
+  scenes: (page: number) => queryOptions({ queryKey: queryKeys.scenesPage(page), queryFn: () => apiRequest<Page<Scene>>(pagePath('/api/scenes', page)) }),
   batchDrafts: (page: number) => queryOptions({ queryKey: queryKeys.batchDraftsPage(page), queryFn: () => apiRequest<Page<BatchDraft>>(pagePath('/api/batch-drafts', page)) }),
   jobs: (page: number, filter: JobQueryFilter = {}) => {
     const params = new URLSearchParams();
@@ -141,11 +141,11 @@ export async function invalidateJobAuthority(client: QueryClient, id: number, in
 
 export function useDatasetsQuery(page = 1, filter: DatasetQueryFilter = {}) { return useQuery(generationQueries.datasets(page, filter)); }
 export function useDatasetQuery(id: number | null) { return useQuery({ ...generationQueries.dataset(id ?? 0), enabled: id !== null }); }
-export function useContentPlansQuery(page = 1) { return useQuery(generationQueries.contentPlans(page)); }
-export function useContentPlanQuery(id: number | null) { return useQuery({ ...generationQueries.contentPlan(id ?? 0), enabled: id !== null }); }
-export function useContentBackgroundsQuery(id: number | null) { return useQuery({ ...generationQueries.contentBackgrounds(id ?? 0), enabled: id !== null }); }
-export function usePromptPresetsQuery(page = 1) { return useQuery(generationQueries.promptPresets(page)); }
-export function useBackgroundPresetsQuery(page = 1) { return useQuery(generationQueries.backgroundPresets(page)); }
+export function useContentScriptsQuery(page = 1) { return useQuery(generationQueries.contentScripts(page)); }
+export function useContentScriptQuery(id: number | null) { return useQuery({ ...generationQueries.contentScript(id ?? 0), enabled: id !== null }); }
+export function useContentScenesQuery(id: number | null) { return useQuery({ ...generationQueries.contentScenes(id ?? 0), enabled: id !== null }); }
+export function usePromptTemplateVersionsQuery(page = 1) { return useQuery(generationQueries.promptTemplateVersions(page)); }
+export function useScenesQuery(page = 1) { return useQuery(generationQueries.scenes(page)); }
 export function useBatchDraftsQuery(page = 1) { return useQuery(generationQueries.batchDrafts(page)); }
 export function useJobsQuery(page = 1, filter: JobQueryFilter = {}) { return useQuery(generationQueries.jobs(page, filter)); }
 export function useGpuSlotsQuery() { return useQuery(generationQueries.gpuSlots()); }
@@ -178,41 +178,44 @@ export function useDeleteDatasetMutation() {
   const client = useQueryClient();
   return useMutation({ mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<void>(`/api/datasets/${id}?expectedRevision=${expectedRevision}`, { method: 'DELETE' }), onSuccess: () => invalidateCatalog(client, roots.datasets) });
 }
-export function useCreateContentPlanMutation() {
+export function useCreateContentScriptMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (input: ContentPlanCreate) => apiRequest<ContentPlan>('/api/content-plans', { method: 'POST', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.contentPlans) });
+  return useMutation({ mutationFn: (input: ContentScriptCreate) => apiRequest<ContentScript>('/api/content-scripts', { method: 'POST', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.contentScripts) });
 }
-export function useUpdateContentPlanMutation() {
+export function useUpdateContentScriptMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: ({ id, input }: { id: number; input: ContentPlanUpdate }) => apiRequest<ContentPlan>(`/api/content-plans/${id}`, { method: 'PATCH', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.contentPlans) });
+  return useMutation({ mutationFn: ({ id, input }: { id: number; input: ContentScriptUpdate }) => apiRequest<ContentScript>(`/api/content-scripts/${id}`, { method: 'PATCH', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.contentScripts) });
 }
-export function useDeleteContentPlanMutation() {
+export function useDeleteContentScriptMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<void>(`/api/content-plans/${id}?expectedRevision=${expectedRevision}`, { method: 'DELETE' }), onSuccess: () => invalidateCatalog(client, roots.contentPlans) });
+  return useMutation({ mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<void>(`/api/content-scripts/${id}?expectedRevision=${expectedRevision}`, { method: 'DELETE' }), onSuccess: () => invalidateCatalog(client, roots.contentScripts) });
 }
-export function useCreatePromptPresetMutation() {
+export function useCreatePromptTemplateVersionMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (input: PromptPresetCreate) => apiRequest<PromptPreset>('/api/prompt-presets', { method: 'POST', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.promptPresets) });
+  return useMutation({ mutationFn: (input: PromptTemplateVersionCreate) => apiRequest<PromptTemplateVersion>('/api/prompt-template-versions', { method: 'POST', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.promptTemplateVersions) });
 }
-export function useUpdatePromptPresetMutation() {
+export function useVerifyPromptTemplateVersionMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: ({ id, input }: { id: number; input: PromptPresetUpdate }) => apiRequest<PromptPreset>(`/api/prompt-presets/${id}`, { method: 'PATCH', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.promptPresets) });
+  return useMutation({
+    mutationFn: ({ id, input }: { id: number; input: PromptTemplateVersionVerify }) =>
+      apiRequest<PromptTemplateVersion>(
+        '/api/prompt-template-versions/' + id + '/verify',
+        { method: 'POST', ...json(input) },
+      ),
+    onSuccess: () => invalidateCatalog(client, roots.promptTemplateVersions),
+  });
 }
-export function useDeletePromptPresetMutation() {
+export function useCreateSceneMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<void>(`/api/prompt-presets/${id}?expectedRevision=${expectedRevision}`, { method: 'DELETE' }), onSuccess: () => invalidateCatalog(client, roots.promptPresets) });
+  return useMutation({ mutationFn: (input: SceneCreate) => apiRequest<Scene>('/api/scenes', { method: 'POST', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.scenes) });
 }
-export function useCreateBackgroundPresetMutation() {
+export function useUpdateSceneMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: (input: BackgroundPresetCreate) => apiRequest<BackgroundPreset>('/api/video-background-presets', { method: 'POST', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.backgroundPresets) });
+  return useMutation({ mutationFn: ({ id, input }: { id: number; input: SceneUpdate }) => apiRequest<Scene>(`/api/scenes/${id}`, { method: 'PATCH', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.scenes) });
 }
-export function useUpdateBackgroundPresetMutation() {
+export function useDeleteSceneMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: ({ id, input }: { id: number; input: BackgroundPresetUpdate }) => apiRequest<BackgroundPreset>(`/api/video-background-presets/${id}`, { method: 'PATCH', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.backgroundPresets) });
-}
-export function useDeleteBackgroundPresetMutation() {
-  const client = useQueryClient();
-  return useMutation({ mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<void>(`/api/video-background-presets/${id}?expectedRevision=${expectedRevision}`, { method: 'DELETE' }), onSuccess: () => invalidateCatalog(client, roots.backgroundPresets) });
+  return useMutation({ mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<void>(`/api/scenes/${id}?expectedRevision=${expectedRevision}`, { method: 'DELETE' }), onSuccess: () => invalidateCatalog(client, roots.scenes) });
 }
 export function useSaveBatchDraftMutation() {
   const client = useQueryClient();

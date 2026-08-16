@@ -173,9 +173,9 @@ try {
 
   await open(page, '/generate/batches');
   const datasetSection = sectionWithHeading(page, '1. Destination dataset');
-  const contentSection = sectionWithHeading(page, '2. Content plans and video scenes');
-  const promptSection = sectionWithHeading(page, '3. Prompt preset');
-  assert.match(await contentSection.innerText(), /Content plans define the plot, emotions, and dialogue.*video scene defines the location, props, environment, and camera/su);
+  const contentSection = sectionWithHeading(page, '2. Content scripts and shooting scenes');
+  const promptSection = sectionWithHeading(page, '3. Prompt template version');
+  assert.match(await contentSection.innerText(), /Content scripts define the plot, emotions, and dialogue.*shooting scene defines the location, props, environment, and camera/su);
   assert.match(await promptSection.innerText(), /writing style.*examples.*negative prompt/su);
   assert.equal(await datasetSection.locator('.generation-choice-grid input[type="radio"]').count() <= 20, true);
   await datasetSection.getByRole('button', { name: 'Create dataset' }).click();
@@ -202,7 +202,7 @@ try {
   await generatedScenes.getByRole('button', { name: 'Select all available scenes' }).click();
   assert.equal(await sceneChecks.evaluateAll(nodes => nodes.every(node => node.checked)), true);
   await generatedScenes.getByRole('button', { name: 'Clear scenes' }).click();
-  await generatedScenes.getByText('Choose at least one video scene for this content plan.').waitFor();
+  await generatedScenes.getByText('Choose at least one shooting scene for this content script.').waitFor();
   await sceneChecks.first().check();
   await promptSection.locator('input[type="radio"]').first().check();
   const combinations = sectionWithHeading(page, '6. Combination preview').locator('.generation-combination-list li');
@@ -211,15 +211,15 @@ try {
   await page.waitForFunction(() => document.querySelector('.generation-unsaved-status')?.textContent === '');
   const batchRequest = api.state.requests.findLast(request => request.method === 'POST' && request.path === '/api/batch-drafts');
   assert.deepEqual(batchRequest?.body.contentSelections, [
-    { contentPlanId: 1, backgroundPresetIds: [] },
-    { contentPlanId: 2, backgroundPresetIds: [1] },
+    { contentScriptId: 1, sceneIds: [] },
+    { contentScriptId: 2, sceneIds: [1] },
   ]);
   await page.getByLabel('Saved draft').selectOption('new');
   await page.getByLabel('Saved draft').selectOption('1');
   assert.equal(await page.locator('input[name="target-dataset"]:checked').count(), 1, 'Saved target dataset must be restored.');
   assert.equal(await contentSection.locator(':scope > .generation-choice-grid input[type="checkbox"]:checked').count(), 2, 'Saved content selections must be restored.');
   assert.equal(await generatedScenes.locator('input[type="checkbox"]:checked').count(), 1, 'Saved scene selections must be restored.');
-  assert.equal(await promptSection.locator('input[type="radio"]:checked').count(), 1, 'Saved prompt preset must be restored.');
+  assert.equal(await promptSection.locator('input[type="radio"]:checked').count(), 1, 'Saved prompt template version must be restored.');
   assert.equal(await page.locator('#batch-model').inputValue(), 'LTX-2.5');
   assert.equal(await page.locator('#batch-precision').inputValue(), 'INT8');
   await page.locator('#batch-quantity').fill('3');
@@ -228,8 +228,8 @@ try {
   const resaveRequest = api.state.requests.findLast(request => request.method === 'PUT' && request.path === '/api/batch-drafts/1');
   assert.deepEqual(resaveRequest?.body.contentSelections, batchRequest.body.contentSelections, 'Re-saving a restored draft must retain every content and scene selection.');
   assert.equal(resaveRequest?.body.targetDatasetId, batchRequest.body.targetDatasetId);
-  assert.equal(resaveRequest?.body.promptPresetId, batchRequest.body.promptPresetId);
-  assert.equal('backgroundPresets' in batchRequest.body, false, 'The removed global scene contract must not be sent.');
+  assert.equal(resaveRequest?.body.promptTemplateVersionId, batchRequest.body.promptTemplateVersionId);
+  assert.equal('scenes' in batchRequest.body, false, 'The removed global scene contract must not be sent.');
 
   await open(page, '/generate/content');
   assert.equal(await page.locator('.generation-selection-list > li').count(), 20);
@@ -247,11 +247,11 @@ try {
   await compatibilityChecks.nth(1).uncheck();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.getByText('Content item saved.').waitFor();
-  const contentUpdateRequest = api.state.requests.findLast(request => request.method === 'PATCH' && request.path === '/api/content-plans/2');
-  assert.deepEqual(contentUpdateRequest?.body.backgroundPresetIds, [1]);
+  const contentUpdateRequest = api.state.requests.findLast(request => request.method === 'PATCH' && request.path === '/api/content-scripts/2');
+  assert.deepEqual(contentUpdateRequest?.body.sceneIds, [1]);
 
-  await open(page, '/generate/presets');
-  assert.equal(await page.locator('body').innerText().then(text => text.includes('Scene supplement')), false, 'Prompt presets must not show the removed scene supplement.');
+  await open(page, '/generate/template-versions');
+  assert.equal(await page.locator('body').innerText().then(text => text.includes('Scene supplement')), false, 'Prompt template versions must not show the removed scene supplement.');
 
   api.state.jobs[0] = { ...api.state.jobs[0], status: 'Running', finishedAt: null };
   jobItemsFixture[20].latestAttempt.failureReason = 'RendererError: CUDA device 0 failed with a private backend trace.';
@@ -404,7 +404,7 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('#statistics-dataset option').length === 2);
   assert.equal(await page.locator('#statistics-dataset option').count(), 2, 'Statistics dataset search must keep the all option and one server result.');
 
-  const routes = ['/workspace', '/generate/batches', '/generate/test', '/generate/content', '/generate/presets', '/generate/jobs?job=1', '/review?sampleId=1', '/archive?dataset=1&page=2', '/settings', '/me/statistics'];
+  const routes = ['/workspace', '/generate/batches', '/generate/test', '/generate/content', '/generate/scenes', '/generate/template-versions', '/generate/jobs?job=1', '/review?sampleId=1', '/archive?dataset=1&page=2', '/settings', '/me/statistics'];
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of [[1440, 900], [1024, 768], [768, 900], [390, 844]]) {
       for (const route of routes) await expectNoOverflow(page, route, locale, width, height);

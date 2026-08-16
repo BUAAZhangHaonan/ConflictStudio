@@ -65,7 +65,7 @@ export interface DatasetUpdate {
   status?: DatasetStatus;
 }
 
-export interface ContentPlanFields {
+export interface ContentScriptFields {
   nameZh: string;
   nameEn: string;
   category: Category;
@@ -90,27 +90,31 @@ export interface ContentPlanFields {
   sceneSupplementEn: string;
 }
 
-export interface ContentPlan extends RevisionedResource, ContentPlanFields {
-  backgroundPresetIds: number[];
+export interface ContentScript extends RevisionedResource, ContentScriptFields {
+  sceneIds: number[];
 }
-export type ContentPlanCreate = ContentPlanFields & { backgroundPresetIds: number[] };
-export type ContentPlanUpdate = Partial<Omit<ContentPlanFields, 'category'>> & { backgroundPresetIds: number[]; expectedRevision: number };
+export type ContentScriptCreate = ContentScriptFields & { sceneIds: number[] };
+export type ContentScriptUpdate = Partial<Omit<ContentScriptFields, 'category'>> & { sceneIds: number[]; expectedRevision: number };
 
-export interface PromptPresetFields {
+export type TemplateVersionStatus = 'Draft' | 'Verified';
+
+export interface PromptTemplateVersionFields {
   name: string;
   category: Category;
+  version: number;
   styleGuidance: string;
   positiveExamples: string[];
   negativeExamples: string[];
-  finalRenderNegativeConstraints: string;
-  status: ResourceStatus;
+  ltxNegativePrompt: string;
+  h3NegativePrompt: string;
+  verificationStatus: TemplateVersionStatus;
 }
 
-export interface PromptPreset extends RevisionedResource, PromptPresetFields {}
-export type PromptPresetCreate = PromptPresetFields;
-export type PromptPresetUpdate = Partial<Omit<PromptPresetFields, 'category'>> & { expectedRevision: number };
+export interface PromptTemplateVersion extends RevisionedResource, PromptTemplateVersionFields {}
+export type PromptTemplateVersionCreate = PromptTemplateVersionFields;
+export interface PromptTemplateVersionVerify { expectedRevision: number; }
 
-export interface BackgroundPresetFields {
+export interface SceneFields {
   nameZh: string;
   nameEn: string;
   sceneZh: string;
@@ -126,31 +130,31 @@ export interface BackgroundPresetFields {
   status: ResourceStatus;
 }
 
-export interface BackgroundPreset extends RevisionedResource, BackgroundPresetFields {}
-export type BackgroundPresetCreate = BackgroundPresetFields;
-export type BackgroundPresetUpdate = Partial<BackgroundPresetFields> & { expectedRevision: number };
+export interface Scene extends RevisionedResource, SceneFields {}
+export type SceneCreate = SceneFields;
+export type SceneUpdate = Partial<SceneFields> & { expectedRevision: number };
 
 export interface SourceSelection {
   id: number;
   expectedRevision: number;
 }
 
-export interface ContentPlanBackgrounds {
-  contentPlanId: number;
-  contentPlanRevision: number;
-  backgrounds: BilingualSelection[];
+export interface ContentScriptScenes {
+  contentScriptId: number;
+  contentScriptRevision: number;
+  scenes: BilingualSelection[];
 }
 
 export interface BatchContentSelectionInput {
-  contentPlanId: number;
-  backgroundPresetIds: number[];
+  contentScriptId: number;
+  sceneIds: number[];
 }
 
 export interface BatchContentSelection {
-  contentPlan: BilingualSelection;
+  contentScript: BilingualSelection;
   mode: 'Fixed' | 'Generative';
-  backgroundPresets: BilingualSelection[];
-  compatibleBackgrounds: BilingualSelection[];
+  scenes: BilingualSelection[];
+  compatibleScenes: BilingualSelection[];
 }
 
 export interface Selection {
@@ -181,7 +185,7 @@ export interface BatchDraftFields {
   quantity: number;
   seed: number | null;
   contentSelections: BatchContentSelectionInput[];
-  promptPresetId: number;
+  promptTemplateVersionId: number;
   demographics: Demographic[];
   gpuSlots: GpuSlotName[];
 }
@@ -200,16 +204,16 @@ export interface BatchDraft extends RevisionedResource {
   seed: number;
   status: 'Draft' | 'Submitted';
   contentSelections: BatchContentSelection[];
-  promptPreset: Selection;
+  promptTemplateVersion: Selection;
   demographics: Demographic[];
   gpuSlots: GpuSlotName[];
 }
 
 export interface BatchAllocation {
   sequence: number;
-  contentPlan: BilingualSelection;
-  promptPreset: Selection;
-  backgroundPreset: BilingualSelection;
+  contentScript: BilingualSelection;
+  promptTemplateVersion: Selection;
+  scene: BilingualSelection;
   demographic: Demographic;
   gpuSlot: GpuSlotName;
   model: ModelName;
@@ -219,7 +223,7 @@ export interface BatchAllocation {
   systemInput: string;
   userInput: string;
   finalPositivePrompt: string | null;
-  finalNegativePrompt: string;
+  negativePrompt: string;
 }
 
 export interface BatchPreview {
@@ -230,16 +234,17 @@ export interface BatchPreview {
 }
 
 export interface PromptPreviewRequest {
-  contentPlan: SourceSelection;
-  promptPreset: SourceSelection;
-  backgroundPreset: SourceSelection;
+  contentScript: SourceSelection;
+  promptTemplateVersion: SourceSelection;
+  scene: SourceSelection;
   demographic: Demographic;
+  model: ModelName;
 }
 
 export interface PromptPreview {
-  contentPlan: BilingualSelection;
-  promptPreset: Selection;
-  backgroundPreset: BilingualSelection;
+  contentScript: BilingualSelection;
+  promptTemplateVersion: Selection;
+  scene: BilingualSelection;
   category: Category;
   conflictDirection: ConflictDirection | null;
   demographic: Demographic;
@@ -247,7 +252,7 @@ export interface PromptPreview {
   systemInput: string;
   userInput: string;
   finalPositivePrompt: string | null;
-  finalNegativePrompt: string;
+  negativePrompt: string;
 }
 
 export interface TestComparisonInput {
@@ -257,9 +262,9 @@ export interface TestComparisonInput {
 }
 
 export interface TestRunCreate {
-  contentPlan: SourceSelection;
-  promptPreset: SourceSelection;
-  backgroundPreset: SourceSelection;
+  contentScript: SourceSelection;
+  promptTemplateVersion: SourceSelection;
+  scene: SourceSelection;
   demographic: Demographic;
   seed: number | null;
   comparisons: TestComparisonInput[];
@@ -327,12 +332,12 @@ export interface Snapshot {
   sequence: number;
   datasetId: number | null;
   datasetRevision: number | null;
-  contentPlanId: number;
-  contentPlanRevision: number;
-  promptPresetId: number;
-  promptPresetRevision: number;
-  backgroundPresetId: number;
-  backgroundPresetRevision: number;
+  contentScriptId: number;
+  contentScriptRevision: number;
+  promptTemplateVersionId: number;
+  promptTemplateVersionRevision: number;
+  sceneId: number;
+  sceneRevision: number;
   policyVersion: string;
   category: Category;
   conflictDirection: ConflictDirection | null;
@@ -352,7 +357,7 @@ export interface Snapshot {
   deriveSilentPrimary: boolean;
   systemInput: string;
   userInput: string;
-  finalNegativePrompt: string;
+  negativePrompt: string;
   fixedPositivePrompt: string | null;
   fixedDialogue: string | null;
   fixedVtText: string | null;
@@ -370,7 +375,7 @@ export interface JobItemPromptResult {
   userInput: string;
   rawStructuredResponse: string;
   finalPositivePrompt: string;
-  finalNegativePrompt: string;
+  negativePrompt: string;
   dialogue: string | null;
   vtText: string | null;
   trueEmotionDescription: string;
@@ -560,9 +565,9 @@ export interface Sample {
   actualSceneSummary: BilingualSelection;
   generationCompatibility: GenerationCompatibility;
   gpuSlot: GpuSlotName;
-  contentPlanId: number;
-  contentPlanRevision: number;
-  promptPresetId: number;
+  contentScriptId: number;
+  contentScriptRevision: number;
+  promptTemplateVersionId: number;
   sourceAssetId: number | null;
   sourceAssetUrl: string | null;
   primaryAssetId: number;
@@ -574,8 +579,8 @@ export interface Sample {
   trueEmotionDescription: string;
   trueEmotion: string;
   apparentEmotion: string;
-  contentPlanNameZh: string;
-  contentPlanNameEn: string;
+  contentScriptNameZh: string;
+  contentScriptNameEn: string;
   sceneZh: string;
   sceneEn: string;
   triggerEventZh: string;

@@ -39,7 +39,7 @@ test('CS-000002 regeneration keeps content 22 and scene 22 in the unsaved prefil
     displayId: 'CS-000002',
     category: 'A-VA',
     conflictDirection: null,
-    promptPresetId: 7,
+    promptTemplateVersionId: 7,
     generationRecord: { model: 'LTX-2.5', precision: 'BF16' },
     age: 25,
     gender: 'Female',
@@ -58,14 +58,14 @@ test('CS-000002 regeneration keeps content 22 and scene 22 in the unsaved prefil
   });
 
   assert.equal(prefill.sourceDisplayId, 'CS-000002');
-  assert.deepEqual(prefill.contentPlan, {
+  assert.deepEqual(prefill.contentScript, {
     id: 22,
     nameZh: '随意邀请',
     nameEn: 'Casual invitation',
     revision: 4,
     mode: 'Fixed',
   });
-  assert.deepEqual(prefill.backgroundPreset, {
+  assert.deepEqual(prefill.scene, {
     id: 22,
     nameZh: '明亮客厅',
     nameEn: 'Bright living room',

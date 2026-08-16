@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, ConfirmDialog, Field, Pagination, StatusBadge } from '../../components';
 import {
-  useContentBackgroundsQuery,
-  useContentPlansQuery,
+  useContentScenesQuery,
+  useContentScriptsQuery,
   useGpuSlotsQuery,
   useJobsQuery,
-  usePromptPresetsQuery,
+  usePromptTemplateVersionsQuery,
   usePromptPreviewMutation,
   useSubmitTestRunMutation,
 } from '../../api/queries';
@@ -54,9 +54,9 @@ interface TestComparisonForm extends GenerationProfile {
 interface TestForm {
   category: Category;
   conflictDirection: ConflictDirection | null;
-  contentPlanId: number | null;
-  promptPresetId: number | null;
-  backgroundPresetId: number | null;
+  contentScriptId: number | null;
+  promptTemplateVersionId: number | null;
+  sceneId: number | null;
   age: Age;
   gender: Gender;
   ethnicity: Ethnicity;
@@ -69,9 +69,9 @@ function emptyForm(): TestForm {
   return {
     category: 'A-VA',
     conflictDirection: null,
-    contentPlanId: null,
-    promptPresetId: null,
-    backgroundPresetId: null,
+    contentScriptId: null,
+    promptTemplateVersionId: null,
+    sceneId: null,
     age: 25,
     gender: 'Female',
     ethnicity: 'EastAsian',
@@ -86,10 +86,10 @@ export function TestPage() {
   const navigate = useNavigate();
   const locale = useGenerationLocale();
   const [contentPage, setContentPage] = useState(1);
-  const [presetPage, setPresetPage] = useState(1);
+  const [templateVersionPage, setTemplateVersionPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
-  const contentQuery = useContentPlansQuery(contentPage);
-  const presetsQuery = usePromptPresetsQuery(presetPage);
+  const contentQuery = useContentScriptsQuery(contentPage);
+  const templateVersionsQuery = usePromptTemplateVersionsQuery(templateVersionPage);
   const jobsQuery = useJobsQuery(historyPage);
   const gpuQuery = useGpuSlotsQuery();
   const previewMutation = usePromptPreviewMutation();
@@ -102,22 +102,22 @@ export function TestPage() {
   const content = useMemo(() => (contentQuery.data?.items ?? []).filter(item =>
     item.status === 'Active' && item.category === form.category && item.conflictDirection === form.conflictDirection,
   ), [contentQuery.data, form.category, form.conflictDirection]);
-  const presets = useMemo(() => (presetsQuery.data?.items ?? []).filter(item =>
-    item.status === 'Active' && item.category === form.category,
-  ), [form.category, presetsQuery.data]);
-  const selectedContent = content.find(item => item.id === form.contentPlanId) ?? null;
-  const contentBackgroundsQuery = useContentBackgroundsQuery(selectedContent?.id ?? null);
-  const backgrounds = useMemo(() => contentBackgroundsQuery.data?.backgrounds ?? [], [contentBackgroundsQuery.data]);
-  const selectedPreset = presets.find(item => item.id === form.promptPresetId) ?? null;
-  const selectedBackground = backgrounds.find(item => item.id === form.backgroundPresetId) ?? null;
+  const templateVersions = useMemo(() => (templateVersionsQuery.data?.items ?? []).filter(item =>
+    item.verificationStatus === 'Verified' && item.category === form.category,
+  ), [form.category, templateVersionsQuery.data]);
+  const selectedContent = content.find(item => item.id === form.contentScriptId) ?? null;
+  const contentScenesQuery = useContentScenesQuery(selectedContent?.id ?? null);
+  const scenes = useMemo(() => contentScenesQuery.data?.scenes ?? [], [contentScenesQuery.data]);
+  const selectedTemplateVersion = templateVersions.find(item => item.id === form.promptTemplateVersionId) ?? null;
+  const selectedScene = scenes.find(item => item.id === form.sceneId) ?? null;
   const formKey = JSON.stringify({
     form,
     contentRevision: selectedContent?.revision ?? null,
-    presetRevision: selectedPreset?.revision ?? null,
-    backgroundRevision: selectedBackground?.revision ?? null,
+    templateVersionRevision: selectedTemplateVersion?.revision ?? null,
+    sceneRevision: selectedScene?.revision ?? null,
   });
   const result = previewedFormKey === formKey ? previewMutation.data : undefined;
-  const queryError = contentQuery.error ?? presetsQuery.error ?? contentBackgroundsQuery.error ?? jobsQuery.error ?? null;
+  const queryError = contentQuery.error ?? templateVersionsQuery.error ?? contentScenesQuery.error ?? jobsQuery.error ?? null;
   const history = (jobsQuery.data?.items ?? []).filter(item => item.source === 'Test');
 
   useEffect(() => {
@@ -126,21 +126,21 @@ export function TestPage() {
 
   useEffect(() => {
     setForm(current => {
-      const contentPlanId = content.some(item => item.id === current.contentPlanId) ? current.contentPlanId : content[0]?.id ?? null;
-      const promptPresetId = presets.some(item => item.id === current.promptPresetId) ? current.promptPresetId : presets[0]?.id ?? null;
-      const backgroundPresetId = backgrounds.some(item => item.id === current.backgroundPresetId) ? current.backgroundPresetId : backgrounds[0]?.id ?? null;
-      if (contentPlanId === current.contentPlanId && promptPresetId === current.promptPresetId && backgroundPresetId === current.backgroundPresetId) return current;
-      return { ...current, contentPlanId, promptPresetId, backgroundPresetId };
+      const contentScriptId = content.some(item => item.id === current.contentScriptId) ? current.contentScriptId : content[0]?.id ?? null;
+      const promptTemplateVersionId = templateVersions.some(item => item.id === current.promptTemplateVersionId) ? current.promptTemplateVersionId : templateVersions[0]?.id ?? null;
+      const sceneId = scenes.some(item => item.id === current.sceneId) ? current.sceneId : scenes[0]?.id ?? null;
+      if (contentScriptId === current.contentScriptId && promptTemplateVersionId === current.promptTemplateVersionId && sceneId === current.sceneId) return current;
+      return { ...current, contentScriptId, promptTemplateVersionId, sceneId };
     });
-  }, [content, presets, backgrounds]);
+  }, [content, templateVersions, scenes]);
 
   const changeCategory = (category: Category) => {
     setForm(current => ({
       ...current,
       category,
       conflictDirection: allowedDirections(category)[0] ?? null,
-      contentPlanId: null,
-      promptPresetId: null,
+      contentScriptId: null,
+      promptTemplateVersionId: null,
     }));
     previewMutation.reset();
   };
@@ -149,8 +149,8 @@ export function TestPage() {
     const seed = parseSeed(form.seed);
     if (
       !selectedContent
-      || !selectedPreset
-      || !selectedBackground
+      || !selectedTemplateVersion
+      || !selectedScene
       || !comparisonEntriesAreValid(form.comparisons)
       || (seed !== null && (!Number.isInteger(seed) || seed < 0 || seed >= 2 ** 31))
     ) {
@@ -161,10 +161,11 @@ export function TestPage() {
     const submittedFormKey = formKey;
     try {
       await previewMutation.mutateAsync({
-        contentPlan: { id: selectedContent.id, expectedRevision: selectedContent.revision },
-        promptPreset: { id: selectedPreset.id, expectedRevision: selectedPreset.revision },
-        backgroundPreset: { id: selectedBackground.id, expectedRevision: selectedBackground.revision },
+        contentScript: { id: selectedContent.id, expectedRevision: selectedContent.revision },
+        promptTemplateVersion: { id: selectedTemplateVersion.id, expectedRevision: selectedTemplateVersion.revision },
+        scene: { id: selectedScene.id, expectedRevision: selectedScene.revision },
         demographic: { age: form.age, gender: form.gender, ethnicity: form.ethnicity },
+        model: form.comparisons[0].model,
       });
       setPreviewedFormKey(submittedFormKey);
     } catch {
@@ -183,8 +184,8 @@ export function TestPage() {
     if (
       !result
       || !selectedContent
-      || !selectedPreset
-      || !selectedBackground
+      || !selectedTemplateVersion
+      || !selectedScene
       || !comparisonEntriesAreValid(form.comparisons)
       || !validSeed
       || !validExecution
@@ -196,9 +197,9 @@ export function TestPage() {
     }
     try {
       const job = await submitMutation.mutateAsync({
-        contentPlan: { id: selectedContent.id, expectedRevision: selectedContent.revision },
-        promptPreset: { id: selectedPreset.id, expectedRevision: selectedPreset.revision },
-        backgroundPreset: { id: selectedBackground.id, expectedRevision: selectedBackground.revision },
+        contentScript: { id: selectedContent.id, expectedRevision: selectedContent.revision },
+        promptTemplateVersion: { id: selectedTemplateVersion.id, expectedRevision: selectedTemplateVersion.revision },
+        scene: { id: selectedScene.id, expectedRevision: selectedScene.revision },
         demographic: { age: form.age, gender: form.gender, ethnicity: form.ethnicity },
         seed,
         comparisons: form.comparisons,
@@ -214,8 +215,8 @@ export function TestPage() {
     }
   };
 
-  if (contentQuery.isPending || presetsQuery.isPending || contentBackgroundsQuery.isPending || jobsQuery.isPending || gpuQuery.isPending) return <GenerationScaffold title="test.title" subtitle="test.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
-  if (queryError || gpuQuery.error) return <GenerationScaffold title="test.title" subtitle="test.subtitle"><OperationFeedback error={queryError ?? gpuQuery.error} onDismiss={() => void Promise.all([contentQuery.refetch(), presetsQuery.refetch(), contentBackgroundsQuery.refetch(), jobsQuery.refetch(), gpuQuery.refetch()])} /></GenerationScaffold>;
+  if (contentQuery.isPending || templateVersionsQuery.isPending || contentScenesQuery.isPending || jobsQuery.isPending || gpuQuery.isPending) return <GenerationScaffold title="test.title" subtitle="test.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
+  if (queryError || gpuQuery.error) return <GenerationScaffold title="test.title" subtitle="test.subtitle"><OperationFeedback error={queryError ?? gpuQuery.error} onDismiss={() => void Promise.all([contentQuery.refetch(), templateVersionsQuery.refetch(), contentScenesQuery.refetch(), jobsQuery.refetch(), gpuQuery.refetch()])} /></GenerationScaffold>;
 
   const directions = allowedDirections(form.category);
   return (
@@ -228,16 +229,16 @@ export function TestPage() {
           <p className="generation-section-note">{g('test.setupNote')}</p>
           <div className="generation-form__grid">
             <Field label={g('test.category')} htmlFor="test-category"><select id="test-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
-            <Field label={g('test.direction')} htmlFor="test-direction"><select id="test-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentPlanId: null }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
-            <Field label={g('test.content')} htmlFor="test-content"><select id="test-content" value={form.contentPlanId ?? ''} onChange={event => setForm(current => ({ ...current, contentPlanId: Number(event.target.value) }))}>{content.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
-            <Field label={g('test.preset')} htmlFor="test-preset"><select id="test-preset" value={form.promptPresetId ?? ''} onChange={event => setForm(current => ({ ...current, promptPresetId: Number(event.target.value) }))}>{presets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-            <Field label={g('test.background')} htmlFor="test-background"><select id="test-background" value={form.backgroundPresetId ?? ''} disabled={backgrounds.length === 0} onChange={event => setForm(current => ({ ...current, backgroundPresetId: Number(event.target.value) }))}>{backgrounds.length === 0 ? <option value="">{g('test.noCompatibleScene')}</option> : null}{backgrounds.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
+            <Field label={g('test.direction')} htmlFor="test-direction"><select id="test-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentScriptId: null }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
+            <Field label={g('test.content')} htmlFor="test-content"><select id="test-content" value={form.contentScriptId ?? ''} onChange={event => setForm(current => ({ ...current, contentScriptId: Number(event.target.value) }))}>{content.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
+            <Field label={g('test.templateVersion')} htmlFor="test-template-version"><select id="test-template-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: Number(event.target.value) }))}>{templateVersions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+            <Field label={g('test.scene')} htmlFor="test-scene"><select id="test-scene" value={form.sceneId ?? ''} disabled={scenes.length === 0} onChange={event => setForm(current => ({ ...current, sceneId: Number(event.target.value) }))}>{scenes.length === 0 ? <option value="">{g('test.noCompatibleScene')}</option> : null}{scenes.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
             <Field label={g('test.age')} htmlFor="test-age"><select id="test-age" value={form.age} onChange={event => setForm(current => ({ ...current, age: Number(event.target.value) as Age }))}>{ages.map(value => <option key={value} value={value}>{g(`demographic.age.${value}`)}</option>)}</select></Field>
             <Field label={g('test.gender')} htmlFor="test-gender"><select id="test-gender" value={form.gender} onChange={event => setForm(current => ({ ...current, gender: event.target.value as Gender }))}>{genders.map(value => <option key={value} value={value}>{g(`demographic.gender.${value}`)}</option>)}</select></Field>
             <Field label={g('test.ethnicity')} htmlFor="test-ethnicity"><select id="test-ethnicity" value={form.ethnicity} onChange={event => setForm(current => ({ ...current, ethnicity: event.target.value as Ethnicity }))}>{ethnicities.map(value => <option key={value} value={value}>{g(`demographic.ethnicity.${value}`)}</option>)}</select></Field>
             <Field label={g('test.seed')} htmlFor="test-seed"><input id="test-seed" inputMode="numeric" placeholder={g('test.seedPlaceholder')} value={form.seed} onChange={event => setForm(current => ({ ...current, seed: event.target.value }))} /></Field>
           </div>
-          <div className="generation-test-source-pages"><Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} /><Pagination page={presetsQuery.data?.page ?? presetPage} totalPages={presetsQuery.data?.totalPages ?? 0} total={presetsQuery.data?.total ?? 0} onPageChange={setPresetPage} /></div>
+          <div className="generation-test-source-pages"><Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} /><Pagination page={templateVersionsQuery.data?.page ?? templateVersionPage} totalPages={templateVersionsQuery.data?.totalPages ?? 0} total={templateVersionsQuery.data?.total ?? 0} onPageChange={setTemplateVersionPage} /></div>
           <fieldset className="generation-comparisons">
             <legend>{g('test.comparisons')}</legend>
             {form.comparisons.length > 1 ? <Field label={g('test.execution')} htmlFor="test-execution"><select id="test-execution" value={form.executionMode} onChange={event => setForm(current => ({ ...current, executionMode: event.target.value as TestExecutionMode }))}><option value="Parallel">{g('test.parallel')}</option><option value="Serial">{g('test.serial')}</option></select></Field> : null}
@@ -266,7 +267,7 @@ export function TestPage() {
         </section>
         <section className="panel generation-form" aria-labelledby="test-preview-title">
           <div className="section-header"><h2 id="test-preview-title">{g('promptPreview.title')}</h2></div>
-          {!result ? <p className="generation-empty-note">{g('test.previewEmpty')}</p> : <div className="generation-prompt-preview"><p>{g('test.previewSourceSummary', { content: localizedName(locale, result.contentPlan), background: localizedName(locale, result.backgroundPreset), preset: result.promptPreset.name })}</p><p>{g('test.sharedSeed', { seed: parseSeed(form.seed) ?? g('test.randomSeed') })}</p><p>{form.comparisons.map(item => item.precision ? `${item.model} ${item.precision}` : item.model).join(' / ')}</p><div className="generation-prompt-preview__field"><strong>{g(result.requiresPromptGeneration ? 'test.promptModelInput' : 'promptPreview.positive')}</strong><pre>{result.finalPositivePrompt ?? result.userInput}</pre></div><div className="generation-prompt-preview__field"><strong>{g('promptPreview.negative')}</strong><pre>{result.finalNegativePrompt}</pre></div><details><summary>{g('test.fixedRules')}</summary><pre>{result.systemInput}</pre></details></div>}
+          {!result ? <p className="generation-empty-note">{g('test.previewEmpty')}</p> : <div className="generation-prompt-preview"><p>{g('test.previewSourceSummary', { content: localizedName(locale, result.contentScript), scene: localizedName(locale, result.scene), templateVersion: result.promptTemplateVersion.name })}</p><p>{g('test.sharedSeed', { seed: parseSeed(form.seed) ?? g('test.randomSeed') })}</p><p>{form.comparisons.map(item => item.precision ? `${item.model} ${item.precision}` : item.model).join(' / ')}</p><div className="generation-prompt-preview__field"><strong>{g(result.requiresPromptGeneration ? 'test.promptModelInput' : 'promptPreview.positive')}</strong><pre>{result.finalPositivePrompt ?? result.userInput}</pre></div><div className="generation-prompt-preview__field"><strong>{g('promptPreview.negative')}</strong><pre>{result.negativePrompt}</pre></div><details><summary>{g('test.fixedRules')}</summary><pre>{result.systemInput}</pre></details></div>}
         </section>
       </div>
       <section className="panel generation-test-history" aria-labelledby="test-history-title">

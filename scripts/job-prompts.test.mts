@@ -4,7 +4,7 @@ import { finalJobItemPrompts } from '../frontend/src/jobPrompts.ts';
 
 const input = {
   fixedPositivePrompt: null,
-  finalNegativePrompt: 'Final negative prompt.',
+  negativePrompt: 'Final negative prompt.',
   userInput: 'Complete generation instruction with spokenText, positivePrompt, dialogue, and vtText.',
 };
 
@@ -15,11 +15,11 @@ test('a failed generated item without a result exposes no raw prompt input', () 
 test('a generated result exposes only its complete final positive and negative prompts', () => {
   const promptResult = {
     finalPositivePrompt: 'Final positive prompt.\nKeep the full second line.',
-    finalNegativePrompt: 'Final negative prompt.\nKeep the full second line.',
+    negativePrompt: 'Final negative prompt.\nKeep the full second line.',
   };
   assert.deepEqual(finalJobItemPrompts({ input, promptResult }), {
     positive: promptResult.finalPositivePrompt,
-    negative: promptResult.finalNegativePrompt,
+    negative: promptResult.negativePrompt,
   });
 });
 
@@ -29,6 +29,6 @@ test('fixed content exposes its fixed final positive and negative prompts', () =
     promptResult: null,
   }), {
     positive: 'Fixed final positive prompt.',
-    negative: input.finalNegativePrompt,
+    negative: input.negativePrompt,
   });
 });

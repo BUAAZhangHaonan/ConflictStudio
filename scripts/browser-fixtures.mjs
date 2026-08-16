@@ -29,21 +29,21 @@ export const datasetsFixture = [
   })),
 ];
 
-export const contentPlansFixture = [{
+export const contentScriptsFixture = [{
   id: 1, nameZh: '克制回应', nameEn: 'Restrained reply', category: 'A-VA', conflictDirection: null,
   mode: 'Fixed', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'sadness',
   sceneZh: '安静办公室', sceneEn: 'Quiet office', triggerEventZh: '收到坏消息', triggerEventEn: 'Bad news arrives',
   psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
   dialogue: 'I understand.', displayText: null, trueEmotionDescription: 'The voice and expression carry sadness.',
   baseVideoPrompt: 'A fixed camera records a short reply.', contentRequirementsZh: '自然回应', contentRequirementsEn: 'Natural reply',
-  sceneSupplementZh: '稳定镜头', sceneSupplementEn: 'Stable camera', backgroundPresetIds: [1], revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  sceneSupplementZh: '稳定镜头', sceneSupplementEn: 'Stable camera', sceneIds: [1], revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }, {
   id: 2, nameZh: '临时来电', nameEn: 'Unexpected call', category: 'A-VA', conflictDirection: null,
   mode: 'Generative', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'sadness',
   sceneZh: '接听电话', sceneEn: 'Answering a call', triggerEventZh: '收到消息', triggerEventEn: 'A message arrives',
   psychologicalBackgroundZh: '人物保持克制', psychologicalBackgroundEn: 'The person remains restrained',
   dialogue: '', displayText: null, trueEmotionDescription: '', baseVideoPrompt: '', contentRequirementsZh: '生成自然对白', contentRequirementsEn: 'Write natural dialogue',
-  sceneSupplementZh: '', sceneSupplementEn: '', backgroundPresetIds: [1, 2], revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  sceneSupplementZh: '', sceneSupplementEn: '', sceneIds: [1, 2], revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }, ...Array.from({ length: 19 }, (_, index) => ({
   id: index + 3, nameZh: `文字内容 ${index + 3}`, nameEn: `Text content ${index + 3}`, category: 'A-VT', conflictDirection: null,
   mode: 'Fixed', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'sadness',
@@ -51,7 +51,7 @@ export const contentPlansFixture = [{
   psychologicalBackgroundZh: '人物保持克制', psychologicalBackgroundEn: 'The person remains restrained',
   dialogue: null, displayText: 'I understand.', trueEmotionDescription: 'The text and expression carry sadness.',
   baseVideoPrompt: 'A fixed camera records a short reply.', contentRequirementsZh: '', contentRequirementsEn: '',
-  sceneSupplementZh: '', sceneSupplementEn: '', backgroundPresetIds: [1], revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  sceneSupplementZh: '', sceneSupplementEn: '', sceneIds: [1], revision: 1, createdAt: timestamp, updatedAt: timestamp,
 })), {
   id: 22, nameZh: '修正后的克制回应', nameEn: 'Corrected restrained reply', category: 'C-VA', conflictDirection: 'Audio',
   mode: 'Fixed', status: 'Active', trueEmotion: 'sadness', apparentEmotion: 'neutral',
@@ -59,20 +59,20 @@ export const contentPlansFixture = [{
   psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
   dialogue: 'I understand.', displayText: null, trueEmotionDescription: 'The voice carries sadness while the face stays neutral.',
   baseVideoPrompt: 'A fixed camera records a restrained reply.', contentRequirementsZh: '', contentRequirementsEn: '',
-  sceneSupplementZh: '', sceneSupplementEn: '', backgroundPresetIds: [22], revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  sceneSupplementZh: '', sceneSupplementEn: '', sceneIds: [22], revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }];
 
-export const promptPresetsFixture = [{
+export const promptTemplateVersionsFixture = [{
   id: 1, name: 'Natural conversation', category: 'A-VA', styleGuidance: 'Natural restrained acting.',
-  positiveExamples: ['A natural reply.'], negativeExamples: ['Exaggerated acting.'], finalRenderNegativeConstraints: 'No subtitles.',
-  status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  version: 1, positiveExamples: ['A natural reply.'], negativeExamples: ['Exaggerated acting.'],
+  ltxNegativePrompt: 'No subtitles.', h3NegativePrompt: 'No subtitles.', verificationStatus: 'Verified', revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }, {
   id: 22, name: 'Restrained conflict', category: 'C-VA', styleGuidance: 'Natural restrained acting.',
-  positiveExamples: ['A restrained reply.'], negativeExamples: ['Exaggerated acting.'], finalRenderNegativeConstraints: 'No subtitles.',
-  status: 'Active', revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  version: 1, positiveExamples: ['A restrained reply.'], negativeExamples: ['Exaggerated acting.'],
+  ltxNegativePrompt: 'No subtitles.', h3NegativePrompt: 'No subtitles.', verificationStatus: 'Verified', revision: 1, createdAt: timestamp, updatedAt: timestamp,
 }];
 
-export const backgroundsFixture = [
+export const scenesFixture = [
   {
     id: 1, nameZh: '安静办公室', nameEn: 'Quiet office', sceneZh: '安静办公室', sceneEn: 'Quiet office',
     ambientSoundZh: '轻微空调声', ambientSoundEn: 'Low air conditioner hum', participantRelationshipZh: '同事', participantRelationshipEn: 'Colleagues',
@@ -113,12 +113,12 @@ function jobItem(id, sequence, gpuSlot) {
     rendererPromptId: `prompt-${id}`, sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id,
     primaryAssetUrl: '/media/browser-check.webm', revision: 2, createdAt: timestamp, updatedAt: timestamp,
     input: {
-      id, sequence, datasetId: 1, datasetRevision: 1, contentPlanId: 1, contentPlanRevision: 1,
-      promptPresetId: 1, promptPresetRevision: 1, backgroundPresetId: 1, backgroundPresetRevision: 1,
+      id, sequence, datasetId: 1, datasetRevision: 1, contentScriptId: 1, contentScriptRevision: 1,
+      promptTemplateVersionId: 1, promptTemplateVersionRevision: 1, sceneId: 1, sceneRevision: 1,
       policyVersion: 'prompt-policy-v1', category: 'A-VA', conflictDirection: null, age: 25, gender: 'Female', ethnicity: 'EastAsian',
       model: 'LTX-2.5', precision: 'INT8', seed: 3200 + sequence, width: 1344, height: 768, fps: 24, frameCount: 121,
       rendererProfileVersion: 'ltx25-v1', promptModel: 'deepseek-v4-flash', sourceHasAudio: true, deriveSilentPrimary: false,
-      systemInput: 'Return valid JSON.', userInput: 'Generate a natural reply.', finalNegativePrompt: 'No subtitles, no captions, no logos, no extra people, no distorted hands, no abrupt camera movement, and no unreadable background text.',
+      systemInput: 'Return valid JSON.', userInput: 'Generate a natural reply.', negativePrompt: 'No subtitles, no captions, no logos, no extra people, no distorted hands, no abrupt camera movement, and no unreadable background text.',
       fixedPositivePrompt: 'A fixed camera records one person in a quiet office. The person faces forward, speaks a short restrained reply, keeps natural eye movement, and shows a clear but controlled emotional expression. Soft light keeps the full face visible while the background remains simple and still.', fixedDialogue: 'I understand.', fixedVtText: null,
       fixedTrueEmotionDescription: 'The voice and expression carry sadness.', trueEmotion: 'sadness', apparentEmotion: 'sadness', createdAt: timestamp,
     },
@@ -126,7 +126,7 @@ function jobItem(id, sequence, gpuSlot) {
       id: 1000 + id, jobItemId: id, policyVersion: 'prompt-policy-v1',
       systemInput: 'Internal prompt model rules.', userInput: 'Internal structured generation input.', rawStructuredResponse: '{"internal":"response"}',
       finalPositivePrompt: 'Final positive prompt line one.\nFinal positive prompt line two.',
-      finalNegativePrompt: 'Final negative prompt line one.\nFinal negative prompt line two.',
+      negativePrompt: 'Final negative prompt line one.\nFinal negative prompt line two.',
       dialogue: 'Internal generated dialogue.', vtText: null, trueEmotionDescription: 'Internal emotion description.', createdAt: timestamp,
     },
     latestAttempt: { id, attemptNumber: 1, model: 'LTX-2.5', precision: 'INT8', gpuSlot, seed: 3200 + sequence, sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/browser-check.webm', rendererPromptId: `prompt-${id}`, status: 'Completed', failureReason: null, startedAt: timestamp, finishedAt: timestamp },
@@ -155,12 +155,12 @@ export function sampleFixture(id, reviewDecision = 'Pending', category = 'C-VA')
     actualContentSummary: incompatible ? { id: 22, nameZh: '修正后的克制回应', nameEn: 'Corrected restrained reply', revision: 1 } : { id: 1, nameZh: '克制回应', nameEn: 'Restrained reply', revision: 1 },
     actualSceneSummary: { id: 1, nameZh: '安静办公室', nameEn: 'Quiet office', revision: 1 },
     generationCompatibility: incompatible ? 'NeedsRegeneration' : 'Compatible',
-    gpuSlot: id % 2 ? 'GPU0' : 'GPU1', contentPlanId: incompatible ? 22 : 1, contentPlanRevision: incompatible ? 1 : 4, promptPresetId: incompatible ? 22 : 1,
+    gpuSlot: id % 2 ? 'GPU0' : 'GPU1', contentScriptId: incompatible ? 22 : 1, contentScriptRevision: incompatible ? 1 : 4, promptTemplateVersionId: incompatible ? 22 : 1,
     sourceAssetId: null, sourceAssetUrl: null, primaryAssetId: id, primaryAssetUrl: '/media/browser-check.webm',
     dialogue: protocol === 'VA' ? 'I understand.' : null, displayText: protocol === 'VT' ? 'I understand.' : null,
     videoPrompt: 'A fixed camera records a short reply.', negativePrompt: 'No subtitles.',
     trueEmotionDescription: category.startsWith('A-') ? 'The visible and spoken emotion is sadness.' : 'The voice carries sadness while the expression stays calm.', trueEmotion: 'sadness', apparentEmotion: category.startsWith('A-') ? 'sadness' : 'neutral',
-    contentPlanNameZh: '克制回应', contentPlanNameEn: 'Restrained reply', sceneZh: '安静办公室', sceneEn: 'Quiet office',
+    contentScriptNameZh: '克制回应', contentScriptNameEn: 'Restrained reply', sceneZh: '安静办公室', sceneEn: 'Quiet office',
     triggerEventZh: '收到坏消息', triggerEventEn: 'Bad news arrives', psychologicalBackgroundZh: '人物压住情绪', psychologicalBackgroundEn: 'The person suppresses emotion',
     age: 35, gender: 'Female', ethnicity: 'EastAsian', seed: 424242 + id, revision: 1, createdAt: timestamp, updatedAt: timestamp,
   };
@@ -185,9 +185,9 @@ export function installPreferences(context, locale = 'en-US') {
 export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, name: index === 0 ? 'Lin' : `Reviewer ${index + 1}`, revision: 1, createdAt: timestamp, updatedAt: timestamp })) } = {}) {
   const state = {
     datasets: datasetsFixture.map(dataset => ({ ...dataset })),
-    contentPlans: contentPlansFixture.map(item => ({ ...item })),
-    promptPresets: promptPresetsFixture.map(item => ({ ...item })),
-    backgrounds: backgroundsFixture.map(item => ({ ...item })),
+    contentScripts: contentScriptsFixture.map(item => ({ ...item })),
+    promptTemplateVersions: promptTemplateVersionsFixture.map(item => ({ ...item })),
+    scenes: scenesFixture.map(item => ({ ...item })),
     contentRelations: new Map([[1, [1]], [2, [1, 2]], [22, [22]]]),
     reviewers: reviewers.map(reviewer => ({ ...reviewer })),
     samples: [
@@ -312,47 +312,47 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           return route.fulfill({ status: 204, body: '' });
         }
         if (method === 'GET' && path === '/api/gpu-slots') return fulfillJson(route, gpuSlotsFixture);
-        if (method === 'GET' && path === '/api/content-plans') return fulfillJson(route, pageValue(url, state.contentPlans));
-        if (method === 'POST' && path === '/api/content-plans') {
-          const content = { id: Math.max(0, ...state.contentPlans.map(item => item.id)) + 1, ...body, revision: 1, createdAt: timestamp, updatedAt: timestamp };
-          state.contentPlans.push(content);
-          state.contentRelations.set(content.id, [...body.backgroundPresetIds]);
+        if (method === 'GET' && path === '/api/content-scripts') return fulfillJson(route, pageValue(url, state.contentScripts));
+        if (method === 'POST' && path === '/api/content-scripts') {
+          const content = { id: Math.max(0, ...state.contentScripts.map(item => item.id)) + 1, ...body, revision: 1, createdAt: timestamp, updatedAt: timestamp };
+          state.contentScripts.push(content);
+          state.contentRelations.set(content.id, [...body.sceneIds]);
           return fulfillJson(route, content, 201);
         }
-        const contentMatch = /^\/api\/content-plans\/(\d+)$/u.exec(path);
-        if (method === 'GET' && contentMatch) return fulfillJson(route, state.contentPlans.find(item => item.id === Number(contentMatch[1])));
+        const contentMatch = /^\/api\/content-scripts\/(\d+)$/u.exec(path);
+        if (method === 'GET' && contentMatch) return fulfillJson(route, state.contentScripts.find(item => item.id === Number(contentMatch[1])));
         if (method === 'PATCH' && contentMatch) {
           const id = Number(contentMatch[1]);
-          const index = state.contentPlans.findIndex(item => item.id === id);
-          const content = { ...state.contentPlans[index], ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'expectedRevision')), revision: state.contentPlans[index].revision + 1, updatedAt: timestamp };
-          state.contentPlans[index] = content;
-          state.contentRelations.set(id, [...body.backgroundPresetIds]);
+          const index = state.contentScripts.findIndex(item => item.id === id);
+          const content = { ...state.contentScripts[index], ...Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'expectedRevision')), revision: state.contentScripts[index].revision + 1, updatedAt: timestamp };
+          state.contentScripts[index] = content;
+          state.contentRelations.set(id, [...body.sceneIds]);
           return fulfillJson(route, content);
         }
-        const relationMatch = /^\/api\/content-plans\/(\d+)\/backgrounds$/u.exec(path);
+        const relationMatch = /^\/api\/content-scripts\/(\d+)\/scenes$/u.exec(path);
         if (method === 'GET' && relationMatch) {
           const id = Number(relationMatch[1]);
-          const content = state.contentPlans.find(item => item.id === id);
-          const backgroundIds = state.contentRelations.get(id) ?? [];
-          return fulfillJson(route, { contentPlanId: id, contentPlanRevision: content?.revision ?? 1, backgrounds: state.backgrounds.filter(item => backgroundIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })) });
+          const content = state.contentScripts.find(item => item.id === id);
+          const sceneIds = state.contentRelations.get(id) ?? [];
+          return fulfillJson(route, { contentScriptId: id, contentScriptRevision: content?.revision ?? 1, scenes: state.scenes.filter(item => sceneIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })) });
         }
-        if (method === 'GET' && path === '/api/prompt-presets') return fulfillJson(route, pageValue(url, state.promptPresets));
-        if (method === 'GET' && path === '/api/video-background-presets') return fulfillJson(route, pageValue(url, state.backgrounds));
+        if (method === 'GET' && path === '/api/prompt-template-versions') return fulfillJson(route, pageValue(url, state.promptTemplateVersions));
+        if (method === 'GET' && path === '/api/scenes') return fulfillJson(route, pageValue(url, state.scenes));
         if (method === 'GET' && path === '/api/batch-drafts') return fulfillJson(route, pageValue(url, state.batchDrafts));
         if ((method === 'POST' && path === '/api/batch-drafts') || (method === 'PUT' && /^\/api\/batch-drafts\/\d+$/u.test(path))) {
           const contentSelections = body.contentSelections.map(selection => {
-            const content = state.contentPlans.find(item => item.id === selection.contentPlanId);
+            const content = state.contentScripts.find(item => item.id === selection.contentScriptId);
             const compatibleIds = state.contentRelations.get(content.id) ?? [];
-            const selectedIds = content.mode === 'Fixed' ? compatibleIds : selection.backgroundPresetIds;
+            const selectedIds = content.mode === 'Fixed' ? compatibleIds : selection.sceneIds;
             return {
-              contentPlan: { id: content.id, nameZh: content.nameZh, nameEn: content.nameEn, revision: content.revision },
+              contentScript: { id: content.id, nameZh: content.nameZh, nameEn: content.nameEn, revision: content.revision },
               mode: content.mode,
-              backgroundPresets: state.backgrounds.filter(item => selectedIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
-              compatibleBackgrounds: state.backgrounds.filter(item => compatibleIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
+              scenes: state.scenes.filter(item => selectedIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
+              compatibleScenes: state.scenes.filter(item => compatibleIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
             };
           });
-          const promptPreset = state.promptPresets.find(item => item.id === body.promptPresetId);
-          const draft = { id: state.batchDrafts[0]?.id ?? 1, ...body, datasetRevision: 1, seed: body.seed ?? 3200, status: 'Draft', contentSelections, promptPreset: { id: promptPreset.id, name: promptPreset.name, revision: promptPreset.revision }, revision: (state.batchDrafts[0]?.revision ?? 0) + 1, createdAt: timestamp, updatedAt: timestamp };
+          const promptTemplateVersion = state.promptTemplateVersions.find(item => item.id === body.promptTemplateVersionId);
+          const draft = { id: state.batchDrafts[0]?.id ?? 1, ...body, datasetRevision: 1, seed: body.seed ?? 3200, status: 'Draft', contentSelections, promptTemplateVersion: { id: promptTemplateVersion.id, name: promptTemplateVersion.name, revision: promptTemplateVersion.revision }, revision: (state.batchDrafts[0]?.revision ?? 0) + 1, createdAt: timestamp, updatedAt: timestamp };
           delete draft.expectedRevision;
           state.batchDrafts = [draft];
           return fulfillJson(route, draft, method === 'POST' ? 201 : 200);

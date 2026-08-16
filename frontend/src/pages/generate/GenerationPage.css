@@ -80,8 +80,6 @@
 .generation-selection-card__title { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; grid-column: 1 / -1; }
 .generation-selection-card strong, .generation-selection-card span { min-width: 0; overflow-wrap: anywhere; }
 .generation-selection-card time { color: var(--color-text-muted); font-size: 12px; white-space: nowrap; }
-.generation-selection-card--preset { grid-template-columns: 1fr; }
-.generation-selection-card--preset time { justify-self: start; }
 .generation-prompt-preview { display: grid; gap: 10px; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .generation-prompt-preview h3 { margin: 0; font-size: 15px; }
 .generation-prompt-preview__field { display: grid; gap: 5px; }

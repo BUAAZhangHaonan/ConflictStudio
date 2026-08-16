@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, ConfirmDialog, Field, Pagination, StatusBadge, useToast } from '../../components';
 import {
-  useBackgroundPresetsQuery,
-  useContentBackgroundsQuery,
-  useContentPlansQuery,
-  useCreateContentPlanMutation,
-  useDeleteContentPlanMutation,
-  useUpdateContentPlanMutation,
+  useScenesQuery,
+  useContentScenesQuery,
+  useContentScriptsQuery,
+  useCreateContentScriptMutation,
+  useDeleteContentScriptMutation,
+  useUpdateContentScriptMutation,
 } from '../../api/queries';
-import type { ContentPlan, ContentPlanCreate } from '../../api/contracts';
+import type { ContentScript, ContentScriptCreate } from '../../api/contracts';
 import { formatDateTime } from '../../time';
 import { allowedDirections, type Category, type ConflictDirection, type ContentMode, type ContentStatus } from '../../types';
 import {
@@ -30,7 +30,7 @@ import {
 const contentStatuses: ContentStatus[] = ['Draft', 'Active', 'Disabled'];
 const contentModes: ContentMode[] = ['Fixed', 'Generative'];
 
-export function emptyContentPlan(): ContentPlanCreate {
+export function emptyContentScript(): ContentScriptCreate {
   return {
     nameZh: '',
     nameEn: '',
@@ -54,16 +54,16 @@ export function emptyContentPlan(): ContentPlanCreate {
     contentRequirementsEn: '',
     sceneSupplementZh: '',
     sceneSupplementEn: '',
-    backgroundPresetIds: [],
+    sceneIds: [],
   };
 }
 
-function contentInput(item: ContentPlan): ContentPlanCreate {
+function contentInput(item: ContentScript): ContentScriptCreate {
   const { id: _id, revision: _revision, createdAt: _createdAt, updatedAt: _updatedAt, ...input } = item;
   return input;
 }
 
-export function contentPlanPayloadIsValid(value: ContentPlanCreate): boolean {
+export function contentScriptPayloadIsValid(value: ContentScriptCreate): boolean {
   const aligned = value.category.startsWith('A-');
   const emotionRelationValid = aligned
     ? value.trueEmotion.trim().toLocaleLowerCase() === value.apparentEmotion.trim().toLocaleLowerCase()
@@ -100,7 +100,7 @@ function statusKind(status: ContentStatus) {
 interface StoredContentDraft {
   creating: boolean;
   selectedId: number | null;
-  draft: ContentPlanCreate;
+  draft: ContentScriptCreate;
 }
 
 export function ContentPage() {
@@ -108,16 +108,16 @@ export function ContentPage() {
   const locale = useGenerationLocale();
   const { showToast } = useToast();
   const [page, setPage] = useState(1);
-  const [backgroundPage, setBackgroundPage] = useState(1);
-  const contentQuery = useContentPlansQuery(page);
-  const backgroundsQuery = useBackgroundPresetsQuery(backgroundPage);
-  const createMutation = useCreateContentPlanMutation();
-  const updateMutation = useUpdateContentPlanMutation();
-  const deleteMutation = useDeleteContentPlanMutation();
+  const [scenePage, setScenePage] = useState(1);
+  const contentQuery = useContentScriptsQuery(page);
+  const scenesQuery = useScenesQuery(scenePage);
+  const createMutation = useCreateContentScriptMutation();
+  const updateMutation = useUpdateContentScriptMutation();
+  const deleteMutation = useDeleteContentScriptMutation();
   const stored = useState(() => readGenerationDraft<StoredContentDraft>('content-editor-bilingual'))[0];
   const [selectedId, setSelectedId] = useState<number | null>(stored?.selectedId ?? null);
   const [creating, setCreating] = useState(stored?.creating ?? false);
-  const [draft, setDraft] = useState<ContentPlanCreate>(stored?.draft ?? emptyContentPlan());
+  const [draft, setDraft] = useState<ContentScriptCreate>(stored?.draft ?? emptyContentScript());
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<Category | 'All'>('All');
   const [statusFilter, setStatusFilter] = useState<ContentStatus | 'All'>('All');
@@ -127,7 +127,7 @@ export function ContentPage() {
   const [pendingSelection, setPendingSelection] = useState<number | 'new' | null>(null);
   const items = contentQuery.data?.items ?? [];
   const selected = items.find(item => item.id === selectedId) ?? null;
-  const fixedBackgroundsQuery = useContentBackgroundsQuery(!creating && draft.mode === 'Fixed' ? selectedId : null);
+  const fixedScenesQuery = useContentScenesQuery(!creating && draft.mode === 'Fixed' ? selectedId : null);
   const error = createMutation.error ?? updateMutation.error ?? deleteMutation.error ?? null;
 
   useEffect(() => {
@@ -152,7 +152,7 @@ export function ContentPage() {
   }, [categoryFilter, items, search, statusFilter]);
 
   const contentDirty = creating
-    ? JSON.stringify(draft) !== JSON.stringify(emptyContentPlan())
+    ? JSON.stringify(draft) !== JSON.stringify(emptyContentScript())
     : selected !== null && JSON.stringify(draft) !== JSON.stringify(contentInput(selected));
   const dirty = contentDirty;
 
@@ -160,7 +160,7 @@ export function ContentPage() {
     if (next === 'new') {
       setCreating(true);
       setSelectedId(null);
-      setDraft(emptyContentPlan());
+      setDraft(emptyContentScript());
     } else {
       const item = items.find(value => value.id === next);
       if (!item) return;
@@ -192,10 +192,10 @@ export function ContentPage() {
   };
 
   const save = async () => {
-    const backgroundSelectionValid = draft.mode === 'Fixed'
-      ? draft.backgroundPresetIds.length === 1
-      : draft.backgroundPresetIds.length > 0;
-    if (!contentPlanPayloadIsValid(draft) || !backgroundSelectionValid) {
+    const sceneSelectionValid = draft.mode === 'Fixed'
+      ? draft.sceneIds.length === 1
+      : draft.status !== 'Active' || draft.sceneIds.length > 0;
+    if (!contentScriptPayloadIsValid(draft) || !sceneSelectionValid) {
       setValidation(true);
       return;
     }
@@ -236,13 +236,13 @@ export function ContentPage() {
   const unsavedDialog = useUnsavedChanges(dirty);
   useCommandEnter(() => void save(), !createMutation.isPending && !updateMutation.isPending);
 
-  const fixedBackgroundsPending = !creating && draft.mode === 'Fixed' && fixedBackgroundsQuery.isPending;
-  const fixedBackgroundsError = !creating && draft.mode === 'Fixed' ? fixedBackgroundsQuery.error : null;
-  if (contentQuery.isPending || backgroundsQuery.isPending || fixedBackgroundsPending) {
+  const fixedScenesPending = !creating && draft.mode === 'Fixed' && fixedScenesQuery.isPending;
+  const fixedScenesError = !creating && draft.mode === 'Fixed' ? fixedScenesQuery.error : null;
+  if (contentQuery.isPending || scenesQuery.isPending || fixedScenesPending) {
     return <GenerationScaffold title="content.title" subtitle="content.subtitle"><p role="status">{g('state.loadingBody')}</p></GenerationScaffold>;
   }
-  if (contentQuery.isError || backgroundsQuery.isError || fixedBackgroundsError) {
-    return <GenerationScaffold title="content.title" subtitle="content.subtitle"><OperationFeedback error={contentQuery.error ?? backgroundsQuery.error ?? fixedBackgroundsError} onDismiss={() => void Promise.all([contentQuery.refetch(), backgroundsQuery.refetch(), ...(!creating && draft.mode === 'Fixed' ? [fixedBackgroundsQuery.refetch()] : [])])} /></GenerationScaffold>;
+  if (contentQuery.isError || scenesQuery.isError || fixedScenesError) {
+    return <GenerationScaffold title="content.title" subtitle="content.subtitle"><OperationFeedback error={contentQuery.error ?? scenesQuery.error ?? fixedScenesError} onDismiss={() => void Promise.all([contentQuery.refetch(), scenesQuery.refetch(), ...(!creating && draft.mode === 'Fixed' ? [fixedScenesQuery.refetch()] : [])])} /></GenerationScaffold>;
   }
 
   const directions = allowedDirections(draft.category);
@@ -307,18 +307,18 @@ export function ContentPage() {
                 <h3 id="content-compatible-scenes-title">{g('content.compatibleScenes')}</h3>
                 <p className="generation-section-note">{g(draft.mode === 'Fixed' ? 'content.fixedSceneHelp' : 'content.generativeSceneHelp')}</p>
               </div>
-              {draft.mode === 'Generative' ? <div className="generation-fieldset__toolbar"><Button type="button" variant="quiet" onClick={() => setDraft(current => ({ ...current, backgroundPresetIds: [...new Set([...current.backgroundPresetIds, ...(backgroundsQuery.data?.items ?? []).filter(item => item.status === 'Active').map(item => item.id)])] }))}>{g('content.selectShownScenes')}</Button><Button type="button" variant="quiet" disabled={draft.backgroundPresetIds.length === 0} onClick={() => setDraft(current => ({ ...current, backgroundPresetIds: [] }))}>{g('content.clearScenes')}</Button></div> : null}
+              {draft.mode === 'Generative' ? <div className="generation-fieldset__toolbar"><Button type="button" variant="quiet" onClick={() => setDraft(current => ({ ...current, sceneIds: [...new Set([...current.sceneIds, ...(scenesQuery.data?.items ?? []).filter(item => item.status === 'Active').map(item => item.id)])] }))}>{g('content.selectShownScenes')}</Button><Button type="button" variant="quiet" disabled={draft.sceneIds.length === 0} onClick={() => setDraft(current => ({ ...current, sceneIds: [] }))}>{g('content.clearScenes')}</Button></div> : null}
             </div>
             {draft.mode === 'Fixed' && !creating ? (
-              <p className="generation-fixed-scene">{fixedBackgroundsQuery.data?.backgrounds.map(item => localizedName(locale, item)).join(', ') || g('content.sceneMissing')}</p>
+              <p className="generation-fixed-scene">{fixedScenesQuery.data?.scenes.map(item => localizedName(locale, item)).join(', ') || g('content.sceneMissing')}</p>
             ) : (
               <div className="generation-choice-grid">
-                {(backgroundsQuery.data?.items ?? []).filter(item => item.status === 'Active').map(item => <label key={item.id}><input type={draft.mode === 'Fixed' ? 'radio' : 'checkbox'} name={draft.mode === 'Fixed' ? 'fixed-source-scene' : undefined} checked={draft.backgroundPresetIds.includes(item.id)} onChange={() => setDraft(current => ({ ...current, backgroundPresetIds: draft.mode === 'Fixed' ? [item.id] : toggleArrayValue(current.backgroundPresetIds, item.id) }))} /><span>{localizedName(locale, item)}</span></label>)}
+                {(scenesQuery.data?.items ?? []).filter(item => item.status === 'Active').map(item => <label key={item.id}><input type={draft.mode === 'Fixed' ? 'radio' : 'checkbox'} name={draft.mode === 'Fixed' ? 'fixed-source-scene' : undefined} checked={draft.sceneIds.includes(item.id)} onChange={() => setDraft(current => ({ ...current, sceneIds: draft.mode === 'Fixed' ? [item.id] : toggleArrayValue(current.sceneIds, item.id) }))} /><span>{localizedName(locale, item)}</span></label>)}
               </div>
             )}
-            {draft.backgroundPresetIds.length === 0 ? <p className="field__error" role="status">{g('content.sceneRequired')}</p> : null}
-            {draft.mode === 'Fixed' && draft.backgroundPresetIds.length > 1 ? <p className="field__error" role="alert">{g('content.fixedSceneOnly')}</p> : null}
-            {(draft.mode === 'Generative' || creating) ? <Pagination page={backgroundsQuery.data?.page ?? backgroundPage} totalPages={backgroundsQuery.data?.totalPages ?? 0} total={backgroundsQuery.data?.total ?? 0} onPageChange={setBackgroundPage} /> : null}
+            {draft.status === 'Active' && draft.sceneIds.length === 0 ? <p className="field__error" role="status">{g('content.sceneRequired')}</p> : null}
+            {draft.mode === 'Fixed' && draft.sceneIds.length > 1 ? <p className="field__error" role="alert">{g('content.fixedSceneOnly')}</p> : null}
+            {(draft.mode === 'Generative' || creating) ? <Pagination page={scenesQuery.data?.page ?? scenePage} totalPages={scenesQuery.data?.totalPages ?? 0} total={scenesQuery.data?.total ?? 0} onPageChange={setScenePage} /> : null}
           </section>
           {validation ? <p className="field__error" role="alert">{g('content.validation')}</p> : null}
           <div className="generation-form__actions">
