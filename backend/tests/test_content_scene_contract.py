@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from backend.adapters.database import Database
 from backend.adapters.llm import OpenAICompatiblePromptModel
 from backend.domain.enums import Category, ContentMode, ContentStatus, DatasetPurpose, Ethnicity, Gender, GpuSlotName, ModelName, ResourceStatus, TemplateVersionStatus
-from backend.domain.models import BatchDraftScriptSelection, ContentScriptScene, Dataset, PromptTemplateVersion
+from backend.domain.models import BatchDraftCombination, ContentScriptScene, Dataset, PromptTemplateVersion
 from backend.domain.schemas import (
     BatchContentSelectionInput,
     BatchDraftCreate,
@@ -143,8 +143,6 @@ def test_fixed_scene_is_automatic_and_generative_uses_only_registered_choices(tm
         targetDatasetId=dataset.id,
         category=Category.A_VA,
         model=ModelName.LTX,
-        quantity=2,
-        seed=7,
         promptTemplateVersionId=template_version.id,
         demographics=[
             DemographicInput(
@@ -154,6 +152,7 @@ def test_fixed_scene_is_automatic_and_generative_uses_only_registered_choices(tm
             )
         ],
         gpuSlots=[GpuSlotName.GPU0],
+        seeds=[7, 8],
     )
     fixed = service.create_batch_draft(
         BatchDraftCreate(
@@ -178,7 +177,13 @@ def test_fixed_scene_is_automatic_and_generative_uses_only_registered_choices(tm
         )
     )
     preview = asyncio.run(service.preview_batch(generative.id, generative.revision))
-    assert [row.scene.id for row in preview.allocations] == [first.id, second.id]
+    assert [row.scene.id for row in preview.allocations] == [
+        first.id,
+        second.id,
+        first.id,
+        second.id,
+    ]
+    assert [row.seed for row in preview.allocations] == [7, 7, 8, 8]
 
     with pytest.raises(ServiceError) as fixed_explicit:
         service.create_batch_draft(
@@ -315,8 +320,6 @@ def test_formal_batch_rejects_inactive_and_nonformal_datasets(tmp_path: Path) ->
         targetDatasetId=dataset.id,
         category=Category.A_VA,
         model=ModelName.LTX,
-        quantity=1,
-        seed=7,
         contentSelections=[BatchContentSelectionInput(contentScriptId=content.id)],
         promptTemplateVersionId=template_version.id,
         demographics=[
@@ -327,6 +330,7 @@ def test_formal_batch_rejects_inactive_and_nonformal_datasets(tmp_path: Path) ->
             )
         ],
         gpuSlots=[GpuSlotName.GPU0],
+        seeds=[7],
     )
     catalog.update_dataset(
         dataset.id,
@@ -361,8 +365,6 @@ def test_incomplete_migrated_draft_can_be_reopened_but_not_previewed(tmp_path: P
             targetDatasetId=dataset.id,
             category=Category.A_VA,
             model=ModelName.LTX,
-            quantity=1,
-            seed=7,
             contentSelections=[BatchContentSelectionInput(contentScriptId=content.id)],
             promptTemplateVersionId=template_version.id,
             demographics=[
@@ -373,12 +375,13 @@ def test_incomplete_migrated_draft_can_be_reopened_but_not_previewed(tmp_path: P
                 )
             ],
             gpuSlots=[GpuSlotName.GPU0],
+            seeds=[7],
         )
     )
     with database.immediate_session() as session:
         session.exec(
-            delete(BatchDraftScriptSelection).where(
-                BatchDraftScriptSelection.batch_draft_id == draft.id
+            delete(BatchDraftCombination).where(
+                BatchDraftCombination.batch_draft_id == draft.id
             )
         )
 
@@ -421,8 +424,6 @@ def test_template_versions_are_immutable_and_formal_batches_require_verified(
         targetDatasetId=dataset.id,
         category=Category.A_VA,
         model=ModelName.LTX,
-        quantity=1,
-        seed=7,
         contentSelections=[
             BatchContentSelectionInput(contentScriptId=content.id)
         ],
@@ -435,6 +436,7 @@ def test_template_versions_are_immutable_and_formal_batches_require_verified(
             )
         ],
         gpuSlots=[GpuSlotName.GPU0],
+        seeds=[7],
     )
     with pytest.raises(ServiceError) as unverified:
         service.create_batch_draft(payload)
@@ -454,3 +456,85 @@ def test_template_versions_are_immutable_and_formal_batches_require_verified(
             assert row is not None
             row.style_instruction = "Changed after verification"
             session.flush()
+
+
+def test_sqlite_rejects_invalid_direct_batch_submission(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    catalog, dataset, content, verified, _ = fixed_resources(database)
+    service = BatchService(
+        database,
+        PromptService(OpenAICompatiblePromptModel("test")),
+        _ConfiguredRendererGateway(),
+    )
+    payload = BatchDraftCreate(
+        targetDatasetId=dataset.id,
+        category=Category.A_VA,
+        model=ModelName.LTX,
+        contentSelections=[BatchContentSelectionInput(contentScriptId=content.id)],
+        promptTemplateVersionId=verified.id,
+        demographics=[
+            DemographicInput(
+                age=25,
+                gender=Gender.FEMALE,
+                ethnicity=Ethnicity.EAST_ASIAN,
+            )
+        ],
+        gpuSlots=[GpuSlotName.GPU0],
+        seeds=[7],
+    )
+    draft = service.create_batch_draft(payload)
+
+    with pytest.raises(IntegrityError, match="current compatible active sources"):
+        with database.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE batch_draft_combinations "
+                "SET content_script_revision = content_script_revision + 1 "
+                "WHERE batch_draft_id = ?",
+                (draft.id,),
+            )
+
+    with database.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE datasets SET status = 'Inactive' WHERE id = ?",
+            (dataset.id,),
+        )
+    with pytest.raises(IntegrityError, match="complete draft"):
+        with database.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE batch_drafts SET status = 'Submitted', revision = revision + 1 "
+                "WHERE id = ?",
+                (draft.id,),
+            )
+    with database.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE datasets SET status = 'Active' WHERE id = ?",
+            (dataset.id,),
+        )
+
+    draft_template = catalog.create_prompt_template(
+        PromptTemplateCreate(name="Unverified direct selection", category=Category.A_VA)
+    )
+    draft_version = catalog.create_prompt_template_version(
+        draft_template.id,
+        PromptTemplateVersionCreate(
+            expectedTemplateRevision=draft_template.revision,
+            styleGuidance="Use a restrained static shot.",
+            ltxNegativePrompt="subtitles",
+            h3NegativePrompt="subtitles",
+        ),
+    )
+    with database.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE batch_draft_prompt_template_versions "
+            "SET prompt_template_version_id = ?, source_revision = ? "
+            "WHERE batch_draft_id = ?",
+            (draft_version.id, draft_version.revision, draft.id),
+        )
+    with pytest.raises(IntegrityError, match="complete draft"):
+        with database.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE batch_drafts SET status = 'Submitted', revision = revision + 1 "
+                "WHERE id = ?",
+                (draft.id,),
+            )

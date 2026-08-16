@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -40,6 +41,7 @@ from backend.domain.models import (
 )
 from backend.domain.schemas import (
     BatchDraftCreate,
+    BatchDraftUpdate,
     BatchSubmitRequest,
     BatchContentSelectionInput,
     ContentScriptCreate,
@@ -243,25 +245,29 @@ def make_batch(
     model: ModelName = ModelName.LTX,
     precision: Precision | None = None,
 ):
+    demographics = [
+        DemographicInput(
+            age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
+        ),
+        DemographicInput(age=35, gender=Gender.MALE, ethnicity=Ethnicity.WHITE),
+    ]
+    if quantity == 1:
+        demographics = demographics[:1]
+    if quantity % len(demographics) != 0:
+        raise ValueError("Test batch size must be a multiple of its explicit combinations")
     return service.create_batch_draft(
         BatchDraftCreate(
             targetDatasetId=dataset.id,
             category=Category.A_VA,
             model=model,
             precision=precision,
-            quantity=quantity,
-            seed=1208,
             contentSelections=[
                 BatchContentSelectionInput(contentScriptId=content.id)
             ],
             promptTemplateVersionId=preset.id,
-            demographics=[
-                DemographicInput(
-                    age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
-                ),
-                DemographicInput(age=35, gender=Gender.MALE, ethnicity=Ethnicity.WHITE),
-            ],
+            demographics=demographics,
             gpuSlots=slots,
+            seeds=[1208 + offset for offset in range(quantity // len(demographics))],
         )
     )
 
@@ -314,8 +320,130 @@ def test_ltx25_precision_reaches_draft_preview_job_and_snapshot(tmp_path: Path) 
     assert draft.precision is Precision.INT8
     assert preview.allocations[0].precision is Precision.INT8
     assert job.precision is Precision.INT8
+    assert re.fullmatch(r"A-VA-\d{14}", job.display_name)
     assert items[0].input.precision is Precision.INT8
     assert items[0].input.frame_count == 121
+
+
+def test_batch_draft_crud_preview_and_submitted_read_only(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    _, dataset, content, preset, _ = fixed_resources(database)
+    batches = BatchService(
+        database,
+        PromptService(ApiPromptModel()),
+        _ConfiguredRendererGateway(),
+    )
+    fields = dict(
+        targetDatasetId=dataset.id,
+        displayName="A-VA study 1",
+        category=Category.A_VA,
+        model=ModelName.LTX,
+        contentSelections=[BatchContentSelectionInput(contentScriptId=content.id)],
+        promptTemplateVersionId=preset.id,
+        demographics=[
+            DemographicInput(
+                age=25,
+                gender=Gender.FEMALE,
+                ethnicity=Ethnicity.EAST_ASIAN,
+            )
+        ],
+        gpuSlots=[GpuSlotName.GPU0],
+        seeds=[3, 5],
+    )
+    draft = batches.create_batch_draft(BatchDraftCreate(**fields))
+    assert (draft.combination_count, draft.total_count, draft.seeds) == (1, 2, [3, 5])
+
+    with pytest.raises(ServiceError) as stale:
+        batches.update_batch_draft(
+            draft.id,
+            BatchDraftUpdate(expectedRevision=draft.revision + 1, **fields),
+        )
+    assert stale.value.status_code == 409
+    updated = batches.update_batch_draft(
+        draft.id,
+        BatchDraftUpdate(
+            expectedRevision=draft.revision,
+            **{**fields, "displayName": "A-VA study 2", "seeds": [11]},
+        ),
+    )
+    preview = asyncio.run(batches.preview_batch(updated.id, updated.revision))
+    assert (preview.combination_count, preview.seed_count, preview.total_count) == (1, 1, 1)
+
+    submitted = asyncio.run(
+        batches.submit_batch(
+            updated.id,
+            BatchSubmitRequest(
+                expectedRevision=updated.revision,
+                expectedGpuRevisions=preview.gpu_revisions,
+            ),
+        )
+    )
+    assert submitted.display_name == "A-VA study 2"
+    with pytest.raises(ServiceError) as read_only:
+        batches.update_batch_draft(
+            updated.id,
+            BatchDraftUpdate(expectedRevision=updated.revision + 1, **fields),
+        )
+    assert read_only.value.status_code == 409
+    with pytest.raises(ServiceError):
+        batches.delete_batch_draft(updated.id, updated.revision + 1)
+    with pytest.raises(IntegrityError, match="submitted batch inputs are immutable"):
+        with database.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE batch_draft_seeds SET seed = 99 WHERE batch_draft_id = ?",
+                (updated.id,),
+            )
+
+    removable = batches.create_batch_draft(BatchDraftCreate(**fields))
+    batches.delete_batch_draft(removable.id, removable.revision)
+    with pytest.raises(ServiceError) as missing:
+        batches.get_batch_draft(removable.id)
+    assert missing.value.status_code == 404
+
+
+def test_expanded_allocations_use_seed_major_order_and_deterministic_gpu_split(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    _, dataset, content, preset, _ = fixed_resources(database)
+    batches = BatchService(
+        database,
+        PromptService(ApiPromptModel()),
+        _ConfiguredRendererGateway(),
+    )
+    common = dict(
+        targetDatasetId=dataset.id,
+        category=Category.A_VA,
+        model=ModelName.LTX,
+        contentSelections=[BatchContentSelectionInput(contentScriptId=content.id)],
+        promptTemplateVersionId=preset.id,
+        demographics=[
+            DemographicInput(
+                age=25,
+                gender=Gender.FEMALE,
+                ethnicity=Ethnicity.EAST_ASIAN,
+            )
+        ],
+        seeds=[101, 202, 303],
+    )
+    dual = batches.create_batch_draft(
+        BatchDraftCreate(gpuSlots=[GpuSlotName.GPU1, GpuSlotName.GPU0], **common)
+    )
+    dual_preview = asyncio.run(batches.preview_batch(dual.id, dual.revision))
+    assert [row.seed for row in dual_preview.allocations] == [101, 202, 303]
+    assert [row.gpu_slot for row in dual_preview.allocations] == [
+        GpuSlotName.GPU0,
+        GpuSlotName.GPU1,
+        GpuSlotName.GPU0,
+    ]
+
+    single = batches.create_batch_draft(
+        BatchDraftCreate(gpuSlots=[GpuSlotName.GPU1], **common)
+    )
+    single_preview = asyncio.run(batches.preview_batch(single.id, single.revision))
+    assert {row.gpu_slot for row in single_preview.allocations} == {GpuSlotName.GPU1}
 
 
 def test_test_run_creates_one_job_with_two_shared_prompt_items(tmp_path: Path) -> None:
@@ -880,8 +1008,6 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
             targetDatasetId=dataset.id,
             category=Category.A_VA,
             model=ModelName.LTX,
-            quantity=4,
-            seed=7,
             contentSelections=[
                 BatchContentSelectionInput(contentScriptId=content.id)
             ],
@@ -892,6 +1018,7 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
                 )
             ],
             gpuSlots=[GpuSlotName.GPU0],
+            seeds=[7, 8, 9, 10],
         )
     )
     preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
@@ -1070,7 +1197,7 @@ def test_dual_gpu_submit_is_atomic_and_snapshots_survive_restart(
         GpuSlotName.GPU0,
         GpuSlotName.GPU1,
     ]
-    assert len({item.input.seed for item in items}) == 4
+    assert [item.input.seed for item in items] == [1208, 1208, 1209, 1209]
     first_input = items[0].input
     first_preview = preview.allocations[0]
     assert (first_input.dataset_id, first_input.dataset_revision) == (
@@ -1241,7 +1368,6 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
         "targetDatasetId": dataset.id,
         "category": Category.A_VA,
         "model": ModelName.LTX,
-        "seed": 47,
         "contentSelections": [
             BatchContentSelectionInput(contentScriptId=content_one.id),
             BatchContentSelectionInput(contentScriptId=content_two.id),
@@ -1250,9 +1376,8 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
         "demographics": demographics,
         "gpuSlots": [GpuSlotName.GPU0, GpuSlotName.GPU1],
     }
-    draft = batches.create_batch_draft(BatchDraftCreate(quantity=4, **selections))
-    repeating_draft = batches.create_batch_draft(
-        BatchDraftCreate(quantity=6, **selections)
+    draft = batches.create_batch_draft(
+        BatchDraftCreate(seeds=[47, 48], **selections)
     )
     with database.immediate_session() as session:
         for row in session.exec(select(GpuSlot)).all():
@@ -1260,9 +1385,6 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             row.revision += 1
 
     preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
-    repeating_preview = asyncio.run(
-        batches.preview_batch(repeating_draft.id, repeating_draft.revision)
-    )
 
     expected = [
         (
@@ -1307,15 +1429,13 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
         ]
 
     preview_values = preview_signatures(preview.allocations)
-    repeating_values = preview_signatures(repeating_preview.allocations)
-    assert preview_values == expected
+    assert preview_values == expected + expected
     assert len(set(preview_values)) == 4
-    assert repeating_values[:4] == expected
-    assert repeating_values[4:] == expected[:2]
+    assert [item.seed for item in preview.allocations] == [47] * 4 + [48] * 4
     assert [item.gpu_slot for item in preview.allocations] == [
         GpuSlotName.GPU0,
         GpuSlotName.GPU1,
-    ] * 2
+    ] * 4
 
     job = asyncio.run(
         batches.submit_batch(
@@ -1411,8 +1531,6 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             targetDatasetId=dataset.id,
             category=Category.A_VT,
             model=ModelName.H3,
-            quantity=1,
-            seed=83,
             contentSelections=[
                 BatchContentSelectionInput(contentScriptId=content.id)
             ],
@@ -1423,6 +1541,7 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
                 )
             ],
             gpuSlots=[GpuSlotName.GPU0],
+            seeds=[83],
         )
     )
     with database.immediate_session() as session:

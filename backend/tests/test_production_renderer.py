@@ -254,8 +254,6 @@ async def create_running_request(
             category=category,
             model=model,
             precision=precision,
-            quantity=1,
-            seed=1208,
             contentSelections=[
                 BatchContentSelectionInput(
                     contentScriptId=content.id,
@@ -267,6 +265,7 @@ async def create_running_request(
                 DemographicInput(age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN)
             ],
             gpuSlots=[GpuSlotName.GPU0],
+            seeds=[1208],
         )
     )
     with database.immediate_session() as session:

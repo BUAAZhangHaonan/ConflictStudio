@@ -278,8 +278,6 @@ def create_draft(
             targetDatasetId=dataset.id,
             category=Category.A_VA,
             model=model,
-            quantity=quantity,
-            seed=1208,
             contentSelections=[
                 BatchContentSelectionInput(
                     contentScriptId=content.id,
@@ -290,10 +288,10 @@ def create_draft(
             demographics=[
                 DemographicInput(
                     age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
-                ),
-                DemographicInput(age=35, gender=Gender.MALE, ethnicity=Ethnicity.WHITE),
+                )
             ],
             gpuSlots=slots,
+            seeds=[1208 + offset for offset in range(quantity)],
         )
     )
 

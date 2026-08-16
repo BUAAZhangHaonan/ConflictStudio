@@ -515,7 +515,6 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
                 "category": "A-VA",
                 "model": "LTX-2.5",
                 "precision": "INT8",
-                    "quantity": 1,
                     "contentSelections": [
                         {
                             "contentScriptId": content.json()["id"],
@@ -525,6 +524,7 @@ def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> No
                 "promptTemplateVersionId": prompt["id"],
                 "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
                 "gpuSlots": ["GPU0"],
+                "seeds": [17],
             },
         )
 

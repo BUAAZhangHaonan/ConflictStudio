@@ -35,13 +35,13 @@ def batch_payload(**overrides: object) -> dict[str, object]:
     values: dict[str, object] = {
         "targetDatasetId": 1,
         "category": "A-VA",
-        "quantity": 1,
         "contentSelections": [
             {"contentScriptId": 1, "sceneIds": [1]}
         ],
         "promptTemplateVersionId": 1,
         "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
         "gpuSlots": ["GPU0"],
+        "seeds": [1],
     }
     values.update(overrides)
     return values
@@ -61,6 +61,33 @@ def test_batch_contract_rejects_removed_global_selection_fields() -> None:
     )
     with pytest.raises(ValidationError):
         BatchDraftCreate.model_validate(payload)
+    with pytest.raises(ValidationError):
+        BatchDraftCreate.model_validate(batch_payload(quantity=1))
+    with pytest.raises(ValidationError):
+        BatchDraftCreate.model_validate(batch_payload(seed=1))
+
+
+@pytest.mark.parametrize(
+    "display_name",
+    ["", " name", "name ", "name!", "x" * 41],
+)
+def test_batch_name_has_clear_length_and_character_rules(display_name: str) -> None:
+    with pytest.raises(ValidationError):
+        BatchDraftCreate.model_validate(batch_payload(displayName=display_name))
+
+
+def test_batch_rejects_duplicate_explicit_dimensions() -> None:
+    with pytest.raises(ValidationError):
+        BatchDraftCreate.model_validate(
+            batch_payload(
+                demographics=[
+                    {"age": 25, "gender": "Female", "ethnicity": "EastAsian"},
+                    {"age": 25, "gender": "Female", "ethnicity": "EastAsian"},
+                ]
+            )
+        )
+    with pytest.raises(ValidationError):
+        BatchDraftCreate.model_validate(batch_payload(seeds=[7, 7]))
 
 
 def test_prompt_template_version_rejects_removed_scene_supplement() -> None:
@@ -130,8 +157,6 @@ def test_database_rejects_invalid_category_direction(tmp_path: Path) -> None:
                 category=Category.A_VA,
                 conflict_direction=ConflictDirection.AUDIO,
                 model="LTX-2.3",
-                quantity=1,
-                seed_base=1,
             )
         )
         with pytest.raises(IntegrityError):
@@ -165,8 +190,6 @@ def test_database_rejects_invalid_model_precision_pair(tmp_path: Path) -> None:
                 category=Category.A_VA,
                 model=ModelName.LTX_25,
                 precision=None,
-                quantity=1,
-                seed_base=1,
             )
         )
         with pytest.raises(IntegrityError):

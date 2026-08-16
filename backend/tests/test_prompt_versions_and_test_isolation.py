@@ -98,7 +98,14 @@ def add_video_test_media(app) -> dict[str, int]:  # type: ignore[no-untyped-def]
         session.flush()
 
         snapshot_data = production_snapshot.model_dump(
-            exclude={"id", "batch_draft_id", "dataset_id", "dataset_revision", "sequence"}
+            exclude={
+                "id",
+                "batch_draft_id",
+                "dataset_id",
+                "dataset_revision",
+                "dataset_name",
+                "sequence",
+            }
         )
         test_snapshot = BatchVideoInputSnapshot(
             **snapshot_data,
@@ -318,40 +325,23 @@ def test_sqlite_rejects_changing_a_sample_to_a_test_job_item(
         )
         session.add(test_job)
         session.flush()
+        snapshot_data = production_snapshot.model_dump(
+            exclude={
+                "id",
+                "batch_draft_id",
+                "dataset_id",
+                "dataset_revision",
+                "dataset_name",
+                "sequence",
+            }
+        )
         test_snapshot = BatchVideoInputSnapshot(
+            **snapshot_data,
             batch_draft_id=None,
             dataset_id=None,
             dataset_revision=None,
+            dataset_name=None,
             sequence=1,
-            content_script_id=production_snapshot.content_script_id,
-            content_script_revision=production_snapshot.content_script_revision,
-            prompt_template_version_id=production_snapshot.prompt_template_version_id,
-            prompt_template_version_revision=production_snapshot.prompt_template_version_revision,
-            scene_id=production_snapshot.scene_id,
-            scene_revision=production_snapshot.scene_revision,
-            policy_version=production_snapshot.policy_version,
-            category=production_snapshot.category,
-            conflict_direction=production_snapshot.conflict_direction,
-            age=production_snapshot.age,
-            gender=production_snapshot.gender,
-            ethnicity=production_snapshot.ethnicity,
-            model=production_snapshot.model,
-            precision=production_snapshot.precision,
-            seed=production_snapshot.seed,
-            width=production_snapshot.width,
-            height=production_snapshot.height,
-            fps=production_snapshot.fps,
-            frame_count=production_snapshot.frame_count,
-            renderer_profile_version=production_snapshot.renderer_profile_version,
-            prompt_model=production_snapshot.prompt_model,
-            source_has_audio=True,
-            derive_silent_primary=production_snapshot.derive_silent_primary,
-            system_input=production_snapshot.system_input,
-            user_input=production_snapshot.user_input,
-            negative_prompt=production_snapshot.negative_prompt,
-            true_emotion=production_snapshot.true_emotion,
-            apparent_emotion=production_snapshot.apparent_emotion,
-            created_at=timestamp,
         )
         session.add(test_snapshot)
         session.flush()

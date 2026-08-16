@@ -369,13 +369,168 @@ class Database:
             END
             """
         )
+        for operation in ("INSERT", "UPDATE"):
+            trigger_name = f"require_batch_combination_source_{operation.casefold()}"
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE {operation} ON batch_draft_combinations
+                WHEN NOT EXISTS (
+                    SELECT 1
+                    FROM batch_drafts
+                    JOIN content_scripts
+                      ON content_scripts.id = NEW.content_script_id
+                    JOIN content_script_scenes
+                      ON content_script_scenes.content_script_id = NEW.content_script_id
+                     AND content_script_scenes.scene_id = NEW.scene_id
+                    JOIN scenes ON scenes.id = NEW.scene_id
+                    WHERE batch_drafts.id = NEW.batch_draft_id
+                      AND batch_drafts.status = 'Draft'
+                      AND content_scripts.category = batch_drafts.category
+                      AND content_scripts.conflict_direction IS batch_drafts.conflict_direction
+                      AND content_scripts.status = 'Active'
+                      AND content_scripts.revision = NEW.content_script_revision
+                      AND scenes.status = 'Active'
+                      AND scenes.revision = NEW.scene_revision
+                )
+                BEGIN
+                    SELECT RAISE(
+                        ABORT,
+                        'batch combination must use current compatible active sources'
+                    );
+                END
+                """
+            )
+        for table_name in (
+            "batch_draft_combinations",
+            "batch_draft_seeds",
+            "batch_draft_prompt_template_versions",
+            "batch_draft_gpu_slots",
+        ):
+            trigger_name = f"protect_submitted_{table_name}_insert"
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+            connection.exec_driver_sql(
+                f"""
+                CREATE TRIGGER {trigger_name}
+                BEFORE INSERT ON {table_name}
+                WHEN (
+                    SELECT status FROM batch_drafts
+                    WHERE id = NEW.batch_draft_id
+                ) != 'Draft'
+                BEGIN
+                    SELECT RAISE(ABORT, 'submitted batch inputs are immutable');
+                END
+                """
+            )
+            for operation in ("UPDATE", "DELETE"):
+                trigger_name = f"protect_submitted_{table_name}_{operation.casefold()}"
+                connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
+                connection.exec_driver_sql(
+                    f"""
+                    CREATE TRIGGER {trigger_name}
+                    BEFORE {operation} ON {table_name}
+                    WHEN (
+                        SELECT status FROM batch_drafts
+                        WHERE id = OLD.batch_draft_id
+                    ) = 'Submitted'
+                    BEGIN
+                        SELECT RAISE(ABORT, 'submitted batch inputs are immutable');
+                    END
+                    """
+                )
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS require_complete_batch_submit")
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER require_complete_batch_submit
+            BEFORE UPDATE OF status ON batch_drafts
+            WHEN NEW.status = 'Submitted'
+              AND (
+                OLD.status != 'Draft'
+                OR NEW.revision != OLD.revision + 1
+                OR NOT EXISTS (
+                    SELECT 1 FROM batch_draft_combinations
+                    WHERE batch_draft_id = OLD.id
+                )
+                OR NOT EXISTS (
+                    SELECT 1 FROM batch_draft_seeds
+                    WHERE batch_draft_id = OLD.id
+                )
+                OR NOT EXISTS (
+                    SELECT 1 FROM batch_draft_prompt_template_versions
+                    WHERE batch_draft_id = OLD.id
+                )
+                OR NOT EXISTS (
+                    SELECT 1 FROM batch_draft_gpu_slots
+                    WHERE batch_draft_id = OLD.id
+                )
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM datasets
+                    WHERE datasets.id = NEW.dataset_id
+                      AND datasets.revision = NEW.dataset_revision
+                      AND datasets.purpose = 'Formal'
+                      AND datasets.status = 'Active'
+                )
+                OR NOT EXISTS (
+                    SELECT 1
+                    FROM batch_draft_prompt_template_versions AS selected
+                    JOIN prompt_template_versions AS versions
+                      ON versions.id = selected.prompt_template_version_id
+                    JOIN prompt_templates AS templates
+                      ON templates.id = versions.template_id
+                    WHERE selected.batch_draft_id = OLD.id
+                      AND selected.source_revision = versions.revision
+                      AND versions.verification_status = 'Verified'
+                      AND templates.category = NEW.category
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM batch_draft_combinations AS combinations
+                    LEFT JOIN content_scripts
+                      ON content_scripts.id = combinations.content_script_id
+                    LEFT JOIN content_script_scenes AS mappings
+                      ON mappings.content_script_id = combinations.content_script_id
+                     AND mappings.scene_id = combinations.scene_id
+                    LEFT JOIN scenes ON scenes.id = combinations.scene_id
+                    WHERE combinations.batch_draft_id = OLD.id
+                      AND (
+                        content_scripts.id IS NULL
+                        OR mappings.id IS NULL
+                        OR scenes.id IS NULL
+                        OR content_scripts.category != NEW.category
+                        OR content_scripts.conflict_direction IS NOT NEW.conflict_direction
+                        OR content_scripts.status != 'Active'
+                        OR content_scripts.revision != combinations.content_script_revision
+                        OR scenes.status != 'Active'
+                        OR scenes.revision != combinations.scene_revision
+                      )
+                )
+              )
+            BEGIN
+                SELECT RAISE(ABORT, 'only a complete draft can be submitted');
+            END
+            """
+        )
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS protect_submitted_batch_draft")
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_submitted_batch_draft
+            BEFORE UPDATE ON batch_drafts
+            WHEN OLD.status = 'Submitted'
+            BEGIN
+                SELECT RAISE(ABORT, 'submitted batches are immutable');
+            END
+            """
+        )
         connection.exec_driver_sql("DROP TRIGGER IF EXISTS protect_job_ownership")
         connection.exec_driver_sql(
             """
             CREATE TRIGGER protect_job_ownership
-            BEFORE UPDATE OF source, dataset_id, batch_draft_id ON jobs
+            BEFORE UPDATE OF source, dataset_id, dataset_name_snapshot, batch_draft_id ON jobs
             WHEN NEW.source != OLD.source
               OR NEW.dataset_id IS NOT OLD.dataset_id
+              OR NEW.dataset_name_snapshot IS NOT OLD.dataset_name_snapshot
               OR NEW.batch_draft_id IS NOT OLD.batch_draft_id
             BEGIN
                 SELECT RAISE(ABORT, 'job source and production ownership are immutable');
@@ -393,8 +548,11 @@ class Database:
                   AND NOT EXISTS (
                     SELECT 1
                     FROM batch_drafts
+                    JOIN datasets ON datasets.id = batch_drafts.dataset_id
                     WHERE batch_drafts.id = NEW.batch_draft_id
+                      AND batch_drafts.status = 'Submitted'
                       AND batch_drafts.dataset_id = NEW.dataset_id
+                      AND datasets.name = NEW.dataset_name_snapshot
                       AND batch_drafts.category = NEW.category
                       AND batch_drafts.conflict_direction IS NEW.conflict_direction
                       AND batch_drafts.model = NEW.model
@@ -464,6 +622,7 @@ class Database:
                           jobs.source = 'Production'
                           AND snapshots.batch_draft_id = jobs.batch_draft_id
                           AND snapshots.dataset_id = jobs.dataset_id
+                          AND snapshots.dataset_name = jobs.dataset_name_snapshot
                           AND snapshots.category = jobs.category
                           AND snapshots.conflict_direction IS jobs.conflict_direction
                           AND snapshots.model = jobs.model

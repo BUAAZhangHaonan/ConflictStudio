@@ -31,11 +31,10 @@ from backend.domain.enums import (
 )
 from backend.domain.models import (
     BatchDraft,
-    BatchDraftContentScene,
-    BatchDraftScriptSelection,
-    BatchDraftDemographic,
+    BatchDraftCombination,
     BatchDraftGpuSlot,
     BatchDraftPromptTemplateVersion,
+    BatchDraftSeed,
     BatchVideoInputSnapshot,
     ContentScript,
     ContentScriptScene,
@@ -110,8 +109,19 @@ class DraftAggregate:
     preset: PromptTemplateVersion
     preset_revision: int
     preset_examples: tuple[list[str], list[str]]
-    demographics: list[BatchDraftDemographic]
+    combinations: list["DraftCombination"]
+    seeds: list[int]
     gpu_slots: list[GpuSlotName]
+
+
+@dataclass(frozen=True)
+class DraftCombination:
+    position: int
+    content: ContentScript
+    scene: Scene
+    content_revision: int
+    scene_revision: int
+    demographic: DemographicInput
 
 
 @dataclass(frozen=True)
@@ -121,7 +131,7 @@ class Allocation:
     template: PromptTemplate
     preset: PromptTemplateVersion
     scene: Scene
-    demographic: BatchDraftDemographic
+    demographic: DemographicInput
     gpu_slot: GpuSlotName
     model: ModelName
     precision: Precision | None
@@ -136,20 +146,6 @@ class PromptSelection:
     preset: PromptTemplateVersion
     scene: Scene
     prepared: PreparedPrompt
-
-
-def allocation_inputs(
-    selections: list[DraftContentSelection],
-    demographics: list[BatchDraftDemographic],
-    quantity: int,
-) -> list[tuple[ContentScript, Scene, BatchDraftDemographic]]:
-    combinations = [
-        (selection.content, scene, demographic)
-        for selection in selections
-        for scene in selection.scenes
-        for demographic in demographics
-    ]
-    return [combinations[index % len(combinations)] for index in range(quantity)]
 
 
 class BatchService:
@@ -183,7 +179,6 @@ class BatchService:
     def create_batch_draft(self, payload: BatchDraftCreate) -> BatchDraftRead:
         with self.database.immediate_session() as session:
             dataset, selections, preset = self._resolve_selections(session, payload)
-            seed = payload.seed if payload.seed is not None else random.SystemRandom().randrange(0, 2**31)
             row = BatchDraft(
                 dataset_id=dataset.id,
                 dataset_revision=dataset.revision,
@@ -191,8 +186,7 @@ class BatchService:
                 conflict_direction=payload.conflict_direction,
                 model=payload.model,
                 precision=payload.precision,
-                quantity=payload.quantity,
-                seed_base=seed,
+                display_name=payload.display_name,
             )
             session.add(row)
             session.flush()
@@ -213,9 +207,7 @@ class BatchService:
             row.conflict_direction = payload.conflict_direction
             row.model = payload.model
             row.precision = payload.precision
-            row.quantity = payload.quantity
-            if payload.seed is not None:
-                row.seed_base = payload.seed
+            row.display_name = payload.display_name
             row.revision += 1
             row.updated_at = utc_now()
             self._delete_links(session, draft_id)
@@ -242,6 +234,9 @@ class BatchService:
         return BatchPreviewRead(
             batch_draft_id=draft_id,
             expected_revision=aggregate.draft.revision,
+            combination_count=len(aggregate.combinations),
+            seed_count=len(aggregate.seeds),
+            total_count=len(allocations),
             gpu_revisions={slot: snapshot.revision for slot, snapshot in live_gpu_slots.items()},
             allocations=[self._allocation_read(value) for value in allocations],
         )
@@ -438,6 +433,7 @@ class BatchService:
                         batch_draft_id=None,
                         dataset_id=None,
                         dataset_revision=None,
+                        dataset_name=None,
                         sequence=sequence,
                         content_script_id=current.content.id,
                         content_script_revision=current.content.revision,
@@ -470,6 +466,10 @@ class BatchService:
                         ),
                         true_emotion=current.content.true_emotion,
                         apparent_emotion=current.content.apparent_emotion,
+                        **self._snapshot_catalog_fields(
+                            current.content,
+                            current.scene,
+                        ),
                         created_at=timestamp,
                     )
                     session.add(snapshot)
@@ -545,17 +545,22 @@ class BatchService:
                 self._validate_gpu_request(session, current, payload, live_gpu_slots)
 
                 timestamp = utc_now()
+                current.draft.status = BatchDraftStatus.SUBMITTED
+                current.draft.revision += 1
+                current.draft.updated_at = timestamp
+                session.flush()
                 job = Job(
-                    display_name=self._job_name(current.draft.category),
+                    display_name=current.draft.display_name or self._job_name(current.draft.category),
                     source=JobSource.PRODUCTION,
                     dataset_id=current.dataset.id,
+                    dataset_name_snapshot=current.dataset.name,
                     batch_draft_id=draft_id,
                     category=current.draft.category,
                     conflict_direction=current.draft.conflict_direction,
                     model=current.draft.model,
                     precision=current.draft.precision,
                     status=JobStatus.QUEUED,
-                    total_count=current.draft.quantity,
+                    total_count=len(allocations),
                     confirm_model_switch=payload.confirm_model_switch,
                     created_at=timestamp,
                     updated_at=timestamp,
@@ -574,6 +579,7 @@ class BatchService:
                         batch_draft_id=draft_id,
                         dataset_id=current.dataset.id,
                         dataset_revision=current.draft.dataset_revision,
+                        dataset_name=current.dataset.name,
                         sequence=allocation.sequence,
                         content_script_id=allocation.content.id,
                         content_script_revision=selection.content_revision,
@@ -605,6 +611,10 @@ class BatchService:
                         negative_prompt=allocation.prepared.negative_prompt,
                         true_emotion=allocation.content.true_emotion,
                         apparent_emotion=allocation.content.apparent_emotion,
+                        **self._snapshot_catalog_fields(
+                            allocation.content,
+                            allocation.scene,
+                        ),
                         created_at=timestamp,
                     )
                     session.add(snapshot)
@@ -640,9 +650,6 @@ class BatchService:
                     gpu.active_job_id = job.id
                     gpu.revision += 1
                     gpu.checked_at = timestamp
-                current.draft.status = BatchDraftStatus.SUBMITTED
-                current.draft.revision += 1
-                current.draft.updated_at = timestamp
                 session.flush()
                 return self._job_detail(session, job)
 
@@ -932,8 +939,15 @@ class BatchService:
             content = session.get(ContentScript, requested.content_script_id)
             if content is None:
                 raise not_found("contentScript", requested.content_script_id)
-            if content.category is not payload.category:
-                raise ServiceError(422, "validation_error", "The content category does not match the batch")
+            if (
+                content.category is not payload.category
+                or content.conflict_direction is not payload.conflict_direction
+            ):
+                raise ServiceError(
+                    422,
+                    "validation_error",
+                    "The content category and direction must match the batch",
+                )
             if content.status is not ContentStatus.ACTIVE:
                 raise ServiceError(
                     422,
@@ -1025,26 +1039,24 @@ class BatchService:
         selections: list[DraftContentSelection],
         preset: PromptTemplateVersion,
     ) -> None:
-        for position, selection in enumerate(selections):
-            session.add(
-                BatchDraftScriptSelection(
-                    batch_draft_id=draft_id,
-                    content_script_id=selection.content.id,
-                    position=position,
-                    source_revision=selection.content_revision,
-                )
-            )
-            session.flush()
-            for scene_position, scene in enumerate(selection.scenes):
-                session.add(
-                    BatchDraftContentScene(
-                        batch_draft_id=draft_id,
-                        content_script_id=selection.content.id,
-                        scene_id=scene.id,
-                        position=scene_position,
-                        source_revision=selection.scene_revisions[scene.id],
+        combination_position = 0
+        for selection in selections:
+            for scene in selection.scenes:
+                for demographic in payload.demographics:
+                    session.add(
+                        BatchDraftCombination(
+                            batch_draft_id=draft_id,
+                            position=combination_position,
+                            content_script_id=selection.content.id,
+                            content_script_revision=selection.content_revision,
+                            scene_id=scene.id,
+                            scene_revision=selection.scene_revisions[scene.id],
+                            age=demographic.age,
+                            gender=demographic.gender,
+                            ethnicity=demographic.ethnicity,
+                        )
                     )
-                )
+                    combination_position += 1
         session.add(
             BatchDraftPromptTemplateVersion(
                 batch_draft_id=draft_id,
@@ -1053,26 +1065,28 @@ class BatchService:
                 source_revision=preset.revision,
             )
         )
-        for position, value in enumerate(payload.demographics):
+        for position, seed in enumerate(payload.seeds):
             session.add(
-                BatchDraftDemographic(
+                BatchDraftSeed(
                     batch_draft_id=draft_id,
                     position=position,
-                    age=value.age,
-                    gender=value.gender,
-                    ethnicity=value.ethnicity,
+                    seed=seed,
                 )
             )
-        for position, value in enumerate(payload.gpu_slots):
+        gpu_slots = (
+            [GpuSlotName.GPU0, GpuSlotName.GPU1]
+            if set(payload.gpu_slots) == {GpuSlotName.GPU0, GpuSlotName.GPU1}
+            else payload.gpu_slots
+        )
+        for position, value in enumerate(gpu_slots):
             session.add(BatchDraftGpuSlot(batch_draft_id=draft_id, gpu_slot=value, position=position))
 
     @staticmethod
     def _delete_links(session: Session, draft_id: int) -> None:
         for model in (
-            BatchDraftContentScene,
-            BatchDraftScriptSelection,
+            BatchDraftCombination,
             BatchDraftPromptTemplateVersion,
-            BatchDraftDemographic,
+            BatchDraftSeed,
             BatchDraftGpuSlot,
         ):
             session.exec(delete(model).where(model.batch_draft_id == draft_id))
@@ -1085,56 +1099,67 @@ class BatchService:
         dataset = session.get(Dataset, draft.dataset_id)
         if dataset is None:
             raise not_found("dataset", draft.dataset_id)
-        content_links = session.exec(
-            select(BatchDraftScriptSelection)
-            .where(BatchDraftScriptSelection.batch_draft_id == draft_id)
-            .order_by(BatchDraftScriptSelection.position)
+        combination_rows = session.exec(
+            select(BatchDraftCombination)
+            .where(BatchDraftCombination.batch_draft_id == draft_id)
+            .order_by(BatchDraftCombination.position)
         ).all()
         preset_links = session.exec(
             select(BatchDraftPromptTemplateVersion)
             .where(BatchDraftPromptTemplateVersion.batch_draft_id == draft_id)
             .order_by(BatchDraftPromptTemplateVersion.position)
         ).all()
-        scene_links = session.exec(
-            select(BatchDraftContentScene)
-            .where(BatchDraftContentScene.batch_draft_id == draft_id)
-            .order_by(
-                BatchDraftContentScene.content_script_id,
-                BatchDraftContentScene.position,
-            )
-        ).all()
-        demographics = session.exec(
-            select(BatchDraftDemographic)
-            .where(BatchDraftDemographic.batch_draft_id == draft_id)
-            .order_by(BatchDraftDemographic.position)
+        seed_rows = session.exec(
+            select(BatchDraftSeed)
+            .where(BatchDraftSeed.batch_draft_id == draft_id)
+            .order_by(BatchDraftSeed.position)
         ).all()
         gpu_links = session.exec(
             select(BatchDraftGpuSlot)
             .where(BatchDraftGpuSlot.batch_draft_id == draft_id)
             .order_by(BatchDraftGpuSlot.position)
         ).all()
-        selections: list[DraftContentSelection] = []
-        for content_link in content_links:
-            content = self._required(
-                session,
-                ContentScript,
-                content_link.content_script_id,
-                "contentScript",
-            )
-            selected_links = [
-                link
-                for link in scene_links
-                if link.content_script_id == content.id
-            ]
-            scenes = [
-                self._required(
+        combinations: list[DraftCombination] = []
+        content_order: list[int] = []
+        contents: dict[int, ContentScript] = {}
+        scenes_by_content: dict[int, list[Scene]] = {}
+        content_revisions: dict[int, int] = {}
+        scene_revisions: dict[tuple[int, int], int] = {}
+        for row in combination_rows:
+            if row.content_script_id not in contents:
+                content_order.append(row.content_script_id)
+                contents[row.content_script_id] = self._required(
                     session,
-                    Scene,
-                    link.scene_id,
-                    "scene",
+                    ContentScript,
+                    row.content_script_id,
+                    "contentScript",
                 )
-                for link in selected_links
-            ]
+                scenes_by_content[row.content_script_id] = []
+                content_revisions[row.content_script_id] = row.content_script_revision
+            content = contents[row.content_script_id]
+            scene = self._required(session, Scene, row.scene_id, "scene")
+            if all(current.id != scene.id for current in scenes_by_content[row.content_script_id]):
+                scenes_by_content[row.content_script_id].append(scene)
+                scene_revisions[(row.content_script_id, row.scene_id)] = row.scene_revision
+            combinations.append(
+                DraftCombination(
+                    position=row.position,
+                    content=content,
+                    scene=scene,
+                    content_revision=row.content_script_revision,
+                    scene_revision=row.scene_revision,
+                    demographic=DemographicInput(
+                        age=row.age,
+                        gender=row.gender,
+                        ethnicity=row.ethnicity,
+                    ),
+                )
+            )
+
+        selections: list[DraftContentSelection] = []
+        for content_id in content_order:
+            content = contents[content_id]
+            scenes = scenes_by_content[content_id]
             compatible_links = session.exec(
                 select(ContentScriptScene)
                 .where(ContentScriptScene.content_script_id == content.id)
@@ -1161,10 +1186,10 @@ class BatchService:
                     content=content,
                     scenes=scenes,
                     compatible_scenes=compatible_scenes,
-                    content_revision=content_link.source_revision,
+                    content_revision=content_revisions[content_id],
                     scene_revisions={
-                        link.scene_id: link.source_revision
-                        for link in selected_links
+                        scene.id: scene_revisions[(content_id, scene.id)]
+                        for scene in scenes
                     },
                 )
             )
@@ -1195,7 +1220,8 @@ class BatchService:
             preset=preset,
             preset_revision=preset_link.source_revision,
             preset_examples=self._version_examples(session, preset.id),
-            demographics=demographics,
+            combinations=combinations,
+            seeds=[row.seed for row in seed_rows],
             gpu_slots=[link.gpu_slot for link in gpu_links],
         )
         return aggregate
@@ -1206,7 +1232,7 @@ class BatchService:
             not selection.scenes for selection in aggregate.selections
         ):
             raise ServiceError(409, "state_conflict", "The batch draft has incomplete source selections")
-        if not aggregate.demographics or not aggregate.gpu_slots:
+        if not aggregate.combinations or not aggregate.seeds or not aggregate.gpu_slots:
             raise ServiceError(409, "state_conflict", "The batch draft has incomplete allocation settings")
 
     def _validate_aggregate(self, aggregate: DraftAggregate) -> None:
@@ -1240,44 +1266,41 @@ class BatchService:
                     self._source_changed("scene", scene.id)
 
     def _build_allocations(self, aggregate: DraftAggregate) -> list[Allocation]:
-        seed_source = random.Random(aggregate.draft.seed_base)
         values: list[Allocation] = []
-        inputs = allocation_inputs(
-            aggregate.selections,
-            aggregate.demographics,
-            aggregate.draft.quantity,
-        )
-        for offset, (content, scene, demographic) in enumerate(inputs):
-            preset = aggregate.preset
-            positive, negative = aggregate.preset_examples
-            prepared = self.prompts.prepare(
-                PromptContext(
-                    content=content,
-                    template_version=preset,
-                    positive_examples=positive,
-                    negative_examples=negative,
-                    scene=scene,
-                    age=demographic.age,
-                    gender=demographic.gender,
-                    ethnicity=demographic.ethnicity,
-                    model=aggregate.draft.model,
+        for seed in aggregate.seeds:
+            for combination in aggregate.combinations:
+                offset = len(values)
+                preset = aggregate.preset
+                positive, negative = aggregate.preset_examples
+                demographic = combination.demographic
+                prepared = self.prompts.prepare(
+                    PromptContext(
+                        content=combination.content,
+                        template_version=preset,
+                        positive_examples=positive,
+                        negative_examples=negative,
+                        scene=combination.scene,
+                        age=demographic.age,
+                        gender=demographic.gender,
+                        ethnicity=demographic.ethnicity,
+                        model=aggregate.draft.model,
+                    )
                 )
-            )
-            values.append(
-                Allocation(
-                    sequence=offset + 1,
-                    content=content,
-                    template=aggregate.template,
-                    preset=preset,
-                    scene=scene,
-                    demographic=demographic,
-                    gpu_slot=aggregate.gpu_slots[offset % len(aggregate.gpu_slots)],
-                    model=aggregate.draft.model,
-                    precision=aggregate.draft.precision,
-                    seed=seed_source.randrange(0, 2**31),
-                    prepared=prepared,
+                values.append(
+                    Allocation(
+                        sequence=offset + 1,
+                        content=combination.content,
+                        template=aggregate.template,
+                        preset=preset,
+                        scene=combination.scene,
+                        demographic=demographic,
+                        gpu_slot=aggregate.gpu_slots[offset % len(aggregate.gpu_slots)],
+                        model=aggregate.draft.model,
+                        precision=aggregate.draft.precision,
+                        seed=seed,
+                        prepared=prepared,
+                    )
                 )
-            )
         return values
 
     @staticmethod
@@ -1368,12 +1391,14 @@ class BatchService:
             id=aggregate.draft.id,
             target_dataset_id=aggregate.draft.dataset_id,
             dataset_revision=aggregate.draft.dataset_revision,
+            display_name=aggregate.draft.display_name,
             category=aggregate.draft.category,
             conflict_direction=aggregate.draft.conflict_direction,
             model=aggregate.draft.model,
             precision=aggregate.draft.precision,
-            quantity=aggregate.draft.quantity,
-            seed=aggregate.draft.seed_base,
+            combination_count=len(aggregate.combinations),
+            total_count=len(aggregate.combinations) * len(aggregate.seeds),
+            seeds=aggregate.seeds,
             status=aggregate.draft.status,
             content_selections=[
                 BatchContentSelectionRead(
@@ -1411,8 +1436,15 @@ class BatchService:
                 revision=aggregate.preset_revision,
             ),
             demographics=[
-                DemographicInput(age=row.age, gender=row.gender, ethnicity=row.ethnicity)
-                for row in aggregate.demographics
+                DemographicInput(age=age, gender=gender, ethnicity=ethnicity)
+                for age, gender, ethnicity in dict.fromkeys(
+                    (
+                        row.demographic.age,
+                        row.demographic.gender,
+                        row.demographic.ethnicity,
+                    )
+                    for row in aggregate.combinations
+                )
             ],
             gpu_slots=aggregate.gpu_slots,
             revision=aggregate.draft.revision,
@@ -1462,12 +1494,39 @@ class BatchService:
                 for selection in after.selections
             ]
             and before.gpu_slots == after.gpu_slots
+            and before.seeds == after.seeds
+            and [
+                (
+                    row.position,
+                    row.content.id,
+                    row.content_revision,
+                    row.scene.id,
+                    row.scene_revision,
+                    row.demographic.age,
+                    row.demographic.gender,
+                    row.demographic.ethnicity,
+                )
+                for row in before.combinations
+            ]
+            == [
+                (
+                    row.position,
+                    row.content.id,
+                    row.content_revision,
+                    row.scene.id,
+                    row.scene_revision,
+                    row.demographic.age,
+                    row.demographic.gender,
+                    row.demographic.ethnicity,
+                )
+                for row in after.combinations
+            ]
         )
 
     @staticmethod
     def _job_name(category: Category) -> str:
         local = datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Shanghai"))
-        return f"{category.value}-{local:%Y%m%d-%H%M%S}"
+        return f"{category.value}-{local:%Y%m%d%H%M%S}"
 
     @staticmethod
     def _negative_prompt(
@@ -1524,6 +1583,7 @@ class BatchService:
             batch_draft_id=None,
             dataset_id=None,
             dataset_revision=None,
+            dataset_name=None,
             sequence=sequence,
             content_script_id=selection.content.id,
             content_script_revision=selection.content.revision,
@@ -1554,8 +1614,37 @@ class BatchService:
             negative_prompt=cls._negative_prompt(selection.preset, model),
             true_emotion=selection.content.true_emotion,
             apparent_emotion=selection.content.apparent_emotion,
+            **cls._snapshot_catalog_fields(selection.content, selection.scene),
             created_at=timestamp,
         )
+
+    @staticmethod
+    def _snapshot_catalog_fields(
+        content: ContentScript,
+        scene: Scene,
+    ) -> dict[str, str]:
+        return {
+            "content_script_name_zh": content.name_zh,
+            "content_script_name_en": content.name_en,
+            "content_scene_zh": content.scene_zh,
+            "content_scene_en": content.scene_en,
+            "trigger_event_zh": content.trigger_event_zh,
+            "trigger_event_en": content.trigger_event_en,
+            "psychological_background_zh": content.psychological_background_zh,
+            "psychological_background_en": content.psychological_background_en,
+            "shooting_scene_name_zh": scene.name_zh,
+            "shooting_scene_name_en": scene.name_en,
+            "shooting_scene_zh": scene.scene_zh,
+            "shooting_scene_en": scene.scene_en,
+            "ambient_sound_zh": scene.ambient_sound_zh,
+            "ambient_sound_en": scene.ambient_sound_en,
+            "participant_relationship_zh": scene.participant_relationship_zh,
+            "participant_relationship_en": scene.participant_relationship_en,
+            "lighting_zh": scene.lighting_zh,
+            "lighting_en": scene.lighting_en,
+            "framing_zh": scene.framing_zh,
+            "framing_en": scene.framing_en,
+        }
 
     @staticmethod
     def _add_prompt_result(

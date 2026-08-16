@@ -19,7 +19,6 @@ from backend.domain.enums import (
 from backend.domain.models import (
     ArchiveItem,
     BatchVideoInputSnapshot,
-    ContentScript,
     Dataset,
     GenerationAttempt,
     Job,
@@ -65,8 +64,7 @@ def create_sample_for_completed_item(
     prompt = session.exec(
         select(JobItemPromptResult).where(JobItemPromptResult.job_item_id == item.id)
     ).one_or_none()
-    content = session.get(ContentScript, snapshot.content_script_id) if snapshot is not None else None
-    if snapshot is None or prompt is None or content is None:
+    if snapshot is None or prompt is None:
         raise state_conflict("jobItem", item.id, "The completed result has incomplete provenance")
     timestamp = utc_now()
     sample = Sample(
@@ -88,14 +86,14 @@ def create_sample_for_completed_item(
         true_emotion_description=prompt.true_emotion_description,
         true_emotion=snapshot.true_emotion,
         apparent_emotion=snapshot.apparent_emotion,
-        content_script_name_zh=content.name_zh,
-        content_script_name_en=content.name_en,
-        scene_zh=content.scene_zh,
-        scene_en=content.scene_en,
-        trigger_event_zh=content.trigger_event_zh,
-        trigger_event_en=content.trigger_event_en,
-        psychological_background_zh=content.psychological_background_zh,
-        psychological_background_en=content.psychological_background_en,
+        content_script_name_zh=snapshot.content_script_name_zh,
+        content_script_name_en=snapshot.content_script_name_en,
+        scene_zh=snapshot.content_scene_zh,
+        scene_en=snapshot.content_scene_en,
+        trigger_event_zh=snapshot.trigger_event_zh,
+        trigger_event_en=snapshot.trigger_event_en,
+        psychological_background_zh=snapshot.psychological_background_zh,
+        psychological_background_en=snapshot.psychological_background_en,
         age=snapshot.age,
         gender=snapshot.gender,
         ethnicity=snapshot.ethnicity,
@@ -241,8 +239,8 @@ class SampleService:
             ),
             actual_scene_summary=BilingualSelectionRead(
                 id=compatibility.snapshot.scene_id,
-                name_zh=compatibility.scene.name_zh,
-                name_en=compatibility.scene.name_en,
+                name_zh=compatibility.snapshot.shooting_scene_name_zh,
+                name_en=compatibility.snapshot.shooting_scene_name_en,
                 revision=compatibility.snapshot.scene_revision,
             ),
             generation_compatibility=compatibility.status,

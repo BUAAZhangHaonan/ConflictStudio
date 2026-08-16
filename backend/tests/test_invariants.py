@@ -210,7 +210,7 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "prompt_template_examples": ("kind",),
         "scenes": ("status",),
         "batch_drafts": ("category", "conflict_direction", "model", "precision", "status"),
-        "batch_draft_demographics": ("gender", "ethnicity"),
+        "batch_draft_combinations": ("gender", "ethnicity"),
         "batch_draft_gpu_slots": ("gpu_slot",),
         "batch_video_input_snapshots": ("category", "conflict_direction", "gender", "ethnicity", "model", "precision"),
         "jobs": ("source", "category", "conflict_direction", "model", "precision", "status"),
@@ -233,16 +233,13 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "scenes": ("ck_scenes_revision",),
         "content_script_scenes": ("ck_content_script_scene_position",),
         "batch_drafts": ("ck_batch_drafts_dataset_revision", "ck_batch_drafts_revision", "ck_batch_drafts_model_precision"),
-        "batch_draft_script_selections": (
-            "ck_batch_content_selection_position",
-            "ck_batch_content_selection_revision",
+        "batch_draft_combinations": (
+            "ck_batch_combinations_position",
+            "ck_batch_combinations_content_revision",
+            "ck_batch_combinations_scene_revision",
         ),
         "batch_draft_prompt_template_versions": ("ck_batch_single_prompt_template_version", "ck_batch_preset_revision"),
-        "batch_draft_content_scenes": (
-            "ck_batch_content_scene_position",
-            "ck_batch_content_scene_revision",
-        ),
-        "batch_draft_demographics": ("ck_batch_demographics_position",),
+        "batch_draft_seeds": ("ck_batch_seeds_position", "ck_batch_seeds_value"),
         "batch_draft_gpu_slots": ("ck_batch_gpu_position",),
         "batch_video_input_snapshots": (
             "ck_batch_snapshots_sequence",
@@ -424,8 +421,6 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
                 "targetDatasetId": records["dataset"]["id"],
                 "category": "A-VA",
                 "model": "LTX-2.3",
-                "quantity": 1,
-                "seed": 7,
                 "contentSelections": [
                     {
                         "contentScriptId": records["content"]["id"],
@@ -435,6 +430,7 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
                 "promptTemplateVersionId": records["prompt"]["id"],
                 "demographics": [{"age": 25, "gender": "Female", "ethnicity": "EastAsian"}],
                 "gpuSlots": ["GPU0"],
+                "seeds": [7],
             },
         )
         assert draft_response.status_code == 201

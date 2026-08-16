@@ -8,7 +8,6 @@ from sqlalchemy import (
     Column,
     Enum as SqlEnum,
     ForeignKey,
-    ForeignKeyConstraint,
     Integer,
     String,
     Text,
@@ -103,17 +102,20 @@ JOB_SOURCE_CHECK = """
 (
   source = 'Production'
   AND dataset_id IS NOT NULL
+  AND dataset_name_snapshot IS NOT NULL
   AND batch_draft_id IS NOT NULL
   AND model IS NOT NULL
 ) OR (
   source = 'PromptTest'
   AND dataset_id IS NULL
+  AND dataset_name_snapshot IS NULL
   AND batch_draft_id IS NULL
   AND model IS NULL
   AND precision IS NULL
 ) OR (
   source = 'VideoTest'
   AND dataset_id IS NULL
+  AND dataset_name_snapshot IS NULL
   AND batch_draft_id IS NULL
   AND model IS NULL
   AND precision IS NULL
@@ -129,10 +131,12 @@ SNAPSHOT_SOURCE_CHECK = """
   batch_draft_id IS NOT NULL
   AND dataset_id IS NOT NULL
   AND dataset_revision IS NOT NULL
+  AND dataset_name IS NOT NULL
 ) OR (
   batch_draft_id IS NULL
   AND dataset_id IS NULL
   AND dataset_revision IS NULL
+  AND dataset_name IS NULL
 )
 """
 
@@ -380,8 +384,10 @@ class BatchDraft(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint(CATEGORY_DIRECTION_CHECK, name="ck_batch_drafts_direction"),
         CheckConstraint(MODEL_PRECISION_CHECK, name="ck_batch_drafts_model_precision"),
-        CheckConstraint("quantity > 0", name="ck_batch_drafts_quantity"),
-        CheckConstraint("seed_base >= 0 AND seed_base < 2147483648", name="ck_batch_drafts_seed"),
+        CheckConstraint(
+            "display_name IS NULL OR (length(trim(display_name)) > 0 AND length(display_name) <= 40)",
+            name="ck_batch_drafts_display_name",
+        ),
         CheckConstraint("dataset_revision >= 1", name="ck_batch_drafts_dataset_revision"),
         CheckConstraint("revision >= 1", name="ck_batch_drafts_revision"),
     )
@@ -393,8 +399,7 @@ class BatchDraft(SQLModel, table=True):
     conflict_direction: ConflictDirection | None = Field(default=None, sa_column=enum_column(ConflictDirection, nullable=True))
     model: ModelName = Field(default=ModelName.LTX_25, sa_column=enum_column(ModelName))
     precision: Precision | None = Field(default=Precision.INT8, sa_column=enum_column(Precision, nullable=True))
-    quantity: int = Field(gt=0)
-    seed_base: int = Field(ge=0, lt=2**31)
+    display_name: str | None = Field(default=None, sa_column=Column(String(40), nullable=True))
     status: BatchDraftStatus = Field(default=BatchDraftStatus.DRAFT, sa_column=enum_column(BatchDraftStatus))
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
@@ -411,18 +416,35 @@ class BatchDraft(SQLModel, table=True):
         super().__init__(**data)
 
 
-class BatchDraftScriptSelection(SQLModel, table=True):
-    __tablename__ = "batch_draft_script_selections"
+class BatchDraftCombination(SQLModel, table=True):
+    __tablename__ = "batch_draft_combinations"
     __table_args__ = (
-        UniqueConstraint("batch_draft_id", "position", name="uq_batch_content_selection_position"),
-        CheckConstraint("position >= 0", name="ck_batch_content_selection_position"),
-        CheckConstraint("source_revision >= 1", name="ck_batch_content_selection_revision"),
+        UniqueConstraint("batch_draft_id", "position", name="uq_batch_combinations_position"),
+        UniqueConstraint(
+            "batch_draft_id",
+            "content_script_id",
+            "scene_id",
+            "age",
+            "gender",
+            "ethnicity",
+            name="uq_batch_combinations_value",
+        ),
+        CheckConstraint(f"age IN {AGES}", name="ck_batch_combinations_age"),
+        CheckConstraint("position >= 0", name="ck_batch_combinations_position"),
+        CheckConstraint("content_script_revision >= 1", name="ck_batch_combinations_content_revision"),
+        CheckConstraint("scene_revision >= 1", name="ck_batch_combinations_scene_revision"),
     )
 
-    batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
-    content_script_id: int = Field(sa_column=Column(Integer, ForeignKey("content_scripts.id", ondelete="RESTRICT"), primary_key=True))
+    id: int | None = Field(default=None, primary_key=True)
+    batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), nullable=False))
     position: int = Field(ge=0)
-    source_revision: int = Field(ge=1)
+    content_script_id: int = Field(sa_column=Column(Integer, ForeignKey("content_scripts.id", ondelete="RESTRICT"), nullable=False))
+    content_script_revision: int = Field(ge=1)
+    scene_id: int = Field(sa_column=Column(Integer, ForeignKey("scenes.id", ondelete="RESTRICT"), nullable=False))
+    scene_revision: int = Field(ge=1)
+    age: int
+    gender: Gender = Field(sa_column=enum_column(Gender))
+    ethnicity: Ethnicity = Field(sa_column=enum_column(Ethnicity))
 
 
 class BatchDraftPromptTemplateVersion(SQLModel, table=True):
@@ -451,62 +473,18 @@ class BatchDraftPromptTemplateVersion(SQLModel, table=True):
     source_revision: int = Field(ge=1)
 
 
-class BatchDraftContentScene(SQLModel, table=True):
-    __tablename__ = "batch_draft_content_scenes"
+class BatchDraftSeed(SQLModel, table=True):
+    __tablename__ = "batch_draft_seeds"
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["batch_draft_id", "content_script_id"],
-            [
-                "batch_draft_script_selections.batch_draft_id",
-                "batch_draft_script_selections.content_script_id",
-            ],
-            ondelete="CASCADE",
-            name="fk_batch_content_scene_selection",
-        ),
-        UniqueConstraint(
-            "batch_draft_id",
-            "content_script_id",
-            "scene_id",
-            name="uq_batch_content_scene_pair",
-        ),
-        UniqueConstraint(
-            "batch_draft_id",
-            "content_script_id",
-            "position",
-            name="uq_batch_content_scene_position",
-        ),
-        CheckConstraint("position >= 0", name="ck_batch_content_scene_position"),
-        CheckConstraint("source_revision >= 1", name="ck_batch_content_scene_revision"),
+        UniqueConstraint("batch_draft_id", "position", name="uq_batch_seeds_position"),
+        UniqueConstraint("batch_draft_id", "seed", name="uq_batch_seeds_value"),
+        CheckConstraint("position >= 0", name="ck_batch_seeds_position"),
+        CheckConstraint("seed >= 0 AND seed < 2147483648", name="ck_batch_seeds_value"),
     )
 
-    id: int | None = Field(default=None, primary_key=True)
-    batch_draft_id: int = Field(nullable=False)
-    content_script_id: int = Field(nullable=False)
-    scene_id: int = Field(
-        sa_column=Column(
-            Integer,
-            ForeignKey("scenes.id", ondelete="RESTRICT"),
-            nullable=False,
-        )
-    )
-    position: int = Field(ge=0)
-    source_revision: int = Field(ge=1)
-
-
-class BatchDraftDemographic(SQLModel, table=True):
-    __tablename__ = "batch_draft_demographics"
-    __table_args__ = (
-        UniqueConstraint("batch_draft_id", "position", name="uq_batch_demographic_position"),
-        CheckConstraint(f"age IN {AGES}", name="ck_batch_demographics_age"),
-        CheckConstraint("position >= 0", name="ck_batch_demographics_position"),
-    )
-
-    id: int | None = Field(default=None, primary_key=True)
-    batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), nullable=False))
-    position: int = Field(ge=0)
-    age: int
-    gender: Gender = Field(sa_column=enum_column(Gender))
-    ethnicity: Ethnicity = Field(sa_column=enum_column(Ethnicity))
+    batch_draft_id: int = Field(sa_column=Column(Integer, ForeignKey("batch_drafts.id", ondelete="CASCADE"), primary_key=True))
+    position: int = Field(primary_key=True, ge=0)
+    seed: int = Field(ge=0, lt=2**31)
 
 
 class BatchDraftGpuSlot(SQLModel, table=True):
@@ -572,6 +550,7 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
         sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=True),
     )
     dataset_revision: int | None = Field(default=None, ge=1)
+    dataset_name: str | None = Field(default=None, sa_column=Column(String(160), nullable=True))
     sequence: int = Field(gt=0)
     content_script_id: int = Field(sa_column=Column(Integer, ForeignKey("content_scripts.id", ondelete="RESTRICT"), nullable=False))
     content_script_revision: int = Field(ge=1)
@@ -601,6 +580,26 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     negative_prompt: str = Field(sa_column=Column(Text, nullable=False))
     true_emotion: str = Field(sa_column=Column(String(120), nullable=False))
     apparent_emotion: str = Field(sa_column=Column(String(120), nullable=False))
+    content_script_name_zh: str = Field(sa_column=Column(String(160), nullable=False))
+    content_script_name_en: str = Field(sa_column=Column(String(160), nullable=False))
+    content_scene_zh: str = Field(sa_column=Column(Text, nullable=False))
+    content_scene_en: str = Field(sa_column=Column(Text, nullable=False))
+    trigger_event_zh: str = Field(sa_column=Column(Text, nullable=False))
+    trigger_event_en: str = Field(sa_column=Column(Text, nullable=False))
+    psychological_background_zh: str = Field(sa_column=Column(Text, nullable=False))
+    psychological_background_en: str = Field(sa_column=Column(Text, nullable=False))
+    shooting_scene_name_zh: str = Field(sa_column=Column(String(160), nullable=False))
+    shooting_scene_name_en: str = Field(sa_column=Column(String(160), nullable=False))
+    shooting_scene_zh: str = Field(sa_column=Column(Text, nullable=False))
+    shooting_scene_en: str = Field(sa_column=Column(Text, nullable=False))
+    ambient_sound_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    ambient_sound_en: str = Field(default="", sa_column=Column(Text, nullable=False))
+    participant_relationship_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    participant_relationship_en: str = Field(default="", sa_column=Column(Text, nullable=False))
+    lighting_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    lighting_en: str = Field(default="", sa_column=Column(Text, nullable=False))
+    framing_zh: str = Field(default="", sa_column=Column(Text, nullable=False))
+    framing_en: str = Field(default="", sa_column=Column(Text, nullable=False))
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
@@ -626,6 +625,10 @@ class Job(SQLModel, table=True):
     dataset_id: int | None = Field(
         default=None,
         sa_column=Column(Integer, ForeignKey("datasets.id", ondelete="RESTRICT"), nullable=True),
+    )
+    dataset_name_snapshot: str | None = Field(
+        default=None,
+        sa_column=Column(String(160), nullable=True),
     )
     batch_draft_id: int | None = Field(
         default=None,

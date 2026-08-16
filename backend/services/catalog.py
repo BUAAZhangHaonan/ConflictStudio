@@ -19,8 +19,7 @@ from backend.domain.models import (
     Archive,
     ArchiveItem,
     BatchDraft,
-    BatchDraftContentScene,
-    BatchDraftScriptSelection,
+    BatchDraftCombination,
     BatchDraftPromptTemplateVersion,
     BatchVideoInputSnapshot,
     ContentScript,
@@ -513,8 +512,8 @@ class CatalogService:
             if row.status is not ResourceStatus.DISABLED:
                 raise state_conflict("scene", preset_id, "Disable the scene before deleting it")
             if session.exec(
-                select(BatchDraftContentScene).where(
-                    BatchDraftContentScene.scene_id == preset_id
+                select(BatchDraftCombination).where(
+                    BatchDraftCombination.scene_id == preset_id
                 )
             ).first() or session.exec(
                 select(ContentScriptScene).where(
@@ -761,8 +760,8 @@ class CatalogService:
     def _content_referenced(session: Session, content_id: int) -> bool:
         return bool(
             session.exec(
-                select(BatchDraftScriptSelection).where(
-                    BatchDraftScriptSelection.content_script_id == content_id
+                select(BatchDraftCombination).where(
+                    BatchDraftCombination.content_script_id == content_id
                 )
             ).first()
             or session.exec(

@@ -451,16 +451,28 @@ class BatchContentSelectionInput(ApiModel):
 
 class BatchDraftFields(ApiModel):
     target_dataset_id: int = Field(gt=0)
+    display_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=40,
+        pattern=r"^[A-Za-z0-9\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff _-]*$",
+    )
     category: Category
     conflict_direction: ConflictDirection | None = None
     model: ModelName = ModelName.LTX_25
     precision: Precision | None = Precision.INT8
-    quantity: int = Field(gt=0, le=10000)
-    seed: int | None = Field(default=None, ge=0, lt=2**31)
     content_selections: list[BatchContentSelectionInput] = Field(min_length=1)
     prompt_template_version_id: int = Field(gt=0)
     demographics: list[DemographicInput] = Field(min_length=1)
     gpu_slots: list[GpuSlotName] = Field(min_length=1, max_length=2)
+    seeds: list[Annotated[int, Field(ge=0, lt=2**31)]] = Field(min_length=1)
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, value: str | None) -> str | None:
+        if value is not None and value != value.strip():
+            raise ValueError("Batch name cannot start or end with a space")
+        return value
 
     @model_validator(mode="before")
     @classmethod
@@ -482,6 +494,14 @@ class BatchDraftFields(ApiModel):
             raise ValueError("Duplicate content script selection")
         if len(self.gpu_slots) != len(set(self.gpu_slots)):
             raise ValueError("Duplicate GPU selection")
+        if len(self.seeds) != len(set(self.seeds)):
+            raise ValueError("Duplicate seed selection")
+        demographics = [
+            (value.age, value.gender, value.ethnicity)
+            for value in self.demographics
+        ]
+        if len(demographics) != len(set(demographics)):
+            raise ValueError("Duplicate demographic selection")
         return self
 
 
@@ -523,12 +543,14 @@ class BatchDraftRead(ApiModel):
     id: int
     target_dataset_id: int
     dataset_revision: int
+    display_name: str | None
     category: Category
     conflict_direction: ConflictDirection | None
     model: ModelName
     precision: Precision | None
-    quantity: int
-    seed: int
+    combination_count: int
+    total_count: int
+    seeds: list[int]
     status: BatchDraftStatus
     content_selections: list[BatchContentSelectionRead]
     prompt_template_version: SelectionRead
@@ -572,6 +594,9 @@ class BatchAllocationRead(ApiModel):
 class BatchPreviewRead(ApiModel):
     batch_draft_id: int
     expected_revision: int
+    combination_count: int
+    seed_count: int
+    total_count: int
     gpu_revisions: dict[GpuSlotName, int]
     allocations: list[BatchAllocationRead]
 
@@ -658,6 +683,7 @@ class SnapshotRead(ApiModel):
     sequence: int
     dataset_id: int | None
     dataset_revision: int | None
+    dataset_name: str | None
     content_script_id: int
     content_script_revision: int
     prompt_template_version_id: int
@@ -686,6 +712,26 @@ class SnapshotRead(ApiModel):
     negative_prompt: str
     true_emotion: str
     apparent_emotion: str
+    content_script_name_zh: str
+    content_script_name_en: str
+    content_scene_zh: str
+    content_scene_en: str
+    trigger_event_zh: str
+    trigger_event_en: str
+    psychological_background_zh: str
+    psychological_background_en: str
+    shooting_scene_name_zh: str
+    shooting_scene_name_en: str
+    shooting_scene_zh: str
+    shooting_scene_en: str
+    ambient_sound_zh: str
+    ambient_sound_en: str
+    participant_relationship_zh: str
+    participant_relationship_en: str
+    lighting_zh: str
+    lighting_en: str
+    framing_zh: str
+    framing_en: str
     created_at: str
 
 
@@ -980,6 +1026,7 @@ class JobSummaryRead(ApiModel):
     display_name: str
     source: JobSource
     dataset_id: int | None
+    dataset_name_snapshot: str | None
     batch_draft_id: int | None
     category: Category
     conflict_direction: ConflictDirection | None
