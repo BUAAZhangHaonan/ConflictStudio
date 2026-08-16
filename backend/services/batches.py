@@ -196,24 +196,36 @@ class BatchService:
 
     def update_batch_draft(self, draft_id: int, payload: BatchDraftUpdate) -> BatchDraftRead:
         with self.database.immediate_session() as session:
-            row = self._get_draft(session, draft_id)
-            self._check_draft_revision(row, payload.expected_revision)
-            if row.status is not BatchDraftStatus.DRAFT:
-                raise state_conflict("batchDraft", draft_id, "A submitted batch cannot be changed")
-            dataset, selections, preset = self._resolve_selections(session, payload)
-            row.dataset_id = dataset.id
-            row.dataset_revision = dataset.revision
-            row.category = payload.category
-            row.conflict_direction = payload.conflict_direction
-            row.model = payload.model
-            row.precision = payload.precision
-            row.display_name = payload.display_name
-            row.revision += 1
-            row.updated_at = utc_now()
-            self._delete_links(session, draft_id)
-            self._replace_links(session, draft_id, payload, selections, preset)
-            session.flush()
-            return self._draft_read(self._load_aggregate(session, draft_id))
+            return self.apply_confirmed_batch_draft(session, draft_id, payload)
+
+    def apply_confirmed_batch_draft(
+        self,
+        session: Session,
+        draft_id: int,
+        payload: BatchDraftUpdate,
+    ) -> BatchDraftRead:
+        row = self._get_draft(session, draft_id)
+        self._check_draft_revision(row, payload.expected_revision)
+        if row.status is not BatchDraftStatus.DRAFT:
+            raise state_conflict(
+                "batchDraft",
+                draft_id,
+                "A submitted batch cannot be changed",
+            )
+        dataset, selections, preset = self._resolve_selections(session, payload)
+        row.dataset_id = dataset.id
+        row.dataset_revision = dataset.revision
+        row.category = payload.category
+        row.conflict_direction = payload.conflict_direction
+        row.model = payload.model
+        row.precision = payload.precision
+        row.display_name = payload.display_name
+        row.revision += 1
+        row.updated_at = utc_now()
+        self._delete_links(session, draft_id)
+        self._replace_links(session, draft_id, payload, selections, preset)
+        session.flush()
+        return self._draft_read(self._load_aggregate(session, draft_id))
 
     def delete_batch_draft(self, draft_id: int, expected_revision: int) -> None:
         with self.database.immediate_session() as session:

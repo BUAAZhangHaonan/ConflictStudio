@@ -19,6 +19,7 @@ from .enums import (
     AGES,
     BatchDraftStatus,
     Category,
+    ConfigurationAssistantStatus,
     ConflictDirection,
     ContentMode,
     ContentStatus,
@@ -570,6 +571,121 @@ class BatchDraftGpuSlot(SQLModel, table=True):
         )
     )
     position: int = Field(ge=0)
+
+
+class GenerationTestDraft(SQLModel, table=True):
+    __tablename__ = "generation_test_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('PromptTest', 'VideoTest')",
+            name="ck_generation_test_drafts_source",
+        ),
+        CheckConstraint(
+            "json_valid(form_state_json)",
+            name="ck_generation_test_drafts_form_state",
+        ),
+        CheckConstraint("revision >= 1", name="ck_generation_test_drafts_revision"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    source: JobSource = Field(sa_column=enum_column(JobSource))
+    form_state_json: str = Field(sa_column=Column(Text, nullable=False))
+    revision: int = Field(default=1, ge=1)
+    created_at: str = Field(
+        default_factory=utc_now,
+        sa_column=Column(String(32), nullable=False),
+    )
+    updated_at: str = Field(
+        default_factory=utc_now,
+        sa_column=Column(String(32), nullable=False),
+    )
+
+
+class ConfigurationAssistant(SQLModel, table=True):
+    __tablename__ = "configuration_assistants"
+    __table_args__ = (
+        CheckConstraint(
+            "model_name = 'deepseek-v4-flash'",
+            name="ck_configuration_assistants_model",
+        ),
+        CheckConstraint(
+            "length(trim(user_requirement)) > 0",
+            name="ck_configuration_assistants_requirement",
+        ),
+        CheckConstraint(
+            "json_valid(current_form_json) AND json_valid(suggestion_json)",
+            name="ck_configuration_assistants_json",
+        ),
+        CheckConstraint(
+            "(target_source = 'Production' AND batch_draft_id IS NOT NULL "
+            "AND batch_draft_revision IS NOT NULL AND test_draft_id IS NULL "
+            "AND test_draft_revision IS NULL) OR "
+            "(target_source IN ('PromptTest', 'VideoTest') "
+            "AND batch_draft_id IS NULL AND batch_draft_revision IS NULL "
+            "AND test_draft_id IS NOT NULL AND test_draft_revision IS NOT NULL)",
+            name="ck_configuration_assistants_target",
+        ),
+        CheckConstraint(
+            "(status = 'Pending' AND applied_values_json IS NULL "
+            "AND result_json IS NULL) OR "
+            "(status = 'Applied' AND applied_values_json IS NOT NULL "
+            "AND json_valid(applied_values_json) AND result_json IS NOT NULL "
+            "AND json_valid(result_json)) OR "
+            "(status = 'Discarded' AND applied_values_json IS NULL "
+            "AND result_json IS NOT NULL AND json_valid(result_json))",
+            name="ck_configuration_assistants_status",
+        ),
+        CheckConstraint("revision >= 1", name="ck_configuration_assistants_revision"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    target_source: JobSource = Field(sa_column=enum_column(JobSource))
+    batch_draft_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("batch_drafts.id", ondelete="RESTRICT"),
+            nullable=True,
+        ),
+    )
+    batch_draft_revision: int | None = Field(default=None, ge=1)
+    test_draft_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("generation_test_drafts.id", ondelete="RESTRICT"),
+            nullable=True,
+        ),
+    )
+    test_draft_revision: int | None = Field(default=None, ge=1)
+    user_requirement: str = Field(sa_column=Column(Text, nullable=False))
+    model_name: str = Field(
+        default="deepseek-v4-flash",
+        sa_column=Column(String(80), nullable=False),
+    )
+    current_form_json: str = Field(sa_column=Column(Text, nullable=False))
+    suggestion_json: str = Field(sa_column=Column(Text, nullable=False))
+    applied_values_json: str | None = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+    result_json: str | None = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+    status: ConfigurationAssistantStatus = Field(
+        default=ConfigurationAssistantStatus.PENDING,
+        sa_column=enum_column(ConfigurationAssistantStatus),
+    )
+    revision: int = Field(default=1, ge=1)
+    created_at: str = Field(
+        default_factory=utc_now,
+        sa_column=Column(String(32), nullable=False),
+    )
+    updated_at: str = Field(
+        default_factory=utc_now,
+        sa_column=Column(String(32), nullable=False),
+    )
 
 
 class BatchVideoInputSnapshot(SQLModel, table=True):

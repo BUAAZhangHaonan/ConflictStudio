@@ -19,6 +19,7 @@ from backend.services.assets import AssetService
 from backend.services.archives import ArchiveService
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
+from backend.services.configuration_assistant import ConfigurationAssistantService
 from backend.services.errors import ServiceError
 from backend.services.job_executor import JobExecutor
 from backend.services.prompts import PromptService
@@ -68,9 +69,16 @@ def create_app(
     app.state.database = database
     app.state.prompt_model = model
     app.state.renderer = renderer_gateway
-    app.state.catalog_service = CatalogService(database)
+    catalog_service = CatalogService(database)
+    app.state.catalog_service = catalog_service
     app.state.asset_service = AssetService(database)
     app.state.batch_service = batch_service
+    app.state.configuration_assistant_service = ConfigurationAssistantService(
+        database,
+        model,
+        batch_service,
+        catalog_service,
+    )
     sample_service = SampleService(database)
     app.state.sample_service = sample_service
     app.state.reviewer_service = ReviewerService(database)

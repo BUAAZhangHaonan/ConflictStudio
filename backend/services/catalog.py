@@ -571,6 +571,52 @@ class CatalogService:
             session.flush()
             return SceneRead.model_validate(row)
 
+    def create_draft_scene_in_session(
+        self,
+        session: Session,
+        payload: SceneCreate,
+    ) -> Scene:
+        if payload.status is not ResourceStatus.DRAFT:
+            raise invalid_request("Assistant-created shooting scenes must remain Draft")
+        self._ensure_scene_names_available(session, payload.name_zh, payload.name_en)
+        row = Scene(
+            **payload.model_dump(),
+            name_zh_key=name_key(payload.name_zh),
+            name_en_key=name_key(payload.name_en),
+        )
+        session.add(row)
+        session.flush()
+        return row
+
+    def create_draft_content_in_session(
+        self,
+        session: Session,
+        payload: ContentScriptCreate,
+    ) -> ContentScript:
+        if payload.status is not ContentStatus.DRAFT:
+            raise invalid_request("Assistant-created content scripts must remain Draft")
+        self._ensure_content_names_available(
+            session,
+            payload.category,
+            payload.name_zh,
+            payload.name_en,
+        )
+        scenes = self._content_scene_rows(
+            session,
+            payload.scene_ids,
+            payload.mode,
+            payload.status,
+        )
+        row = ContentScript(
+            **payload.model_dump(exclude={"scene_ids"}),
+            name_zh_key=name_key(payload.name_zh),
+            name_en_key=name_key(payload.name_en),
+        )
+        session.add(row)
+        session.flush()
+        self._replace_content_scene_links(session, row.id, scenes)
+        return row
+
     def update_scene(
         self,
         preset_id: int,

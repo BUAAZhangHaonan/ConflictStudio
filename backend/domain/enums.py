@@ -39,6 +39,7 @@ class DatasetPurpose(ValueEnum):
 
 
 class ResourceStatus(ValueEnum):
+    DRAFT = "Draft"
     ACTIVE = "Active"
     INACTIVE = "Inactive"
     DISABLED = "Disabled"
@@ -68,6 +69,35 @@ class PromptExampleKind(ValueEnum):
 class BatchDraftStatus(ValueEnum):
     DRAFT = "Draft"
     SUBMITTED = "Submitted"
+
+
+class ConfigurationAssistantStatus(ValueEnum):
+    PENDING = "Pending"
+    APPLIED = "Applied"
+    DISCARDED = "Discarded"
+
+
+class ConfigurationAssistantField(ValueEnum):
+    TARGET_DATASET = "TargetDataset"
+    DISPLAY_NAME = "DisplayName"
+    CATEGORY = "Category"
+    CONFLICT_DIRECTION = "ConflictDirection"
+    MODEL = "Model"
+    PRECISION = "Precision"
+    CONTENT_SELECTIONS = "ContentSelections"
+    PROMPT_TEMPLATE_VERSION = "PromptTemplateVersion"
+    DEMOGRAPHICS = "Demographics"
+    GPU_SLOTS = "GpuSlots"
+    SEEDS = "Seeds"
+    COMPARISONS = "Comparisons"
+    EXECUTION_MODE = "ExecutionMode"
+
+
+class ConfigurationCandidateKind(ValueEnum):
+    DATASET = "Dataset"
+    CONTENT_SCRIPT = "ContentScript"
+    SHOOTING_SCENE = "ShootingScene"
+    PROMPT_TEMPLATE_VERSION = "PromptTemplateVersion"
 
 
 class JobSource(ValueEnum):

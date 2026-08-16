@@ -34,6 +34,10 @@ from backend.domain.schemas import (
     ContentScriptSceneRead,
     ContentScriptRead,
     ContentScriptUpdate,
+    ConfigurationAssistantApply,
+    ConfigurationAssistantCreate,
+    ConfigurationAssistantDiscard,
+    ConfigurationAssistantRead,
     DatasetCreate,
     DatasetMergeRead,
     DatasetMergeRequest,
@@ -75,6 +79,7 @@ from backend.services.assets import AssetService
 from backend.services.archives import ArchiveService
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
+from backend.services.configuration_assistant import ConfigurationAssistantService
 from backend.services.gpu_slots import GpuSlotSnapshot
 from backend.services.job_executor import JobExecutor
 from backend.services.samples import SampleService
@@ -98,6 +103,12 @@ def catalog(request: Request) -> CatalogService:
 
 def batches(request: Request) -> BatchService:
     return request.app.state.batch_service
+
+
+def configuration_assistants(
+    request: Request,
+) -> ConfigurationAssistantService:
+    return request.app.state.configuration_assistant_service
 
 
 def assets(request: Request) -> AssetService:
@@ -371,6 +382,56 @@ def delete_scene(
 @router.post("/prompt-preview", response_model=PromptPreviewRead)
 def preview_prompt(payload: PromptPreviewRequest, request: Request) -> PromptPreviewRead:
     return batches(request).preview_prompt(payload)
+
+
+@router.post(
+    "/configuration-assistants",
+    response_model=ConfigurationAssistantRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_configuration_assistant(
+    payload: ConfigurationAssistantCreate,
+    request: Request,
+) -> ConfigurationAssistantRead:
+    return await configuration_assistants(request).create(payload)
+
+
+@router.get(
+    "/configuration-assistants/{assistant_id}",
+    response_model=ConfigurationAssistantRead,
+)
+def get_configuration_assistant(
+    assistant_id: int,
+    request: Request,
+) -> ConfigurationAssistantRead:
+    return configuration_assistants(request).get(assistant_id)
+
+
+@router.post(
+    "/configuration-assistants/{assistant_id}/apply",
+    response_model=ConfigurationAssistantRead,
+)
+def apply_configuration_assistant(
+    assistant_id: int,
+    payload: ConfigurationAssistantApply,
+    request: Request,
+) -> ConfigurationAssistantRead:
+    return configuration_assistants(request).apply(assistant_id, payload)
+
+
+@router.post(
+    "/configuration-assistants/{assistant_id}/discard",
+    response_model=ConfigurationAssistantRead,
+)
+def discard_configuration_assistant(
+    assistant_id: int,
+    payload: ConfigurationAssistantDiscard,
+    request: Request,
+) -> ConfigurationAssistantRead:
+    return configuration_assistants(request).discard(
+        assistant_id,
+        payload.expected_revision,
+    )
 
 
 @router.post(
