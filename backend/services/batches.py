@@ -194,7 +194,9 @@ class BatchService:
             session.flush()
             return self._draft_read(self._load_aggregate(session, row.id))
 
-    def update_batch_draft(self, draft_id: int, payload: BatchDraftUpdate) -> BatchDraftRead:
+    def update_batch_draft(
+        self, draft_id: int, payload: BatchDraftUpdate
+    ) -> BatchDraftRead:
         with self.database.immediate_session() as session:
             return self.apply_confirmed_batch_draft(session, draft_id, payload)
 
@@ -232,10 +234,14 @@ class BatchService:
             row = self._get_draft(session, draft_id)
             self._check_draft_revision(row, expected_revision)
             if row.status is not BatchDraftStatus.DRAFT:
-                raise state_conflict("batchDraft", draft_id, "A submitted batch cannot be deleted")
+                raise state_conflict(
+                    "batchDraft", draft_id, "A submitted batch cannot be deleted"
+                )
             session.delete(row)
 
-    async def preview_batch(self, draft_id: int, expected_revision: int) -> BatchPreviewRead:
+    async def preview_batch(
+        self, draft_id: int, expected_revision: int
+    ) -> BatchPreviewRead:
         with self.database.read_session() as session:
             aggregate = self._load_aggregate(session, draft_id)
             self._check_draft_revision(aggregate.draft, expected_revision)
@@ -249,7 +255,9 @@ class BatchService:
             combination_count=len(aggregate.combinations),
             seed_count=len(aggregate.seeds),
             total_count=len(allocations),
-            gpu_revisions={slot: snapshot.revision for slot, snapshot in live_gpu_slots.items()},
+            gpu_revisions={
+                slot: snapshot.revision for slot, snapshot in live_gpu_slots.items()
+            },
             allocations=[self._allocation_read(value) for value in allocations],
         )
 
@@ -392,10 +400,20 @@ class BatchService:
                 payload.demographic,
                 payload.comparisons[0].model,
             )
-        prompt_result = await self.prompts.complete(selection.prepared, selection.content.category)
-        seed = payload.seed if payload.seed is not None else random.SystemRandom().randrange(0, 2**31)
-        selected_slots = list(dict.fromkeys(value.gpu_slot for value in payload.comparisons))
-        async with self.gpu_slots.submission_inspection(selected_slots) as live_gpu_slots:
+        prompt_result = await self.prompts.complete(
+            selection.prepared, selection.content.category
+        )
+        seed = (
+            payload.seed
+            if payload.seed is not None
+            else random.SystemRandom().randrange(0, 2**31)
+        )
+        selected_slots = list(
+            dict.fromkeys(value.gpu_slot for value in payload.comparisons)
+        )
+        async with self.gpu_slots.submission_inspection(
+            selected_slots
+        ) as live_gpu_slots:
             with self.database.immediate_session() as session:
                 current = self._prepare_prompt_selection(
                     session,
@@ -405,9 +423,9 @@ class BatchService:
                     payload.demographic,
                     payload.comparisons[0].model,
                 )
-                requested_profiles: dict[GpuSlotName, list[tuple[ModelName, Precision | None]]] = {
-                    slot: [] for slot in selected_slots
-                }
+                requested_profiles: dict[
+                    GpuSlotName, list[tuple[ModelName, Precision | None]]
+                ] = {slot: [] for slot in selected_slots}
                 for comparison in payload.comparisons:
                     requested_profiles[comparison.gpu_slot].append(
                         (comparison.model, comparison.precision)
@@ -528,7 +546,9 @@ class BatchService:
                 session.flush()
                 return self._job_detail(session, job)
 
-    async def submit_batch(self, draft_id: int, payload: BatchSubmitRequest) -> JobDetailRead:
+    async def submit_batch(
+        self, draft_id: int, payload: BatchSubmitRequest
+    ) -> JobDetailRead:
         if not self.renderer.configured:
             raise ServiceError(
                 503,
@@ -542,7 +562,9 @@ class BatchService:
             self._validate_aggregate(aggregate)
             allocations = self._build_allocations(aggregate)
 
-        async with self.gpu_slots.submission_inspection(aggregate.gpu_slots) as live_gpu_slots:
+        async with self.gpu_slots.submission_inspection(
+            aggregate.gpu_slots
+        ) as live_gpu_slots:
             with self.database.immediate_session() as session:
                 current = self._load_aggregate(session, draft_id)
                 self._check_draft_revision(current.draft, payload.expected_revision)
@@ -562,7 +584,8 @@ class BatchService:
                 current.draft.updated_at = timestamp
                 session.flush()
                 job = Job(
-                    display_name=current.draft.display_name or self._job_name(current.draft.category),
+                    display_name=current.draft.display_name
+                    or self._job_name(current.draft.category),
                     source=JobSource.PRODUCTION,
                     dataset_id=current.dataset.id,
                     dataset_name_snapshot=current.dataset.name,
@@ -582,8 +605,7 @@ class BatchService:
 
                 snapshots: list[BatchVideoInputSnapshot] = []
                 selections_by_content = {
-                    selection.content.id: selection
-                    for selection in current.selections
+                    selection.content.id: selection for selection in current.selections
                 }
                 for allocation in allocations:
                     selection = selections_by_content[allocation.content.id]
@@ -598,9 +620,7 @@ class BatchService:
                         prompt_template_version_id=allocation.preset.id,
                         prompt_template_version_revision=current.preset_revision,
                         scene_id=allocation.scene.id,
-                        scene_revision=selection.scene_revisions[
-                            allocation.scene.id
-                        ],
+                        scene_revision=selection.scene_revisions[allocation.scene.id],
                         policy_version=allocation.prepared.policy_version,
                         category=current.draft.category,
                         conflict_direction=current.draft.conflict_direction,
@@ -617,7 +637,8 @@ class BatchService:
                         renderer_profile_version=RENDERER_PROFILE_VERSION,
                         prompt_model=PROMPT_MODEL,
                         source_has_audio=True,
-                        derive_silent_primary=current.draft.category in {Category.A_VT, Category.C_VT},
+                        derive_silent_primary=current.draft.category
+                        in {Category.A_VT, Category.C_VT},
                         system_input=allocation.prepared.system_input,
                         user_input=allocation.prepared.user_input,
                         negative_prompt=allocation.prepared.negative_prompt,
@@ -802,9 +823,7 @@ class BatchService:
             self._required(session, Job, job_id, "job")
             return paginate(
                 session,
-                select(JobEvent)
-                .where(JobEvent.job_id == job_id)
-                .order_by(JobEvent.id),
+                select(JobEvent).where(JobEvent.job_id == job_id).order_by(JobEvent.id),
                 page,
                 self._job_event_read,
             )
@@ -826,6 +845,7 @@ class BatchService:
                 JobStatus.COMPLETED,
                 JobStatus.FAILED,
                 JobStatus.CANCELLED,
+                JobStatus.INTERRUPTED,
             }
 
     async def list_gpu_slots(self) -> list[GpuSlotSnapshot]:
@@ -837,7 +857,11 @@ class BatchService:
         expected_revision: int,
     ) -> GpuSlotSnapshot:
         if not self.renderer.configured:
-            raise ServiceError(503, "renderer_not_configured", "Rendering requires a configured renderer gateway")
+            raise ServiceError(
+                503,
+                "renderer_not_configured",
+                "Rendering requires a configured renderer gateway",
+            )
         return await self.gpu_slots.release(slot, expected_revision)
 
     def _prepare_prompt_selection(
@@ -849,8 +873,12 @@ class BatchService:
         demographic: DemographicInput,
         model: ModelName,
     ) -> PromptSelection:
-        content = self._required(session, ContentScript, content_selection.id, "contentScript")
-        preset = self._required(session, PromptTemplateVersion, preset_selection.id, "promptTemplateVersion")
+        content = self._required(
+            session, ContentScript, content_selection.id, "contentScript"
+        )
+        preset = self._required(
+            session, PromptTemplateVersion, preset_selection.id, "promptTemplateVersion"
+        )
         template = self._required(
             session,
             PromptTemplate,
@@ -863,11 +891,17 @@ class BatchService:
             scene_selection.id,
             "scene",
         )
-        self._check_source(content, content_selection.expected_revision, "contentScript")
-        self._check_source(preset, preset_selection.expected_revision, "promptTemplateVersion")
+        self._check_source(
+            content, content_selection.expected_revision, "contentScript"
+        )
+        self._check_source(
+            preset, preset_selection.expected_revision, "promptTemplateVersion"
+        )
         self._check_source(scene, scene_selection.expected_revision, "scene")
         if content.status is not ContentStatus.ACTIVE:
-            raise state_conflict("contentScript", content.id, "The selected content script is not active")
+            raise state_conflict(
+                "contentScript", content.id, "The selected content script is not active"
+            )
         if scene.status is not ResourceStatus.ACTIVE:
             raise state_conflict(
                 "scene",
@@ -875,19 +909,28 @@ class BatchService:
                 "The selected scene is disabled",
             )
         if template.category is not content.category:
-            raise ServiceError(422, "validation_error", "The prompt template version category does not match the content")
-        if session.exec(
-            select(ContentScriptScene).where(
-                ContentScriptScene.content_script_id == content.id,
-                ContentScriptScene.scene_id == scene.id,
+            raise ServiceError(
+                422,
+                "validation_error",
+                "The prompt template version category does not match the content",
             )
-        ).first() is None:
+        if (
+            session.exec(
+                select(ContentScriptScene).where(
+                    ContentScriptScene.content_script_id == content.id,
+                    ContentScriptScene.scene_id == scene.id,
+                )
+            ).first()
+            is None
+        ):
             raise ServiceError(
                 422,
                 "incompatible_content_scene",
                 "The selected scene is not registered for this content script",
             )
-        positive_examples, negative_examples = self._version_examples(session, preset.id)
+        positive_examples, negative_examples = self._version_examples(
+            session, preset.id
+        )
         prepared = self.prompts.prepare(
             PromptContext(
                 content=content,
@@ -1002,10 +1045,7 @@ class BatchService:
                         "content_scene_required",
                         "Generative content requires at least one registered scene",
                     )
-                if any(
-                    scene_id not in mapped_ids
-                    for scene_id in requested.scene_ids
-                ):
+                if any(scene_id not in mapped_ids for scene_id in requested.scene_ids):
                     raise ServiceError(
                         422,
                         "incompatible_content_scene",
@@ -1033,9 +1073,7 @@ class BatchService:
                     scenes=scenes,
                     compatible_scenes=compatible_scenes,
                     content_revision=content.revision,
-                    scene_revisions={
-                        scene.id: scene.revision for scene in scenes
-                    },
+                    scene_revisions={scene.id: scene.revision for scene in scenes},
                 )
             )
         for slot in payload.gpu_slots:
@@ -1091,7 +1129,11 @@ class BatchService:
             else payload.gpu_slots
         )
         for position, value in enumerate(gpu_slots):
-            session.add(BatchDraftGpuSlot(batch_draft_id=draft_id, gpu_slot=value, position=position))
+            session.add(
+                BatchDraftGpuSlot(
+                    batch_draft_id=draft_id, gpu_slot=value, position=position
+                )
+            )
 
     @staticmethod
     def _delete_links(session: Session, draft_id: int) -> None:
@@ -1150,9 +1192,14 @@ class BatchService:
                 content_revisions[row.content_script_id] = row.content_script_revision
             content = contents[row.content_script_id]
             scene = self._required(session, Scene, row.scene_id, "scene")
-            if all(current.id != scene.id for current in scenes_by_content[row.content_script_id]):
+            if all(
+                current.id != scene.id
+                for current in scenes_by_content[row.content_script_id]
+            ):
                 scenes_by_content[row.content_script_id].append(scene)
-                scene_revisions[(row.content_script_id, row.scene_id)] = row.scene_revision
+                scene_revisions[(row.content_script_id, row.scene_id)] = (
+                    row.scene_revision
+                )
             combinations.append(
                 DraftCombination(
                     position=row.position,
@@ -1243,14 +1290,24 @@ class BatchService:
         if not aggregate.selections or any(
             not selection.scenes for selection in aggregate.selections
         ):
-            raise ServiceError(409, "state_conflict", "The batch draft has incomplete source selections")
+            raise ServiceError(
+                409,
+                "state_conflict",
+                "The batch draft has incomplete source selections",
+            )
         if not aggregate.combinations or not aggregate.seeds or not aggregate.gpu_slots:
-            raise ServiceError(409, "state_conflict", "The batch draft has incomplete allocation settings")
+            raise ServiceError(
+                409,
+                "state_conflict",
+                "The batch draft has incomplete allocation settings",
+            )
 
     def _validate_aggregate(self, aggregate: DraftAggregate) -> None:
         self._ensure_complete_aggregate(aggregate)
         if aggregate.draft.status is not BatchDraftStatus.DRAFT:
-            raise state_conflict("batchDraft", aggregate.draft.id, "The batch has already been submitted")
+            raise state_conflict(
+                "batchDraft", aggregate.draft.id, "The batch has already been submitted"
+            )
         if (
             aggregate.dataset.revision != aggregate.draft.dataset_revision
             or aggregate.dataset.status is not ResourceStatus.ACTIVE
@@ -1271,8 +1328,7 @@ class BatchService:
                 self._source_changed("contentScript", selection.content.id)
             for scene in selection.scenes:
                 if (
-                    scene.revision
-                    != selection.scene_revisions[scene.id]
+                    scene.revision != selection.scene_revisions[scene.id]
                     or scene.status is not ResourceStatus.ACTIVE
                 ):
                     self._source_changed("scene", scene.id)
@@ -1558,25 +1614,15 @@ class BatchService:
     ) -> tuple[list[str], list[str]]:
         rows = session.exec(
             select(PromptTemplateExample)
-            .where(
-                PromptTemplateExample.prompt_template_version_id == version_id
-            )
+            .where(PromptTemplateExample.prompt_template_version_id == version_id)
             .order_by(
                 PromptTemplateExample.kind,
                 PromptTemplateExample.position,
             )
         ).all()
         return (
-            [
-                row.text
-                for row in rows
-                if row.kind is PromptExampleKind.POSITIVE
-            ],
-            [
-                row.text
-                for row in rows
-                if row.kind is PromptExampleKind.NEGATIVE
-            ],
+            [row.text for row in rows if row.kind is PromptExampleKind.POSITIVE],
+            [row.text for row in rows if row.kind is PromptExampleKind.NEGATIVE],
         )
 
     @classmethod
@@ -1700,11 +1746,7 @@ class BatchService:
                         "completedCount": job.completed_count,
                         "failedCount": job.failed_count,
                         "totalCount": job.total_count,
-                        **(
-                            {"sequence": item.sequence}
-                            if item is not None
-                            else {}
-                        ),
+                        **({"sequence": item.sequence} if item is not None else {}),
                     },
                     ensure_ascii=False,
                     separators=(",", ":"),
@@ -1733,7 +1775,9 @@ class BatchService:
             session.exec(
                 select(GenerationAttempt)
                 .where(GenerationAttempt.job_item_id.in_([item.id for item in items]))
-                .order_by(GenerationAttempt.job_item_id, GenerationAttempt.attempt_number)
+                .order_by(
+                    GenerationAttempt.job_item_id, GenerationAttempt.attempt_number
+                )
             ).all()
             if items
             else []
@@ -1742,7 +1786,11 @@ class BatchService:
         for attempt in attempts:
             attempts_by_item.setdefault(attempt.job_item_id, []).append(attempt)
         samples = (
-            session.exec(select(Sample).where(Sample.job_item_id.in_([item.id for item in items]))).all()
+            session.exec(
+                select(Sample).where(
+                    Sample.job_item_id.in_([item.id for item in items])
+                )
+            ).all()
             if items
             else []
         )
@@ -1842,7 +1890,12 @@ class BatchService:
                 409,
                 "referenced_resource_changed",
                 "A selected record has changed",
-                {"resource": resource, "id": row.id, "expectedRevision": expected, "actualRevision": actual},  # type: ignore[attr-defined]
+                {
+                    "resource": resource,
+                    "id": row.id,
+                    "expectedRevision": expected,
+                    "actualRevision": actual,
+                },  # type: ignore[attr-defined]
             )
 
     @staticmethod

@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-from backend.domain.enums import Category, GpuAvailability, GpuSlotName, ModelName, Precision
+from backend.domain.enums import (
+    Category,
+    GpuAvailability,
+    GpuSlotName,
+    ModelName,
+    Precision,
+)
 
 
 class RendererGatewayError(Exception):
@@ -17,6 +23,12 @@ class RendererGatewayError(Exception):
 class CancelOutcome(str, Enum):
     CANCELLED = "cancelled"
     ALREADY_COMPLETED = "already_completed"
+
+
+class ResumeOutcome(str, Enum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    MISSING = "missing"
 
 
 class RendererInstallationStatus(str, Enum):
@@ -80,6 +92,13 @@ class RendererGateway(Protocol):
     async def submit(self, request: RenderRequest) -> str: ...
 
     async def wait(self, slot: GpuSlotName, prompt_id: str) -> RenderResult: ...
+    async def resume(
+        self,
+        request: RenderRequest,
+        prompt_id: str,
+        attempt_id: int,
+        attempt_number: int,
+    ) -> ResumeOutcome: ...
 
     async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome: ...
 
@@ -118,6 +137,18 @@ class UnconfiguredRendererGateway:
         )
 
     async def wait(self, slot: GpuSlotName, prompt_id: str) -> RenderResult:
+        raise RendererGatewayError(
+            "renderer_not_configured",
+            "Rendering requires a configured renderer gateway",
+        )
+
+    async def resume(
+        self,
+        request: RenderRequest,
+        prompt_id: str,
+        attempt_id: int,
+        attempt_number: int,
+    ) -> ResumeOutcome:
         raise RendererGatewayError(
             "renderer_not_configured",
             "Rendering requires a configured renderer gateway",

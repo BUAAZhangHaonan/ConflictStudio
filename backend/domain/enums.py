@@ -114,6 +114,7 @@ class TestExecutionMode(ValueEnum):
 class JobStatus(ValueEnum):
     QUEUED = "Queued"
     RUNNING = "Running"
+    INTERRUPTED = "Interrupted"
     COMPLETED = "Completed"
     FAILED = "Failed"
     CANCELLED = "Cancelled"
@@ -208,7 +209,11 @@ def protocol_for(category: Category) -> Protocol:
 
 
 def relation_for(category: Category) -> Relation:
-    return Relation.ALIGNED if category in {Category.A_VA, Category.A_VT} else Relation.CONFLICT
+    return (
+        Relation.ALIGNED
+        if category in {Category.A_VA, Category.A_VT}
+        else Relation.CONFLICT
+    )
 
 
 def archive_status_for(

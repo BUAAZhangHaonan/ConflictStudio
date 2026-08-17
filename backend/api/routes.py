@@ -5,7 +5,15 @@ from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 
-from fastapi import APIRouter, Query, Request, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
@@ -46,6 +54,8 @@ from backend.domain.schemas import (
     GenerationAttemptRead,
     HealthRead,
     JobCancelRequest,
+    JobResumeRequest,
+    JobRetryFailedRequest,
     JobDetailRead,
     JobEventRead,
     JobItemRead,
@@ -93,7 +103,7 @@ router = APIRouter(prefix="/api")
 
 EVENT_REPLAY_LIMIT = PAGE_SIZE
 EVENT_POLL_SECONDS = 0.25
-TERMINAL_EVENT_TYPES = {"JobCompleted", "JobFailed", "JobCancelled"}
+TERMINAL_EVENT_TYPES = {"JobCompleted", "JobFailed", "JobCancelled", "JobInterrupted"}
 MEDIA_CHUNK_SIZE = 1024 * 1024
 
 
@@ -174,13 +184,17 @@ def get_dataset(dataset_id: int, request: Request) -> DatasetRead:
     return catalog(request).get_dataset(dataset_id)
 
 
-@router.post("/datasets", response_model=DatasetRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/datasets", response_model=DatasetRead, status_code=status.HTTP_201_CREATED
+)
 def create_dataset(payload: DatasetCreate, request: Request) -> DatasetRead:
     return catalog(request).create_dataset(payload)
 
 
 @router.patch("/datasets/{dataset_id}", response_model=DatasetRead)
-def update_dataset(dataset_id: int, payload: DatasetUpdate, request: Request) -> DatasetRead:
+def update_dataset(
+    dataset_id: int, payload: DatasetUpdate, request: Request
+) -> DatasetRead:
     return catalog(request).update_dataset(dataset_id, payload)
 
 
@@ -211,8 +225,14 @@ def list_content_scripts(
     return catalog(request).list_content_scripts(page)
 
 
-@router.post("/content-scripts", response_model=ContentScriptRead, status_code=status.HTTP_201_CREATED)
-def create_content_script(payload: ContentScriptCreate, request: Request) -> ContentScriptRead:
+@router.post(
+    "/content-scripts",
+    response_model=ContentScriptRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_content_script(
+    payload: ContentScriptCreate, request: Request
+) -> ContentScriptRead:
     return catalog(request).create_content_script(payload)
 
 
@@ -222,7 +242,9 @@ def get_content_script(content_id: int, request: Request) -> ContentScriptRead:
 
 
 @router.patch("/content-scripts/{content_id}", response_model=ContentScriptRead)
-def update_content_script(content_id: int, payload: ContentScriptUpdate, request: Request) -> ContentScriptRead:
+def update_content_script(
+    content_id: int, payload: ContentScriptUpdate, request: Request
+) -> ContentScriptRead:
     return catalog(request).update_content_script(content_id, payload)
 
 
@@ -380,7 +402,9 @@ def delete_scene(
 
 
 @router.post("/prompt-preview", response_model=PromptPreviewRead)
-def preview_prompt(payload: PromptPreviewRequest, request: Request) -> PromptPreviewRead:
+def preview_prompt(
+    payload: PromptPreviewRequest, request: Request
+) -> PromptPreviewRead:
     return batches(request).preview_prompt(payload)
 
 
@@ -474,7 +498,9 @@ def list_batch_drafts(
     return batches(request).list_batch_drafts(page)
 
 
-@router.post("/batch-drafts", response_model=BatchDraftRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/batch-drafts", response_model=BatchDraftRead, status_code=status.HTTP_201_CREATED
+)
 def create_batch_draft(payload: BatchDraftCreate, request: Request) -> BatchDraftRead:
     return batches(request).create_batch_draft(payload)
 
@@ -485,7 +511,9 @@ def get_batch_draft(draft_id: int, request: Request) -> BatchDraftRead:
 
 
 @router.put("/batch-drafts/{draft_id}", response_model=BatchDraftRead)
-def update_batch_draft(draft_id: int, payload: BatchDraftUpdate, request: Request) -> BatchDraftRead:
+def update_batch_draft(
+    draft_id: int, payload: BatchDraftUpdate, request: Request
+) -> BatchDraftRead:
     return batches(request).update_batch_draft(draft_id, payload)
 
 
@@ -500,12 +528,20 @@ def delete_batch_draft(
 
 
 @router.post("/batch-drafts/{draft_id}/preview", response_model=BatchPreviewRead)
-async def preview_batch(draft_id: int, payload: BatchPreviewRequest, request: Request) -> BatchPreviewRead:
+async def preview_batch(
+    draft_id: int, payload: BatchPreviewRequest, request: Request
+) -> BatchPreviewRead:
     return await batches(request).preview_batch(draft_id, payload.expected_revision)
 
 
-@router.post("/batch-drafts/{draft_id}/submit", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)
-async def submit_batch(draft_id: int, payload: BatchSubmitRequest, request: Request) -> Response:
+@router.post(
+    "/batch-drafts/{draft_id}/submit",
+    response_model=JobDetailRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def submit_batch(
+    draft_id: int, payload: BatchSubmitRequest, request: Request
+) -> Response:
     job = await batches(request).submit_batch(draft_id, payload)
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
@@ -624,7 +660,9 @@ def get_reviewer(reviewer_id: int, request: Request) -> ReviewerRead:
     return reviewers(request).get(reviewer_id)
 
 
-@router.post("/reviewers", response_model=ReviewerRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/reviewers", response_model=ReviewerRead, status_code=status.HTTP_201_CREATED
+)
 def create_reviewer(payload: ReviewerCreate, request: Request) -> ReviewerRead:
     return reviewers(request).create(payload)
 
@@ -652,12 +690,20 @@ def create_review(payload: ReviewCreate, request: Request) -> SampleRead:
     return reviews(request).create(payload)
 
 
-@router.post("/reviews/batch", response_model=list[SampleRead], status_code=status.HTTP_201_CREATED)
-def create_reviews_batch(payload: ReviewBatchCreate, request: Request) -> list[SampleRead]:
+@router.post(
+    "/reviews/batch",
+    response_model=list[SampleRead],
+    status_code=status.HTTP_201_CREATED,
+)
+def create_reviews_batch(
+    payload: ReviewBatchCreate, request: Request
+) -> list[SampleRead]:
     return reviews(request).create_batch(payload)
 
 
-@router.get("/reviewers/{reviewer_id}/statistics", response_model=ReviewerStatisticsRead)
+@router.get(
+    "/reviewers/{reviewer_id}/statistics", response_model=ReviewerStatisticsRead
+)
 def reviewer_statistics(
     reviewer_id: int,
     request: Request,
@@ -682,7 +728,9 @@ def list_archives(
 
 
 @router.post("/archives/preview", response_model=ArchivePreviewRead)
-def preview_archive(payload: ArchivePreviewRequest, request: Request) -> ArchivePreviewRead:
+def preview_archive(
+    payload: ArchivePreviewRequest, request: Request
+) -> ArchivePreviewRead:
     return archives(request).preview(payload)
 
 
@@ -697,7 +745,9 @@ def download_archive_manifest(dataset_id: int, request: Request) -> Response:
     return Response(
         path.read_bytes(),
         media_type="application/x-ndjson",
-        headers={"Content-Disposition": f'attachment; filename="dataset-{dataset_id}-manifest.jsonl"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="dataset-{dataset_id}-manifest.jsonl"'
+        },
     )
 
 
@@ -719,7 +769,9 @@ def head_media_asset(asset_id: int, request: Request) -> Response:
     return _read_media_asset(asset_id, request, include_body=False)
 
 
-def _read_media_asset(asset_id: int, request: Request, *, include_body: bool) -> Response:
+def _read_media_asset(
+    asset_id: int, request: Request, *, include_body: bool
+) -> Response:
     path, media_type, evidence = assets(request).content(asset_id)
     range_header = request.headers.get("range")
     if range_header is None:
@@ -774,7 +826,9 @@ def _parse_byte_range(value: str, size: int) -> tuple[int, int]:
         raise _MalformedRangeError
 
     if start_text:
-        if not _is_ascii_digits(start_text) or (end_text and not _is_ascii_digits(end_text)):
+        if not _is_ascii_digits(start_text) or (
+            end_text and not _is_ascii_digits(end_text)
+        ):
             raise _MalformedRangeError
         start = int(start_text)
         if start >= size:
@@ -875,7 +929,9 @@ async def replay_job_events(
                     continue
                 await websocket.send_json(event.model_dump(mode="json", by_alias=True))
                 cursor = event.id
-                terminal_sent = terminal_sent or event.event_type in TERMINAL_EVENT_TYPES
+                terminal_sent = (
+                    terminal_sent or event.event_type in TERMINAL_EVENT_TYPES
+                )
 
             replay_exhausted = len(events) < EVENT_REPLAY_LIMIT
             if replaying and not replay_exhausted:
@@ -914,7 +970,11 @@ async def replay_job_events(
     except (WebSocketDisconnect, asyncio.CancelledError):
         return
     finally:
-        pending = [task for task in (receive_task, signal_task, poll_task) if task is not None and not task.done()]
+        pending = [
+            task
+            for task in (receive_task, signal_task, poll_task)
+            if task is not None and not task.done()
+        ]
         for task in pending:
             task.cancel()
         job_executor.unsubscribe_events(signal)
@@ -925,9 +985,41 @@ async def replay_job_events(
                 pass
 
 
-@router.post("/jobs/{job_id}/cancel", response_model=JobDetailRead, status_code=status.HTTP_202_ACCEPTED)
-async def cancel_job(job_id: int, payload: JobCancelRequest, request: Request) -> JobDetailRead:
+@router.post(
+    "/jobs/{job_id}/cancel",
+    response_model=JobDetailRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def cancel_job(
+    job_id: int, payload: JobCancelRequest, request: Request
+) -> JobDetailRead:
     await executor(request).cancel_job(job_id, payload)
+    return batches(request).get_job(job_id)
+
+
+@router.post(
+    "/jobs/{job_id}/resume",
+    response_model=JobDetailRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def resume_job(
+    job_id: int, payload: JobResumeRequest, request: Request
+) -> JobDetailRead:
+    await executor(request).resume_job(job_id, payload)
+    return batches(request).get_job(job_id)
+
+
+@router.post(
+    "/jobs/{job_id}/retry-failed",
+    response_model=JobDetailRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_failed_job_items(
+    job_id: int,
+    payload: JobRetryFailedRequest,
+    request: Request,
+) -> JobDetailRead:
+    await executor(request).retry_failed_items(job_id, payload)
     return batches(request).get_job(job_id)
 
 
@@ -952,10 +1044,14 @@ def _gpu_slot_read(snapshot: GpuSlotSnapshot) -> GpuSlotRead:
 
 @router.get("/gpu-slots", response_model=list[GpuSlotRead])
 async def list_gpu_slots(request: Request) -> list[GpuSlotRead]:
-    return [_gpu_slot_read(snapshot) for snapshot in await batches(request).list_gpu_slots()]
+    return [
+        _gpu_slot_read(snapshot) for snapshot in await batches(request).list_gpu_slots()
+    ]
 
 
 @router.post("/gpu-slots/{slot}/release", response_model=GpuSlotRead)
-async def release_gpu_slot(slot: GpuSlotName, payload: GpuReleaseRequest, request: Request) -> GpuSlotRead:
+async def release_gpu_slot(
+    slot: GpuSlotName, payload: GpuReleaseRequest, request: Request
+) -> GpuSlotRead:
     snapshot = await batches(request).release_gpu_slot(slot, payload.expected_revision)
     return _gpu_slot_read(snapshot)

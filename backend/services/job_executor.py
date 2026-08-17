@@ -13,9 +13,11 @@ from sqlmodel import Session, select
 from backend.adapters.database import Database
 from backend.adapters.renderer import (
     CancelOutcome,
+    ResumeOutcome,
     RenderRequest,
     RendererGateway,
     RendererGatewayError,
+    RendererSlotState,
 )
 from backend.domain.enums import (
     Category,
@@ -38,7 +40,12 @@ from backend.domain.models import (
     JobItemPromptResult,
     utc_now,
 )
-from backend.domain.schemas import JobCancelRequest, PromptFailureDetails
+from backend.domain.schemas import (
+    JobCancelRequest,
+    JobResumeRequest,
+    JobRetryFailedRequest,
+    PromptFailureDetails,
+)
 
 from .errors import (
     PromptServiceError,
@@ -71,6 +78,10 @@ class _ItemExecution:
     derive_silent_primary: bool
     prepared_prompt: PreparedPrompt
     prompt_result: PromptResult | None
+
+    resume_attempt_id: int | None = None
+    resume_attempt_number: int | None = None
+    resume_prompt_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,7 +117,7 @@ class JobExecutor:
         if self._loop_task is not None:
             return
         self._stopping = False
-        self.recover()
+        await self.recover()
         self._loop_task = asyncio.create_task(
             self._run_loop(), name="conflictstudio-job-executor"
         )
@@ -175,6 +186,12 @@ class JobExecutor:
                 raise state_conflict(
                     "job", job_id, "A finished job cannot be cancelled"
                 )
+            if job.status is JobStatus.INTERRUPTED:
+                raise state_conflict(
+                    "job",
+                    job_id,
+                    "Resume the interrupted job before cancelling it",
+                )
 
             timestamp = utc_now()
             if job.status is JobStatus.QUEUED:
@@ -213,49 +230,409 @@ class JobExecutor:
         if task_to_cancel is not None:
             task_to_cancel.cancel()
 
-    def recover(self) -> None:
-        with self._event_session() as session:
-            running_jobs = session.exec(
-                select(Job).where(Job.status == JobStatus.RUNNING).order_by(Job.id)
-            ).all()
-            for job in running_jobs:
-                timestamp = utc_now()
-                self._fail_unfinished_items(
-                    session,
-                    job,
-                    "interrupted_by_restart",
-                    "The application stopped while this job was running",
-                    timestamp,
+    async def resume_job(
+        self,
+        job_id: int,
+        payload: JobResumeRequest,
+    ) -> None:
+        item_revisions, slot_revisions = self._reactivation_snapshot(
+            job_id,
+            payload.expected_revision,
+            JobStatus.INTERRUPTED,
+            None,
+        )
+        live_states = await self._probe_reactivation_slots(list(slot_revisions))
+        self._reactivate_items(
+            job_id,
+            payload.expected_revision,
+            JobStatus.INTERRUPTED,
+            item_revisions,
+            slot_revisions,
+            live_states,
+            "JobResumed",
+        )
+        self.notify()
+
+    async def retry_failed_items(
+        self,
+        job_id: int,
+        payload: JobRetryFailedRequest,
+    ) -> None:
+        item_revisions, slot_revisions = self._reactivation_snapshot(
+            job_id,
+            payload.expected_revision,
+            JobStatus.FAILED,
+            payload.item_revisions,
+        )
+        live_states = await self._probe_reactivation_slots(list(slot_revisions))
+        self._reactivate_items(
+            job_id,
+            payload.expected_revision,
+            JobStatus.FAILED,
+            item_revisions,
+            slot_revisions,
+            live_states,
+            "JobRetryQueued",
+        )
+        self.notify()
+
+    def _reactivation_snapshot(
+        self,
+        job_id: int,
+        expected_revision: int,
+        required_status: JobStatus,
+        selected_revisions: dict[int, int] | None,
+    ) -> tuple[dict[int, int], dict[GpuSlotName, int]]:
+        if not self.renderer.configured:
+            raise ServiceError(
+                503,
+                "renderer_not_configured",
+                "Rendering requires a configured renderer gateway",
+            )
+        with self.database.read_session() as session:
+            job = session.get(Job, job_id)
+            if job is None:
+                raise not_found("job", job_id)
+            if job.revision != expected_revision:
+                raise revision_conflict(
+                    "job",
+                    job_id,
+                    expected_revision,
+                    job.revision,
                 )
-                job.status = JobStatus.FAILED
+            if job.status is not required_status:
+                raise state_conflict(
+                    "job",
+                    job_id,
+                    "The job is not ready for this operation",
+                )
+            items = session.exec(
+                select(JobItem)
+                .where(JobItem.job_id == job_id)
+                .order_by(JobItem.sequence)
+            ).all()
+            by_id = {item.id: item for item in items}
+            if selected_revisions is None:
+                selected = [
+                    item for item in items if item.status is JobStatus.INTERRUPTED
+                ]
+                if not selected:
+                    raise state_conflict(
+                        "job",
+                        job_id,
+                        "The interrupted job has no unfinished items",
+                    )
+                item_revisions = {item.id: item.revision for item in selected}
+            else:
+                item_revisions = dict(selected_revisions)
+                selected = []
+                for item_id, expected_item_revision in item_revisions.items():
+                    item = by_id.get(item_id)
+                    if item is None or item.status is not JobStatus.FAILED:
+                        raise ServiceError(
+                            422,
+                            "validation_error",
+                            "Every selected item must be a failed item in this job",
+                        )
+                    if item.revision != expected_item_revision:
+                        raise revision_conflict(
+                            "jobItem",
+                            item_id,
+                            expected_item_revision,
+                            item.revision,
+                        )
+                    selected.append(item)
+            slots = list(
+                dict.fromkeys(
+                    item.gpu_slot for item in selected if item.gpu_slot is not None
+                )
+            )
+            if not slots:
+                raise state_conflict(
+                    "job",
+                    job_id,
+                    "The selected items have no assigned GPU",
+                )
+            slot_revisions: dict[GpuSlotName, int] = {}
+            for slot in slots:
+                row = session.get(GpuSlot, slot)
+                if row is None:
+                    raise state_conflict(
+                        "job",
+                        job_id,
+                        "An assigned GPU record does not exist",
+                    )
+                slot_revisions[slot] = row.revision
+            return item_revisions, slot_revisions
+
+    async def _probe_reactivation_slots(
+        self,
+        slots: list[GpuSlotName],
+    ) -> dict[GpuSlotName, RendererSlotState]:
+        live_states: dict[GpuSlotName, RendererSlotState] = {}
+        for slot in slots:
+            try:
+                state = await self.renderer.probe(slot)
+            except Exception as error:
+                raise ServiceError(
+                    503,
+                    "gpu_state_unavailable",
+                    "The current GPU state could not be checked",
+                ) from error
+            if state.availability is not GpuAvailability.AVAILABLE:
+                raise ServiceError(
+                    409,
+                    "gpu_unavailable",
+                    state.reason or "The assigned GPU is not available",
+                    {"slot": slot.value},
+                )
+            live_states[slot] = state
+        return live_states
+
+    def _reactivate_items(
+        self,
+        job_id: int,
+        expected_job_revision: int,
+        required_job_status: JobStatus,
+        item_revisions: dict[int, int],
+        slot_revisions: dict[GpuSlotName, int],
+        live_states: dict[GpuSlotName, RendererSlotState],
+        event_type: str,
+    ) -> None:
+        with self._event_session() as session:
+            job = session.get(Job, job_id)
+            if job is None:
+                raise not_found("job", job_id)
+            if job.revision != expected_job_revision:
+                raise revision_conflict(
+                    "job",
+                    job_id,
+                    expected_job_revision,
+                    job.revision,
+                )
+            if job.status is not required_job_status:
+                raise state_conflict(
+                    "job",
+                    job_id,
+                    "The job is not ready for this operation",
+                )
+            items: list[JobItem] = []
+            required_item_status = (
+                JobStatus.INTERRUPTED
+                if required_job_status is JobStatus.INTERRUPTED
+                else JobStatus.FAILED
+            )
+            for item_id, expected_item_revision in item_revisions.items():
+                item = session.get(JobItem, item_id)
+                if (
+                    item is None
+                    or item.job_id != job_id
+                    or item.status is not required_item_status
+                ):
+                    raise state_conflict(
+                        "job",
+                        job_id,
+                        "A selected item is no longer ready",
+                    )
+                if item.revision != expected_item_revision:
+                    raise revision_conflict(
+                        "jobItem",
+                        item_id,
+                        expected_item_revision,
+                        item.revision,
+                    )
+                items.append(item)
+            self._reserve_reactivation_slots(
+                session,
+                job,
+                slot_revisions,
+                live_states,
+            )
+            timestamp = utc_now()
+            for item in items:
+                self._prepare_item_reactivation(session, item, timestamp)
+            job.status = JobStatus.QUEUED
+            job.failure_code = None
+            job.failure_reason = None
+            job.cancel_requested_at = None
+            job.finished_at = None
+            job.updated_at = timestamp
+            job.revision += 1
+            self._sync_counts(session, job)
+            self._append_event(session, job, event_type)
+
+    @staticmethod
+    def _reserve_reactivation_slots(
+        session: Session,
+        job: Job,
+        expected_revisions: dict[GpuSlotName, int],
+        live_states: dict[GpuSlotName, RendererSlotState],
+    ) -> None:
+        timestamp = utc_now()
+        for slot, expected_revision in expected_revisions.items():
+            row = session.get(GpuSlot, slot)
+            state = live_states[slot]
+            if row is None:
+                raise state_conflict(
+                    "job",
+                    job.id,
+                    "An assigned GPU record does not exist",
+                )
+            if row.revision != expected_revision:
+                raise revision_conflict(
+                    "gpuSlot",
+                    slot.value,
+                    expected_revision,
+                    row.revision,
+                )
+            if row.active_job_id is not None:
+                raise state_conflict(
+                    "job",
+                    job.id,
+                    "An assigned GPU is already reserved",
+                )
+            row.availability = GpuAvailability.RESERVED
+            row.active_job_id = job.id
+            row.loaded_model = state.loaded_model
+            row.loaded_precision = state.loaded_precision
+            row.checked_at = timestamp
+            row.revision += 1
+
+    @staticmethod
+    def _prepare_item_reactivation(
+        session: Session,
+        item: JobItem,
+        timestamp: str,
+    ) -> None:
+        prompt_result = session.exec(
+            select(JobItemPromptResult).where(
+                JobItemPromptResult.job_item_id == item.id
+            )
+        ).one_or_none()
+        running_attempt = session.exec(
+            select(GenerationAttempt).where(
+                GenerationAttempt.job_item_id == item.id,
+                GenerationAttempt.status == GenerationAttemptStatus.RUNNING,
+            )
+        ).one_or_none()
+        item.status = JobStatus.QUEUED
+        if running_attempt is not None:
+            item.stage = (
+                item.stage
+                if item.stage
+                in {
+                    JobItemStage.RENDERING,
+                    JobItemStage.MEDIA_PROCESSING,
+                }
+                else JobItemStage.RENDERING
+            )
+            item.renderer_prompt_id = running_attempt.renderer_prompt_id
+        elif prompt_result is not None:
+            item.stage = JobItemStage.PROMPT_READY
+            item.renderer_prompt_id = None
+        else:
+            item.stage = JobItemStage.PROMPT_QUEUED
+            item.renderer_prompt_id = None
+        item.source_asset_id = None
+        item.primary_asset_id = None
+        item.failure_code = None
+        item.failure_reason = None
+        item.failure_details_json = None
+        item.updated_at = timestamp
+        item.revision += 1
+
+    def _complete_persisted_item(
+        self,
+        session: Session,
+        job: Job,
+        item: JobItem,
+        timestamp: str,
+    ) -> bool:
+        latest_attempt = session.exec(
+            select(GenerationAttempt)
+            .where(GenerationAttempt.job_item_id == item.id)
+            .order_by(GenerationAttempt.attempt_number.desc())
+        ).first()
+        if (
+            latest_attempt is None
+            or latest_attempt.status is not GenerationAttemptStatus.COMPLETED
+        ):
+            return False
+        if (
+            item.stage is not JobItemStage.MEDIA_PROCESSING
+            or latest_attempt.source_asset_id is None
+            or latest_attempt.primary_asset_id is None
+            or item.renderer_prompt_id != latest_attempt.renderer_prompt_id
+            or item.source_asset_id != latest_attempt.source_asset_id
+            or item.primary_asset_id != latest_attempt.primary_asset_id
+        ):
+            raise RuntimeError(
+                "The persisted completed attempt does not match its job item"
+            )
+        self._complete_item_in_session(session, job, item, timestamp)
+        return True
+
+    async def recover(self) -> None:
+        recovered_slots: set[GpuSlotName] = set()
+        with self._event_session() as session:
+            unfinished_jobs = session.exec(
+                select(Job)
+                .where(Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
+                .order_by(Job.id)
+            ).all()
+            for job in unfinished_jobs:
+                previous_status = job.status
+                timestamp = utc_now()
+                items = session.exec(
+                    select(JobItem).where(JobItem.job_id == job.id)
+                ).all()
+                recovered_slots.update(
+                    item.gpu_slot for item in items if item.gpu_slot is not None
+                )
+                for item in items:
+                    if item.status in TERMINAL_STATUSES:
+                        continue
+                    if self._complete_persisted_item(session, job, item, timestamp):
+                        continue
+                    item.status = JobStatus.INTERRUPTED
+                    item.failure_code = "interrupted_by_restart"
+                    item.failure_reason = self._interrupted_reason(item.stage)
+                    item.updated_at = timestamp
+                    item.revision += 1
+                if items and all(item.status in TERMINAL_STATUSES for item in items):
+                    if job.cancel_requested_at is not None or any(
+                        item.status is JobStatus.CANCELLED for item in items
+                    ):
+                        self._finish_cancelled_job_in_session(session, job)
+                    else:
+                        self._finalize_job_in_session(
+                            session, job, timestamp, GpuAvailability.UNKNOWN
+                        )
+                    continue
+                job.status = JobStatus.INTERRUPTED
                 job.failure_code = "interrupted_by_restart"
                 job.failure_reason = (
-                    "The application stopped while this job was running"
+                    "The application stopped before the job started"
+                    if previous_status is JobStatus.QUEUED
+                    else "The application stopped before the job finished"
                 )
-                job.finished_at = timestamp
+                job.finished_at = None
                 job.updated_at = timestamp
                 job.revision += 1
                 self._sync_counts(session, job)
                 self._release_owned_slots(
-                    session, job.id, GpuAvailability.UNKNOWN, timestamp
-                )
-                self._append_event(
-                    session, job, "JobInterrupted", code=job.failure_code
+                    session,
+                    job.id,
+                    GpuAvailability.UNKNOWN,
+                    timestamp,
                 )
                 self._append_event(
                     session,
                     job,
-                    "JobFailed",
+                    "JobInterrupted",
                     code=job.failure_code,
                     reason=job.failure_reason,
                 )
-
-            queued_jobs = session.exec(
-                select(Job).where(Job.status == JobStatus.QUEUED).order_by(Job.id)
-            ).all()
-            for job in queued_jobs:
-                if not self._reservations_match(session, job):
-                    self._fail_queued_reservation(session, job)
 
             occupied_slots = session.exec(
                 select(GpuSlot).where(
@@ -278,6 +655,55 @@ class JobExecutor:
                     slot.active_job_id = None
                     slot.revision += 1
                     slot.checked_at = utc_now()
+
+        for slot in recovered_slots:
+            await self._refresh_interrupted_slot(slot)
+
+    async def _refresh_interrupted_slot(self, slot: GpuSlotName) -> None:
+        try:
+            live = await self.renderer.probe(slot)
+            availability = live.availability
+            if availability in {
+                GpuAvailability.RESERVED,
+                GpuAvailability.BUSY,
+            }:
+                availability = GpuAvailability.EXTERNAL_OCCUPIED
+            loaded_model = live.loaded_model
+            loaded_precision = live.loaded_precision
+        except Exception:
+            availability = GpuAvailability.UNKNOWN
+            loaded_model = None
+            loaded_precision = None
+        with self._event_session() as session:
+            row = session.get(GpuSlot, slot)
+            if row is None or row.active_job_id is not None:
+                return
+            row.availability = availability
+            row.loaded_model = loaded_model
+            row.loaded_precision = loaded_precision
+            row.checked_at = utc_now()
+            row.revision += 1
+
+    @staticmethod
+    def _interrupted_reason(stage: JobItemStage) -> str:
+        return {
+            JobItemStage.PROMPT_QUEUED: (
+                "The application stopped before prompt generation started"
+            ),
+            JobItemStage.PROMPT_GENERATING: (
+                "The application stopped during prompt generation"
+            ),
+            JobItemStage.PROMPT_READY: (
+                "The application stopped before video rendering started"
+            ),
+            JobItemStage.RENDERING: ("The application stopped during video rendering"),
+            JobItemStage.MEDIA_PROCESSING: (
+                "The application stopped while the video was being prepared"
+            ),
+            JobItemStage.COMPLETED: (
+                "The application stopped after the video completed"
+            ),
+        }[stage]
 
     async def _run_loop(self) -> None:
         while not self._stopping:
@@ -344,7 +770,10 @@ class JobExecutor:
             with self.database.read_session() as session:
                 items = session.exec(
                     select(JobItem)
-                    .where(JobItem.job_id == job_id)
+                    .where(
+                        JobItem.job_id == job_id,
+                        JobItem.status == JobStatus.QUEUED,
+                    )
                     .order_by(JobItem.sequence)
                 ).all()
                 channels: dict[GpuSlotName, list[int]] = defaultdict(list)
@@ -405,10 +834,40 @@ class JobExecutor:
                 source_has_audio=execution.source_has_audio,
                 derive_silent_primary=execution.derive_silent_primary,
             )
-            prompt_id = await self.renderer.submit(request)
-            if not getattr(self.renderer, "persists_render_state", False):
-                self._record_rendering(job_id, item_id, prompt_id)
-            await self.renderer.wait(execution.gpu_slot, prompt_id)
+            if execution.resume_prompt_id is not None:
+                if (
+                    execution.resume_attempt_id is None
+                    or execution.resume_attempt_number is None
+                ):
+                    raise RuntimeError("The interrupted render attempt is incomplete")
+                prompt_id = execution.resume_prompt_id
+                outcome = await self.renderer.resume(
+                    request,
+                    prompt_id,
+                    execution.resume_attempt_id,
+                    execution.resume_attempt_number,
+                )
+                if outcome is ResumeOutcome.MISSING:
+                    self._mark_missing_attempt(
+                        job_id,
+                        item_id,
+                        execution.resume_attempt_id,
+                    )
+                    prompt_id = await self.renderer.submit(request)
+                    if not getattr(
+                        self.renderer,
+                        "persists_render_state",
+                        False,
+                    ):
+                        self._record_rendering(job_id, item_id, prompt_id)
+                    await self.renderer.wait(execution.gpu_slot, prompt_id)
+                elif outcome is ResumeOutcome.RUNNING:
+                    await self.renderer.wait(execution.gpu_slot, prompt_id)
+            else:
+                prompt_id = await self.renderer.submit(request)
+                if not getattr(self.renderer, "persists_render_state", False):
+                    self._record_rendering(job_id, item_id, prompt_id)
+                await self.renderer.wait(execution.gpu_slot, prompt_id)
             self._complete_item(job_id, item_id)
         except asyncio.CancelledError:
             cancel_outcome: CancelOutcome | None = None
@@ -454,9 +913,26 @@ class JobExecutor:
                     JobItemPromptResult.job_item_id == item.id
                 )
             ).one_or_none()
+            running_attempt = session.exec(
+                select(GenerationAttempt).where(
+                    GenerationAttempt.job_item_id == item.id,
+                    GenerationAttempt.status == GenerationAttemptStatus.RUNNING,
+                )
+            ).one_or_none()
             timestamp = utc_now()
             item.status = JobStatus.RUNNING
-            if stored_prompt is None:
+            if running_attempt is not None:
+                if (
+                    stored_prompt is None
+                    or item.stage
+                    not in {
+                        JobItemStage.RENDERING,
+                        JobItemStage.MEDIA_PROCESSING,
+                    }
+                    or item.renderer_prompt_id != running_attempt.renderer_prompt_id
+                ):
+                    raise RuntimeError("The interrupted render is in an invalid state")
+            elif stored_prompt is None:
                 if item.stage is not JobItemStage.PROMPT_QUEUED:
                     raise RuntimeError("The queued prompt is in an invalid stage")
                 item.stage = JobItemStage.PROMPT_GENERATING
@@ -464,7 +940,7 @@ class JobExecutor:
                 raise RuntimeError("The prepared prompt is in an invalid stage")
             item.updated_at = timestamp
             item.revision += 1
-            if stored_prompt is None:
+            if stored_prompt is None and running_attempt is None:
                 self._append_event(session, job, "ItemPromptStarted", item=item)
             session.flush()
             return _ItemExecution(
@@ -485,6 +961,19 @@ class JobExecutor:
                 prompt_result=(
                     self._prompt_result(stored_prompt)
                     if stored_prompt is not None
+                    else None
+                ),
+                resume_attempt_id=(
+                    running_attempt.id if running_attempt is not None else None
+                ),
+                resume_attempt_number=(
+                    running_attempt.attempt_number
+                    if running_attempt is not None
+                    else None
+                ),
+                resume_prompt_id=(
+                    running_attempt.renderer_prompt_id
+                    if running_attempt is not None
                     else None
                 ),
             )
@@ -563,31 +1052,74 @@ class JobExecutor:
             item.revision += 1
             self._append_event(session, job, "ItemRenderStarted", item=item)
 
+    def _mark_missing_attempt(
+        self,
+        job_id: int,
+        item_id: int,
+        attempt_id: int,
+    ) -> None:
+        with self._event_session() as session:
+            job = session.get(Job, job_id)
+            item = session.get(JobItem, item_id)
+            attempt = session.get(GenerationAttempt, attempt_id)
+            if (
+                job is None
+                or item is None
+                or attempt is None
+                or item.job_id != job_id
+                or attempt.job_item_id != item_id
+                or attempt.status is not GenerationAttemptStatus.RUNNING
+                or item.renderer_prompt_id != attempt.renderer_prompt_id
+            ):
+                raise RuntimeError("The interrupted render attempt changed")
+            timestamp = utc_now()
+            attempt.status = GenerationAttemptStatus.FAILED
+            attempt.failure_reason = "The previous renderer task no longer exists"
+            attempt.finished_at = timestamp
+            item.stage = JobItemStage.PROMPT_READY
+            item.renderer_prompt_id = None
+            item.updated_at = timestamp
+            item.revision += 1
+            self._append_event(
+                session,
+                job,
+                "ItemRenderMissing",
+                item=item,
+                code="renderer_prompt_missing",
+                reason=attempt.failure_reason,
+            )
+
     def _complete_item(self, job_id: int, item_id: int) -> None:
         with self._event_session() as session:
             job = session.get(Job, job_id)
             item = session.get(JobItem, item_id)
             if job is None or item is None:
                 raise RuntimeError("The running job item no longer exists")
-            if getattr(self.renderer, "persists_render_state", False) and (
-                item.source_asset_id is None or item.primary_asset_id is None
-            ):
-                raise RuntimeError("The renderer did not persist completed media")
-            timestamp = utc_now()
-            item.status = JobStatus.COMPLETED
-            item.stage = JobItemStage.COMPLETED
-            item.updated_at = timestamp
-            item.revision += 1
-            if job.source is JobSource.PRODUCTION and item.primary_asset_id is not None:
-                if job.dataset_id is None:
-                    raise RuntimeError(
-                        "A production job must have a destination dataset"
-                    )
-                create_sample_for_completed_item(session, job, item, job.dataset_id)
-            job.completed_count += 1
-            job.updated_at = timestamp
-            job.revision += 1
-            self._append_event(session, job, "ItemCompleted", item=item)
+            self._complete_item_in_session(session, job, item, utc_now())
+
+    def _complete_item_in_session(
+        self,
+        session: Session,
+        job: Job,
+        item: JobItem,
+        timestamp: str,
+    ) -> None:
+        if getattr(self.renderer, "persists_render_state", False) and (
+            item.source_asset_id is None or item.primary_asset_id is None
+        ):
+            raise RuntimeError("The renderer did not persist completed media")
+        item.status = JobStatus.COMPLETED
+        item.stage = JobItemStage.COMPLETED
+        item.updated_at = timestamp
+        item.revision += 1
+        if job.source is JobSource.PRODUCTION and item.primary_asset_id is not None:
+            if job.dataset_id is None:
+                raise RuntimeError("A production job must have a destination dataset")
+            create_sample_for_completed_item(session, job, item, job.dataset_id)
+        job.completed_count += 1
+        job.updated_at = timestamp
+        job.revision += 1
+        self._append_event(session, job, "ItemCompleted", item=item)
 
     def _fail_item(self, job_id: int, item_id: int, failure: _Failure) -> None:
         with self._event_session() as session:
@@ -659,28 +1191,39 @@ class JobExecutor:
             if job.cancel_requested_at is not None:
                 self._finish_cancelled_job_in_session(session, job)
                 return
-            timestamp = utc_now()
-            self._sync_counts(session, job)
-            job.status = JobStatus.FAILED if job.failed_count else JobStatus.COMPLETED
-            job.failure_code = "item_failed" if job.failed_count else None
-            job.failure_reason = (
-                f"{job.failed_count} of {job.total_count} job items failed"
-                if job.failed_count
-                else None
-            )
-            job.finished_at = timestamp
-            job.updated_at = timestamp
-            job.revision += 1
-            self._release_owned_slots(
-                session, job.id, GpuAvailability.AVAILABLE, timestamp
-            )
-            self._append_event(
+            self._finalize_job_in_session(
                 session,
                 job,
-                "JobFailed" if job.failed_count else "JobCompleted",
-                code=job.failure_code,
-                reason=job.failure_reason,
+                utc_now(),
+                GpuAvailability.AVAILABLE,
             )
+
+    def _finalize_job_in_session(
+        self,
+        session: Session,
+        job: Job,
+        timestamp: str,
+        slot_availability: GpuAvailability,
+    ) -> None:
+        self._sync_counts(session, job)
+        job.status = JobStatus.FAILED if job.failed_count else JobStatus.COMPLETED
+        job.failure_code = "item_failed" if job.failed_count else None
+        job.failure_reason = (
+            f"{job.failed_count} of {job.total_count} job items failed"
+            if job.failed_count
+            else None
+        )
+        job.finished_at = timestamp
+        job.updated_at = timestamp
+        job.revision += 1
+        self._release_owned_slots(session, job.id, slot_availability, timestamp)
+        self._append_event(
+            session,
+            job,
+            "JobFailed" if job.failed_count else "JobCompleted",
+            code=job.failure_code,
+            reason=job.failure_reason,
+        )
 
     def _finish_cancelled_job(self, job_id: int) -> None:
         with self._event_session() as session:
@@ -772,12 +1315,17 @@ class JobExecutor:
     @staticmethod
     def _job_slots(session: Session, job_id: int) -> list[GpuSlotName]:
         items = session.exec(
-            select(JobItem).where(JobItem.job_id == job_id).order_by(JobItem.sequence)
+            select(JobItem)
+            .where(
+                JobItem.job_id == job_id,
+                JobItem.status.in_(
+                    [JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.INTERRUPTED]
+                ),
+            )
+            .order_by(JobItem.sequence)
         ).all()
         return list(
-            dict.fromkeys(
-                item.gpu_slot for item in items if item.gpu_slot is not None
-            )
+            dict.fromkeys(item.gpu_slot for item in items if item.gpu_slot is not None)
         )
 
     def _cancel_requested(self, job_id: int) -> bool:
@@ -909,6 +1457,4 @@ class JobExecutor:
             return _Failure(error.code, error.message)
         if isinstance(error, RendererGatewayError):
             return _Failure(error.code, error.message)
-        return _Failure(
-            "item_execution_failed", "The job item failed during execution"
-        )
+        return _Failure("item_execution_failed", "The job item failed during execution")

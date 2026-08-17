@@ -4,7 +4,16 @@ import re
 from datetime import date
 from typing import Annotated, Any, Generic, Literal, Self, TypeVar
 
-from pydantic import BeforeValidator, BaseModel, ConfigDict, Field, StringConstraints, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BeforeValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from .enums import (
     AGES,
@@ -68,8 +77,12 @@ class PageRead(ApiModel, Generic[PageItem]):
     total_pages: int
 
 
-Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]
-ReviewerName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+Name = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)
+]
+ReviewerName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+]
 TextValue = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 OptionalTextValue = Annotated[str, StringConstraints(strip_whitespace=True)]
 ReviewNote = Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)]
@@ -156,14 +169,18 @@ class UpdateWithChanges(ExpectedRevision):
             raise ValueError("At least one field must be provided")
         return self
 
-    def reject_explicit_nulls(self, nullable_fields: frozenset[str] = frozenset()) -> Self:
+    def reject_explicit_nulls(
+        self, nullable_fields: frozenset[str] = frozenset()
+    ) -> Self:
         null_fields = {
             field_name
             for field_name in self.model_fields_set.difference(nullable_fields)
             if field_name != "expected_revision" and getattr(self, field_name) is None
         }
         if null_fields:
-            fields = ", ".join(sorted(to_camel(field_name) for field_name in null_fields))
+            fields = ", ".join(
+                sorted(to_camel(field_name) for field_name in null_fields)
+            )
             raise ValueError(f"Fields cannot be null: {fields}")
         return self
 
@@ -256,20 +273,38 @@ class ContentScriptFields(ApiModel):
     def validate_content(self) -> Self:
         if not validate_direction(self.category, self.conflict_direction):
             raise ValueError("Conflict direction does not match the category")
-        if self.category in {Category.A_VA, Category.A_VT} and self.true_emotion != self.apparent_emotion:
-            raise ValueError("Aligned content requires true emotion to equal apparent emotion")
-        if self.category in {Category.C_VA, Category.C_VT} and self.true_emotion == self.apparent_emotion:
-            raise ValueError("Conflict content requires true emotion to differ from apparent emotion")
+        if (
+            self.category in {Category.A_VA, Category.A_VT}
+            and self.true_emotion != self.apparent_emotion
+        ):
+            raise ValueError(
+                "Aligned content requires true emotion to equal apparent emotion"
+            )
+        if (
+            self.category in {Category.C_VA, Category.C_VT}
+            and self.true_emotion == self.apparent_emotion
+        ):
+            raise ValueError(
+                "Conflict content requires true emotion to differ from apparent emotion"
+            )
         if self.mode is ContentMode.FIXED and not self.base_video_prompt.strip():
             raise ValueError("Fixed content requires a base video prompt")
         if self.mode is ContentMode.GENERATIVE and (
             not self.content_requirements_zh or not self.content_requirements_en
         ):
-            raise ValueError("Generative content requires Chinese and English content requirements")
-        if self.category in {Category.A_VA, Category.C_VA} and self.mode is ContentMode.FIXED:
+            raise ValueError(
+                "Generative content requires Chinese and English content requirements"
+            )
+        if (
+            self.category in {Category.A_VA, Category.C_VA}
+            and self.mode is ContentMode.FIXED
+        ):
             if not (self.dialogue or "").strip():
                 raise ValueError("Fixed VA content requires dialogue")
-        if self.category in {Category.A_VT, Category.C_VT} and self.mode is ContentMode.FIXED:
+        if (
+            self.category in {Category.A_VT, Category.C_VT}
+            and self.mode is ContentMode.FIXED
+        ):
             if not (self.display_text or "").strip():
                 raise ValueError("Fixed VT content requires display text")
         if self.mode is ContentMode.FIXED and not self.true_emotion_description.strip():
@@ -312,7 +347,9 @@ class ContentScriptUpdate(UpdateWithChanges):
 
     @model_validator(mode="after")
     def reject_null_fields(self) -> Self:
-        self.reject_explicit_nulls(frozenset({"conflict_direction", "dialogue", "display_text"}))
+        self.reject_explicit_nulls(
+            frozenset({"conflict_direction", "dialogue", "display_text"})
+        )
         if len(self.scene_ids) != len(set(self.scene_ids)):
             raise ValueError("A scene can be registered only once")
         if any(identifier <= 0 for identifier in self.scene_ids):
@@ -402,7 +439,13 @@ class SceneFields(ApiModel):
     framing_en: OptionalTextValue
     status: ResourceStatus = ResourceStatus.ACTIVE
 
-    @field_validator("scene_en", "ambient_sound_en", "participant_relationship_en", "lighting_en", "framing_en")
+    @field_validator(
+        "scene_en",
+        "ambient_sound_en",
+        "participant_relationship_en",
+        "lighting_en",
+        "framing_en",
+    )
     @classmethod
     def validate_scene_text(cls, value: str, info: ValidationInfo) -> str:
         return validate_scene_policy_text(value, info.field_name)
@@ -431,7 +474,13 @@ class SceneUpdate(UpdateWithChanges):
     def reject_null_fields(self) -> Self:
         return self.reject_explicit_nulls()
 
-    @field_validator("scene_en", "ambient_sound_en", "participant_relationship_en", "lighting_en", "framing_en")
+    @field_validator(
+        "scene_en",
+        "ambient_sound_en",
+        "participant_relationship_en",
+        "lighting_en",
+        "framing_en",
+    )
     @classmethod
     def validate_scene_text(cls, value: str | None, info: ValidationInfo) -> str | None:
         if value is None:
@@ -515,7 +564,9 @@ class BatchDraftFields(ApiModel):
         if not validate_direction(self.category, self.conflict_direction):
             raise ValueError("Conflict direction does not match the category")
         if not validate_model_precision(self.model, self.precision):
-            raise ValueError("LTX-2.5 requires BF16 or INT8 precision; older models require null precision")
+            raise ValueError(
+                "LTX-2.5 requires BF16 or INT8 precision; older models require null precision"
+            )
         identifiers = [value.content_script_id for value in self.content_selections]
         if len(identifiers) != len(set(identifiers)):
             raise ValueError("Duplicate content script selection")
@@ -524,8 +575,7 @@ class BatchDraftFields(ApiModel):
         if len(self.seeds) != len(set(self.seeds)):
             raise ValueError("Duplicate seed selection")
         demographics = [
-            (value.age, value.gender, value.ethnicity)
-            for value in self.demographics
+            (value.age, value.gender, value.ethnicity) for value in self.demographics
         ]
         if len(demographics) != len(set(demographics)):
             raise ValueError("Duplicate demographic selection")
@@ -599,6 +649,20 @@ class BatchSubmitRequest(ExpectedRevision):
 
 class JobCancelRequest(ExpectedRevision):
     pass
+
+
+class JobResumeRequest(ExpectedRevision):
+    pass
+
+
+class JobRetryFailedRequest(ExpectedRevision):
+    item_revisions: dict[Annotated[int, Field(gt=0)], Annotated[int, Field(ge=1)]]
+
+    @model_validator(mode="after")
+    def require_items(self) -> Self:
+        if not self.item_revisions:
+            raise ValueError("Select at least one failed item")
+        return self
 
 
 class BatchAllocationRead(ApiModel):
@@ -823,7 +887,9 @@ class ConfigurationRecommendations(ApiModel):
         emotions = (self.true_emotion, self.apparent_emotion)
         if any(value is not None for value in emotions):
             if self.category is None or any(value is None for value in emotions):
-                raise ValueError("Emotion recommendations require a complete category pair")
+                raise ValueError(
+                    "Emotion recommendations require a complete category pair"
+                )
             if relation_for(self.category) is Relation.ALIGNED:
                 if self.true_emotion != self.apparent_emotion:
                     raise ValueError("Aligned emotion recommendations must match")
@@ -939,13 +1005,10 @@ class ConfigurationAssistantApply(ApiModel):
             "execution_mode": ConfigurationAssistantField.EXECUTION_MODE,
         }
         provided = {
-            field_map[field_name]
-            for field_name in self.values.model_fields_set
+            field_map[field_name] for field_name in self.values.model_fields_set
         }
         if provided != set(self.confirmed_fields):
-            raise ValueError(
-                "Confirmed fields must exactly match the provided values"
-            )
+            raise ValueError("Confirmed fields must exactly match the provided values")
         if self.link_new_scene_to_content and not (
             self.create_content_script and self.create_shooting_scene
         ):
@@ -1169,14 +1232,21 @@ class SampleClassificationUpdate(ExpectedRevision):
     @model_validator(mode="after")
     def validate_target(self) -> Self:
         if not validate_direction(self.target_category, self.conflict_direction):
-            raise ValueError("The conflict direction does not match the target category")
-        if relation_for(self.target_category) is Relation.CONFLICT and self.apparent_emotion is None:
+            raise ValueError(
+                "The conflict direction does not match the target category"
+            )
+        if (
+            relation_for(self.target_category) is Relation.CONFLICT
+            and self.apparent_emotion is None
+        ):
             raise ValueError("A conflict category requires an apparent emotion")
         if (
             relation_for(self.target_category) is Relation.ALIGNED
             and "apparent_emotion" in self.model_fields_set
         ):
-            raise ValueError("An aligned category sets the apparent emotion automatically")
+            raise ValueError(
+                "An aligned category sets the apparent emotion automatically"
+            )
         return self
 
 
@@ -1230,9 +1300,13 @@ class ArchivePreviewRead(ApiModel):
 class ArchiveSyncRequest(ArchivePreviewRead):
     @model_validator(mode="after")
     def reject_duplicate_samples(self) -> Self:
-        sample_ids = [item.sample_id for item in self.added + self.updated + self.removed]
+        sample_ids = [
+            item.sample_id for item in self.added + self.updated + self.removed
+        ]
         if len(sample_ids) != len(set(sample_ids)):
-            raise ValueError("An archive preview cannot contain the same sample more than once")
+            raise ValueError(
+                "An archive preview cannot contain the same sample more than once"
+            )
         return self
 
 
@@ -1313,10 +1387,13 @@ class JobEventPayloadRead(ApiModel):
 JobEventType = Literal[
     "JobQueued",
     "JobStarted",
+    "JobResumed",
+    "JobRetryQueued",
     "CancelRequested",
     "ItemPromptStarted",
     "ItemPromptReady",
     "ItemRenderStarted",
+    "ItemRenderMissing",
     "ItemRenderProgress",
     "ItemMediaProcessing",
     "ItemCompleted",
@@ -1373,4 +1450,6 @@ class HealthRead(ApiModel):
     ok: bool
     database: str
     prompt_service_configured: bool
-    renderer_installation: Literal["installed", "notInstalled", "unknown", "notConfigured"]
+    renderer_installation: Literal[
+        "installed", "notInstalled", "unknown", "notConfigured"
+    ]

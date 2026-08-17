@@ -17,13 +17,14 @@ from backend.adapters.renderer import (
     RendererGatewayError,
     RendererInstallationStatus,
     RendererSlotState,
+    ResumeOutcome,
 )
 from backend.app import create_app
 from backend.domain.enums import (
     Category,
     ContentMode,
     ContentStatus,
-    DatasetPurpose,
+    GenerationAttemptStatus,
     Ethnicity,
     Gender,
     GpuAvailability,
@@ -33,11 +34,16 @@ from backend.domain.enums import (
     ModelName,
 )
 from backend.domain.models import (
+    Asset,
     BatchDraft,
+    GenerationAttempt,
     BatchVideoInputSnapshot,
     GpuSlot,
     Job,
+    JobItemPromptResult,
+    utc_now,
     JobItem,
+    Sample,
 )
 from backend.domain.schemas import (
     BatchDraftCreate,
@@ -47,6 +53,8 @@ from backend.domain.schemas import (
     DatasetCreate,
     DemographicInput,
     JobCancelRequest,
+    JobResumeRequest,
+    JobRetryFailedRequest,
     PromptTemplateCreate,
     PromptTemplateVersionCreate,
     PromptTemplateVersionVerify,
@@ -67,9 +75,7 @@ class RecordingPromptModel:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def generate(
-        self, system_input: str, user_input: str
-    ) -> PromptModelResponse:
+    async def generate(self, system_input: str, user_input: str) -> PromptModelResponse:
         self.calls += 1
         if "Age: 35" in user_input:
             appearance = "He wears a plain navy shirt, and his short dark hair remains neatly combed away from his face."
@@ -80,26 +86,26 @@ class RecordingPromptModel:
         return PromptModelResponse(
             content=json.dumps(
                 {
-                "spokenText": DIALOGUE,
-                "appearance": appearance,
-                "bodyAction": (
-                    f"{pronoun} sits upright, folds both hands on the lap, presses the lips together, raises the "
-                    "chin, and keeps the gaze level through the final word."
-                ),
-                "vocalDelivery": (
-                    f"{pronoun} keeps the voice low and steady, with measured pacing and firm articulation."
-                ),
-                "environmentalSound": (
-                    "A soft ventilation hum and the even ticking of a wall clock remain audible."
-                ),
-                "setting": (
-                    "The private office contains pale walls, a bare wooden table, and one closed window behind the seat."
-                ),
-                "camera": "The camera holds a static front-facing close-up head-and-shoulders view.",
-                "lighting": (
-                    "Soft daylight keeps the face bright and evenly lit with gentle highlights across the plain fabric."
-                ),
-                "trueEmotionDescription": "说话内容和可见动作共同表达受控状态。",
+                    "spokenText": DIALOGUE,
+                    "appearance": appearance,
+                    "bodyAction": (
+                        f"{pronoun} sits upright, folds both hands on the lap, presses the lips together, raises the "
+                        "chin, and keeps the gaze level through the final word."
+                    ),
+                    "vocalDelivery": (
+                        f"{pronoun} keeps the voice low and steady, with measured pacing and firm articulation."
+                    ),
+                    "environmentalSound": (
+                        "A soft ventilation hum and the even ticking of a wall clock remain audible."
+                    ),
+                    "setting": (
+                        "The private office contains pale walls, a bare wooden table, and one closed window behind the seat."
+                    ),
+                    "camera": "The camera holds a static front-facing close-up head-and-shoulders view.",
+                    "lighting": (
+                        "Soft daylight keeps the face bright and evenly lit with gentle highlights across the plain fabric."
+                    ),
+                    "trueEmotionDescription": "说话内容和可见动作共同表达受控状态。",
                 },
                 ensure_ascii=False,
             ),
@@ -122,9 +128,7 @@ class BlockingPromptModel(RecordingPromptModel):
         self.all_started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def generate(
-        self, system_input: str, user_input: str
-    ) -> PromptModelResponse:
+    async def generate(self, system_input: str, user_input: str) -> PromptModelResponse:
         self.entered_calls += 1
         if self.entered_calls == self.expected_calls:
             self.all_started.set()
@@ -133,6 +137,7 @@ class BlockingPromptModel(RecordingPromptModel):
 
 
 class FakeRenderer:
+    persists_render_state = False
     configured = True
 
     def __init__(self, *, hold: bool = False) -> None:
@@ -143,6 +148,8 @@ class FakeRenderer:
         self.wait_gates: dict[int, asyncio.Event] = {}
         self.cancel_calls: list[tuple[GpuSlotName, str]] = []
         self.fail_items: set[int] = set()
+        self.resume_calls: list[tuple[int, str, int, int]] = []
+        self.resume_outcomes: dict[int, ResumeOutcome] = {}
         self.active_total = 0
         self.max_active_total = 0
         self.active_by_slot: defaultdict[GpuSlotName, int] = defaultdict(int)
@@ -157,7 +164,7 @@ class FakeRenderer:
 
     async def submit(self, request: RenderRequest) -> str:
         self.submit_counts[request.job_item_id] += 1
-        prompt_id = f"{request.job_id}:{request.job_item_id}"
+        prompt_id = f"{request.job_id}:{request.job_item_id}:{self.submit_counts[request.job_item_id]}"
         self.requests[prompt_id] = request
         return prompt_id
 
@@ -183,6 +190,22 @@ class FakeRenderer:
         finally:
             self.active_total -= 1
             self.active_by_slot[slot] -= 1
+
+    async def resume(
+        self,
+        request: RenderRequest,
+        prompt_id: str,
+        attempt_id: int,
+        attempt_number: int,
+    ) -> ResumeOutcome:
+        self.resume_calls.append(
+            (request.job_item_id, prompt_id, attempt_id, attempt_number)
+        )
+        self.requests[prompt_id] = request
+        return self.resume_outcomes.get(
+            request.job_item_id,
+            ResumeOutcome.RUNNING,
+        )
 
     async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome:
         self.cancel_calls.append((slot, prompt_id))
@@ -255,7 +278,7 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
             styleGuidance="Use restrained movement and a static medium shot.",
             ltxNegativePrompt="subtitles, captions, distortion, exaggerated movement",
             h3NegativePrompt="subtitles, captions, distortion, exaggerated movement",
-        )
+        ),
     )
     preset = catalog.verify_prompt_template_version(
         preset.id,
@@ -317,6 +340,60 @@ async def enqueue(batches: BatchService, draft):  # type: ignore[no-untyped-def]
     )
 
 
+def seed_running_render(
+    database,  # type: ignore[no-untyped-def]
+    job_id: int,
+    prompt_id: str,
+) -> tuple[int, int]:
+    with database.immediate_session() as session:
+        job = session.get(Job, job_id)
+        assert job is not None
+        item = session.exec(select(JobItem).where(JobItem.job_id == job_id)).one()
+        snapshot = session.get(
+            BatchVideoInputSnapshot,
+            item.input_snapshot_id,
+        )
+        assert snapshot is not None
+        job.status = JobStatus.RUNNING
+        job.started_at = job.updated_at
+        item.status = JobStatus.RUNNING
+        item.stage = JobItemStage.RENDERING
+        item.renderer_prompt_id = prompt_id
+        session.add(
+            JobItemPromptResult(
+                job_item_id=item.id,
+                policy_version=snapshot.policy_version,
+                system_input=snapshot.system_input,
+                user_input=snapshot.user_input,
+                raw_structured_response="{}",
+                final_positive_prompt="A fixed positive prompt.",
+                negative_prompt=snapshot.negative_prompt,
+                dialogue=DIALOGUE,
+                vt_text=None,
+                true_emotion_description="True emotion description",
+            )
+        )
+        attempt = GenerationAttempt(
+            job_item_id=item.id,
+            attempt_number=1,
+            model=snapshot.model,
+            precision=snapshot.precision,
+            gpu_slot=item.gpu_slot,
+            seed=snapshot.seed,
+            renderer_prompt_id=prompt_id,
+            status=GenerationAttemptStatus.RUNNING,
+            started_at=utc_now(),
+        )
+        session.add(attempt)
+        slot = session.get(GpuSlot, item.gpu_slot)
+        assert slot is not None
+        slot.availability = GpuAvailability.BUSY
+        slot.active_job_id = job_id
+        session.flush()
+        assert item.id is not None and attempt.id is not None
+        return item.id, attempt.id
+
+
 async def wait_for_status(
     batches: BatchService,
     job_id: int,
@@ -362,13 +439,13 @@ def test_executor_persists_results_and_runs_two_gpu_channels(tmp_path: Path) -> 
             quantity=4,
         )
         make_available(database, [GpuSlotName.GPU0, GpuSlotName.GPU1])
+        executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
+        await executor.start()
         job = await enqueue(batches, draft)
         items = {
             item.sequence: item.id
             for item in batches.list_production_result_items(job.id, 1).items
         }
-        executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
-        await executor.start()
         try:
             await wait_until(lambda: {items[1], items[2]} <= renderer.wait_started)
             assert items[3] not in renderer.wait_started
@@ -441,10 +518,10 @@ def test_two_single_gpu_jobs_with_different_models_run_concurrently(
             model=ModelName.H3,
         )
         make_available(database, [GpuSlotName.GPU0, GpuSlotName.GPU1])
-        ltx_job = await enqueue(batches, draft_ltx)
-        h3_job = await enqueue(batches, draft_h3)
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
         await executor.start()
+        ltx_job = await enqueue(batches, draft_ltx)
+        h3_job = await enqueue(batches, draft_h3)
         try:
             await wait_until(lambda: len(renderer.wait_started) == 2)
             assert {request.model for request in renderer.requests.values()} == {
@@ -488,10 +565,10 @@ def test_concurrent_prompt_generation_releases_database_transactions(
             model=ModelName.H3,
         )
         make_available(database, [GpuSlotName.GPU0, GpuSlotName.GPU1])
-        first_job = await enqueue(batches, first_draft)
-        second_job = await enqueue(batches, second_draft)
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
         await executor.start()
+        first_job = await enqueue(batches, first_draft)
+        second_job = await enqueue(batches, second_draft)
         try:
             await asyncio.wait_for(model.all_started.wait(), timeout=2)
             created = catalog.create_dataset(
@@ -536,12 +613,12 @@ def test_single_item_failure_is_not_retried_and_other_items_continue(
             quantity=3,
         )
         make_available(database, [GpuSlotName.GPU0])
+        executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
+        await executor.start()
         job = await enqueue(batches, draft)
         job_items = batches.list_production_result_items(job.id, 1).items
         failed_item_id = next(item.id for item in job_items if item.sequence == 2)
         renderer.fail_items.add(failed_item_id)
-        executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
-        await executor.start()
         try:
             failed = await wait_for_status(batches, job.id, {JobStatus.FAILED})
         finally:
@@ -569,7 +646,7 @@ def test_single_item_failure_is_not_retried_and_other_items_continue(
     asyncio.run(scenario())
 
 
-def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(
+def test_queued_and_running_jobs_are_interrupted_during_startup_recovery(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
@@ -590,17 +667,29 @@ def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(
         )
         make_available(queued_database, [GpuSlotName.GPU0])
         queued_job = await enqueue(queued_batches, queued_draft)
-        resumed = JobExecutor(
-            queued_database, queued_prompts, queued_renderer, scan_interval_seconds=0.05
+        recovered_queued = JobExecutor(
+            queued_database,
+            queued_prompts,
+            queued_renderer,
+            scan_interval_seconds=0.05,
         )
-        await resumed.start()
+        await recovered_queued.start()
         try:
-            completed = await wait_for_status(
-                queued_batches, queued_job.id, {JobStatus.COMPLETED}
-            )
+            interrupted_queued = queued_batches.get_job(queued_job.id)
         finally:
-            await resumed.stop()
-        assert completed.completed_count == 1
+            await recovered_queued.stop()
+        assert interrupted_queued.status is JobStatus.INTERRUPTED
+        assert interrupted_queued.failure_reason == (
+            "The application stopped before the job started"
+        )
+        queued_items = queued_batches.list_production_result_items(
+            queued_job.id,
+            1,
+        ).items
+        assert queued_items[0].status is JobStatus.INTERRUPTED
+        assert queued_items[0].stage is JobItemStage.PROMPT_QUEUED
+        assert queued_model.calls == 0
+        assert queued_renderer.submit_counts == Counter()
 
         running_root = tmp_path / "running"
         running_root.mkdir()
@@ -644,19 +733,180 @@ def test_queued_job_resumes_and_running_job_fails_during_startup_recovery(
             interrupted = running_batches.get_job(running_job.id)
         finally:
             await recovered.stop()
-        assert interrupted.status is JobStatus.FAILED
+        assert interrupted.status is JobStatus.INTERRUPTED
+        assert interrupted.failed_count == 0
         assert interrupted.failure_code == "interrupted_by_restart"
-        interrupted_items = running_batches.list_production_result_items(interrupted.id, 1).items
+        interrupted_items = running_batches.list_production_result_items(
+            interrupted.id, 1
+        ).items
         interrupted_events = running_batches.list_job_events(interrupted.id, 1).items
         assert all(
             item.failure_code == "interrupted_by_restart" for item in interrupted_items
+        )
+        assert all(item.status is JobStatus.INTERRUPTED for item in interrupted_items)
+        assert all(
+            item.stage is JobItemStage.PROMPT_GENERATING for item in interrupted_items
         )
         assert "JobInterrupted" in [event.event_type for event in interrupted_events]
         with running_database.read_session() as session:
             slot = session.get(GpuSlot, GpuSlotName.GPU0)
             assert slot is not None
-            assert slot.availability is GpuAvailability.UNKNOWN
+            assert slot.availability is GpuAvailability.AVAILABLE
             assert slot.active_job_id is None
+
+    asyncio.run(scenario())
+
+
+def test_startup_recovery_finalizes_a_job_with_only_failed_items(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        model = RecordingPromptModel()
+        renderer = FakeRenderer()
+        prompts = PromptService(model)
+        batches = BatchService(database, prompts, renderer)
+        draft = create_draft(
+            batches,
+            create_resources(database, "terminal recovery"),
+            [GpuSlotName.GPU0],
+            quantity=2,
+        )
+        make_available(database, [GpuSlotName.GPU0])
+        job = await enqueue(batches, draft)
+        with database.immediate_session() as session:
+            job_row = session.get(Job, job.id)
+            items = session.exec(
+                select(JobItem)
+                .where(JobItem.job_id == job.id)
+                .order_by(JobItem.sequence)
+            ).all()
+            slot = session.get(GpuSlot, GpuSlotName.GPU0)
+            assert job_row is not None and slot is not None
+            job_row.status = JobStatus.RUNNING
+            job_row.started_at = utc_now()
+            for item in items:
+                item.status = JobStatus.FAILED
+                item.stage = JobItemStage.PROMPT_GENERATING
+                item.failure_code = "prompt_failed"
+                item.failure_reason = "Prompt generation failed"
+                item.revision += 1
+            slot.availability = GpuAvailability.BUSY
+            slot.active_job_id = job.id
+
+        executor = JobExecutor(database, prompts, renderer)
+        await executor.recover()
+
+        finalized = batches.get_job(job.id)
+        events = batches.list_job_events(job.id, 1).items
+        assert finalized.status is JobStatus.FAILED
+        assert finalized.failed_count == 2
+        assert finalized.completed_count == 0
+        assert finalized.finished_at is not None
+        assert finalized.failure_reason == "2 of 2 job items failed"
+        assert events[-1].event_type == "JobFailed"
+        assert "JobInterrupted" not in [event.event_type for event in events]
+        assert model.calls == 0
+        assert renderer.submit_counts == Counter()
+        with database.read_session() as session:
+            slot = session.get(GpuSlot, GpuSlotName.GPU0)
+            assert slot is not None
+            assert slot.availability is GpuAvailability.AVAILABLE
+            assert slot.active_job_id is None
+
+    asyncio.run(scenario())
+
+
+def test_startup_recovery_finishes_a_persisted_completed_attempt_without_rendering(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        model = RecordingPromptModel()
+        renderer = FakeRenderer()
+        prompts = PromptService(model)
+        batches = BatchService(database, prompts, renderer)
+        draft = create_draft(
+            batches,
+            create_resources(database, "persisted completion"),
+            [GpuSlotName.GPU0],
+        )
+        make_available(database, [GpuSlotName.GPU0])
+        job = await enqueue(batches, draft)
+        item_id, attempt_id = seed_running_render(
+            database,
+            job.id,
+            "persisted-prompt",
+        )
+        with database.immediate_session() as session:
+            item = session.get(JobItem, item_id)
+            attempt = session.get(GenerationAttempt, attempt_id)
+            assert item is not None and attempt is not None
+            asset = Asset(
+                origin_job_item_id=item.id,
+                storage_root=str(database.data_root),
+                relative_path="media/persisted-completion.mp4",
+                media_type="video/mp4",
+                byte_size=1024,
+                width=1344,
+                height=768,
+                fps=24,
+                frame_count=121,
+                duration_seconds=5.04,
+                has_audio=True,
+            )
+            session.add(asset)
+            session.flush()
+            assert asset.id is not None
+            attempt.status = GenerationAttemptStatus.COMPLETED
+            attempt.source_asset_id = asset.id
+            attempt.primary_asset_id = asset.id
+            attempt.finished_at = utc_now()
+            item.stage = JobItemStage.MEDIA_PROCESSING
+            item.source_asset_id = asset.id
+            item.primary_asset_id = asset.id
+            item.revision += 1
+            asset_id = asset.id
+
+        executor = JobExecutor(database, prompts, renderer)
+        await executor.recover()
+
+        completed = batches.get_job(job.id)
+        events = batches.list_job_events(job.id, 1).items
+        with database.read_session() as session:
+            item = session.get(JobItem, item_id)
+            attempt = session.get(GenerationAttempt, attempt_id)
+            samples = session.exec(select(Sample)).all()
+            attempts = session.exec(select(GenerationAttempt)).all()
+            assets = session.exec(select(Asset)).all()
+        assert completed.status is JobStatus.COMPLETED
+        assert completed.completed_count == 1
+        assert completed.failed_count == 0
+        assert item is not None
+        assert item.status is JobStatus.COMPLETED
+        assert item.stage is JobItemStage.COMPLETED
+        assert item.source_asset_id == asset_id
+        assert item.primary_asset_id == asset_id
+        assert attempt is not None
+        assert attempt.status is GenerationAttemptStatus.COMPLETED
+        assert attempt.source_asset_id == asset_id
+        assert attempt.primary_asset_id == asset_id
+        assert len(samples) == 1
+        assert samples[0].job_item_id == item_id
+        assert len(attempts) == 1
+        assert len(assets) == 1
+        assert renderer.submit_counts == Counter()
+        assert renderer.resume_calls == []
+        assert model.calls == 0
+        assert events[-2].event_type == "ItemCompleted"
+        assert events[-1].event_type == "JobCompleted"
+        assert "JobInterrupted" not in [event.event_type for event in events]
 
     asyncio.run(scenario())
 
@@ -684,9 +934,11 @@ def test_queued_and_running_cancellation_only_release_owned_slots(
             [GpuSlotName.GPU1],
         )
         make_available(database, [GpuSlotName.GPU0, GpuSlotName.GPU1])
+        executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=10)
+        await executor.start()
+        await asyncio.sleep(0)
         first_job = await enqueue(batches, first_draft)
         second_job = await enqueue(batches, second_draft)
-        executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
         await executor.cancel_job(
             first_job.id, JobCancelRequest(expectedRevision=first_job.revision)
         )
@@ -705,9 +957,11 @@ def test_queued_and_running_cancellation_only_release_owned_slots(
                 and gpu1.active_job_id == second_job.id
             )
 
-        await executor.start()
+        executor.notify()
         try:
-            second_item_id = batches.list_production_result_items(second_job.id, 1).items[0].id
+            second_item_id = (
+                batches.list_production_result_items(second_job.id, 1).items[0].id
+            )
             await wait_until(lambda: second_item_id in renderer.wait_started)
             running = batches.get_job(second_job.id)
             await executor.cancel_job(
@@ -720,10 +974,12 @@ def test_queued_and_running_cancellation_only_release_owned_slots(
         finally:
             await executor.stop()
 
-        prompt_id = f"{second_job.id}:{second_item_id}"
+        prompt_id = f"{second_job.id}:{second_item_id}:1"
         assert renderer.cancel_calls == [(GpuSlotName.GPU1, prompt_id)]
         assert cancelled_running.cancel_requested_at is not None
-        cancelled_items = batches.list_production_result_items(cancelled_running.id, 1).items
+        cancelled_items = batches.list_production_result_items(
+            cancelled_running.id, 1
+        ).items
         cancelled_events = batches.list_job_events(cancelled_running.id, 1).items
         assert cancelled_items[0].status is JobStatus.CANCELLED
         event_types = [event.event_type for event in cancelled_events]
@@ -754,9 +1010,9 @@ def test_cancel_race_keeps_an_already_completed_item(tmp_path: Path) -> None:
             [GpuSlotName.GPU0],
         )
         make_available(database, [GpuSlotName.GPU0])
-        job = await enqueue(batches, draft)
         executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
         await executor.start()
+        job = await enqueue(batches, draft)
         try:
             item_id = batches.list_production_result_items(job.id, 1).items[0].id
             await wait_until(lambda: item_id in renderer.wait_started)
@@ -870,3 +1126,327 @@ def test_submit_is_non_blocking_and_unconfigured_renderer_writes_nothing(
         draft_row = session.get(BatchDraft, unconfigured_draft.id)
         assert draft_row is not None
         assert draft_row.status.value == "Draft"
+
+
+def test_interrupted_render_resumes_existing_comfy_task(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        model = RecordingPromptModel()
+        renderer = FakeRenderer()
+        prompts = PromptService(model)
+        batches = BatchService(database, prompts, renderer)
+        draft = create_draft(
+            batches,
+            create_resources(database, "resume render"),
+            [GpuSlotName.GPU0],
+        )
+        make_available(database, [GpuSlotName.GPU0])
+        job = await enqueue(batches, draft)
+        item_id, attempt_id = seed_running_render(
+            database,
+            job.id,
+            "existing-prompt",
+        )
+        executor = JobExecutor(database, prompts, renderer)
+        await executor.recover()
+
+        interrupted = batches.get_job(job.id)
+        assert interrupted.status is JobStatus.INTERRUPTED
+        with database.read_session() as session:
+            attempt = session.get(GenerationAttempt, attempt_id)
+            item = session.get(JobItem, item_id)
+            prompt = session.exec(
+                select(JobItemPromptResult).where(
+                    JobItemPromptResult.job_item_id == item_id
+                )
+            ).one()
+        assert attempt is not None
+        assert attempt.status is GenerationAttemptStatus.RUNNING
+        assert item is not None
+        assert item.renderer_prompt_id == "existing-prompt"
+        assert prompt.final_positive_prompt == "A fixed positive prompt."
+
+        renderer.resume_outcomes[item_id] = ResumeOutcome.RUNNING
+        await executor.resume_job(
+            job.id,
+            JobResumeRequest(expectedRevision=interrupted.revision),
+        )
+        assert executor._claim_queued_job(job.id)
+        await executor._run_job(job.id)
+
+        completed = batches.get_job(job.id)
+        assert completed.status is JobStatus.COMPLETED
+        assert renderer.submit_counts[item_id] == 0
+        assert renderer.resume_calls == [(item_id, "existing-prompt", attempt_id, 1)]
+        assert model.calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_missing_interrupted_render_adds_new_submission_without_prompt_regeneration(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        model = RecordingPromptModel()
+        renderer = FakeRenderer()
+        prompts = PromptService(model)
+        batches = BatchService(database, prompts, renderer)
+        draft = create_draft(
+            batches,
+            create_resources(database, "missing render"),
+            [GpuSlotName.GPU0],
+        )
+        make_available(database, [GpuSlotName.GPU0])
+        job = await enqueue(batches, draft)
+        item_id, attempt_id = seed_running_render(
+            database,
+            job.id,
+            "missing-prompt",
+        )
+        executor = JobExecutor(database, prompts, renderer)
+        await executor.recover()
+        interrupted = batches.get_job(job.id)
+        renderer.resume_outcomes[item_id] = ResumeOutcome.MISSING
+
+        await executor.resume_job(
+            job.id,
+            JobResumeRequest(expectedRevision=interrupted.revision),
+        )
+        assert executor._claim_queued_job(job.id)
+        await executor._run_job(job.id)
+
+        with database.read_session() as session:
+            attempt = session.get(GenerationAttempt, attempt_id)
+            item = session.get(JobItem, item_id)
+        assert attempt is not None
+        assert attempt.status is GenerationAttemptStatus.FAILED
+        assert attempt.failure_reason == ("The previous renderer task no longer exists")
+        assert item is not None and item.status is JobStatus.COMPLETED
+        assert renderer.submit_counts[item_id] == 1
+        assert model.calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_retry_failed_only_runs_selected_items_and_reuses_prompt(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        model = RecordingPromptModel()
+        renderer = FakeRenderer()
+        prompts = PromptService(model)
+        batches = BatchService(database, prompts, renderer)
+        draft = create_draft(
+            batches,
+            create_resources(database, "retry selected"),
+            [GpuSlotName.GPU0, GpuSlotName.GPU1],
+            quantity=2,
+        )
+        make_available(database, [GpuSlotName.GPU0, GpuSlotName.GPU1])
+        executor = JobExecutor(
+            database,
+            prompts,
+            renderer,
+            scan_interval_seconds=0.01,
+        )
+        await executor.start()
+        job = await enqueue(batches, draft)
+        initial_items = batches.list_production_result_items(job.id, 1).items
+        renderer.fail_items = {item.id for item in initial_items}
+        try:
+            failed = await wait_for_status(
+                batches,
+                job.id,
+                {JobStatus.FAILED},
+            )
+        finally:
+            await executor.stop()
+
+        failed_items = batches.list_production_result_items(job.id, 1).items
+        selected, untouched = failed_items
+        first_requests = {
+            prompt_id: request
+            for prompt_id, request in renderer.requests.items()
+            if request.job_item_id == selected.id
+        }
+        assert model.calls == 2
+        renderer.fail_items.remove(selected.id)
+        await executor.retry_failed_items(
+            job.id,
+            JobRetryFailedRequest(
+                expectedRevision=failed.revision,
+                itemRevisions={selected.id: selected.revision},
+            ),
+        )
+        assert executor._claim_queued_job(job.id)
+        await executor._run_job(job.id)
+        retried = batches.get_job(job.id)
+
+        retried_items = {
+            item.id: item
+            for item in batches.list_production_result_items(job.id, 1).items
+        }
+        assert retried.status is JobStatus.FAILED
+        assert retried_items[selected.id].status is JobStatus.COMPLETED
+        assert retried_items[untouched.id].status is JobStatus.FAILED
+        assert renderer.submit_counts[selected.id] == 2
+        assert renderer.submit_counts[untouched.id] == 1
+        assert model.calls == 2
+        selected_requests = [
+            request
+            for request in renderer.requests.values()
+            if request.job_item_id == selected.id
+        ]
+        assert len(first_requests) == 1
+        assert len(selected_requests) == 2
+        assert {
+            (
+                request.model,
+                request.precision,
+                request.gpu_slot,
+                request.seed,
+            )
+            for request in selected_requests
+        } == {
+            (
+                selected_requests[0].model,
+                selected_requests[0].precision,
+                selected_requests[0].gpu_slot,
+                selected_requests[0].seed,
+            )
+        }
+
+    asyncio.run(scenario())
+
+
+def test_retry_prompt_failure_runs_deepseek_again(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        model = RecordingPromptModel()
+        renderer = FakeRenderer()
+        prompts = PromptService(model)
+        batches = BatchService(database, prompts, renderer)
+        draft = create_draft(
+            batches,
+            create_resources(database, "retry prompt"),
+            [GpuSlotName.GPU0],
+        )
+        make_available(database, [GpuSlotName.GPU0])
+        job = await enqueue(batches, draft)
+        with database.immediate_session() as session:
+            job_row = session.get(Job, job.id)
+            item = session.exec(select(JobItem).where(JobItem.job_id == job.id)).one()
+            slot = session.get(GpuSlot, GpuSlotName.GPU0)
+            assert job_row is not None and slot is not None
+            job_row.status = JobStatus.FAILED
+            job_row.failure_code = "prompt_failed"
+            job_row.failure_reason = "Prompt generation failed"
+            job_row.finished_at = utc_now()
+            job_row.revision += 1
+            item.status = JobStatus.FAILED
+            item.stage = JobItemStage.PROMPT_GENERATING
+            item.failure_code = "prompt_failed"
+            item.failure_reason = "Prompt generation failed"
+            item.revision += 1
+            slot.availability = GpuAvailability.AVAILABLE
+            slot.active_job_id = None
+            slot.revision += 1
+            item_id = item.id
+        failed = batches.get_job(job.id)
+        failed_item = batches.list_production_result_items(job.id, 1).items[0]
+        executor = JobExecutor(
+            database,
+            prompts,
+            renderer,
+            scan_interval_seconds=0.01,
+        )
+        await executor.retry_failed_items(
+            job.id,
+            JobRetryFailedRequest(
+                expectedRevision=failed.revision,
+                itemRevisions={failed_item.id: failed_item.revision},
+            ),
+        )
+        assert executor._claim_queued_job(job.id)
+        await executor._run_job(job.id)
+        completed = batches.get_job(job.id)
+
+        assert completed.status is JobStatus.COMPLETED
+        assert model.calls == 1
+        assert renderer.submit_counts[item_id] == 1
+
+    asyncio.run(scenario())
+
+
+def test_resume_and_retry_api_validate_revisions_and_payloads(
+    tmp_path: Path,
+) -> None:
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    model = RecordingPromptModel()
+    renderer = FakeRenderer()
+    app = create_app(
+        Settings(data_root=tmp_path, frontend_dist=frontend),
+        model,
+        renderer,
+    )
+    batches = app.state.batch_service
+    draft = create_draft(
+        batches,
+        create_resources(app.state.database, "resume api"),
+        [GpuSlotName.GPU0],
+    )
+    make_available(app.state.database, [GpuSlotName.GPU0])
+    job = asyncio.run(enqueue(batches, draft))
+    item_id, _ = seed_running_render(
+        app.state.database,
+        job.id,
+        "api-existing-prompt",
+    )
+    renderer.resume_outcomes[item_id] = ResumeOutcome.COMPLETED
+
+    with TestClient(app) as client:
+        interrupted = batches.get_job(job.id)
+        assert interrupted.status is JobStatus.INTERRUPTED
+        stale = client.post(
+            f"/api/jobs/{job.id}/resume",
+            json={"expectedRevision": interrupted.revision - 1},
+        )
+        invalid = client.post(
+            f"/api/jobs/{job.id}/retry-failed",
+            json={
+                "expectedRevision": interrupted.revision,
+                "itemRevisions": {},
+            },
+        )
+        extra = client.post(
+            f"/api/jobs/{job.id}/resume",
+            json={
+                "expectedRevision": interrupted.revision,
+                "submit": True,
+            },
+        )
+        resumed = client.post(
+            f"/api/jobs/{job.id}/resume",
+            json={"expectedRevision": interrupted.revision},
+        )
+
+    assert stale.status_code == 409
+    assert invalid.status_code == 422
+    assert extra.status_code == 422
+    assert resumed.status_code == 202
+    assert resumed.json()["id"] == job.id

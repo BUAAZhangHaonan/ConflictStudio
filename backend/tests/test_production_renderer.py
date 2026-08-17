@@ -21,14 +21,17 @@ from backend.adapters.renderer import (
     CancelOutcome,
     RenderRequest,
     RendererGatewayError,
-    RendererSlotState,
+    ResumeOutcome,
 )
-from backend.adapters.workflows import H3WorkflowBuilder, Ltx23WorkflowBuilder, Ltx25WorkflowBuilder
+from backend.adapters.workflows import (
+    H3WorkflowBuilder,
+    Ltx23WorkflowBuilder,
+    Ltx25WorkflowBuilder,
+)
 from backend.domain.enums import (
     Category,
     ContentMode,
     ContentStatus,
-    DatasetPurpose,
     Ethnicity,
     Gender,
     GenerationAttemptStatus,
@@ -39,7 +42,14 @@ from backend.domain.enums import (
     ModelName,
     Precision,
 )
-from backend.domain.models import Asset, BatchVideoInputSnapshot, GenerationAttempt, GpuSlot, Job, JobItem
+from backend.domain.models import (
+    Asset,
+    BatchVideoInputSnapshot,
+    GenerationAttempt,
+    GpuSlot,
+    Job,
+    JobItem,
+)
 from backend.domain.schemas import (
     BatchDraftCreate,
     BatchContentSelectionInput,
@@ -138,6 +148,7 @@ class FakeInspector:
 
 class FakeComfyUIClient:
     def __init__(self) -> None:
+        self.queue: dict[str, Any] = {"queue_running": [], "queue_pending": []}
         self.submit_calls: list[tuple[dict[str, Any], str]] = []
         self.history: dict[str, Any] = {}
         self.history_calls = 0
@@ -157,7 +168,7 @@ class FakeComfyUIClient:
             yield {}
 
     async def get_queue(self) -> dict[str, Any]:
-        return {"queue_running": [], "queue_pending": []}
+        return self.queue
 
     async def get_history(self, prompt_id: str) -> dict[str, Any]:
         self.history_calls += 1
@@ -188,9 +199,7 @@ async def create_running_request(
     database = Database(data_root)
     database.initialize()
     catalog = CatalogService(database)
-    dataset = catalog.create_dataset(
-        DatasetCreate(name="Renderer gateway", note="")
-    )
+    dataset = catalog.create_dataset(DatasetCreate(name="Renderer gateway", note=""))
     background = catalog.create_scene(
         SceneCreate(
             nameZh="私人办公室",
@@ -239,7 +248,7 @@ async def create_running_request(
             styleGuidance="Use a static eye-level medium shot.",
             ltxNegativePrompt="subtitles, captions, distortion",
             h3NegativePrompt="subtitles, captions, distortion",
-        )
+        ),
     )
     preset = catalog.verify_prompt_template_version(
         preset.id,
@@ -262,7 +271,9 @@ async def create_running_request(
             ],
             promptTemplateVersionId=preset.id,
             demographics=[
-                DemographicInput(age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN)
+                DemographicInput(
+                    age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
+                )
             ],
             gpuSlots=[GpuSlotName.GPU0],
             seeds=[1208],
@@ -320,7 +331,9 @@ def make_gateway(
     database: Database,
     *,
     controller: FakeModelController | None = None,
-) -> tuple[ProductionRendererGateway, FakeComfyUIClient, FakeComfyUIClient, FakeModelController]:
+) -> tuple[
+    ProductionRendererGateway, FakeComfyUIClient, FakeComfyUIClient, FakeModelController
+]:
     gpu0 = FakeComfyUIClient()
     gpu1 = FakeComfyUIClient()
     resolved_controller = controller or FakeModelController()
@@ -431,7 +444,9 @@ def install_media_tools(
         ]
         if has_audio:
             streams.append({"codec_type": "audio"})
-        duration = "5.0416667" if model in {ModelName.LTX, ModelName.LTX_25} else "5.1666667"
+        duration = (
+            "5.0416667" if model in {ModelName.LTX, ModelName.LTX_25} else "5.1666667"
+        )
         payload = json.dumps({"streams": streams, "format": {"duration": duration}})
         return CompletedProcess(args, 0, payload, "")
 
@@ -526,8 +541,12 @@ def test_gateway_uses_ltx25_precision_workflow_save_node_and_profile_output_root
         prompt_id = await gateway.submit(request)
         workflow = gpu0.submit_calls[0][0]
         assert workflow["5004:5569"]["inputs"]["unet_name"] == transformer
-        assert workflow["4852"]["inputs"]["filename_prefix"].startswith(str(request.job_id))
-        assert controller.calls == [(GpuSlotName.GPU0, ModelName.LTX_25, precision, False)]
+        assert workflow["4852"]["inputs"]["filename_prefix"].startswith(
+            str(request.job_id)
+        )
+        assert controller.calls == [
+            (GpuSlotName.GPU0, ModelName.LTX_25, precision, False)
+        ]
 
         gpu0.history = success_history(request, prompt_id)
         result = await gateway.wait(GpuSlotName.GPU0, prompt_id)
@@ -571,14 +590,20 @@ def test_gateway_requires_explicit_model_switch_confirmation(
         prompt_id = await gateway.submit(request)
         assert len(gpu0.submit_calls) == 1
         assert controller.calls == [(GpuSlotName.GPU0, ModelName.LTX, None, True)]
-        assert await gateway.cancel(GpuSlotName.GPU0, prompt_id) is CancelOutcome.CANCELLED
+        assert (
+            await gateway.cancel(GpuSlotName.GPU0, prompt_id) is CancelOutcome.CANCELLED
+        )
 
     run(scenario())
 
 
-def test_gateway_blocks_unknown_gpu_occupancy_without_submission(tmp_path: Path) -> None:
+def test_gateway_blocks_unknown_gpu_occupancy_without_submission(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
-        database, request = await create_running_request(tmp_path / "occupied", category=Category.A_VA)
+        database, request = await create_running_request(
+            tmp_path / "occupied", category=Category.A_VA
+        )
         controller = FakeModelController(externally_occupied=True)
         gateway, gpu0, gpu1, _ = make_gateway(database, controller=controller)
 
@@ -596,7 +621,9 @@ def test_gateway_cancel_completion_race_persists_completed_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def scenario() -> None:
-        database, request = await create_running_request(tmp_path / "race", category=Category.A_VA)
+        database, request = await create_running_request(
+            tmp_path / "race", category=Category.A_VA
+        )
         gateway, gpu0, _, _ = make_gateway(database)
         source = source_path(database, request)
         source.parent.mkdir(parents=True)
@@ -693,7 +720,9 @@ def test_gateway_media_failure_leaves_source_evidence_without_orphan_primary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def scenario() -> None:
-        database, request = await create_running_request(tmp_path / "media", category=Category.A_VT)
+        database, request = await create_running_request(
+            tmp_path / "media", category=Category.A_VT
+        )
         gateway, gpu0, _, _ = make_gateway(database)
         source = source_path(database, request)
         source.parent.mkdir(parents=True)
@@ -719,9 +748,13 @@ def test_gateway_media_failure_leaves_source_evidence_without_orphan_primary(
     run(scenario())
 
 
-def test_gateway_execution_failure_is_not_retried_on_any_model_or_slot(tmp_path: Path) -> None:
+def test_gateway_execution_failure_is_not_retried_on_any_model_or_slot(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
-        database, request = await create_running_request(tmp_path / "failure", category=Category.A_VA)
+        database, request = await create_running_request(
+            tmp_path / "failure", category=Category.A_VA
+        )
         gateway, gpu0, gpu1, controller = make_gateway(database)
         prompt_id = await gateway.submit(request)
         gpu0.history = {
@@ -748,4 +781,139 @@ def test_gateway_execution_failure_is_not_retried_on_any_model_or_slot(tmp_path:
         assert attempts[0].attempt_number == 1
         assert attempts[0].status is GenerationAttemptStatus.FAILED
 
+    run(scenario())
+
+
+def test_gateway_resumes_running_prompt_and_accepts_completed_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "resume-running",
+            category=Category.A_VA,
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+        source = source_path(database, request)
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"audio-source")
+        prompt_id = await gateway.submit(request)
+        with database.read_session() as session:
+            attempt = session.exec(select(GenerationAttempt)).one()
+        gateway._contexts.clear()
+        gpu0.queue = {
+            "queue_running": [[1, prompt_id]],
+            "queue_pending": [],
+        }
+
+        outcome = await gateway.resume(
+            request,
+            prompt_id,
+            attempt.id,
+            attempt.attempt_number,
+        )
+        assert outcome is ResumeOutcome.RUNNING
+        gpu0.history = success_history(request, prompt_id)
+        await gateway.wait(GpuSlotName.GPU0, prompt_id)
+
+        with database.read_session() as session:
+            completed = session.get(GenerationAttempt, attempt.id)
+        assert completed is not None
+        assert completed.status is GenerationAttemptStatus.COMPLETED
+        assert len(gpu0.submit_calls) == 1
+
+    install_media_tools(monkeypatch)
+    run(scenario())
+
+
+def test_gateway_missing_prompt_allows_same_configuration_next_attempt(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "resume-missing",
+            category=Category.A_VA,
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+        first_prompt_id = await gateway.submit(request)
+        with database.read_session() as session:
+            first_attempt = session.exec(select(GenerationAttempt)).one()
+        gateway._contexts.clear()
+
+        outcome = await gateway.resume(
+            request,
+            first_prompt_id,
+            first_attempt.id,
+            first_attempt.attempt_number,
+        )
+        assert outcome is ResumeOutcome.MISSING
+
+        with database.immediate_session() as session:
+            attempt = session.get(GenerationAttempt, first_attempt.id)
+            item = session.get(JobItem, request.job_item_id)
+            assert attempt is not None and item is not None
+            attempt.status = GenerationAttemptStatus.FAILED
+            attempt.failure_reason = "The previous renderer task no longer exists"
+            attempt.finished_at = attempt.started_at
+            item.stage = JobItemStage.PROMPT_READY
+            item.renderer_prompt_id = None
+            item.revision += 1
+
+        second_prompt_id = await gateway.submit(request)
+        with database.read_session() as session:
+            attempts = session.exec(
+                select(GenerationAttempt).order_by(GenerationAttempt.attempt_number)
+            ).all()
+        assert second_prompt_id != first_prompt_id
+        assert [attempt.attempt_number for attempt in attempts] == [1, 2]
+        assert [attempt.status for attempt in attempts] == [
+            GenerationAttemptStatus.FAILED,
+            GenerationAttemptStatus.RUNNING,
+        ]
+        assert all(attempt.model is request.model for attempt in attempts)
+        assert all(attempt.precision is request.precision for attempt in attempts)
+        assert all(attempt.gpu_slot is request.gpu_slot for attempt in attempts)
+        assert all(attempt.seed == request.seed for attempt in attempts)
+
+    run(scenario())
+
+
+def test_gateway_accepts_output_completed_while_application_was_stopped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "resume-completed",
+            category=Category.A_VA,
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+        source = source_path(database, request)
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"audio-source")
+        prompt_id = await gateway.submit(request)
+        with database.read_session() as session:
+            attempt = session.exec(select(GenerationAttempt)).one()
+        gateway._contexts.clear()
+        gpu0.history = success_history(request, prompt_id)
+
+        outcome = await gateway.resume(
+            request,
+            prompt_id,
+            attempt.id,
+            attempt.attempt_number,
+        )
+
+        assert outcome is ResumeOutcome.COMPLETED
+        with database.read_session() as session:
+            completed = session.get(GenerationAttempt, attempt.id)
+            item = session.get(JobItem, request.job_item_id)
+        assert completed is not None
+        assert completed.status is GenerationAttemptStatus.COMPLETED
+        assert item is not None
+        assert item.source_asset_id is not None
+        assert item.primary_asset_id is not None
+        assert len(gpu0.submit_calls) == 1
+
+    install_media_tools(monkeypatch)
     run(scenario())

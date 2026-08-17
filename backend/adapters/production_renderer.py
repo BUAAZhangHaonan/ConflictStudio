@@ -5,7 +5,7 @@ import json
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 from sqlmodel import select
 
@@ -28,6 +28,7 @@ from backend.adapters.renderer import (
     RendererGatewayError,
     RendererInstallationStatus,
     RendererSlotState,
+    ResumeOutcome,
 )
 from backend.adapters.workflows import (
     H3WorkflowBuilder,
@@ -90,7 +91,9 @@ class ProductionRendererGateway:
             raise ValueError("One ComfyUI client is required for every GPU slot")
         controlled_models = {definition.model for definition in UNIT_DEFINITIONS}
         if set(workflow_builders) != controlled_models:
-            raise ValueError("One workflow builder is required for every controlled renderer model")
+            raise ValueError(
+                "One workflow builder is required for every controlled renderer model"
+            )
         if render_timeout_seconds <= 0 or status_poll_seconds <= 0:
             raise ValueError("Renderer timing must be positive")
         if media_store.data_root != database.data_root:
@@ -119,7 +122,9 @@ class ProductionRendererGateway:
             raise ValueError("One renderer URL is required for every GPU slot")
         for slot, port in PORTS.items():
             if urls[slot] != f"http://127.0.0.1:{port}":
-                raise ValueError("Renderer URLs must match the fixed local service ports")
+                raise ValueError(
+                    "Renderer URLs must match the fixed local service ports"
+                )
 
         workflow_builders = {
             ModelName.LTX: Ltx23WorkflowBuilder(settings.ltx23_template),
@@ -200,14 +205,16 @@ class ProductionRendererGateway:
             else:
                 workflow = builder.build(**build_arguments)
             client_id = f"conflictstudio-{request.job_id}-{request.job_item_id}"
-            prompt_id = await self.clients[request.gpu_slot].submit_prompt(workflow, client_id)
+            prompt_id = await self.clients[request.gpu_slot].submit_prompt(
+                workflow, client_id
+            )
         except asyncio.CancelledError:
             raise
         except Exception as error:
             raise self._safe_error(error) from error
 
         try:
-            attempt_id = self._record_running(request, prompt_id)
+            attempt_id, attempt_number = self._record_running(request, prompt_id)
         except Exception as error:
             try:
                 await self.clients[request.gpu_slot].cancel(prompt_id)
@@ -223,7 +230,7 @@ class ProductionRendererGateway:
             client_id=client_id,
             prompt_id=prompt_id,
             attempt_id=attempt_id,
-            attempt_number=1,
+            attempt_number=attempt_number,
             save_node_id={
                 ModelName.LTX: "save_video",
                 ModelName.LTX_25: "4852",
@@ -253,6 +260,45 @@ class ProductionRendererGateway:
             self._contexts.pop((slot, prompt_id), None)
             raise safe from error
 
+    async def resume(
+        self,
+        request: RenderRequest,
+        prompt_id: str,
+        attempt_id: int,
+        attempt_number: int,
+    ) -> ResumeOutcome:
+        self._validate_resume_request(request, prompt_id, attempt_id, attempt_number)
+        context = _RenderContext(
+            request=request,
+            client_id=f"conflictstudio-{request.job_id}-{request.job_item_id}",
+            prompt_id=prompt_id,
+            attempt_id=attempt_id,
+            attempt_number=attempt_number,
+            save_node_id={
+                ModelName.LTX: "save_video",
+                ModelName.LTX_25: "4852",
+                ModelName.H3: "14",
+            }[request.model],
+        )
+        try:
+            history = await self.clients[request.gpu_slot].get_history(prompt_id)
+            source_relative_path = self._history_output(context, history)
+            if source_relative_path is not None:
+                self._persist_output(context, source_relative_path)
+                return ResumeOutcome.COMPLETED
+            queue = await self.clients[request.gpu_slot].get_queue()
+            if not self._validate_queue_prompt(queue, prompt_id):
+                return ResumeOutcome.MISSING
+            self._contexts[(request.gpu_slot, prompt_id)] = context
+            return ResumeOutcome.RUNNING
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            safe = self._safe_error(error)
+            self._mark_attempt_failed(context, safe.message)
+            self._contexts.pop((request.gpu_slot, prompt_id), None)
+            raise safe from error
+
     async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome:
         context = self._contexts.get((slot, prompt_id))
         try:
@@ -260,7 +306,10 @@ class ProductionRendererGateway:
         except asyncio.CancelledError:
             raise
         except AdapterError as error:
-            if error.code == CancelOutcome.ALREADY_COMPLETED.value and context is not None:
+            if (
+                error.code == CancelOutcome.ALREADY_COMPLETED.value
+                and context is not None
+            ):
                 try:
                     history = await self.clients[slot].get_history(prompt_id)
                     source_relative_path = self._history_output(context, history)
@@ -364,7 +413,59 @@ class ProductionRendererGateway:
                 "Renderer media mode does not match the item category",
             )
 
-    def _record_live_model(self, request: RenderRequest, inspection: SlotInspection) -> None:
+    def _validate_resume_request(
+        self,
+        request: RenderRequest,
+        prompt_id: str,
+        attempt_id: int,
+        attempt_number: int,
+    ) -> None:
+        with self.database.read_session() as session:
+            job = session.get(Job, request.job_id)
+            item = session.get(JobItem, request.job_item_id)
+            attempt = session.get(GenerationAttempt, attempt_id)
+            snapshot = (
+                session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
+                if item is not None
+                else None
+            )
+            slot = session.get(GpuSlot, request.gpu_slot)
+            if (
+                job is None
+                or item is None
+                or attempt is None
+                or snapshot is None
+                or item.job_id != job.id
+                or job.status is not JobStatus.RUNNING
+                or item.status is not JobStatus.RUNNING
+                or item.stage
+                not in {
+                    JobItemStage.RENDERING,
+                    JobItemStage.MEDIA_PROCESSING,
+                }
+                or item.renderer_prompt_id != prompt_id
+                or attempt.job_item_id != item.id
+                or attempt.attempt_number != attempt_number
+                or attempt.renderer_prompt_id != prompt_id
+                or attempt.status is not GenerationAttemptStatus.RUNNING
+                or attempt.model is not request.model
+                or attempt.precision is not request.precision
+                or attempt.gpu_slot is not request.gpu_slot
+                or attempt.seed != request.seed
+                or snapshot.model is not request.model
+                or snapshot.precision is not request.precision
+                or slot is None
+                or slot.active_job_id != job.id
+                or slot.availability is not GpuAvailability.BUSY
+            ):
+                raise RendererGatewayError(
+                    "renderer_state_invalid",
+                    "The interrupted render state does not match this job item",
+                )
+
+    def _record_live_model(
+        self, request: RenderRequest, inspection: SlotInspection
+    ) -> None:
         with self.database.immediate_session() as session:
             slot = session.get(GpuSlot, request.gpu_slot)
             if (
@@ -381,20 +482,36 @@ class ProductionRendererGateway:
             slot.checked_at = utc_now()
             slot.revision += 1
 
-    def _record_running(self, request: RenderRequest, prompt_id: str) -> int:
+    def _record_running(
+        self,
+        request: RenderRequest,
+        prompt_id: str,
+    ) -> tuple[int, int]:
         with self.database.immediate_session() as session:
             job = session.get(Job, request.job_id)
             item = session.get(JobItem, request.job_item_id)
             attempts = session.exec(
-                select(GenerationAttempt).where(GenerationAttempt.job_item_id == request.job_item_id)
+                select(GenerationAttempt).where(
+                    GenerationAttempt.job_item_id == request.job_item_id
+                )
             ).all()
+            attempt_number = (
+                max(
+                    (attempt.attempt_number for attempt in attempts),
+                    default=0,
+                )
+                + 1
+            )
             if (
                 job is None
                 or item is None
                 or item.status is not JobStatus.RUNNING
                 or item.stage is not JobItemStage.PROMPT_READY
                 or item.renderer_prompt_id is not None
-                or attempts
+                or any(
+                    attempt.status is GenerationAttemptStatus.RUNNING
+                    for attempt in attempts
+                )
             ):
                 raise RendererGatewayError(
                     "renderer_state_invalid",
@@ -403,7 +520,7 @@ class ProductionRendererGateway:
             timestamp = utc_now()
             attempt = GenerationAttempt(
                 job_item_id=item.id,
-                attempt_number=1,
+                attempt_number=attempt_number,
                 model=request.model,
                 precision=request.precision,
                 gpu_slot=request.gpu_slot,
@@ -423,7 +540,7 @@ class ProductionRendererGateway:
         self._notify_events()
         if attempt_id is None:
             raise RuntimeError("The running generation attempt has no id")
-        return attempt_id
+        return attempt_id, attempt_number
 
     async def _wait_for_output(self, context: _RenderContext) -> str:
         messages: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
@@ -484,7 +601,9 @@ class ProductionRendererGateway:
                 websocket_task.cancel()
                 await asyncio.gather(websocket_task, return_exceptions=True)
 
-    def _persist_output(self, context: _RenderContext, source_relative_path: str) -> RenderResult:
+    def _persist_output(
+        self, context: _RenderContext, source_relative_path: str
+    ) -> RenderResult:
         prepared: PreparedMedia | None = None
         try:
             self._record_media_processing(context)
@@ -496,14 +615,18 @@ class ProductionRendererGateway:
                 model=context.request.model,
                 derive_silent_primary=context.request.derive_silent_primary,
             )
-            source_asset_path, primary_asset_path = self._complete_attempt(context, prepared)
+            source_asset_path, primary_asset_path = self._complete_attempt(
+                context, prepared
+            )
             return RenderResult((source_asset_path, primary_asset_path))
         except Exception:
             if prepared is not None:
                 self.media_store.discard_prepared(prepared)
             raise
 
-    def _handle_websocket_message(self, context: _RenderContext, payload: dict[str, object]) -> None:
+    def _handle_websocket_message(
+        self, context: _RenderContext, payload: dict[str, object]
+    ) -> None:
         event_type = payload.get("type")
         data = payload.get("data")
         if not isinstance(data, dict):
@@ -540,7 +663,7 @@ class ProductionRendererGateway:
         self._record_progress(context, value, maximum)
 
     @staticmethod
-    def _validate_queue_prompt(queue: dict[str, object], prompt_id: str) -> None:
+    def _validate_queue_prompt(queue: dict[str, object], prompt_id: str) -> bool:
         occurrences = 0
         for key in ("queue_running", "queue_pending"):
             entries = queue.get(key)
@@ -558,8 +681,11 @@ class ProductionRendererGateway:
                 "comfyui_invalid_response",
                 "ComfyUI returned an invalid response",
             )
+        return occurrences == 1
 
-    def _history_output(self, context: _RenderContext, history: dict[str, object]) -> str | None:
+    def _history_output(
+        self, context: _RenderContext, history: dict[str, object]
+    ) -> str | None:
         record = history.get(context.prompt_id)
         if record is None:
             return None
@@ -576,9 +702,13 @@ class ProductionRendererGateway:
             )
         status_text = status.get("status_str")
         messages = status.get("messages")
-        if status_text in {"error", "interrupted"} or self._history_has_failure(messages):
+        if status_text in {"error", "interrupted"} or self._history_has_failure(
+            messages
+        ):
             raise RendererGatewayError(
-                "renderer_execution_failed" if status_text != "interrupted" else "renderer_interrupted",
+                "renderer_execution_failed"
+                if status_text != "interrupted"
+                else "renderer_interrupted",
                 "ComfyUI reported that rendering did not complete successfully",
             )
         if status.get("completed") is not True and status_text != "success":
@@ -590,7 +720,10 @@ class ProductionRendererGateway:
                 "ComfyUI did not return the expected video output",
             )
         node_output = outputs.get(context.save_node_id)
-        if not isinstance(node_output, dict) or set(node_output) != {"images", "animated"}:
+        if not isinstance(node_output, dict) or set(node_output) != {
+            "images",
+            "animated",
+        }:
             raise RendererGatewayError(
                 "renderer_output_invalid",
                 "ComfyUI did not return the expected video output",
@@ -622,7 +755,9 @@ class ProductionRendererGateway:
             for message in messages
         )
 
-    def _resolve_output(self, context: _RenderContext, output: dict[str, object]) -> str:
+    def _resolve_output(
+        self, context: _RenderContext, output: dict[str, object]
+    ) -> str:
         if set(output) != {"filename", "subfolder", "type"}:
             raise RendererGatewayError(
                 "renderer_output_invalid",
@@ -675,7 +810,11 @@ class ProductionRendererGateway:
         with self.database.immediate_session() as session:
             job = session.get(Job, context.request.job_id)
             item = session.get(JobItem, context.request.job_item_id)
-            if job is None or item is None or item.renderer_prompt_id != context.prompt_id:
+            if (
+                job is None
+                or item is None
+                or item.renderer_prompt_id != context.prompt_id
+            ):
                 raise RendererGatewayError(
                     "renderer_state_invalid",
                     "The rendered item state changed unexpectedly",
@@ -732,11 +871,17 @@ class ProductionRendererGateway:
         self._notify_events()
         return source_path, primary_path
 
-    def _record_progress(self, context: _RenderContext, value: int, maximum: int) -> None:
+    def _record_progress(
+        self, context: _RenderContext, value: int, maximum: int
+    ) -> None:
         with self.database.immediate_session() as session:
             job = session.get(Job, context.request.job_id)
             item = session.get(JobItem, context.request.job_item_id)
-            if job is None or item is None or item.renderer_prompt_id != context.prompt_id:
+            if (
+                job is None
+                or item is None
+                or item.renderer_prompt_id != context.prompt_id
+            ):
                 return
             payload = self._event_payload(job, item)
             payload["progressValue"] = value
@@ -746,7 +891,9 @@ class ProductionRendererGateway:
                     job_id=job.id,
                     item_id=item.id,
                     event_type="ItemRenderProgress",
-                    payload_json=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    payload_json=json.dumps(
+                        payload, ensure_ascii=False, separators=(",", ":")
+                    ),
                     created_at=utc_now(),
                 )
             )
@@ -756,7 +903,10 @@ class ProductionRendererGateway:
         try:
             with self.database.immediate_session() as session:
                 attempt = session.get(GenerationAttempt, context.attempt_id)
-                if attempt is None or attempt.status is not GenerationAttemptStatus.RUNNING:
+                if (
+                    attempt is None
+                    or attempt.status is not GenerationAttemptStatus.RUNNING
+                ):
                     return
                 attempt.status = GenerationAttemptStatus.FAILED
                 attempt.failure_reason = reason
