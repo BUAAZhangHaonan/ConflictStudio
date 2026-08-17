@@ -22,7 +22,12 @@ const testPageSource = read('../frontend/src/pages/generate/TestPage.tsx');
 const testResourcesSource = read('../frontend/src/pages/generate/TestResources.tsx');
 const testWorkflowSource = read('../frontend/src/pages/generate/testWorkflow.ts');
 const productionPageSource = read('../frontend/src/pages/generate/ProductionPage.tsx');
-const resultsPageSource = read('../frontend/src/pages/generate/ResultsPage.tsx');
+const resultsPageSource = [
+  read('../frontend/src/pages/generate/ResultsPage.tsx'),
+  read('../frontend/src/pages/generate/ResultsView.tsx'),
+  read('../frontend/src/pages/generate/ResultsOutputList.tsx'),
+  read('../frontend/src/pages/generate/resultsModel.ts'),
+].join('\n');
 const assistantSource = read('../frontend/src/pages/generate/AssistantPanel.tsx');
 const formalGenerationSource = read('../frontend/src/pages/generate/formalGeneration.ts');
 const generatePageSource = read('../frontend/src/pages/GeneratePage.tsx');
@@ -257,7 +262,7 @@ test('test page manages isolated resources and displays the exact prompt test ou
     assert.match(testResourcesSource, new RegExp(token));
   }
   assert.match(testWorkflowSource, /sceneIds/u);
-  assert.match(generationLocaleSource, /Tests do not create formal samples and never enter review or archive/u);
+  assert.match(generationLocaleSource, /Test results never enter a formal dataset, review, or archive/u);
 });
 test('formal generation uses explicit valid combinations and current preview and submit contracts', () => {
   for (const token of ['useDatasetsQuery', "status: 'Active'", 'contentSelections', 'selectedSceneIds', 'demographics', 'parseSeeds', 'gpuSlots', 'usePreviewBatchMutation', 'useSubmitBatchMutation']) {
@@ -285,12 +290,12 @@ test('results separate test and formal tasks and wire explicit task controls', (
   for (const token of ['useTestResultsQuery', 'useProductionResultsQuery', 'useResultItemsQuery', 'useJobEventsQuery', 'useCancelJobMutation', 'useResumeJobMutation', 'useRetryFailedItemsMutation', 'expectedRevision', 'itemRevisions']) {
     assert.match(resultsPageSource, new RegExp(token));
   }
-  assert.match(resultsPageSource, /<Pagination page=\{listQuery\.data\?\.page/u);
-  assert.match(resultsPageSource, /<Pagination page=\{itemsQuery\.data\?\.page/u);
-  assert.match(resultsPageSource, /<Pagination page=\{eventsQuery\.data\?\.page/u);
+  assert.match(resultsPageSource, /listQuery\.data\?\.page/u);
+  assert.match(resultsPageSource, /itemsQuery\.data\?\.page/u);
+  assert.match(resultsPageSource, /eventsQuery\.data\?\.page/u);
   assert.match(resultsPageSource, /collapseProgressEvents/u);
   assert.match(resultsPageSource, /writeSessionDraft\(testCopyDraftKey/u);
-  assert.match(resultsPageSource, /disabled=\{copiedSettings === null\}/u);
+  assert.match(resultsPageSource, /disabled=\{testDraft === null\}/u);
   assert.match(resultsPageSource, /jobFailureMessage\(detail\.failureCode/u);
   assert.match(resultsPageSource, /jobFailureMessage\(item\.failureCode/u);
   assert.doesNotMatch(resultsPageSource, />\{detail\.failureReason\}</u);
