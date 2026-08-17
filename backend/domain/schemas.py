@@ -1189,17 +1189,44 @@ class ReviewerRead(ApiModel):
     updated_at: str
 
 
-class ReviewCreate(ApiModel):
+class ReviewQueueFilter(ApiModel):
+    decision: Literal[
+        "All",
+        ReviewDecision.PENDING,
+        ReviewDecision.ACCEPTED,
+        ReviewDecision.REJECTED,
+    ] = "All"
+    dataset_id: int | None = Field(default=None, gt=0)
+    protocol: Protocol | None = None
+    relation: Relation | None = None
+    direction: ConflictDirection | None = None
+    search: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=160,
+        pattern=r".*\S.*",
+    )
+
+
+class ReviewMutation(ApiModel):
     sample_id: int = Field(gt=0)
     reviewer_id: int = Field(gt=0)
     decision: Literal[ReviewDecision.ACCEPTED, ReviewDecision.REJECTED]
-    note: ReviewNote = ""
     expected_revision: int = Field(ge=1)
     expected_review_revision: int = Field(ge=0)
+    expected_note_draft_revision: int = Field(ge=0)
+
+
+class ReviewCreate(ReviewMutation):
+    queue: ReviewQueueFilter
+
+
+class ReviewBatchItem(ReviewMutation):
+    pass
 
 
 class ReviewBatchCreate(ApiModel):
-    items: list[ReviewCreate] = Field(min_length=1)
+    items: list[ReviewBatchItem] = Field(min_length=1)
 
     @model_validator(mode="after")
     def reject_duplicate_samples(self) -> Self:
@@ -1223,7 +1250,24 @@ class ReviewRead(ApiModel):
     created_at: str
 
 
+class ReviewNoteDraftUpdate(ApiModel):
+    reviewer_id: int = Field(gt=0)
+    note: ReviewNote = ""
+    expected_revision: int = Field(ge=0)
+    expected_sample_revision: int = Field(ge=1)
+
+
+class ReviewNoteDraftRead(ApiModel):
+    sample_id: int
+    reviewer_id: int
+    sample_revision: int
+    note: str
+    revision: int = Field(ge=0)
+    updated_at: str | None
+
+
 class SampleClassificationUpdate(ExpectedRevision):
+    reviewer_id: int = Field(gt=0)
     target_category: Category
     conflict_direction: ConflictDirection | None = None
     apparent_emotion: EmotionValue | None = None
@@ -1367,6 +1411,82 @@ class SampleRead(ApiModel):
     revision: int
     created_at: str
     updated_at: str
+
+
+class ReviewMediaRead(ApiModel):
+    url: str
+    has_audio: bool
+
+
+class ReviewSampleListRead(ApiModel):
+    id: int
+    display_id: str
+    dataset_id: int
+    dataset_name: str
+    category: Category
+    protocol: Protocol
+    relation: Relation
+    conflict_direction: ConflictDirection | None
+    review_decision: ReviewDecision
+    review_revision: int
+    current_review: ReviewRead | None
+    in_archive: bool
+    archive_sync_status: ArchiveSyncStatus
+    generation_compatibility: GenerationCompatibility
+    primary_media: ReviewMediaRead
+    true_emotion: str
+    apparent_emotion: str
+    content_script_name_zh: str
+    content_script_name_en: str
+    revision: int
+    created_at: str
+    updated_at: str
+
+
+class ReviewSampleDetailRead(ReviewSampleListRead):
+    source_media: ReviewMediaRead | None
+    dialogue: str | None
+    display_text: str | None
+    true_emotion_description: str
+    scene_zh: str
+    scene_en: str
+    trigger_event_zh: str
+    trigger_event_en: str
+    psychological_background_zh: str
+    psychological_background_en: str
+    age: int
+    gender: Gender
+    ethnicity: Ethnicity
+
+
+class ReviewSampleReferenceRead(ApiModel):
+    id: int
+    display_id: str
+    page: int = Field(ge=1)
+
+
+class ReviewSubmissionRead(ReviewSampleDetailRead):
+    next_reference: ReviewSampleReferenceRead | None
+
+
+class SampleClassificationChangeRead(ApiModel):
+    id: int
+    sample_id: int
+    operator_id: int
+    operator_name: str
+    before_protocol: Protocol
+    after_protocol: Protocol
+    before_relation: Relation
+    after_relation: Relation
+    before_direction: ConflictDirection | None
+    after_direction: ConflictDirection | None
+    before_apparent_emotion: str
+    after_apparent_emotion: str
+    before_true_emotion_description: str
+    after_true_emotion_description: str
+    before_sample_revision: int
+    after_sample_revision: int
+    created_at: str
 
 
 class JobEventPayloadRead(ApiModel):

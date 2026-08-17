@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 from fastapi import (
     APIRouter,
@@ -19,11 +20,12 @@ from starlette.background import BackgroundTask
 
 from backend.adapters.renderer import RendererInstallationStatus
 from backend.domain.enums import (
-    Category,
+    ConflictDirection,
     GpuSlotName,
     JobSource,
     JobStatus,
     Protocol,
+    Relation,
     ResourceStatus,
     ReviewDecision,
 )
@@ -71,13 +73,19 @@ from backend.domain.schemas import (
     PromptPreviewRequest,
     ReviewBatchCreate,
     ReviewCreate,
+    ReviewNoteDraftRead,
+    ReviewNoteDraftUpdate,
+    ReviewQueueFilter,
     ReviewerCreate,
     ReviewerRead,
     ReviewerRename,
     ReviewerStatisticsRead,
     ReviewRead,
+    ReviewSampleDetailRead,
+    ReviewSampleListRead,
+    ReviewSubmissionRead,
+    SampleClassificationChangeRead,
     SampleClassificationUpdate,
-    SampleRead,
     PromptTestCreate,
     VideoTestCreate,
     SceneCreate,
@@ -613,37 +621,66 @@ def list_job_attempts(
     return batches(request).list_job_attempts(item_id, page)
 
 
-@router.get("/samples", response_model=PageRead[SampleRead])
+@router.get("/samples", response_model=PageRead[ReviewSampleListRead])
 def list_samples(
     request: Request,
-    decision: ReviewDecision | None = Query(default=None),
+    decision: Literal[
+        "All",
+        ReviewDecision.PENDING,
+        ReviewDecision.ACCEPTED,
+        ReviewDecision.REJECTED,
+    ] = Query(default="All"),
     dataset_id: int | None = Query(default=None, alias="datasetId", gt=0),
     protocol: Protocol | None = Query(default=None),
-    category: Category | None = Query(default=None),
-    search: str | None = Query(default=None, min_length=1, max_length=160),
+    relation: Relation | None = Query(default=None),
+    direction: ConflictDirection | None = Query(default=None),
+    search: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=160,
+        pattern=r".*\S.*",
+    ),
     page: int = Query(default=1, ge=1),
-) -> PageRead[SampleRead]:
+) -> PageRead[ReviewSampleListRead]:
     return samples(request).list_samples(
         page,
-        decision,
-        dataset_id,
-        protocol,
-        category,
-        search,
+        ReviewQueueFilter(
+            decision=decision,
+            dataset_id=dataset_id,
+            protocol=protocol,
+            relation=relation,
+            direction=direction,
+            search=search,
+        ),
     )
 
 
-@router.get("/samples/{sample_id}", response_model=SampleRead)
-def get_sample(sample_id: int, request: Request) -> SampleRead:
+@router.get("/samples/{sample_id}", response_model=ReviewSampleDetailRead)
+def get_sample(sample_id: int, request: Request) -> ReviewSampleDetailRead:
     return samples(request).get_sample(sample_id)
 
 
-@router.patch("/samples/{sample_id}/classification", response_model=SampleRead)
+@router.get(
+    "/samples/{sample_id}/classification-history",
+    response_model=PageRead[SampleClassificationChangeRead],
+)
+def list_sample_classification_history(
+    sample_id: int,
+    request: Request,
+    page: int = Query(default=1, ge=1),
+) -> PageRead[SampleClassificationChangeRead]:
+    return samples(request).list_classification_history(sample_id, page)
+
+
+@router.patch(
+    "/samples/{sample_id}/classification",
+    response_model=ReviewSampleDetailRead,
+)
 def update_sample_classification(
     sample_id: int,
     payload: SampleClassificationUpdate,
     request: Request,
-) -> SampleRead:
+) -> ReviewSampleDetailRead:
     return samples(request).update_classification(sample_id, payload)
 
 
@@ -676,6 +713,30 @@ def rename_reviewer(
     return reviewers(request).rename(reviewer_id, payload)
 
 
+@router.get(
+    "/samples/{sample_id}/review-note-draft",
+    response_model=ReviewNoteDraftRead,
+)
+def get_review_note_draft(
+    sample_id: int,
+    request: Request,
+    reviewer_id: int = Query(alias="reviewerId", gt=0),
+) -> ReviewNoteDraftRead:
+    return reviews(request).get_note_draft(sample_id, reviewer_id)
+
+
+@router.put(
+    "/samples/{sample_id}/review-note-draft",
+    response_model=ReviewNoteDraftRead,
+)
+def put_review_note_draft(
+    sample_id: int,
+    payload: ReviewNoteDraftUpdate,
+    request: Request,
+) -> ReviewNoteDraftRead:
+    return reviews(request).put_note_draft(sample_id, payload)
+
+
 @router.get("/reviews", response_model=PageRead[ReviewRead])
 def list_reviews(
     request: Request,
@@ -685,19 +746,26 @@ def list_reviews(
     return reviews(request).list_for_sample(sample_id, page)
 
 
-@router.post("/reviews", response_model=SampleRead, status_code=status.HTTP_201_CREATED)
-def create_review(payload: ReviewCreate, request: Request) -> SampleRead:
+@router.post(
+    "/reviews",
+    response_model=ReviewSubmissionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_review(
+    payload: ReviewCreate,
+    request: Request,
+) -> ReviewSubmissionRead:
     return reviews(request).create(payload)
 
 
 @router.post(
     "/reviews/batch",
-    response_model=list[SampleRead],
+    response_model=list[ReviewSampleDetailRead],
     status_code=status.HTTP_201_CREATED,
 )
 def create_reviews_batch(
     payload: ReviewBatchCreate, request: Request
-) -> list[SampleRead]:
+) -> list[ReviewSampleDetailRead]:
     return reviews(request).create_batch(payload)
 
 

@@ -1066,6 +1066,26 @@ class Reviewer(SQLModel, table=True):
     updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 
+class ReviewNoteDraft(SQLModel, table=True):
+    __tablename__ = "review_note_drafts"
+    __table_args__ = (
+        CheckConstraint("length(note) <= 2000", name="ck_review_note_drafts_note"),
+        CheckConstraint("sample_revision >= 1", name="ck_review_note_drafts_sample_revision"),
+        CheckConstraint("revision >= 1", name="ck_review_note_drafts_revision"),
+    )
+
+    sample_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("samples.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    )
+    reviewer_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("reviewers.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    )
+    sample_revision: int = Field(ge=1)
+    note: str = Field(default="", sa_column=Column(Text, nullable=False))
+    revision: int = Field(default=1, ge=1)
+    updated_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
 class Review(SQLModel, table=True):
     __tablename__ = "reviews"
     __table_args__ = (
@@ -1089,6 +1109,39 @@ class Review(SQLModel, table=True):
     note: str = Field(default="", sa_column=Column(Text, nullable=False))
     sample_revision: int = Field(ge=1)
     revision: int = Field(ge=1)
+    created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
+
+
+class SampleClassificationChange(SQLModel, table=True):
+    __tablename__ = "sample_classification_changes"
+    __table_args__ = (
+        CheckConstraint("before_sample_revision >= 1", name="ck_classification_changes_before_revision"),
+        CheckConstraint("after_sample_revision = before_sample_revision + 1", name="ck_classification_changes_after_revision"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    sample_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("samples.id", ondelete="RESTRICT"), nullable=False)
+    )
+    operator_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("reviewers.id", ondelete="RESTRICT"), nullable=False)
+    )
+    before_protocol: Protocol = Field(sa_column=enum_column(Protocol))
+    after_protocol: Protocol = Field(sa_column=enum_column(Protocol))
+    before_relation: Relation = Field(sa_column=enum_column(Relation))
+    after_relation: Relation = Field(sa_column=enum_column(Relation))
+    before_direction: ConflictDirection | None = Field(
+        default=None, sa_column=enum_column(ConflictDirection, nullable=True)
+    )
+    after_direction: ConflictDirection | None = Field(
+        default=None, sa_column=enum_column(ConflictDirection, nullable=True)
+    )
+    before_apparent_emotion: str = Field(sa_column=Column(String(120), nullable=False))
+    after_apparent_emotion: str = Field(sa_column=Column(String(120), nullable=False))
+    before_true_emotion_description: str = Field(sa_column=Column(Text, nullable=False))
+    after_true_emotion_description: str = Field(sa_column=Column(Text, nullable=False))
+    before_sample_revision: int = Field(ge=1)
+    after_sample_revision: int = Field(ge=2)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))
 
 

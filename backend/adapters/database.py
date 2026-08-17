@@ -74,6 +74,10 @@ class Database:
             ("prompt_template_examples", "prompt template examples are immutable"),
             ("assets", "assets are immutable"),
             ("reviews", "reviews are immutable"),
+            (
+                "sample_classification_changes",
+                "sample classification changes are immutable",
+            ),
         )
         quoted_root = str(self.data_root).replace("'", "''")
         connection.exec_driver_sql("DROP TRIGGER IF EXISTS require_assets_storage_root")
@@ -353,13 +357,22 @@ class Database:
             END
             """
         )
-        connection.exec_driver_sql("DROP TRIGGER IF EXISTS require_reviews_sample_snapshot")
+        for trigger_name in (
+            "require_reviews_sample_snapshot",
+            "apply_review_to_sample",
+            "protect_sample_review_state",
+            "validate_sample_classification_change",
+            "apply_sample_classification_change",
+            "protect_sample_classification",
+        ):
+            connection.exec_driver_sql(f"DROP TRIGGER IF EXISTS {trigger_name}")
         connection.exec_driver_sql(
             """
             CREATE TRIGGER require_reviews_sample_snapshot
             BEFORE INSERT ON reviews
             WHEN NOT EXISTS (
-                SELECT 1 FROM samples
+                SELECT 1
+                FROM samples
                 WHERE samples.id = NEW.sample_id
                   AND NEW.protocol = CASE
                       WHEN samples.category IN ('A-VA', 'C-VA') THEN 'VA'
@@ -369,9 +382,252 @@ class Database:
                       WHEN samples.category IN ('A-VA', 'A-VT') THEN 'Aligned'
                       ELSE 'Conflict'
                   END
+                  AND NEW.sample_revision = samples.revision
+                  AND NEW.revision = samples.review_revision + 1
+                  AND NEW.revision = COALESCE(
+                      (
+                        SELECT max(revision) FROM reviews
+                        WHERE reviews.sample_id = NEW.sample_id
+                      ),
+                      0
+                  ) + 1
             )
             BEGIN
                 SELECT RAISE(ABORT, 'review snapshot must match its sample');
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER apply_review_to_sample
+            AFTER INSERT ON reviews
+            BEGIN
+                UPDATE samples
+                SET review_decision = NEW.decision,
+                    review_revision = NEW.revision,
+                    revision = NEW.sample_revision + 1,
+                    updated_at = NEW.created_at
+                WHERE id = NEW.sample_id
+                  AND revision = NEW.sample_revision
+                  AND review_revision = NEW.revision - 1;
+                SELECT CASE
+                    WHEN changes() != 1
+                    THEN RAISE(ABORT, 'review could not update its sample')
+                END;
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_sample_review_state
+            BEFORE UPDATE OF review_decision, review_revision ON samples
+            WHEN (
+                NEW.review_decision != OLD.review_decision
+                OR NEW.review_revision != OLD.review_revision
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM reviews
+                WHERE reviews.sample_id = OLD.id
+                  AND reviews.sample_revision = OLD.revision
+                  AND reviews.revision = NEW.review_revision
+                  AND reviews.decision = NEW.review_decision
+                  AND NEW.review_revision = OLD.review_revision + 1
+                  AND NEW.revision = OLD.revision + 1
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM sample_classification_changes AS changes
+                WHERE changes.sample_id = OLD.id
+                  AND changes.before_protocol = CASE
+                      WHEN OLD.category IN ('A-VA', 'C-VA') THEN 'VA'
+                      ELSE 'VT'
+                  END
+                  AND changes.after_protocol = CASE
+                      WHEN NEW.category IN ('A-VA', 'C-VA') THEN 'VA'
+                      ELSE 'VT'
+                  END
+                  AND changes.before_relation = CASE
+                      WHEN OLD.category IN ('A-VA', 'A-VT') THEN 'Aligned'
+                      ELSE 'Conflict'
+                  END
+                  AND changes.after_relation = CASE
+                      WHEN NEW.category IN ('A-VA', 'A-VT') THEN 'Aligned'
+                      ELSE 'Conflict'
+                  END
+                  AND changes.before_direction IS OLD.conflict_direction
+                  AND changes.after_direction IS NEW.conflict_direction
+                  AND changes.before_apparent_emotion = OLD.apparent_emotion
+                  AND changes.after_apparent_emotion = NEW.apparent_emotion
+                  AND changes.before_true_emotion_description
+                      = OLD.true_emotion_description
+                  AND changes.after_true_emotion_description
+                      = NEW.true_emotion_description
+                  AND changes.before_sample_revision = OLD.revision
+                  AND changes.after_sample_revision = NEW.revision
+                  AND NEW.review_decision = 'Pending'
+                  AND NEW.review_revision = OLD.review_revision
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'sample review state requires its append-only review'
+                );
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER validate_sample_classification_change
+            BEFORE INSERT ON sample_classification_changes
+            WHEN NOT EXISTS (
+                SELECT 1
+                FROM samples
+                WHERE samples.id = NEW.sample_id
+                  AND NEW.before_protocol = CASE
+                      WHEN samples.category IN ('A-VA', 'C-VA') THEN 'VA'
+                      ELSE 'VT'
+                  END
+                  AND NEW.before_relation = CASE
+                      WHEN samples.category IN ('A-VA', 'A-VT') THEN 'Aligned'
+                      ELSE 'Conflict'
+                  END
+                  AND NEW.before_direction IS samples.conflict_direction
+                  AND NEW.before_apparent_emotion = samples.apparent_emotion
+                  AND NEW.before_true_emotion_description
+                      = samples.true_emotion_description
+                  AND NEW.before_sample_revision = samples.revision
+                  AND NEW.after_sample_revision = samples.revision + 1
+                  AND (
+                      NEW.before_protocol != NEW.after_protocol
+                      OR NEW.before_relation != NEW.after_relation
+                      OR NEW.before_direction IS NOT NEW.after_direction
+                      OR NEW.before_apparent_emotion
+                          != NEW.after_apparent_emotion
+                      OR NEW.before_true_emotion_description
+                          != NEW.after_true_emotion_description
+                  )
+                  AND (
+                      (
+                        NEW.after_relation = 'Aligned'
+                        AND NEW.after_direction IS NULL
+                        AND lower(trim(NEW.after_apparent_emotion))
+                            = lower(trim(samples.true_emotion))
+                      )
+                      OR (
+                        NEW.after_relation = 'Conflict'
+                        AND (
+                            (
+                              NEW.after_protocol = 'VA'
+                              AND NEW.after_direction IN ('Vision', 'Audio')
+                            )
+                            OR (
+                              NEW.after_protocol = 'VT'
+                              AND NEW.after_direction IN ('Vision', 'Text')
+                            )
+                        )
+                        AND lower(trim(NEW.after_apparent_emotion))
+                            != lower(trim(samples.true_emotion))
+                      )
+                  )
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'classification history must match its sample transition'
+                );
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER apply_sample_classification_change
+            AFTER INSERT ON sample_classification_changes
+            BEGIN
+                UPDATE samples
+                SET category = CASE
+                        WHEN NEW.after_relation = 'Aligned'
+                             AND NEW.after_protocol = 'VA' THEN 'A-VA'
+                        WHEN NEW.after_relation = 'Aligned'
+                             AND NEW.after_protocol = 'VT' THEN 'A-VT'
+                        WHEN NEW.after_relation = 'Conflict'
+                             AND NEW.after_protocol = 'VA' THEN 'C-VA'
+                        ELSE 'C-VT'
+                    END,
+                    conflict_direction = NEW.after_direction,
+                    apparent_emotion = NEW.after_apparent_emotion,
+                    true_emotion_description
+                        = NEW.after_true_emotion_description,
+                    review_decision = 'Pending',
+                    revision = NEW.after_sample_revision,
+                    updated_at = NEW.created_at
+                WHERE id = NEW.sample_id
+                  AND revision = NEW.before_sample_revision;
+                SELECT CASE
+                    WHEN changes() != 1
+                    THEN RAISE(
+                        ABORT,
+                        'classification history could not update its sample'
+                    )
+                END;
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER protect_sample_classification
+            BEFORE UPDATE OF
+                category,
+                conflict_direction,
+                apparent_emotion,
+                true_emotion_description
+            ON samples
+            WHEN (
+                NEW.category != OLD.category
+                OR NEW.conflict_direction IS NOT OLD.conflict_direction
+                OR NEW.apparent_emotion != OLD.apparent_emotion
+                OR NEW.true_emotion_description
+                    != OLD.true_emotion_description
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM sample_classification_changes AS changes
+                WHERE changes.sample_id = OLD.id
+                  AND changes.before_protocol = CASE
+                      WHEN OLD.category IN ('A-VA', 'C-VA') THEN 'VA'
+                      ELSE 'VT'
+                  END
+                  AND changes.after_protocol = CASE
+                      WHEN NEW.category IN ('A-VA', 'C-VA') THEN 'VA'
+                      ELSE 'VT'
+                  END
+                  AND changes.before_relation = CASE
+                      WHEN OLD.category IN ('A-VA', 'A-VT') THEN 'Aligned'
+                      ELSE 'Conflict'
+                  END
+                  AND changes.after_relation = CASE
+                      WHEN NEW.category IN ('A-VA', 'A-VT') THEN 'Aligned'
+                      ELSE 'Conflict'
+                  END
+                  AND changes.before_direction IS OLD.conflict_direction
+                  AND changes.after_direction IS NEW.conflict_direction
+                  AND changes.before_apparent_emotion = OLD.apparent_emotion
+                  AND changes.after_apparent_emotion = NEW.apparent_emotion
+                  AND changes.before_true_emotion_description
+                      = OLD.true_emotion_description
+                  AND changes.after_true_emotion_description
+                      = NEW.true_emotion_description
+                  AND changes.before_sample_revision = OLD.revision
+                  AND changes.after_sample_revision = NEW.revision
+                  AND NEW.revision = OLD.revision + 1
+                  AND NEW.review_decision = 'Pending'
+                  AND NEW.review_revision = OLD.review_revision
+            )
+            BEGIN
+                SELECT RAISE(
+                    ABORT,
+                    'sample classification requires append-only history'
+                );
             END
             """
         )

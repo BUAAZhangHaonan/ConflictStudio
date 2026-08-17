@@ -8,6 +8,7 @@ from sqlmodel import select
 from backend.domain.enums import BatchDraftStatus, DatasetPurpose, GenerationAttemptStatus, JobItemStage, JobSource, JobStatus
 from backend.domain.models import Archive, ArchiveItem, Asset, BatchDraft, BatchVideoInputSnapshot, Dataset, DatasetMergeOperation, DatasetMergeSource, GenerationAttempt, Job, JobItem, JobItemPromptResult, Review, Sample, utc_now
 from backend.services.samples import create_sample_for_completed_item
+from backend.domain.schemas import ReviewQueueFilter
 from backend.tests.test_invariants import client_for
 from backend.tests.test_review_api import create_reviewer, review_payload, sample_app
 
@@ -191,8 +192,8 @@ def test_dataset_merge_preserves_sample_media_review_and_job_history(
     assert moved["datasetId"] == target["id"]
     assert moved["datasetName"] == target["name"]
     assert moved["revision"] == reviewed["revision"] + 1
-    assert moved["primaryAssetId"] == reviewed["primaryAssetId"]
-    assert moved["sourceAssetId"] == reviewed["sourceAssetId"]
+    assert moved["primaryMedia"] == reviewed["primaryMedia"]
+    assert moved["sourceMedia"] == reviewed["sourceMedia"]
     assert moved["reviewDecision"] == "Accepted"
     assert moved["reviewRevision"] == reviewed["reviewRevision"]
     assert moved["currentReview"]["id"] == reviewed["currentReview"]["id"]
@@ -217,7 +218,7 @@ def test_dataset_merge_preserves_sample_media_review_and_job_history(
         assert persisted_review is not None
         assert persisted_review.sample_id == sample["id"]
         assert persisted_review.decision.value == "Accepted"
-        assert session.get(Asset, reviewed["primaryAssetId"]) is not None
+        assert session.get(Asset, int(reviewed["primaryMedia"]["url"].rsplit("/", 1)[1])) is not None
         assert job is not None
         assert job.dataset_id == source["id"]
         assert job.dataset_name_snapshot == source["name"]
@@ -472,8 +473,7 @@ def test_incremental_production_appends_without_changing_existing_review(
         appended_id = appended.id
 
     samples = app.state.sample_service.list_samples(
-        1,
-        dataset_id=existing["datasetId"],
+        1, ReviewQueueFilter(dataset_id=existing["datasetId"])
     )
     unchanged = app.state.sample_service.get_sample(existing["id"])
 
@@ -484,4 +484,4 @@ def test_incremental_production_appends_without_changing_existing_review(
     assert unchanged.review_revision == reviewed["reviewRevision"]
     assert unchanged.current_review is not None
     assert unchanged.current_review.id == reviewed["currentReview"]["id"]
-    assert unchanged.primary_asset_id == reviewed["primaryAssetId"]
+    assert unchanged.primary_media.url == reviewed["primaryMedia"]["url"]

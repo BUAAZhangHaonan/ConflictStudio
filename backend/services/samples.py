@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
@@ -18,13 +20,16 @@ from backend.domain.enums import (
 )
 from backend.domain.models import (
     ArchiveItem,
+    Asset,
     BatchVideoInputSnapshot,
     Dataset,
     GenerationAttempt,
     Job,
     JobItem,
     JobItemPromptResult,
+    Reviewer,
     Sample,
+    SampleClassificationChange,
     utc_now,
 )
 from backend.domain.schemas import (
@@ -32,6 +37,12 @@ from backend.domain.schemas import (
     emotion_key,
     GenerationAttemptRead,
     PageRead,
+    ReviewMediaRead,
+    ReviewQueueFilter,
+    ReviewSampleDetailRead,
+    ReviewSampleListRead,
+    ReviewSampleReferenceRead,
+    SampleClassificationChangeRead,
     SampleRead,
     SampleClassificationUpdate,
 )
@@ -40,7 +51,7 @@ from .assets import asset_content_url
 from .errors import invalid_request, not_found, revision_conflict, state_conflict
 from .generation_compatibility import generation_compatibility
 from .reviews import latest_review, review_read
-from .pagination import paginate
+from .pagination import PAGE_SIZE, paginate
 
 
 def create_sample_for_completed_item(
@@ -110,61 +121,33 @@ class SampleService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    def list_samples(
-        self,
-        page: int,
-        decision: ReviewDecision | None = None,
-        dataset_id: int | None = None,
-        protocol: Protocol | None = None,
-        category: Category | None = None,
-        search: str | None = None,
-    ) -> PageRead[SampleRead]:
+    def list_samples(self, page: int, filters: ReviewQueueFilter) -> PageRead[ReviewSampleListRead]:
         with self.database.read_session() as session:
-            statement = select(Sample)
-            if decision is not None:
-                statement = statement.where(Sample.review_decision == decision)
-            if dataset_id is not None:
-                statement = statement.where(Sample.dataset_id == dataset_id)
-            if protocol is Protocol.VA:
-                statement = statement.where(Sample.category.in_([Category.A_VA, Category.C_VA]))
-            elif protocol is Protocol.VT:
-                statement = statement.where(Sample.category.in_([Category.A_VT, Category.C_VT]))
-            if category is not None:
-                statement = statement.where(Sample.category == category)
-            if search is not None and search.strip():
-                needle = search.strip().casefold()
-                dataset_ids = select(Dataset.id).where(
-                    func.lower(Dataset.name).contains(needle)
-                )
-                statement = statement.where(
-                    or_(
-                        func.lower(func.printf("CS-%06d", Sample.id)).contains(needle),
-                        Sample.dataset_id.in_(dataset_ids),
-                    )
-                )
             return paginate(
                 session,
-                statement.order_by(Sample.created_at, Sample.id),
+                self.review_statement(filters),
                 page,
-                lambda row: self._read(session, row),
+                lambda row: self.review_list_read_in_session(session, row),
             )
 
-    def get_sample(self, sample_id: int) -> SampleRead:
+    def get_sample(self, sample_id: int) -> ReviewSampleDetailRead:
         with self.database.read_session() as session:
             row = session.get(Sample, sample_id)
             if row is None:
                 raise not_found("sample", sample_id)
-            return self._read(session, row)
+            return self.review_detail_read_in_session(session, row)
 
     def update_classification(
         self,
         sample_id: int,
         payload: SampleClassificationUpdate,
-    ) -> SampleRead:
+    ) -> ReviewSampleDetailRead:
         with self.database.immediate_session() as session:
             row = session.get(Sample, sample_id)
             if row is None:
                 raise not_found("sample", sample_id)
+            if session.get(Reviewer, payload.reviewer_id) is None:
+                raise not_found("reviewer", payload.reviewer_id)
             if row.revision != payload.expected_revision:
                 raise revision_conflict("sample", sample_id, payload.expected_revision, row.revision)
             if protocol_for(row.category) is not protocol_for(payload.target_category):
@@ -176,19 +159,232 @@ class SampleService:
                 and payload.apparent_emotion == emotion_key(row.true_emotion)
             ):
                 raise invalid_request("The apparent emotion must differ from the true emotion")
-            row.category = payload.target_category
-            row.conflict_direction = payload.conflict_direction
-            row.apparent_emotion = (
+            after_apparent_emotion = (
                 payload.apparent_emotion
                 if payload.apparent_emotion is not None
                 else row.true_emotion
             )
-            row.true_emotion_description = payload.true_emotion_description
-            row.review_decision = ReviewDecision.PENDING
-            row.revision += 1
-            row.updated_at = utc_now()
-            session.flush()
-            return self.read_in_session(session, row)
+            timestamp = utc_now()
+            change = SampleClassificationChange(
+                sample_id=row.id,
+                operator_id=payload.reviewer_id,
+                before_protocol=protocol_for(row.category),
+                after_protocol=protocol_for(payload.target_category),
+                before_relation=relation_for(row.category),
+                after_relation=relation_for(payload.target_category),
+                before_direction=row.conflict_direction,
+                after_direction=payload.conflict_direction,
+                before_apparent_emotion=row.apparent_emotion,
+                after_apparent_emotion=after_apparent_emotion,
+                before_true_emotion_description=row.true_emotion_description,
+                after_true_emotion_description=payload.true_emotion_description,
+                before_sample_revision=row.revision,
+                after_sample_revision=row.revision + 1,
+                created_at=timestamp,
+            )
+            session.add(change)
+            session.flush([change])
+            session.refresh(row)
+            return self.review_detail_read_in_session(session, row)
+
+    def list_classification_history(
+        self,
+        sample_id: int,
+        page: int,
+    ) -> PageRead[SampleClassificationChangeRead]:
+        with self.database.read_session() as session:
+            if session.get(Sample, sample_id) is None:
+                raise not_found("sample", sample_id)
+            return paginate(
+                session,
+                select(SampleClassificationChange)
+                .where(SampleClassificationChange.sample_id == sample_id)
+                .order_by(SampleClassificationChange.id),
+                page,
+                lambda row: self._classification_change_read(session, row),
+            )
+
+    @staticmethod
+    def review_statement(filters: ReviewQueueFilter) -> Any:
+        statement = select(Sample)
+        if filters.decision != "All":
+            statement = statement.where(Sample.review_decision == filters.decision)
+        if filters.dataset_id is not None:
+            statement = statement.where(Sample.dataset_id == filters.dataset_id)
+        if filters.protocol is Protocol.VA:
+            statement = statement.where(Sample.category.in_([Category.A_VA, Category.C_VA]))
+        elif filters.protocol is Protocol.VT:
+            statement = statement.where(Sample.category.in_([Category.A_VT, Category.C_VT]))
+        if filters.relation is Relation.ALIGNED:
+            statement = statement.where(Sample.category.in_([Category.A_VA, Category.A_VT]))
+        elif filters.relation is Relation.CONFLICT:
+            statement = statement.where(Sample.category.in_([Category.C_VA, Category.C_VT]))
+        if filters.direction is not None:
+            statement = statement.where(Sample.conflict_direction == filters.direction)
+        if filters.search is not None:
+            needle = filters.search.strip().casefold()
+            dataset_ids = select(Dataset.id).where(func.lower(Dataset.name).contains(needle))
+            statement = statement.where(
+                or_(
+                    func.lower(func.printf("CS-%06d", Sample.id)).contains(needle),
+                    Sample.dataset_id.in_(dataset_ids),
+                    func.lower(Sample.true_emotion).contains(needle),
+                    func.lower(Sample.apparent_emotion).contains(needle),
+                    func.lower(Sample.dialogue).contains(needle),
+                    func.lower(Sample.display_text).contains(needle),
+                )
+            )
+        return statement.order_by(Sample.id)
+
+    def next_sample_id(
+        self,
+        session: Session,
+        sample_id: int,
+        filters: ReviewQueueFilter,
+    ) -> int | None:
+        current = session.exec(
+            self.review_statement(filters).where(Sample.id == sample_id)
+        ).first()
+        if current is None:
+            raise invalid_request("The sample is not part of the supplied review queue")
+        next_row = session.exec(
+            self.review_statement(filters).where(Sample.id > sample_id).limit(1)
+        ).first()
+        return next_row.id if next_row is not None else None
+
+    def reference_for_sample(
+        self,
+        session: Session,
+        sample_id: int | None,
+        filters: ReviewQueueFilter,
+    ) -> ReviewSampleReferenceRead | None:
+        if sample_id is None:
+            return None
+        row = session.exec(
+            self.review_statement(filters).where(Sample.id == sample_id)
+        ).first()
+        if row is None:
+            return None
+        position = int(
+            session.exec(
+                select(func.count()).select_from(
+                    self.review_statement(filters)
+                    .where(Sample.id <= sample_id)
+                    .order_by(None)
+                    .subquery()
+                )
+            ).one()
+        )
+        return ReviewSampleReferenceRead(
+            id=row.id,
+            display_id=f"CS-{row.id:06d}",
+            page=((position - 1) // PAGE_SIZE) + 1,
+        )
+
+    @staticmethod
+    def _classification_change_read(
+        session: Session,
+        row: SampleClassificationChange,
+    ) -> SampleClassificationChangeRead:
+        operator = session.get(Reviewer, row.operator_id)
+        if operator is None:
+            raise RuntimeError("A classification change must reference an operator")
+        return SampleClassificationChangeRead(
+            **row.model_dump(),
+            operator_name=operator.name,
+        )
+
+    def review_list_read_in_session(
+        self,
+        session: Session,
+        row: Sample,
+    ) -> ReviewSampleListRead:
+        values = self._review_common_values(session, row)
+        return ReviewSampleListRead(**values)
+
+    def review_detail_read_in_session(
+        self,
+        session: Session,
+        row: Sample,
+    ) -> ReviewSampleDetailRead:
+        values = self._review_common_values(session, row)
+        protocol = protocol_for(row.category)
+        source_media = None
+        if protocol is Protocol.VT:
+            if row.source_asset_id is None:
+                raise state_conflict("sample", row.id, "The VT source media is missing")
+            source_media = self._review_media(session, row.source_asset_id)
+            if not source_media.has_audio:
+                raise state_conflict("sample", row.id, "The VT source media must contain audio")
+        return ReviewSampleDetailRead(
+            **values,
+            source_media=source_media,
+            dialogue=row.dialogue,
+            display_text=row.display_text,
+            true_emotion_description=row.true_emotion_description,
+            scene_zh=row.scene_zh,
+            scene_en=row.scene_en,
+            trigger_event_zh=row.trigger_event_zh,
+            trigger_event_en=row.trigger_event_en,
+            psychological_background_zh=row.psychological_background_zh,
+            psychological_background_en=row.psychological_background_en,
+            age=row.age,
+            gender=row.gender,
+            ethnicity=row.ethnicity,
+        )
+
+    def _review_common_values(self, session: Session, row: Sample) -> dict[str, object]:
+        if row.id is None:
+            raise RuntimeError("A persisted sample must have an id")
+        dataset = session.get(Dataset, row.dataset_id)
+        if dataset is None:
+            raise state_conflict("sample", row.id, "The sample dataset does not exist")
+        primary_media = self._review_media(session, row.primary_asset_id)
+        protocol = protocol_for(row.category)
+        if protocol is Protocol.VA and not primary_media.has_audio:
+            raise state_conflict("sample", row.id, "The VA primary media must contain audio")
+        if protocol is Protocol.VT and primary_media.has_audio:
+            raise state_conflict("sample", row.id, "The VT primary media must be silent")
+        current = None if row.review_decision is ReviewDecision.PENDING else latest_review(session, row.id)
+        archive_item = session.get(ArchiveItem, (row.dataset_id, row.id))
+        return {
+            "id": row.id,
+            "display_id": f"CS-{row.id:06d}",
+            "dataset_id": row.dataset_id,
+            "dataset_name": dataset.name,
+            "category": row.category,
+            "protocol": protocol,
+            "relation": relation_for(row.category),
+            "conflict_direction": row.conflict_direction,
+            "review_decision": row.review_decision,
+            "review_revision": row.review_revision,
+            "current_review": review_read(session, current) if current is not None else None,
+            "in_archive": archive_item is not None,
+            "archive_sync_status": archive_status_for(
+                row.review_decision,
+                row.revision,
+                archive_item.sample_revision if archive_item is not None else None,
+            ),
+            "generation_compatibility": generation_compatibility(session, row).status,
+            "primary_media": primary_media,
+            "true_emotion": row.true_emotion,
+            "apparent_emotion": row.apparent_emotion,
+            "content_script_name_zh": row.content_script_name_zh,
+            "content_script_name_en": row.content_script_name_en,
+            "revision": row.revision,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+
+    @staticmethod
+    def _review_media(session: Session, asset_id: int) -> ReviewMediaRead:
+        asset = session.get(Asset, asset_id)
+        if asset is None:
+            raise state_conflict("asset", asset_id, "The sample media does not exist")
+        url = asset_content_url(asset.id)
+        if url is None:
+            raise RuntimeError("A persisted asset must have an id")
+        return ReviewMediaRead(url=url, has_audio=asset.has_audio)
 
     @staticmethod
     def read_in_session(session: Session, row: Sample) -> SampleRead:

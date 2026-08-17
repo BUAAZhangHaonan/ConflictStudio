@@ -221,6 +221,8 @@ def test_openapi_contains_review_statistics_and_archive_contracts(tmp_path: Path
         "/api/reviews",
         "/api/reviews/batch",
         "/api/samples/{sample_id}/classification",
+        "/api/samples/{sample_id}/classification-history",
+        "/api/samples/{sample_id}/review-note-draft",
         "/api/archives",
         "/api/archives/preview",
         "/api/archives/sync",

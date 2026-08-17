@@ -66,6 +66,26 @@ def review_revision_conflict(sample_id: int, expected: int, actual: int) -> Serv
     )
 
 
+def note_draft_revision_conflict(
+    sample_id: int,
+    reviewer_id: int,
+    expected: int,
+    actual: int,
+) -> ServiceError:
+    return ServiceError(
+        409,
+        "note_draft_revision_conflict",
+        "The saved note has been changed by another operation",
+        {
+            "resource": "reviewNoteDraft",
+            "sampleId": sample_id,
+            "reviewerId": reviewer_id,
+            "expectedRevision": expected,
+            "actualRevision": actual,
+        },
+    )
+
+
 def reviewer_name_conflict(name: str) -> ServiceError:
     return ServiceError(
         409,

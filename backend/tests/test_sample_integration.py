@@ -755,9 +755,9 @@ def test_completed_production_result_enters_pending_review_queue(
     assert queue.status_code == 200
     assert queue.json()["total"] == 1
     sample = queue.json()["items"][0]
-    assert sample["jobItemId"] == item_id
+    assert "jobItemId" not in sample
     assert sample["reviewDecision"] == "Pending"
-    assert sample["primaryAssetId"] == item["primaryAssetId"]
+    assert sample["primaryMedia"]["url"] == item["primaryAssetUrl"]
     assert item["sampleId"] == sample["id"]
 
 
@@ -769,7 +769,7 @@ def test_completed_production_result_enters_pending_review_queue(
         (ModelName.H3, None),
     ],
 )
-def test_sample_api_reads_precision_only_from_current_successful_attempt(
+def test_attempt_api_exposes_model_precision_without_leaking_them_to_review_queue(
     tmp_path: Path,
     model: ModelName,
     precision: Precision | None,
@@ -779,17 +779,16 @@ def test_sample_api_reads_precision_only_from_current_successful_attempt(
     app.state.job_executor._complete_item(job_id, item_id)
 
     with TestClient(app) as client:
-        response = client.get("/api/samples", params={"decision": "Pending"})
+        response = client.get(f"/api/job-items/{item_id}/attempts")
+        queue = client.get("/api/samples", params={"decision": "Pending"})
 
     assert response.status_code == 200
-    sample = response.json()["items"][0]
-    assert sample["model"] == model.value
-    assert "precision" not in sample
-    assert sample["generationRecord"]["model"] == model.value
-    assert sample["generationRecord"]["precision"] == (precision.value if precision else None)
-    assert sample["generationRecord"]["gpuSlot"] == "GPU0"
-    assert sample["generationRecord"]["seed"] == 77
-    assert sample["generationRecord"]["id"] > 0
+    attempt = response.json()["items"][0]
+    assert attempt["model"] == model.value
+    assert attempt["precision"] == (precision.value if precision else None)
+    sample = queue.json()["items"][0]
+    assert "model" not in sample
+    assert "generationRecord" not in sample
 
 
 def test_video_test_result_never_creates_a_sample(

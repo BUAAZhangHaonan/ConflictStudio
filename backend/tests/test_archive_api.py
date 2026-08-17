@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
-from backend.domain.enums import Category, GenerationAttemptStatus
+from backend.domain.enums import GenerationAttemptStatus
 from backend.domain.models import (
     Archive,
     ArchiveItem,
@@ -15,6 +15,8 @@ from backend.domain.models import (
     GenerationAttempt,
     JobItem,
     Sample,
+    Reviewer,
+    SampleClassificationChange,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
@@ -22,6 +24,7 @@ from backend.domain.models import (
 from backend.tests.test_review_api import (
     classification_payload,
     create_reviewer,
+    save_note,
     review_payload,
     sample_app,
 )
@@ -45,9 +48,14 @@ def test_archive_preview_and_sync_cover_add_update_remove_and_unchanged(tmp_path
         first_sync = client.post("/api/archives/sync", json=added.json())
         unchanged = client.post("/api/archives/preview", json={"datasetId": sample["datasetId"]})
 
+        update_draft = save_note(client, sample, reviewer, "updated note")
         changed = client.post(
             "/api/reviews",
-            json=review_payload(sample, reviewer, note="updated note"),
+            json=review_payload(
+                sample,
+                reviewer,
+                expectedNoteDraftRevision=update_draft["revision"],
+            ),
         ).json()
         updated = client.post("/api/archives/preview", json={"datasetId": sample["datasetId"]})
         stale = client.post("/api/archives/sync", json=unchanged.json())
@@ -55,7 +63,7 @@ def test_archive_preview_and_sync_cover_add_update_remove_and_unchanged(tmp_path
 
         rejected = client.post(
             "/api/reviews",
-            json=review_payload(changed, reviewer, decision="Rejected", note="not usable"),
+            json=review_payload(changed, reviewer, decision="Rejected"),
         ).json()
         removed = client.post("/api/archives/preview", json={"datasetId": sample["datasetId"]})
         third_sync = client.post("/api/archives/sync", json=removed.json())
@@ -72,8 +80,8 @@ def test_archive_preview_and_sync_cover_add_update_remove_and_unchanged(tmp_path
         "category": sample["category"],
         "protocol": "VA",
         "relation": "Aligned",
-        "primaryAssetId": sample["primaryAssetId"],
-        "primaryAssetUrl": sample["primaryAssetUrl"],
+        "primaryAssetId": int(sample["primaryMedia"]["url"].rsplit("/", 1)[1]),
+        "primaryAssetUrl": sample["primaryMedia"]["url"],
     }
     assert added.json()["expectedArchiveRevision"] == 0
     assert first_sync.status_code == 200
@@ -106,7 +114,7 @@ def test_manifest_contains_user_fields_and_excludes_runtime_details(tmp_path: Pa
     assert synced.status_code == 200
     record = json.loads(response.text)
     assert record["sampleId"] == sample["id"]
-    assert record["primaryMedia"]["assetId"] == sample["primaryAssetId"]
+    assert record["primaryMedia"]["assetId"] == preview.json()["added"][0]["primaryAssetId"]
     assert record["review"]["reviewerName"] == "Reviewer One"
     assert record["contentScript"]["nameEn"] == sample["contentScriptNameEn"]
     assert record["sampleRevision"] == sample["revision"]
@@ -132,6 +140,7 @@ def test_classification_changes_keep_archive_relation_and_emotions_coherent(tmp_
             f"/api/samples/{aligned['id']}/classification",
             json=classification_payload(
                 aligned,
+                reviewer,
                 "C-VA",
                 "The voice carries calm while the face appears tense.",
                 direction="Audio",
@@ -142,7 +151,7 @@ def test_classification_changes_keep_archive_relation_and_emotions_coherent(tmp_
         assert conflict.json()["archiveSyncStatus"] == "NeedsUpdate"
         accepted_conflict = client.post(
             "/api/reviews",
-            json=review_payload(conflict.json(), reviewer, note="conflict confirmed"),
+            json=review_payload(conflict.json(), reviewer),
         ).json()
         conflict_preview = client.post(
             "/api/archives/preview",
@@ -157,6 +166,7 @@ def test_classification_changes_keep_archive_relation_and_emotions_coherent(tmp_
             f"/api/samples/{aligned['id']}/classification",
             json=classification_payload(
                 accepted_conflict,
+                reviewer,
                 "A-VA",
                 "The voice and face now express the same calm emotion.",
             ),
@@ -165,7 +175,7 @@ def test_classification_changes_keep_archive_relation_and_emotions_coherent(tmp_
         assert restored.json()["archiveSyncStatus"] == "NeedsUpdate"
         client.post(
             "/api/reviews",
-            json=review_payload(restored.json(), reviewer, note="alignment confirmed"),
+            json=review_payload(restored.json(), reviewer),
         )
         aligned_preview = client.post(
             "/api/archives/preview",
@@ -192,6 +202,11 @@ def test_vt_manifest_uses_only_silent_primary_media(tmp_path: Path) -> None:
     app = sample_app(tmp_path)
     with app.state.database.immediate_session() as session:
         sample = session.get(Sample, 1)
+        classification_reviewer = Reviewer(
+            name="VT Setup Reviewer",
+            name_key="vt setup reviewer",
+        )
+        session.add(classification_reviewer)
         assert sample is not None
         relative_path = "media/vt-primary.mp4"
         path = app.state.database.data_root / relative_path
@@ -214,8 +229,6 @@ def test_vt_manifest_uses_only_silent_primary_media(tmp_path: Path) -> None:
         session.flush()
         item = session.get(JobItem, sample.job_item_id)
         assert item is not None
-        item.primary_asset_id = asset.id
-        session.flush()
         previous_attempt = session.get(GenerationAttempt, 1)
         assert previous_attempt is not None
         session.add(
@@ -234,7 +247,28 @@ def test_vt_manifest_uses_only_silent_primary_media(tmp_path: Path) -> None:
                 finished_at=previous_attempt.finished_at,
             )
         )
-        sample.category = Category.A_VT
+        session.flush()
+        change = SampleClassificationChange(
+            sample_id=sample.id,
+            operator_id=classification_reviewer.id,
+            before_protocol="VA",
+            after_protocol="VT",
+            before_relation="Aligned",
+            after_relation="Aligned",
+            before_direction=None,
+            after_direction=None,
+            before_apparent_emotion=sample.apparent_emotion,
+            after_apparent_emotion=sample.apparent_emotion,
+            before_true_emotion_description=sample.true_emotion_description,
+            after_true_emotion_description=sample.true_emotion_description,
+            before_sample_revision=sample.revision,
+            after_sample_revision=sample.revision + 1,
+        )
+        session.add(change)
+        session.flush([change])
+        session.refresh(sample)
+        item.primary_asset_id = asset.id
+        session.flush([item])
         sample.primary_asset_id = asset.id
         sample.dialogue = None
         sample.display_text = "这是独立展示文本"
@@ -264,9 +298,14 @@ def test_manifest_write_failure_leaves_database_and_old_file_unchanged(
         client.post("/api/archives/sync", json=preview.json())
         path = app.state.archive_service.manifests.path(sample["datasetId"])
         previous = path.read_bytes()
+        note_draft = save_note(client, sample, reviewer, "requires archive update")
         changed = client.post(
             "/api/reviews",
-            json=review_payload(sample, reviewer, note="requires archive update"),
+            json=review_payload(
+                sample,
+                reviewer,
+                expectedNoteDraftRevision=note_draft["revision"],
+            ),
         ).json()
         update = client.post("/api/archives/preview", json={"datasetId": sample["datasetId"]})
 
@@ -294,9 +333,14 @@ def test_database_failure_after_manifest_replace_restores_both_states(tmp_path: 
         client.post("/api/archives/sync", json=preview.json())
         path = app.state.archive_service.manifests.path(sample["datasetId"])
         previous = path.read_bytes()
+        note_draft = save_note(client, sample, reviewer, "database failure case")
         changed = client.post(
             "/api/reviews",
-            json=review_payload(sample, reviewer, note="database failure case"),
+            json=review_payload(
+                sample,
+                reviewer,
+                expectedNoteDraftRevision=note_draft["revision"],
+            ),
         ).json()
         update = client.post("/api/archives/preview", json={"datasetId": sample["datasetId"]})
         with app.state.database.engine.begin() as connection:
