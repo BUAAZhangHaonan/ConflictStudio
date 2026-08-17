@@ -19,9 +19,7 @@ import { isModelSwitchConfirmationRequired } from '../../api/client';
 import type {
   AssistantFormState,
   BatchDraft,
-  BatchDraftCreate,
-  BilingualSelection,
-  Demographic,
+  ConfigurationAssistant,
   GpuSlotName,
 } from '../../api/contracts';
 import { defaultGenerationProfile, ltx25Precisions, models, precisionForModel } from '../../generationProfile';
@@ -48,33 +46,13 @@ import {
   useUnsavedChanges,
 } from './shared';
 import type { GenerationKey } from '../../locales/features/generation';
-
-interface SelectedContent {
-  id: number;
-  revision: number;
-  nameZh: string;
-  nameEn: string;
-  mode: 'Fixed' | 'Generative';
-  scenes: BilingualSelection[];
-  selectedSceneIds: number[];
-}
-
-interface ProductionForm {
-  targetDatasetId: number | null;
-  displayName: string;
-  category: Category;
-  conflictDirection: ConflictDirection | null;
-  promptTemplateId: number | null;
-  promptTemplateVersionId: number | null;
-  selectedContent: SelectedContent[];
-  selectedAges: number[];
-  selectedGenders: Demographic['gender'][];
-  selectedEthnicities: Demographic['ethnicity'][];
-  seeds: string;
-  model: ModelName;
-  precision: ModelPrecision | null;
-  gpuSlots: GpuSlotName[];
-}
+import {
+  buildBatchDraftRequest,
+  demographics,
+  productionFormFromDraft,
+  type ProductionForm,
+  type SelectedContent,
+} from './formalGeneration';
 
 function defaultName(category: Category): string {
   return category + '-' + formatCompactDateTime(new Date());
@@ -96,44 +74,6 @@ function emptyForm(): ProductionForm {
     model: defaultGenerationProfile.model,
     precision: defaultGenerationProfile.precision,
     gpuSlots: ['GPU0'],
-  };
-}
-
-function demographics(form: ProductionForm): Demographic[] {
-  return form.selectedAges.flatMap(age =>
-    form.selectedGenders.flatMap(gender =>
-      form.selectedEthnicities.map(ethnicity => ({ age: age as Demographic['age'], gender, ethnicity }))));
-}
-
-function requestFor(form: ProductionForm): BatchDraftCreate | null {
-  const seedValues = parseSeeds(form.seeds);
-  const people = demographics(form);
-  const contentSelections = form.selectedContent.map(item => ({
-    contentScriptId: item.id,
-    sceneIds: item.selectedSceneIds,
-  }));
-  if (
-    form.targetDatasetId === null
-    || !form.displayName.trim()
-    || form.promptTemplateVersionId === null
-    || contentSelections.length === 0
-    || contentSelections.some(item => item.sceneIds.length === 0)
-    || people.length === 0
-    || seedValues === null
-    || form.gpuSlots.length === 0
-  ) return null;
-  return {
-    targetDatasetId: form.targetDatasetId,
-    displayName: form.displayName.trim(),
-    category: form.category,
-    conflictDirection: form.conflictDirection,
-    model: form.model,
-    precision: form.precision,
-    contentSelections,
-    promptTemplateVersionId: form.promptTemplateVersionId,
-    demographics: people,
-    gpuSlots: form.gpuSlots,
-    seeds: seedValues,
   };
 }
 
@@ -197,12 +137,20 @@ export function ProductionPage() {
   const versionOptions = selectedVersion && !versions.some(item => item.id === selectedVersion.id)
     ? [selectedVersion, ...versions]
     : versions;
-  const activeDatasets = datasetsQuery.data?.items ?? [];
+  const activeDatasets = (datasetsQuery.data?.items ?? []).filter(
+    item => item.status === 'Active' && item.purpose === 'Formal',
+  );
   const datasetOptions = selectedDatasetQuery.data?.status === 'Active'
+    && selectedDatasetQuery.data.purpose === 'Formal'
     && !activeDatasets.some(item => item.id === selectedDatasetQuery.data?.id)
     ? [selectedDatasetQuery.data, ...activeDatasets]
     : activeDatasets;
-  const request = requestFor(form);
+  const availableGpuSlots = new Set(
+    (gpuQuery.data ?? [])
+      .filter(slot => slot.availability === 'Available')
+      .map(slot => slot.slot),
+  );
+  const request = buildBatchDraftRequest(form, parseSeeds(form.seeds), availableGpuSlots);
   const dirty = JSON.stringify(form) !== savedFormSignature;
   const people = demographics(form);
   const seedValues = parseSeeds(form.seeds) ?? [];
@@ -425,57 +373,28 @@ export function ProductionPage() {
     seeds: seedValues,
   };
 
-  const applyAssistant = async (values: AssistantFormState) => {
-    const targetCategory = values.category ?? form.category;
-    const targetDirection = values.conflictDirection !== undefined
-      ? values.conflictDirection
-      : form.conflictDirection;
-    const classificationChanged = targetCategory !== form.category || targetDirection !== form.conflictDirection;
-    const selectedContent = values.contentSelections === undefined || values.contentSelections === null
-      ? undefined
-      : await Promise.all(values.contentSelections.map(async selection => {
-        const [script, relation] = await Promise.all([
-          queryClient.fetchQuery(generationQueries.contentScript(selection.contentScript.id)),
-          queryClient.fetchQuery(generationQueries.contentScenes(selection.contentScript.id)),
-        ]);
-        const selectedScenes = selection.scenes.map(source =>
-          relation.scenes.find(scene => scene.id === source.id && scene.revision === source.expectedRevision));
-        if (
-          script.revision !== selection.contentScript.expectedRevision
-          || relation.contentScriptRevision !== script.revision
-          || script.status !== 'Active'
-          || script.category !== targetCategory
-          || script.conflictDirection !== targetDirection
-          || selectedScenes.length === 0
-          || selectedScenes.some(scene => scene === undefined)
-          || (script.mode === 'Fixed' && selectedScenes.length !== 1)
-        ) throw new Error('assistant_selection_changed');
-        return {
-          id: script.id,
-          revision: script.revision,
-          nameZh: script.nameZh,
-          nameEn: script.nameEn,
-          mode: script.mode,
-          scenes: relation.scenes,
-          selectedSceneIds: selectedScenes.map(scene => scene!.id),
-        } satisfies SelectedContent;
-      }));
-    setForm(current => ({
-      ...current,
-      targetDatasetId: values.targetDataset?.id ?? current.targetDatasetId,
-      displayName: values.displayName ?? current.displayName,
-      category: targetCategory,
-      conflictDirection: targetDirection,
-      model: values.model ?? current.model,
-      precision: values.model ? precisionForModel(values.model, values.precision) : current.precision,
-      promptTemplateVersionId: values.promptTemplateVersion?.id ?? current.promptTemplateVersionId,
-      selectedContent: selectedContent ?? (classificationChanged ? [] : current.selectedContent),
-      selectedAges: values.demographics ? [...new Set(values.demographics.map(item => item.age))] : current.selectedAges,
-      selectedGenders: values.demographics ? [...new Set(values.demographics.map(item => item.gender))] : current.selectedGenders,
-      selectedEthnicities: values.demographics ? [...new Set(values.demographics.map(item => item.ethnicity))] : current.selectedEthnicities,
-      gpuSlots: values.gpuSlots ?? current.gpuSlots,
-      seeds: values.seeds ? values.seeds.join(', ') : current.seeds,
-    }));
+  const applyAssistant = async (
+    _values: AssistantFormState,
+    applied: ConfigurationAssistant,
+  ) => {
+    const targetRevision = applied.result?.targetRevision;
+    if (!savedDraft || targetRevision === null || targetRevision === undefined) {
+      throw new Error('assistant_target_missing');
+    }
+    const refreshed = await queryClient.fetchQuery(
+      generationQueries.batchDraft(savedDraft.id),
+    );
+    if (refreshed.revision !== targetRevision) {
+      throw new Error('assistant_target_changed');
+    }
+    const templateVersion = await queryClient.fetchQuery(
+      generationQueries.promptTemplateVersion(refreshed.promptTemplateVersion.id),
+    );
+    const nextForm = productionFormFromDraft(refreshed, templateVersion.templateId);
+    setForm(nextForm);
+    setSavedDraft(refreshed);
+    setSavedFormSignature(JSON.stringify(nextForm));
+    setValidation(false);
     previewMutation.reset();
   };
 
@@ -515,7 +434,7 @@ export function ProductionPage() {
           <div className="generation-form__grid">
             <Field label={g('production.name')} htmlFor="production-name"><input id="production-name" maxLength={40} value={form.displayName} onChange={event => setForm(current => ({ ...current, displayName: event.target.value }))} /></Field>
             <Field label={g('production.datasetSearch')} htmlFor="production-dataset-search"><input id="production-dataset-search" type="search" value={datasetSearch} onChange={event => { setDatasetSearch(event.target.value); setDatasetPage(1); }} /></Field>
-            <Field label={g('production.dataset')} htmlFor="production-dataset"><select id="production-dataset" value={form.targetDatasetId ?? ''} onChange={event => setForm(current => ({ ...current, targetDatasetId: Number(event.target.value) }))}><option value="">{g('common.none')}</option>{datasetOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+            <Field label={g('production.dataset')} htmlFor="production-dataset"><select id="production-dataset" value={form.targetDatasetId ?? ''} onChange={event => setForm(current => ({ ...current, targetDatasetId: event.target.value ? Number(event.target.value) : null }))}><option value="">{g('common.none')}</option>{datasetOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
             <Field label={g('production.taskType')} htmlFor="production-category"><select id="production-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
             <Field label={g('production.direction')} htmlFor="production-direction"><select id="production-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, selectedContent: [] }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
           </div>
@@ -542,8 +461,8 @@ export function ProductionPage() {
           </div>
           <Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} />
           <div className="generation-form__grid">
-            <Field label={g('production.template')} htmlFor="production-template"><select id="production-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: Number(event.target.value), promptTemplateVersionId: null })); setVersionPage(1); }}>{templateOptions.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{templateOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-            <Field label={g('production.version')} htmlFor="production-version"><select id="production-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: Number(event.target.value) }))}>{versionOptions.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{versionOptions.map(item => <option key={item.id} value={item.id}>{item.templateName} {item.version}</option>)}</select></Field>
+            <Field label={g('production.template')} htmlFor="production-template"><select id="production-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{templateOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+            <Field label={g('production.version')} htmlFor="production-version"><select id="production-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{versionOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{item.templateName} {item.version}</option>)}</select></Field>
           </div>
           <div className="generation-source-pages">
             <div><span>{g('production.templatePage')}</span><Pagination page={templatesQuery.data?.page ?? templatePage} totalPages={templatesQuery.data?.totalPages ?? 0} total={templatesQuery.data?.total ?? 0} onPageChange={setTemplatePage} /></div>
@@ -567,7 +486,10 @@ export function ProductionPage() {
             <Field label={g('production.model')} htmlFor="production-model"><select id="production-model" value={form.model} onChange={event => { const model = event.target.value as ModelName; setForm(current => ({ ...current, model, precision: precisionForModel(model, current.precision) })); }}>{models.map(value => <option key={value} value={value}>{g(('model.' + value) as GenerationKey)}</option>)}</select></Field>
             {form.model === 'LTX-2.5' ? <Field label={g('production.precision')} htmlFor="production-precision"><select id="production-precision" value={form.precision ?? ''} onChange={event => setForm(current => ({ ...current, precision: event.target.value as ModelPrecision }))}>{ltx25Precisions.map(value => <option key={value} value={value}>{g(('precision.' + value) as GenerationKey)}</option>)}</select></Field> : null}
           </div>
-          <fieldset className="generation-gpu-select"><legend>{g('production.gpus')}</legend>{(gpuQuery.data ?? []).map(slot => <label key={slot.slot}><input type="checkbox" checked={form.gpuSlots.includes(slot.slot)} onChange={() => setForm(current => ({ ...current, gpuSlots: toggleValue(current.gpuSlots, slot.slot) }))} />{g(('gpu.' + slot.slot) as GenerationKey)} {g(('gpu.' + slot.availability) as GenerationKey)}</label>)}</fieldset>
+          <fieldset className="generation-gpu-select"><legend>{g('production.gpus')}</legend>{(gpuQuery.data ?? []).map(slot => {
+            const checked = form.gpuSlots.includes(slot.slot);
+            return <label key={slot.slot}><input type="checkbox" checked={checked} disabled={slot.availability !== 'Available' && !checked} onChange={() => setForm(current => ({ ...current, gpuSlots: toggleValue(current.gpuSlots, slot.slot) }))} />{g(('gpu.' + slot.slot) as GenerationKey)} {g(('gpu.' + slot.availability) as GenerationKey)}</label>;
+          })}</fieldset>
           <GpuPanel />
         </fieldset>
 

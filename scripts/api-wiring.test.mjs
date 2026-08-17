@@ -22,6 +22,7 @@ const testPageSource = read('../frontend/src/pages/generate/TestPage.tsx');
 const productionPageSource = read('../frontend/src/pages/generate/ProductionPage.tsx');
 const resultsPageSource = read('../frontend/src/pages/generate/ResultsPage.tsx');
 const assistantSource = read('../frontend/src/pages/generate/AssistantPanel.tsx');
+const formalGenerationSource = read('../frontend/src/pages/generate/formalGeneration.ts');
 const generatePageSource = read('../frontend/src/pages/GeneratePage.tsx');
 const generationCss = read('../frontend/src/pages/generate/GenerationPage.css');
 const responsiveCss = read('../frontend/src/styles/responsive.css');
@@ -48,6 +49,13 @@ function loadClient(fetchMock) {
 
 function loadGpuStatus() {
   const output = ts.transpileModule(gpuStatusSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const module = { exports: {} };
+  vm.runInNewContext(output, { module, exports: module.exports });
+  return module.exports;
+}
+
+function loadFormalGeneration() {
+  const output = ts.transpileModule(formalGenerationSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(output, { module, exports: module.exports });
   return module.exports;
@@ -259,8 +267,8 @@ test('formal generation uses explicit valid combinations and current preview and
   assert.match(productionPageSource, /const unsavedDialog = useUnsavedChanges\(dirty\)/u);
   assert.match(productionPageSource, /JSON\.stringify\(form\) !== savedFormSignature/u);
   assert.match(productionPageSource, /\{unsavedDialog\}/u);
-  assert.match(productionPageSource, /queryClient\.fetchQuery\(generationQueries\.contentScript/u);
-  assert.match(productionPageSource, /queryClient\.fetchQuery\(generationQueries\.contentScenes/u);
+  assert.match(productionPageSource, /queryClient\.fetchQuery\([\s\S]*generationQueries\.batchDraft/u);
+  assert.match(productionPageSource, /productionFormFromDraft\(refreshed, templateVersion\.templateId\)/u);
   assert.match(productionPageSource, /results\?tab=production&job=/u);
   assert.match(reviewSource, /navigate\('\/generate\/production', \{ state \}\)/u);
   assert.match(reviewSource, /buildCorrectedSampleBatchPrefill\(selected/u);
@@ -285,15 +293,133 @@ test('results separate test and formal tasks and wire explicit task controls', (
   assert.doesNotMatch(resultsPageSource, /failureDetails|requestId|httpStatus|finishReason|\/keep|\/promote/u);
 });
 
-test('assistant shows complete suggestions and applies only confirmed changes', () => {
+test('assistant candidate mapper keeps every choice explicit and builds only compatible visible values', () => {
+  const {
+    assistantValuesWithCandidates,
+    candidateChoicesReady,
+    chooseCandidate,
+    initialCandidateChoices,
+  } = loadFormalGeneration();
+  const groups = [
+    { kind: 'Dataset', items: [{ id: 1, revision: 2, label: 'Formal one' }, { id: 2, revision: 1, label: 'Formal two' }] },
+    { kind: 'ContentScript', items: [{ id: 11, revision: 4, label: '内容一 / Content one' }, { id: 12, revision: 3, label: '内容二 / Content two' }] },
+    { kind: 'ShootingScene', items: [{ id: 21, revision: 5, label: '场景一 / Scene one' }, { id: 22, revision: 2, label: '场景二 / Scene two' }] },
+    { kind: 'PromptTemplateVersion', items: [{ id: 31, revision: 7, label: 'Template v3' }, { id: 32, revision: 1, label: 'Template v4' }] },
+  ];
+  let choices = initialCandidateChoices(groups);
+  assert.equal(choices.Dataset, null);
+  assert.equal(choices.PromptTemplateVersion, null);
+  assert.equal(choices.ContentScript.length, 0);
+  assert.equal(choices.ShootingScene.length, 0);
+  choices = chooseCandidate(choices, 'Dataset', 2);
+  choices = chooseCandidate(choices, 'PromptTemplateVersion', 31);
+  choices = chooseCandidate(choices, 'ContentScript', 11);
+  choices = chooseCandidate(choices, 'ContentScript', 12);
+  choices = chooseCandidate(choices, 'ShootingScene', 21);
+  choices = chooseCandidate(choices, 'ShootingScene', 22);
+  const values = assistantValuesWithCandidates(
+    { displayName: 'A-VA-formal' },
+    groups,
+    choices,
+    {
+      11: [{ id: 21, revision: 5, nameZh: '场景一', nameEn: 'Scene one' }],
+      12: [{ id: 22, revision: 2, nameZh: '场景二', nameEn: 'Scene two' }],
+    },
+  );
+  assert.equal(values.targetDataset.id, 2);
+  assert.equal(values.promptTemplateVersion.id, 31);
+  assert.equal(JSON.stringify(values.contentSelections.map(value => ({
+    content: value.contentScript.id,
+    scenes: value.scenes.map(scene => scene.id),
+  }))), JSON.stringify([
+    { content: 11, scenes: [21] },
+    { content: 12, scenes: [22] },
+  ]));
+  assert.equal(candidateChoicesReady(groups, choices, values), true);
+  const incomplete = chooseCandidate(choices, 'ShootingScene', 22);
+  const incompleteValues = assistantValuesWithCandidates(
+    {},
+    groups,
+    incomplete,
+    { 11: [{ id: 21, revision: 5 }], 12: [{ id: 22, revision: 2 }] },
+  );
+  assert.equal(candidateChoicesReady(groups, incomplete, incompleteValues), false);
+});
+
+test('formal generation mapper preserves controlled values and rejects invalid batch inputs', () => {
+  const { buildBatchDraftRequest, productionFormFromDraft } = loadFormalGeneration();
+  const form = {
+    targetDatasetId: 4,
+    displayName: 'A-VA-20260817',
+    category: 'A-VA',
+    conflictDirection: null,
+    promptTemplateId: 8,
+    promptTemplateVersionId: 9,
+    selectedContent: [{
+      id: 10,
+      revision: 2,
+      nameZh: '内容',
+      nameEn: 'Content',
+      mode: 'Fixed',
+      scenes: [{ id: 12, revision: 1, nameZh: '场景', nameEn: 'Scene' }],
+      selectedSceneIds: [12],
+    }],
+    selectedAges: [25],
+    selectedGenders: ['Female'],
+    selectedEthnicities: ['EastAsian'],
+    seeds: '7',
+    model: 'LTX-2.5',
+    precision: 'INT8',
+    gpuSlots: ['GPU0'],
+  };
+  const request = buildBatchDraftRequest(form, [7], new Set(['GPU0']));
+  assert.equal(request.targetDatasetId, 4);
+  assert.equal(JSON.stringify(request.contentSelections), JSON.stringify([{ contentScriptId: 10, sceneIds: [] }]));
+  assert.equal(buildBatchDraftRequest({ ...form, targetDatasetId: null }, [7], new Set(['GPU0'])), null);
+  assert.equal(buildBatchDraftRequest({ ...form, gpuSlots: ['GPU1'] }, [7], new Set(['GPU0'])), null);
+  const restored = productionFormFromDraft({
+    targetDatasetId: 4,
+    displayName: 'A-VA-restored',
+    category: 'A-VA',
+    conflictDirection: null,
+    promptTemplateVersion: { id: 9, revision: 3, name: 'Template v2' },
+    contentSelections: [{
+      contentScript: { id: 10, revision: 2, nameZh: '内容', nameEn: 'Content' },
+      mode: 'Fixed',
+      scenes: [{ id: 12, revision: 1, nameZh: '场景', nameEn: 'Scene' }],
+      compatibleScenes: [{ id: 12, revision: 1, nameZh: '场景', nameEn: 'Scene' }],
+    }],
+    demographics: [{ age: 25, gender: 'Female', ethnicity: 'EastAsian' }],
+    seeds: [7, 8],
+    model: 'LTX-2.5',
+    precision: 'INT8',
+    gpuSlots: ['GPU0', 'GPU1'],
+  }, 8);
+  assert.equal(restored.promptTemplateId, 8);
+  assert.equal(restored.seeds, '7, 8');
+  assert.equal(JSON.stringify(restored.gpuSlots), JSON.stringify(['GPU0', 'GPU1']));
+});
+
+test('assistant renders all candidates and uses one server confirmation before visible application', () => {
   for (const token of ['missingFields', 'candidates', 'changedFields', 'selectedValues', 'confirmedFields', 'createContentScript', 'createShootingScene', 'ConfirmDialog']) {
     assert.match(assistantSource, new RegExp(token));
   }
-  assert.match(assistantSource, /group\.items\.length === 1/u);
+  assert.match(assistantSource, /type=\{single \? 'radio' : 'checkbox'\}/u);
+  assert.match(assistantSource, /checked=\{checked\}/u);
+  assert.match(assistantSource, /chooseCandidate\(value, group\.kind, item\.id\)/u);
   assert.match(assistantSource, /if \(!clean \|\| \(production && batchDraft === null\)\) return/u);
-  assert.match(assistantSource, /await onApply\(values\)/u);
+  assert.match(assistantSource, /saved = await apply\.mutateAsync/u);
+  assert.match(assistantSource, /confirmedFields: selected/u);
+  assert.match(assistantSource, /await onApply\(saved\.appliedValues \?\? values, saved\)/u);
+  assert.match(productionPageSource, /setForm\(nextForm\)/u);
+  assert.match(productionPageSource, /setSavedFormSignature\(JSON\.stringify\(nextForm\)\)/u);
+  assert.match(productionPageSource, /targetDatasetId: event\.target\.value \? Number\(event\.target\.value\) : null/u);
+  assert.match(productionPageSource, /promptTemplateVersionId: event\.target\.value \? Number\(event\.target\.value\) : null/u);
   assert.match(assistantSource, /assistant\.selectionChanged/u);
-  assert.doesNotMatch(assistantSource, /submitBatch|createDataset|updateDataset/u);
+  assert.match(assistantSource, /assistant\.proposedContent/u);
+  assert.match(assistantSource, /assistant\.proposedScene/u);
+  assert.doesNotMatch(assistantSource, /submitBatch|createDataset|updateDataset|renameDataset|deleteDataset|mergeDataset|review/u);
+  assert.doesNotMatch(productionPageSource, /promote|testArtifact|createDataset/u);
 });
 
 test('relationship guide is accessible and the DrawIO source has two pages', () => {

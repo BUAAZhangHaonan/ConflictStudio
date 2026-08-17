@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useQueries } from '@tanstack/react-query';
 import { Button, ConfirmDialog, Field, StatusBadge } from '../../components';
 import {
+  generationQueries,
   useApplyConfigurationAssistantMutation,
   useCreateConfigurationAssistantMutation,
 } from '../../api/queries';
@@ -16,14 +18,26 @@ import {
   OperationFeedback,
   profileLabel,
   useGenerationCopy,
+  useGenerationLocale,
 } from './shared';
 import type { GenerationKey } from '../../locales/features/generation';
+import {
+  assistantValuesWithCandidates,
+  candidateChoicesReady,
+  chooseCandidate,
+  initialCandidateChoices,
+  localizedCandidateLabel,
+  type CandidateChoices,
+} from './formalGeneration';
 
 interface AssistantPanelProps {
   targetSource: JobSource;
   currentForm: AssistantFormState;
   batchDraft: { id: number; revision: number } | null;
-  onApply: (values: AssistantFormState) => void | Promise<void>;
+  onApply: (
+    values: AssistantFormState,
+    applied: ConfigurationAssistant,
+  ) => void | Promise<void>;
 }
 
 const assistantFields: ConfigurationAssistantField[] = [
@@ -91,6 +105,7 @@ export function AssistantPanel({
   onApply,
 }: AssistantPanelProps) {
   const g = useGenerationCopy();
+  const locale = useGenerationLocale();
   const create = useCreateConfigurationAssistantMutation();
   const apply = useApplyConfigurationAssistantMutation();
   const [requirement, setRequirement] = useState('');
@@ -99,18 +114,64 @@ export function AssistantPanel({
   const [createContent, setCreateContent] = useState(false);
   const [createScene, setCreateScene] = useState(false);
   const [linkDrafts, setLinkDrafts] = useState(false);
+  const [candidateChoices, setCandidateChoices] = useState<CandidateChoices>({
+    Dataset: null,
+    ContentScript: [],
+    ShootingScene: [],
+    PromptTemplateVersion: null,
+  });
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [localApplyError, setLocalApplyError] = useState(false);
   const production = targetSource === 'Production';
   const suggestion = record?.suggestion ?? null;
-  const changes = useMemo(
-    () => suggestion === null ? [] : changedFields(currentForm, suggestion.prefill),
-    [currentForm, suggestion],
+  const contentCandidates = suggestion?.candidates
+    .find(group => group.kind === 'ContentScript')?.items ?? [];
+  const candidateSceneQueries = useQueries({
+    queries: contentCandidates.map(candidate => generationQueries.contentScenes(candidate.id)),
+  });
+  const scenesByContent = Object.fromEntries(
+    contentCandidates.map((candidate, index) => [
+      candidate.id,
+      candidateSceneQueries[index]?.data?.scenes ?? [],
+    ]),
   );
+  const candidateValues = useMemo(
+    () => suggestion === null
+      ? {}
+      : assistantValuesWithCandidates(
+          suggestion.prefill,
+          suggestion.candidates,
+          candidateChoices,
+          scenesByContent,
+        ),
+    [candidateChoices, scenesByContent, suggestion],
+  );
+  const changes = useMemo(
+    () => suggestion === null ? [] : changedFields(currentForm, candidateValues),
+    [candidateValues, currentForm, suggestion],
+  );
+  const candidatesReady = suggestion === null
+    || (
+      candidateSceneQueries.every(query => !query.isPending)
+      && candidateChoicesReady(suggestion.candidates, candidateChoices, candidateValues)
+    );
+
+  useEffect(() => {
+    setCandidateChoices(
+      suggestion === null
+        ? {
+            Dataset: null,
+            ContentScript: [],
+            ShootingScene: [],
+            PromptTemplateVersion: null,
+          }
+        : initialCandidateChoices(suggestion.candidates),
+    );
+  }, [record?.id]);
 
   useEffect(() => {
     setSelected(changes);
-  }, [record?.id]);
+  }, [record?.id, JSON.stringify(candidateValues)]);
 
   const requestSuggestions = async () => {
     const clean = requirement.trim();
@@ -135,22 +196,11 @@ export function AssistantPanel({
 
   const applySuggestion = async () => {
     if (record === null) return;
-    const values = selectedValues(record.suggestion.prefill, selected);
-    const createAny = createContent || createScene;
-    if (production && !createAny) {
-      try {
-        await onApply(values);
-        setLocalApplyError(false);
-        setConfirmOpen(false);
-      } catch {
-        setLocalApplyError(true);
-      }
-      return;
-    }
+    const values = selectedValues(candidateValues, selected);
     const targetRevision = production
       ? batchDraft?.revision
       : record.testDraft?.revision;
-    if (targetRevision === undefined) return;
+    if (targetRevision === undefined || !candidatesReady) return;
     let saved: ConfigurationAssistant;
     try {
       saved = await apply.mutateAsync({
@@ -158,8 +208,8 @@ export function AssistantPanel({
         input: {
           expectedRevision: record.revision,
           expectedTargetRevision: targetRevision,
-          confirmedFields: production ? [] : selected,
-          values: production ? {} : values,
+          confirmedFields: selected,
+          values,
           createContentScript: createContent,
           createShootingScene: createScene,
           linkNewSceneToContent: linkDrafts,
@@ -170,7 +220,7 @@ export function AssistantPanel({
     }
     setRecord(saved);
     try {
-      await onApply(values);
+      await onApply(saved.appliedValues ?? values, saved);
       setLocalApplyError(false);
       setConfirmOpen(false);
     } catch {
@@ -180,10 +230,10 @@ export function AssistantPanel({
 
   const summary = (field: ConfigurationAssistantField): string => {
     if (suggestion === null) return '';
-    const value = suggestion.prefill[fieldProperty(field)];
+    const value = candidateValues[fieldProperty(field)];
     if (field === 'Category' && value) return categoryLabel(g, value as NonNullable<AssistantFormState['category']>);
     if (field === 'ConflictDirection') return directionLabel(g, value as NonNullable<AssistantFormState['conflictDirection']> | null);
-    if (field === 'Model') return profileLabel(value as NonNullable<AssistantFormState['model']> | null, suggestion.prefill.precision ?? null);
+    if (field === 'Model') return profileLabel(value as NonNullable<AssistantFormState['model']> | null, candidateValues.precision ?? null);
     if (field === 'Precision') return String(value ?? g('common.none'));
     if (field === 'TargetDataset' || field === 'PromptTemplateVersion') {
       return (value as { label?: string | null } | null)?.label ?? g('common.none');
@@ -195,8 +245,13 @@ export function AssistantPanel({
     return String(value ?? g('common.none'));
   };
 
-  const error = create.error ?? apply.error;
+  const error = create.error ?? apply.error
+    ?? candidateSceneQueries.find(query => query.error)?.error;
   const canAsk = requirement.trim().length > 0 && (!production || batchDraft !== null);
+  const text = (value: string | null | undefined): string => value?.trim() || g('common.none');
+  const localized = (zh: string, en: string): string => locale === 'zh-CN' ? zh : en;
+  const contentDraft = suggestion?.newContentScriptDraft ?? null;
+  const sceneDraft = suggestion?.newShootingSceneDraft ?? null;
 
   return (
     <section className="panel generation-assistant" aria-labelledby="assistant-title">
@@ -248,18 +303,34 @@ export function AssistantPanel({
             {record.suggestion.candidates.length === 0 ? <p>{g('common.none')}</p> : (
               <div className="generation-assistant__candidates">
                 {record.suggestion.candidates.map(group => (
-                  <div key={group.kind}>
-                    <strong>{g(('assistant.kind.' + group.kind) as GenerationKey)}</strong>
-                    <ul>{group.items.map(item => (
-                      <li key={item.id}>
-                        <span>{item.label}</span>
+                  <fieldset key={group.kind}>
+                    <legend>{g(('assistant.kind.' + group.kind) as GenerationKey)}</legend>
+                    <ul>{group.items.map(item => {
+                      const current = candidateChoices[group.kind];
+                      const checked = Array.isArray(current)
+                        ? current.includes(item.id)
+                        : current === item.id;
+                      const single = group.kind === 'Dataset'
+                        || group.kind === 'PromptTemplateVersion';
+                      return <li key={item.id}>
+                        <label>
+                          <input
+                            type={single ? 'radio' : 'checkbox'}
+                            name={single ? 'assistant-' + record.id + '-' + group.kind : undefined}
+                            checked={checked}
+                            onChange={() => setCandidateChoices(value =>
+                              chooseCandidate(value, group.kind, item.id))}
+                          />
+                          <span>{localizedCandidateLabel(group.kind, item.label, locale)}</span>
+                        </label>
                         {group.items.length === 1 ? <StatusBadge label={g('assistant.unique')} kind="complete" /> : null}
-                      </li>
-                    ))}</ul>
-                  </div>
+                      </li>;
+                    })}</ul>
+                  </fieldset>
                 ))}
               </div>
             )}
+            {!candidatesReady ? <p className="field__error" role="alert">{g('assistant.candidatesIncomplete')}</p> : null}
           </section>
           <section>
             <h3>{g('assistant.changes')}</h3>
@@ -287,14 +358,48 @@ export function AssistantPanel({
           {record.suggestion.failureAdvice.length > 0 ? (
             <section><h3>{g('assistant.advice')}</h3><ul>{record.suggestion.failureAdvice.map(value => <li key={value}>{value}</li>)}</ul></section>
           ) : null}
-          {record.suggestion.newContentScriptDraft || record.suggestion.newShootingSceneDraft ? (
+          {contentDraft || sceneDraft ? (
             <fieldset className="generation-assistant__drafts">
               <legend>{g('assistant.createDrafts')}</legend>
-              {record.suggestion.newContentScriptDraft ? (
-                <label><input type="checkbox" checked={createContent} onChange={event => setCreateContent(event.target.checked)} />{g('assistant.createContent')}</label>
+              {contentDraft ? (
+                <section className="generation-assistant__draft-detail">
+                  <h4>{g('assistant.proposedContent')}</h4>
+                  <dl>
+                    <div><dt>{g('assistant.draft.name')}</dt><dd>{localized(contentDraft.nameZh, contentDraft.nameEn)}</dd></div>
+                    <div><dt>{g('assistant.draft.category')}</dt><dd>{categoryLabel(g, contentDraft.category)}</dd></div>
+                    <div><dt>{g('assistant.draft.direction')}</dt><dd>{directionLabel(g, contentDraft.conflictDirection)}</dd></div>
+                    <div><dt>{g('assistant.draft.mode')}</dt><dd>{g(('assistant.mode.' + contentDraft.mode) as GenerationKey)}</dd></div>
+                    <div><dt>{g('assistant.draft.status')}</dt><dd>{g('assistant.status.Draft')}</dd></div>
+                    <div><dt>{g('assistant.draft.trueEmotion')}</dt><dd>{text(contentDraft.trueEmotion)}</dd></div>
+                    <div><dt>{g('assistant.draft.apparentEmotion')}</dt><dd>{text(contentDraft.apparentEmotion)}</dd></div>
+                    <div><dt>{g('assistant.draft.setting')}</dt><dd>{text(localized(contentDraft.sceneZh, contentDraft.sceneEn))}</dd></div>
+                    <div><dt>{g('assistant.draft.trigger')}</dt><dd>{text(localized(contentDraft.triggerEventZh, contentDraft.triggerEventEn))}</dd></div>
+                    <div><dt>{g('assistant.draft.background')}</dt><dd>{text(localized(contentDraft.psychologicalBackgroundZh, contentDraft.psychologicalBackgroundEn))}</dd></div>
+                    <div><dt>{g('assistant.draft.dialogue')}</dt><dd>{text(contentDraft.dialogue)}</dd></div>
+                    <div><dt>{g('assistant.draft.displayText')}</dt><dd>{text(contentDraft.displayText)}</dd></div>
+                    <div><dt>{g('assistant.draft.emotionDescription')}</dt><dd>{text(contentDraft.trueEmotionDescription)}</dd></div>
+                    <div><dt>{g('assistant.draft.basePrompt')}</dt><dd>{text(contentDraft.baseVideoPrompt)}</dd></div>
+                    <div><dt>{g('assistant.draft.requirements')}</dt><dd>{text(localized(contentDraft.contentRequirementsZh, contentDraft.contentRequirementsEn))}</dd></div>
+                    <div><dt>{g('assistant.draft.supplement')}</dt><dd>{text(localized(contentDraft.sceneSupplementZh, contentDraft.sceneSupplementEn))}</dd></div>
+                    <div><dt>{g('assistant.draft.allowedScenes')}</dt><dd>{g('common.selected', { count: contentDraft.sceneIds.length })}</dd></div>
+                  </dl>
+                  <label><input type="checkbox" checked={createContent} onChange={event => setCreateContent(event.target.checked)} />{g('assistant.createContent')}</label>
+                </section>
               ) : null}
-              {record.suggestion.newShootingSceneDraft ? (
-                <label><input type="checkbox" checked={createScene} onChange={event => setCreateScene(event.target.checked)} />{g('assistant.createScene')}</label>
+              {sceneDraft ? (
+                <section className="generation-assistant__draft-detail">
+                  <h4>{g('assistant.proposedScene')}</h4>
+                  <dl>
+                    <div><dt>{g('assistant.draft.name')}</dt><dd>{localized(sceneDraft.nameZh, sceneDraft.nameEn)}</dd></div>
+                    <div><dt>{g('assistant.draft.status')}</dt><dd>{g('assistant.status.Draft')}</dd></div>
+                    <div><dt>{g('assistant.draft.setting')}</dt><dd>{text(localized(sceneDraft.sceneZh, sceneDraft.sceneEn))}</dd></div>
+                    <div><dt>{g('assistant.draft.ambient')}</dt><dd>{text(localized(sceneDraft.ambientSoundZh, sceneDraft.ambientSoundEn))}</dd></div>
+                    <div><dt>{g('assistant.draft.relationship')}</dt><dd>{text(localized(sceneDraft.participantRelationshipZh, sceneDraft.participantRelationshipEn))}</dd></div>
+                    <div><dt>{g('assistant.draft.lighting')}</dt><dd>{text(localized(sceneDraft.lightingZh, sceneDraft.lightingEn))}</dd></div>
+                    <div><dt>{g('assistant.draft.framing')}</dt><dd>{text(localized(sceneDraft.framingZh, sceneDraft.framingEn))}</dd></div>
+                  </dl>
+                  <label><input type="checkbox" checked={createScene} onChange={event => setCreateScene(event.target.checked)} />{g('assistant.createScene')}</label>
+                </section>
               ) : null}
               {createContent && createScene ? (
                 <label><input type="checkbox" checked={linkDrafts} onChange={event => setLinkDrafts(event.target.checked)} />{g('assistant.linkDrafts')}</label>
@@ -303,7 +408,7 @@ export function AssistantPanel({
           ) : null}
           <Button
             variant="secondary"
-            disabled={(selected.length === 0 && !createContent && !createScene) || apply.isPending}
+            disabled={!candidatesReady || record.status !== 'Pending' || (selected.length === 0 && !createContent && !createScene) || apply.isPending}
             onClick={() => {
               setLocalApplyError(false);
               setConfirmOpen(true);
