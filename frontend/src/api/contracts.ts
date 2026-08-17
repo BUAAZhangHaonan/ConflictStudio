@@ -122,6 +122,20 @@ export interface PromptTemplateVersion {
   verifiedAt: string | null;
 }
 
+export interface PromptTemplateVersionCreate {
+  expectedTemplateRevision: number;
+  organizationRules: string;
+  styleGuidance: string;
+  positiveExamples: string[];
+  negativeExamples: string[];
+  ltxNegativePrompt: string;
+  h3NegativePrompt: string;
+}
+
+export interface PromptTemplateVersionVerify {
+  expectedRevision: number;
+}
+
 export interface SceneFields {
   nameZh: string;
   nameEn: string;
@@ -244,28 +258,6 @@ export interface BatchPreview {
   totalCount: number;
   gpuRevisions: Record<GpuSlotName, number>;
   allocations: BatchAllocation[];
-}
-
-export interface PromptPreviewRequest {
-  contentScript: SourceSelection;
-  promptTemplateVersion: SourceSelection;
-  scene: SourceSelection;
-  demographic: Demographic;
-  model: ModelName;
-}
-
-export interface PromptPreview {
-  contentScript: BilingualSelection;
-  promptTemplateVersion: Selection;
-  scene: BilingualSelection;
-  category: Category;
-  conflictDirection: ConflictDirection | null;
-  demographic: Demographic;
-  requiresPromptGeneration: boolean;
-  systemInput: string;
-  userInput: string;
-  finalPositivePrompt: string | null;
-  negativePrompt: string;
 }
 
 export interface TestComparisonInput {

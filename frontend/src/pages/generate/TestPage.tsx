@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Button, ConfirmDialog, Field, Pagination, StatusBadge } from '../../components';
 import {
   useContentScenesQuery,
   useContentScriptQuery,
   useContentScriptsQuery,
   useGpuSlotsQuery,
-  usePromptPreviewMutation,
   usePromptTemplatesQuery,
   usePromptTemplateVersionsQuery,
   usePromptTemplateVersionQuery,
+  useResultItemsQuery,
   useSceneQuery,
   useSubmitPromptTestMutation,
   useSubmitVideoTestMutation,
@@ -43,6 +43,8 @@ import {
 } from '../../types';
 import { formatDateTime } from '../../time';
 import { AssistantPanel } from './AssistantPanel';
+import { TestResources } from './TestResources';
+import { modelPrecisionIsValid } from './testWorkflow';
 import {
   ages,
   categories,
@@ -87,16 +89,6 @@ interface TestForm {
   executionMode: TestExecutionMode;
 }
 
-interface TemporaryInputs {
-  content: string;
-  scene: string;
-  template: string;
-  positive: string;
-  negative: string;
-}
-
-const emptyInputs: TemporaryInputs = { content: '', scene: '', template: '', positive: '', negative: '' };
-
 function emptyForm(): TestForm {
   return {
     kind: 'PromptTest',
@@ -117,14 +109,9 @@ function emptyForm(): TestForm {
   };
 }
 
-function sameInputs(left: TemporaryInputs, right: TemporaryInputs): boolean {
-  return Object.keys(left).every(key => left[key as keyof TemporaryInputs] === right[key as keyof TemporaryInputs]);
-}
-
 export function TestPage() {
   const g = useGenerationCopy();
   const locale = useGenerationLocale();
-  const navigate = useNavigate();
   const [copied] = useState(() => takeSessionDraft<TestCopyDraft>(testCopyDraftKey));
   const [form, setForm] = useState<TestForm>(() => copied ? {
     ...emptyForm(),
@@ -149,9 +136,8 @@ export function TestPage() {
   const [validation, setValidation] = useState(false);
   const [runConfirmOpen, setRunConfirmOpen] = useState(false);
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
-  const [previewKey, setPreviewKey] = useState<string | null>(null);
-  const [baselineInputs, setBaselineInputs] = useState<TemporaryInputs | null>(null);
-  const [temporaryInputs, setTemporaryInputs] = useState<TemporaryInputs>(emptyInputs);
+  const [inspectedJobId, setInspectedJobId] = useState<number | null>(null);
+  const [testedVersionIds, setTestedVersionIds] = useState<Set<number>>(() => new Set());
   const [hiddenIds, setHiddenIds] = useState(hiddenTestIds);
 
   const contentQuery = useContentScriptsQuery(contentPage);
@@ -163,7 +149,7 @@ export function TestPage() {
   const sceneQuery = useSceneQuery(form.sceneId);
   const gpuQuery = useGpuSlotsQuery();
   const recentQuery = useTestResultsQuery(1);
-  const previewMutation = usePromptPreviewMutation();
+  const inspectedItemsQuery = useResultItemsQuery('test', inspectedJobId, 1);
   const promptTestMutation = useSubmitPromptTestMutation();
   const videoTestMutation = useSubmitVideoTestMutation();
 
@@ -179,8 +165,7 @@ export function TestPage() {
     [form.category, templatesQuery.data],
   );
   const versions = useMemo(
-    () => (versionsQuery.data?.items ?? []).filter(item =>
-      item.category === form.category && item.verificationStatus === 'Verified'),
+    () => (versionsQuery.data?.items ?? []).filter(item => item.category === form.category),
     [form.category, versionsQuery.data],
   );
   const scenes = scenesQuery.data?.scenes ?? [];
@@ -191,7 +176,7 @@ export function TestPage() {
       && contentDetail.conflictDirection === form.conflictDirection ? contentDetail : null);
   const versionDetail = selectedVersionDetailQuery.data;
   const selectedVersion = versions.find(item => item.id === form.promptTemplateVersionId)
-    ?? (versionDetail?.category === form.category && versionDetail.verificationStatus === 'Verified' ? versionDetail : null);
+    ?? (versionDetail?.category === form.category ? versionDetail : null);
   const contentOptions = selectedContent && !content.some(item => item.id === selectedContent.id)
     ? [selectedContent, ...content]
     : content;
@@ -202,25 +187,17 @@ export function TestPage() {
     ? [selectedVersion, ...versions]
     : versions;
   const selectedScene = scenes.find(item => item.id === form.sceneId) ?? null;
+  const selectedSceneIsActive = sceneQuery.data?.status === 'Active';
   const gpuBySlot = new Map((gpuQuery.data ?? []).map(slot => [slot.slot, slot]));
   const seeds = parseSeeds(form.seed);
   const directions = allowedDirections(form.category);
-  const currentKey = JSON.stringify({
-    category: form.category,
-    direction: form.conflictDirection,
-    content: [selectedContent?.id, selectedContent?.revision],
-    scene: [selectedScene?.id, selectedScene?.revision],
-    version: [selectedVersion?.id, selectedVersion?.revision],
-    person: [form.age, form.gender, form.ethnicity],
-    profile: form.kind === 'PromptTest' ? [form.model, form.precision] : form.comparisons,
-    seed: form.seed,
-  });
-  const preview = previewKey === currentKey ? previewMutation.data : undefined;
-  const temporaryChanged = baselineInputs !== null && !sameInputs(baselineInputs, temporaryInputs);
   const recent = (recentQuery.data?.items ?? []).filter(item => !hiddenIds.includes(item.id)).slice(0, 5);
+  const inspectedItem = inspectedItemsQuery.data?.items[0] ?? null;
+  const promptOutput = inspectedItem?.promptResult ?? null;
   const queryError = contentQuery.error ?? selectedContentQuery.error ?? templatesQuery.error ?? versionsQuery.error
-    ?? selectedVersionDetailQuery.error ?? scenesQuery.error ?? sceneQuery.error ?? gpuQuery.error ?? recentQuery.error;
-  const mutationError = previewMutation.error ?? promptTestMutation.error ?? videoTestMutation.error;
+    ?? selectedVersionDetailQuery.error ?? scenesQuery.error ?? sceneQuery.error ?? gpuQuery.error
+    ?? recentQuery.error ?? inspectedItemsQuery.error;
+  const mutationError = promptTestMutation.error ?? videoTestMutation.error;
 
   useEffect(() => {
     if (selectedContent !== null) return;
@@ -270,46 +247,7 @@ export function TestPage() {
     setContentPage(1);
     setTemplatePage(1);
     setVersionPage(1);
-    setPreviewKey(null);
-  };
-
-  const buildPreview = async () => {
-    if (!selectedContent || !selectedScene || !selectedVersion) {
-      setValidation(true);
-      return;
-    }
     setValidation(false);
-    const submittedKey = currentKey;
-    try {
-      const result = await previewMutation.mutateAsync({
-        contentScript: { id: selectedContent.id, expectedRevision: selectedContent.revision },
-        promptTemplateVersion: { id: selectedVersion.id, expectedRevision: selectedVersion.revision },
-        scene: { id: selectedScene.id, expectedRevision: selectedScene.revision },
-        demographic: { age: form.age, gender: form.gender, ethnicity: form.ethnicity },
-        model: form.kind === 'PromptTest' ? form.model : form.comparisons[0].model,
-      });
-      const scene = sceneQuery.data;
-      const inputs: TemporaryInputs = {
-        content: [
-          locale === 'zh-CN' ? selectedContent.sceneZh : selectedContent.sceneEn,
-          selectedContent.dialogue ?? selectedContent.displayText ?? '',
-          selectedContent.baseVideoPrompt,
-        ].filter(Boolean).join('\n'),
-        scene: scene ? [
-          localizedName(locale, scene),
-          locale === 'zh-CN' ? scene.sceneZh : scene.sceneEn,
-          locale === 'zh-CN' ? scene.ambientSoundZh : scene.ambientSoundEn,
-        ].filter(Boolean).join('\n') : localizedName(locale, selectedScene),
-        template: [selectedVersion.organizationRules, selectedVersion.styleGuidance].filter(Boolean).join('\n'),
-        positive: result.finalPositivePrompt ?? result.userInput,
-        negative: result.negativePrompt,
-      };
-      setPreviewKey(submittedKey);
-      setBaselineInputs(inputs);
-      setTemporaryInputs(inputs);
-    } catch {
-      setPreviewKey(null);
-    }
   };
 
   const videoSettingsValid = () => {
@@ -320,8 +258,18 @@ export function TestPage() {
     return [...slots].every(slot => gpuBySlot.has(slot));
   };
 
+  const settingsValid = Boolean(
+    selectedContent
+    && selectedScene
+    && selectedSceneIsActive
+    && selectedVersion
+    && (form.kind === 'PromptTest'
+      ? modelPrecisionIsValid(form.model, form.precision)
+      : videoSettingsValid()),
+  );
+
   const runTest = async (confirmModelSwitch: boolean) => {
-    if (!preview || !selectedContent || !selectedScene || !selectedVersion || temporaryChanged) {
+    if (!settingsValid || !selectedContent || !selectedScene || !selectedVersion) {
       setValidation(true);
       setRunConfirmOpen(false);
       return;
@@ -345,7 +293,11 @@ export function TestPage() {
               .map(slot => [slot, gpuBySlot.get(slot)!.revision])),
           confirmModelSwitch,
         });
-      navigate('/generate/results?tab=test&job=' + job.id);
+      setInspectedJobId(job.id);
+      if (form.kind === 'PromptTest') {
+        setTestedVersionIds(current => new Set(current).add(selectedVersion.id));
+      }
+      setValidation(false);
     } catch (error) {
       if (!confirmModelSwitch && isModelSwitchConfirmationRequired(error)) setSwitchConfirmOpen(true);
     } finally {
@@ -407,7 +359,7 @@ export function TestPage() {
         executionMode: values.executionMode ?? current.executionMode,
       };
     });
-    setPreviewKey(null);
+    setValidation(false);
   };
 
   const addComparison = () => {
@@ -419,7 +371,6 @@ export function TestPage() {
         gpuSlot: index === 0 ? current.comparisons[0].gpuSlot : 'GPU1',
       })),
     }));
-    setPreviewKey(null);
   };
 
   return (
@@ -431,20 +382,22 @@ export function TestPage() {
         onApply={applyAssistant}
       />
       <RelationshipGuide production={false} />
+      <TestResources
+        testedVersionIds={testedVersionIds}
+        onVersionCreated={(id, templateId) => setForm(current => ({
+          ...current,
+          promptTemplateId: templateId,
+          promptTemplateVersionId: id,
+        }))}
+        onVersionVerified={id => setForm(current => ({ ...current, promptTemplateVersionId: id }))}
+      />
       {copied ? <p className="generation-isolation-note" role="status">{g('test.copied')}</p> : null}
       {queryError ? <OperationFeedback error={queryError} onDismiss={() => void Promise.all([
-        contentQuery.refetch(),
-        selectedContentQuery.refetch(),
-        templatesQuery.refetch(),
-        versionsQuery.refetch(),
-        selectedVersionDetailQuery.refetch(),
-        scenesQuery.refetch(),
-        sceneQuery.refetch(),
-        gpuQuery.refetch(),
-        recentQuery.refetch(),
+        contentQuery.refetch(), selectedContentQuery.refetch(), templatesQuery.refetch(), versionsQuery.refetch(),
+        selectedVersionDetailQuery.refetch(), scenesQuery.refetch(), sceneQuery.refetch(), gpuQuery.refetch(),
+        recentQuery.refetch(), inspectedItemsQuery.refetch(),
       ])} /> : null}
       {mutationError && !switchConfirmOpen ? <OperationFeedback error={mutationError} onDismiss={() => {
-        previewMutation.reset();
         promptTestMutation.reset();
         videoTestMutation.reset();
       }} /> : null}
@@ -465,70 +418,17 @@ export function TestPage() {
           </fieldset>
 
           <div className="generation-form__grid">
-            <Field label={g('test.taskType')} htmlFor="test-category">
-              <select id="test-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>
-                {categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}
-              </select>
-            </Field>
-            <Field label={g('test.direction')} htmlFor="test-direction">
-              <select id="test-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => {
-                setForm(current => ({
-                  ...current,
-                  conflictDirection: (event.target.value || null) as ConflictDirection | null,
-                  contentScriptId: null,
-                  sceneId: null,
-                }));
-                setPreviewKey(null);
-              }}>
-                {directions.length === 0 ? <option value="">{g('common.none')}</option> : null}
-                {directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}
-              </select>
-            </Field>
-            <Field label={g('test.content')} htmlFor="test-content">
-              <select id="test-content" value={form.contentScriptId ?? ''} onChange={event => {
-                setForm(current => ({ ...current, contentScriptId: Number(event.target.value), sceneId: null }));
-                setPreviewKey(null);
-              }}>
-                {content.length === 0 ? <option value="">{g('state.filtered')}</option> : null}
-                {contentOptions.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}
-              </select>
-            </Field>
-            <Field label={g('test.scene')} htmlFor="test-scene">
-              <select id="test-scene" value={form.sceneId ?? ''} disabled={scenes.length === 0} onChange={event => {
-                setForm(current => ({ ...current, sceneId: Number(event.target.value) }));
-                setPreviewKey(null);
-              }}>
-                {scenes.length === 0 ? <option value="">{g('state.filtered')}</option> : null}
-                {scenes.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}
-              </select>
-            </Field>
-            <Field label={g('test.template')} htmlFor="test-template">
-              <select id="test-template" value={form.promptTemplateId ?? ''} onChange={event => {
-                setForm(current => ({
-                  ...current,
-                  promptTemplateId: Number(event.target.value),
-                  promptTemplateVersionId: null,
-                }));
-                setVersionPage(1);
-                setPreviewKey(null);
-              }}>
-                {templates.length === 0 ? <option value="">{g('state.filtered')}</option> : null}
-                {templateOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </Field>
-            <Field label={g('test.version')} htmlFor="test-version">
-              <select id="test-version" value={form.promptTemplateVersionId ?? ''} onChange={event => {
-                setForm(current => ({ ...current, promptTemplateVersionId: Number(event.target.value) }));
-                setPreviewKey(null);
-              }}>
-                {versions.length === 0 ? <option value="">{g('state.filtered')}</option> : null}
-                {versionOptions.map(item => <option key={item.id} value={item.id}>{item.templateName} {item.version}</option>)}
-              </select>
-            </Field>
+            <Field label={g('test.taskType')} htmlFor="test-category"><select id="test-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
+            <Field label={g('test.direction')} htmlFor="test-direction"><select id="test-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentScriptId: null, sceneId: null }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
+            <Field label={g('test.content')} htmlFor="test-content"><select id="test-content" value={form.contentScriptId ?? ''} onChange={event => setForm(current => ({ ...current, contentScriptId: event.target.value ? Number(event.target.value) : null, sceneId: null }))}>{content.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{contentOptions.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
+            <Field label={g('test.scene')} htmlFor="test-scene"><select id="test-scene" value={form.sceneId ?? ''} disabled={scenes.length === 0} onChange={event => setForm(current => ({ ...current, sceneId: event.target.value ? Number(event.target.value) : null }))}>{scenes.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{scenes.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
+            <Field label={g('test.template')} htmlFor="test-template"><select id="test-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+            <Field label={g('test.version')} htmlFor="test-version"><select id="test-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{item.templateName} {item.version} {g(item.verificationStatus === 'Verified' ? 'test.resource.verified' : 'test.resource.draft')}</option>)}</select></Field>
           </div>
 
           <div className="generation-source-pages">
             <div><span>{g('test.contentPage')}</span><Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} /></div>
+            <div><span>{g('test.templatePage')}</span><Pagination page={templatesQuery.data?.page ?? templatePage} totalPages={templatesQuery.data?.totalPages ?? 0} total={templatesQuery.data?.total ?? 0} onPageChange={setTemplatePage} /></div>
             <div><span>{g('test.versionPage')}</span><Pagination page={versionsQuery.data?.page ?? versionPage} totalPages={versionsQuery.data?.totalPages ?? 0} total={versionsQuery.data?.total ?? 0} onPageChange={setVersionPage} /></div>
           </div>
 
@@ -543,13 +443,7 @@ export function TestPage() {
 
           {form.kind === 'PromptTest' ? (
             <div className="generation-form__grid">
-              <Field label={g('test.model')} htmlFor="test-model">
-                <select id="test-model" value={form.model} onChange={event => {
-                  const model = event.target.value as ModelName;
-                  setForm(current => ({ ...current, model, precision: precisionForModel(model, current.precision) }));
-                  setPreviewKey(null);
-                }}>{models.map(value => <option key={value} value={value}>{g(('model.' + value) as GenerationKey)}</option>)}</select>
-              </Field>
+              <Field label={g('test.model')} htmlFor="test-model"><select id="test-model" value={form.model} onChange={event => { const model = event.target.value as ModelName; setForm(current => ({ ...current, model, precision: precisionForModel(model, current.precision) })); }}>{models.map(value => <option key={value} value={value}>{g(('model.' + value) as GenerationKey)}</option>)}</select></Field>
               {form.model === 'LTX-2.5' ? <Field label={g('test.precision')} htmlFor="test-precision"><select id="test-precision" value={form.precision ?? ''} onChange={event => setForm(current => ({ ...current, precision: event.target.value as ModelPrecision }))}>{ltx25Precisions.map(value => <option key={value} value={value}>{g(('precision.' + value) as GenerationKey)}</option>)}</select></Field> : null}
             </div>
           ) : (
@@ -557,17 +451,7 @@ export function TestPage() {
               <legend>{g('test.model')}</legend>
               {form.comparisons.length > 1 ? <Field label={g('test.execution')} htmlFor="test-execution"><select id="test-execution" value={form.executionMode} onChange={event => setForm(current => ({ ...current, executionMode: event.target.value as TestExecutionMode }))}><option value="Parallel">{g('test.parallel')}</option><option value="Serial">{g('test.serial')}</option></select></Field> : null}
               {form.comparisons.map((comparison, index) => <div className="generation-comparisons__row" key={index}>
-                <Field label={g('test.model')} htmlFor={'test-model-' + index}>
-                  <select id={'test-model-' + index} value={comparison.model} onChange={event => {
-                    const model = event.target.value as ModelName;
-                    setForm(current => ({
-                      ...current,
-                      comparisons: current.comparisons.map((item, itemIndex) =>
-                        itemIndex === index ? { ...item, model, precision: precisionForModel(model, item.precision) } : item),
-                    }));
-                    setPreviewKey(null);
-                  }}>{models.map(value => <option key={value} value={value}>{g(('model.' + value) as GenerationKey)}</option>)}</select>
-                </Field>
+                <Field label={g('test.model')} htmlFor={'test-model-' + index}><select id={'test-model-' + index} value={comparison.model} onChange={event => { const model = event.target.value as ModelName; setForm(current => ({ ...current, comparisons: current.comparisons.map((item, itemIndex) => itemIndex === index ? { ...item, model, precision: precisionForModel(model, item.precision) } : item) })); }}>{models.map(value => <option key={value} value={value}>{g(('model.' + value) as GenerationKey)}</option>)}</select></Field>
                 {comparison.model === 'LTX-2.5' ? <Field label={g('test.precision')} htmlFor={'test-precision-' + index}><select id={'test-precision-' + index} value={comparison.precision ?? ''} onChange={event => setForm(current => ({ ...current, comparisons: current.comparisons.map((item, itemIndex) => itemIndex === index ? { ...item, precision: event.target.value as ModelPrecision } : item) }))}>{ltx25Precisions.map(value => <option key={value} value={value}>{g(('precision.' + value) as GenerationKey)}</option>)}</select></Field> : null}
                 <Field label={g('test.gpu')} htmlFor={'test-gpu-' + index}><select id={'test-gpu-' + index} value={comparison.gpuSlot} onChange={event => setForm(current => ({ ...current, comparisons: current.comparisons.map((item, itemIndex) => itemIndex === index ? { ...item, gpuSlot: event.target.value as GpuSlotName } : item) }))}>{(gpuQuery.data ?? []).map(value => <option key={value.slot} value={value.slot}>{g(('gpu.' + value.slot) as GenerationKey)} {g(('gpu.' + value.availability) as GenerationKey)}</option>)}</select></Field>
                 {form.comparisons.length > 1 ? <Button variant="quiet" onClick={() => setForm(current => ({ ...current, comparisons: current.comparisons.filter((_, itemIndex) => itemIndex !== index) }))}>{g('test.removeComparison')}</Button> : null}
@@ -576,43 +460,30 @@ export function TestPage() {
             </fieldset>
           )}
 
-          <Field label={g('test.seed')} htmlFor="test-seed" hint={g('test.seedHint')}>
-            <input id="test-seed" inputMode="numeric" disabled={form.kind === 'PromptTest'} value={form.seed} onChange={event => setForm(current => ({ ...current, seed: event.target.value }))} />
-          </Field>
+          <Field label={g('test.seed')} htmlFor="test-seed" hint={g('test.seedHint')}><input id="test-seed" inputMode="numeric" disabled={form.kind === 'PromptTest'} value={form.seed} onChange={event => setForm(current => ({ ...current, seed: event.target.value }))} /></Field>
           {validation ? <p className="field__error" role="alert">{g('test.validation')}</p> : null}
-          <div className="generation-form__actions">
-            <Button variant="secondary" busy={previewMutation.isPending} onClick={() => void buildPreview()}>{g('test.preview')}</Button>
-            <Button variant="primary" disabled={!preview || temporaryChanged || (form.kind === 'VideoTest' && !videoSettingsValid())} onClick={() => setRunConfirmOpen(true)}>{g('test.run')}</Button>
-          </div>
+          <div className="generation-form__actions"><Button variant="primary" disabled={!settingsValid} onClick={() => setRunConfirmOpen(true)}>{g('test.run')}</Button></div>
         </section>
 
-        <section className="panel generation-test-preview" aria-labelledby="test-temporary-title">
-          <div className="section-header"><h2 id="test-temporary-title">{g('test.temporary')}</h2></div>
-          <p>{g('test.temporaryHint')}</p>
-          {!preview || baselineInputs === null ? <p>{g('test.previewEmpty')}</p> : <div className="generation-temporary-fields">
-            {(['content', 'scene', 'template', 'positive', 'negative'] as const).map(field => (
-              <Field key={field} label={g(('test.' + (field === 'content' ? 'contentInput' : field === 'scene' ? 'sceneInput' : field === 'template' ? 'templateInput' : field)) as GenerationKey)} htmlFor={'test-temporary-' + field}>
-                <textarea id={'test-temporary-' + field} value={temporaryInputs[field]} onChange={event => setTemporaryInputs(current => ({ ...current, [field]: event.target.value }))} />
-              </Field>
-            ))}
-            {temporaryChanged ? <div className="generation-override-notice" role="status"><p>{g('test.overrideBlocked')}</p><Button variant="quiet" onClick={() => setTemporaryInputs(baselineInputs)}>{g('common.clear')}</Button></div> : null}
-          </div>}
+        <section className="panel generation-test-preview" aria-labelledby="test-output-title">
+          <div className="section-header"><h2 id="test-output-title">{g('test.output')}</h2></div>
+          <p>{g('test.outputHint')}</p>
+          {inspectedJobId === null ? <p>{g('test.outputEmpty')}</p> : <>
+            <p className="generation-isolation-note">{g('test.resultReady')}</p>
+            {inspectedItemsQuery.isPending ? <p role="status">{g('common.loading')}</p> : null}
+            {promptOutput ? <div className="generation-prompt-output">
+              <Field label={g('test.positive')} htmlFor="test-positive-output"><textarea id="test-positive-output" value={promptOutput.finalPositivePrompt} readOnly /></Field>
+              <Field label={g('test.negative')} htmlFor="test-negative-output"><textarea id="test-negative-output" value={promptOutput.negativePrompt} readOnly /></Field>
+            </div> : <p>{g('test.outputPending')}</p>}
+            <Link className="button button--secondary" to={'/generate/results?tab=test&job=' + inspectedJobId}>{g('test.inspectResult')}</Link>
+          </>}
         </section>
       </div>
 
       <section className="panel generation-test-history" aria-labelledby="test-latest-title">
-        <div className="section-header">
-          <div><h2 id="test-latest-title">{g('test.latest')}</h2><p>{g('test.latestHint')}</p></div>
-          <Link className="button button--secondary" to="/generate/results?tab=test">{g('test.viewAll')}</Link>
-        </div>
+        <div className="section-header"><div><h2 id="test-latest-title">{g('test.latest')}</h2><p>{g('test.latestHint')}</p></div><Link className="button button--secondary" to="/generate/results?tab=test">{g('test.viewAll')}</Link></div>
         <p className="generation-isolation-note">{g('test.isolation')}</p>
-        {recent.length === 0 ? <p>{g('state.empty')}</p> : <ul className="generation-job-list">{recent.map(job => <li key={job.id}><div className="generation-job-row">
-          <div><strong>{job.displayName}</strong><span>{g(('source.' + job.source) as GenerationKey)}</span></div>
-          <StatusBadge label={g(('job.' + job.status) as GenerationKey)} kind={jobStatusKind(job.status)} />
-          <span>{profileLabel(job.model, job.precision)}</span>
-          <time dateTime={job.updatedAt}>{formatDateTime(job.updatedAt)}</time>
-          <div className="generation-row-actions"><Button variant="quiet" onClick={() => navigate('/generate/results?tab=test&job=' + job.id)}>{g('common.view')}</Button><Button variant="quiet" onClick={() => setHiddenIds(hideTestResult(job.id))}>{g('common.hide')}</Button></div>
-        </div></li>)}</ul>}
+        {recent.length === 0 ? <p>{g('state.empty')}</p> : <ul className="generation-job-list">{recent.map(job => <li key={job.id}><div className="generation-job-row"><div><strong>{job.displayName}</strong><span>{g(('source.' + job.source) as GenerationKey)}</span></div><StatusBadge label={g(('job.' + job.status) as GenerationKey)} kind={jobStatusKind(job.status)} /><span>{profileLabel(job.model, job.precision)}</span><time dateTime={job.updatedAt}>{formatDateTime(job.updatedAt)}</time><div className="generation-row-actions"><Link className="button button--quiet" to={'/generate/results?tab=test&job=' + job.id}>{g('common.view')}</Link><Button variant="quiet" onClick={() => setHiddenIds(hideTestResult(job.id))}>{g('common.hide')}</Button></div></div></li>)}</ul>}
       </section>
 
       <ConfirmDialog open={runConfirmOpen} title={g('test.runTitle')} body={g('test.runBody')} confirmLabel={g('test.run')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void runTest(false)} onClose={() => setRunConfirmOpen(false)} busy={promptTestMutation.isPending || videoTestMutation.isPending} />

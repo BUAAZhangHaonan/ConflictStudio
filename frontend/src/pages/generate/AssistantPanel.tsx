@@ -210,9 +210,9 @@ export function AssistantPanel({
           expectedTargetRevision: targetRevision,
           confirmedFields: selected,
           values,
-          createContentScript: createContent,
-          createShootingScene: createScene,
-          linkNewSceneToContent: linkDrafts,
+          createContentScript: production && createContent,
+          createShootingScene: production && createScene,
+          linkNewSceneToContent: production && linkDrafts,
         },
       });
     } catch {
@@ -238,8 +238,31 @@ export function AssistantPanel({
     if (field === 'TargetDataset' || field === 'PromptTemplateVersion') {
       return (value as { label?: string | null } | null)?.label ?? g('common.none');
     }
-    if (field === 'ContentSelections' || field === 'Demographics' || field === 'GpuSlots' || field === 'Seeds' || field === 'Comparisons') {
-      return g('common.selected', { count: Array.isArray(value) ? value.length : 0 });
+    if (field === 'ContentSelections') {
+      return (value as NonNullable<AssistantFormState['contentSelections']> | null)?.map(selection => {
+        const content = selection.contentScript.label ?? String(selection.contentScript.id);
+        const scenes = selection.scenes.map(scene => scene.label ?? String(scene.id)).join(', ');
+        return content + ': ' + scenes;
+      }).join('; ') ?? g('common.none');
+    }
+    if (field === 'Demographics') {
+      return (value as NonNullable<AssistantFormState['demographics']> | null)?.map(person => [
+        g(('demographic.age.' + person.age) as GenerationKey),
+        g(('demographic.gender.' + person.gender) as GenerationKey),
+        g(('demographic.ethnicity.' + person.ethnicity) as GenerationKey),
+      ].join(', ')).join('; ') ?? g('common.none');
+    }
+    if (field === 'GpuSlots') {
+      return (value as NonNullable<AssistantFormState['gpuSlots']> | null)?.map(slot =>
+        g(('gpu.' + slot) as GenerationKey)).join(', ') ?? g('common.none');
+    }
+    if (field === 'Seeds') {
+      return (value as NonNullable<AssistantFormState['seeds']> | null)?.join(', ') ?? g('common.none');
+    }
+    if (field === 'Comparisons') {
+      return (value as NonNullable<AssistantFormState['comparisons']> | null)?.map(comparison =>
+        profileLabel(comparison.model, comparison.precision) + ' ' + g(('gpu.' + comparison.gpuSlot) as GenerationKey)
+      ).join(', ') ?? g('common.none');
     }
     if (field === 'ExecutionMode' && value) return g(value === 'Parallel' ? 'test.parallel' : 'test.serial');
     return String(value ?? g('common.none'));
@@ -310,7 +333,8 @@ export function AssistantPanel({
                       const checked = Array.isArray(current)
                         ? current.includes(item.id)
                         : current === item.id;
-                      const single = group.kind === 'Dataset'
+                      const single = !production
+                        || group.kind === 'Dataset'
                         || group.kind === 'PromptTemplateVersion';
                       return <li key={item.id}>
                         <label>
@@ -318,8 +342,13 @@ export function AssistantPanel({
                             type={single ? 'radio' : 'checkbox'}
                             name={single ? 'assistant-' + record.id + '-' + group.kind : undefined}
                             checked={checked}
-                            onChange={() => setCandidateChoices(value =>
-                              chooseCandidate(value, group.kind, item.id))}
+                            onChange={() => setCandidateChoices(value => {
+                              if (production) return chooseCandidate(value, group.kind, item.id);
+                              if (group.kind === 'ContentScript' || group.kind === 'ShootingScene') {
+                                return { ...value, [group.kind]: [item.id] };
+                              }
+                              return { ...value, [group.kind]: item.id };
+                            })}
                           />
                           <span>{localizedCandidateLabel(group.kind, item.label, locale)}</span>
                         </label>
@@ -358,7 +387,7 @@ export function AssistantPanel({
           {record.suggestion.failureAdvice.length > 0 ? (
             <section><h3>{g('assistant.advice')}</h3><ul>{record.suggestion.failureAdvice.map(value => <li key={value}>{value}</li>)}</ul></section>
           ) : null}
-          {contentDraft || sceneDraft ? (
+          {production && (contentDraft || sceneDraft) ? (
             <fieldset className="generation-assistant__drafts">
               <legend>{g('assistant.createDrafts')}</legend>
               {contentDraft ? (
@@ -408,7 +437,7 @@ export function AssistantPanel({
           ) : null}
           <Button
             variant="secondary"
-            disabled={!candidatesReady || record.status !== 'Pending' || (selected.length === 0 && !createContent && !createScene) || apply.isPending}
+            disabled={!candidatesReady || record.status !== 'Pending' || (selected.length === 0 && !(production && (createContent || createScene))) || apply.isPending}
             onClick={() => {
               setLocalApplyError(false);
               setConfirmOpen(true);
@@ -420,8 +449,8 @@ export function AssistantPanel({
       ) : null}
       <ConfirmDialog
         open={confirmOpen}
-        title={createContent || createScene ? g('assistant.createTitle') : g('assistant.applyTitle')}
-        body={createContent || createScene ? g('assistant.createBody') : g('assistant.applyBody')}
+        title={production && (createContent || createScene) ? g('assistant.createTitle') : g('assistant.applyTitle')}
+        body={production && (createContent || createScene) ? g('assistant.createBody') : g('assistant.applyBody')}
         confirmLabel={g('common.apply')}
         cancelLabel={g('common.cancel')}
         closeLabel={g('common.close')}

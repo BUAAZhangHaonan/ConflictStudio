@@ -4,13 +4,15 @@ import type {
   Archive, ArchivePreview, ArchivePreviewRequest, ArchiveSyncRequest,
   AssistantFormState, BatchDraft, BatchDraftCreate, BatchDraftUpdate, BatchPreview,
   ConfigurationAssistant, ConfigurationAssistantApply, ConfigurationAssistantCreate,
-  ContentScript, ContentScriptScenes, Dataset, DatasetCreate, DatasetUpdate,
+  ContentScript, ContentScriptCreate, ContentScriptScenes, ContentScriptUpdate,
+  Dataset, DatasetCreate, DatasetUpdate,
   GenerationAttempt, GpuSlot, Health, JobDetail, JobEvent, JobItem, JobSource,
   JobStatus, JobSummary, Page, PromptTemplate, PromptTemplateVersion,
-  PromptPreview, PromptPreviewRequest, PromptTestCreate, Reviewer, ReviewerCreate,
+  PromptTemplateVersionCreate, PromptTemplateVersionVerify,
+  PromptTestCreate, Reviewer, ReviewerCreate,
   ReviewerRename, ReviewerStatistics, ReviewerStatisticsFilter, Review,
   ReviewBatchCreate, ReviewCreate, ReviewDecision, Sample, SampleClassificationUpdate,
-  Scene, VideoTestCreate,
+  Scene, SceneCreate, SceneUpdate, VideoTestCreate,
 } from './contracts';
 import type { Category } from '../types';
 
@@ -57,6 +59,7 @@ export const queryKeys = {
   promptTemplatesPage: (page: number) => [...roots.promptTemplates, page] as const,
   promptTemplateVersionsPage: (templateId: number, page: number) => [...roots.promptTemplates, templateId, 'versions', page] as const,
   promptTemplateVersion: (id: number) => [...roots.promptTemplates, 'version', id] as const,
+  scenesPage: (page: number) => [...roots.scenes, page] as const,
   scene: (id: number) => [...roots.scenes, 'detail', id] as const,
   batchDraftsPage: (page: number) => [...roots.batchDrafts, page] as const,
   batchDraft: (id: number) => [...roots.batchDrafts, 'detail', id] as const,
@@ -103,6 +106,7 @@ export const generationQueries = {
   promptTemplates: (page: number) => queryOptions({ queryKey: queryKeys.promptTemplatesPage(page), queryFn: () => apiRequest<Page<PromptTemplate>>(pagePath('/api/prompt-templates', page)) }),
   promptTemplateVersions: (templateId: number, page: number) => queryOptions({ queryKey: queryKeys.promptTemplateVersionsPage(templateId, page), queryFn: () => apiRequest<Page<PromptTemplateVersion>>(pagePath('/api/prompt-templates/' + templateId + '/versions', page)) }),
   promptTemplateVersion: (id: number) => queryOptions({ queryKey: queryKeys.promptTemplateVersion(id), queryFn: () => apiRequest<PromptTemplateVersion>('/api/prompt-template-versions/' + id) }),
+  scenes: (page: number) => queryOptions({ queryKey: queryKeys.scenesPage(page), queryFn: () => apiRequest<Page<Scene>>(pagePath('/api/scenes', page)) }),
   scene: (id: number) => queryOptions({ queryKey: queryKeys.scene(id), queryFn: () => apiRequest<Scene>('/api/scenes/' + id) }),
   batchDrafts: (page: number) => queryOptions({ queryKey: queryKeys.batchDraftsPage(page), queryFn: () => apiRequest<Page<BatchDraft>>(pagePath('/api/batch-drafts', page)) }),
   batchDraft: (id: number) => queryOptions({ queryKey: queryKeys.batchDraft(id), queryFn: () => apiRequest<BatchDraft>('/api/batch-drafts/' + id) }),
@@ -162,6 +166,7 @@ export function useContentScenesQuery(id: number | null) { return useQuery({ ...
 export function usePromptTemplatesQuery(page = 1) { return useQuery(generationQueries.promptTemplates(page)); }
 export function usePromptTemplateVersionsQuery(templateId: number | null, page = 1) { return useQuery({ ...generationQueries.promptTemplateVersions(templateId ?? 0, page), enabled: templateId !== null }); }
 export function usePromptTemplateVersionQuery(id: number | null) { return useQuery({ ...generationQueries.promptTemplateVersion(id ?? 0), enabled: id !== null }); }
+export function useScenesQuery(page = 1) { return useQuery(generationQueries.scenes(page)); }
 export function useSceneQuery(id: number | null) { return useQuery({ ...generationQueries.scene(id ?? 0), enabled: id !== null }); }
 export function useBatchDraftsQuery(page = 1) { return useQuery(generationQueries.batchDrafts(page)); }
 export function useBatchDraftQuery(id: number | null) { return useQuery({ ...generationQueries.batchDraft(id ?? 0), enabled: id !== null }); }
@@ -198,6 +203,30 @@ export function useDeleteDatasetMutation() {
   const client = useQueryClient();
   return useMutation({ mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<void>('/api/datasets/' + id + '?expectedRevision=' + expectedRevision, { method: 'DELETE' }), onSuccess: () => invalidateCatalog(client, roots.datasets) });
 }
+export function useCreateContentScriptMutation() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (input: ContentScriptCreate) => apiRequest<ContentScript>('/api/content-scripts', { method: 'POST', ...json(input) }), onSuccess: async value => { client.setQueryData(queryKeys.contentScript(value.id), value); await invalidateCatalog(client, roots.contentScripts); } });
+}
+export function useUpdateContentScriptMutation() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: ({ id, input }: { id: number; input: ContentScriptUpdate }) => apiRequest<ContentScript>('/api/content-scripts/' + id, { method: 'PATCH', ...json(input) }), onSuccess: async value => { client.setQueryData(queryKeys.contentScript(value.id), value); await invalidateCatalog(client, roots.contentScripts); } });
+}
+export function useCreateSceneMutation() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: (input: SceneCreate) => apiRequest<Scene>('/api/scenes', { method: 'POST', ...json(input) }), onSuccess: async value => { client.setQueryData(queryKeys.scene(value.id), value); await invalidateCatalog(client, roots.scenes); } });
+}
+export function useUpdateSceneMutation() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: ({ id, input }: { id: number; input: SceneUpdate }) => apiRequest<Scene>('/api/scenes/' + id, { method: 'PATCH', ...json(input) }), onSuccess: async value => { client.setQueryData(queryKeys.scene(value.id), value); await Promise.all([invalidateCatalog(client, roots.scenes), invalidateCatalog(client, roots.contentScripts)]); } });
+}
+export function useCreatePromptTemplateVersionMutation() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: ({ templateId, input }: { templateId: number; input: PromptTemplateVersionCreate }) => apiRequest<PromptTemplateVersion>('/api/prompt-templates/' + templateId + '/versions', { method: 'POST', ...json(input) }), onSuccess: async value => { client.setQueryData(queryKeys.promptTemplateVersion(value.id), value); await invalidateCatalog(client, roots.promptTemplates); } });
+}
+export function useVerifyPromptTemplateVersionMutation() {
+  const client = useQueryClient();
+  return useMutation({ mutationFn: ({ id, input }: { id: number; input: PromptTemplateVersionVerify }) => apiRequest<PromptTemplateVersion>('/api/prompt-template-versions/' + id + '/verify', { method: 'POST', ...json(input) }), onSuccess: async value => { client.setQueryData(queryKeys.promptTemplateVersion(value.id), value); await invalidateCatalog(client, roots.promptTemplates); } });
+}
 export function useSaveBatchDraftMutation() {
   const client = useQueryClient();
   return useMutation({ mutationFn: ({ id, input }: { id: number | null; input: BatchDraftCreate | BatchDraftUpdate }) => id === null ? apiRequest<BatchDraft>('/api/batch-drafts', { method: 'POST', ...json(input) }) : apiRequest<BatchDraft>('/api/batch-drafts/' + id, { method: 'PUT', ...json(input) }), onSuccess: async value => { client.setQueryData(queryKeys.batchDraft(value.id), value); await invalidateCatalog(client, roots.batchDrafts); } });
@@ -207,7 +236,6 @@ export function useSubmitBatchMutation() {
   const client = useQueryClient();
   return useMutation({ mutationFn: ({ id, expectedRevision, expectedGpuRevisions, confirmModelSwitch }: { id: number; expectedRevision: number; expectedGpuRevisions: Record<string, number>; confirmModelSwitch: boolean }) => apiRequest<JobDetail>('/api/batch-drafts/' + id + '/submit', { method: 'POST', ...json({ expectedRevision, expectedGpuRevisions, confirmModelSwitch }) }), onSuccess: async value => { setJobDetailData(client, value); await Promise.all([invalidateCatalog(client, roots.productionResults), invalidateCatalog(client, roots.batchDrafts), invalidateCatalog(client, queryKeys.gpuSlots)]); } });
 }
-export function usePromptPreviewMutation() { return useMutation({ mutationFn: (input: PromptPreviewRequest) => apiRequest<PromptPreview>('/api/prompt-preview', { method: 'POST', ...json(input) }) }); }
 export function useSubmitPromptTestMutation() {
   const client = useQueryClient();
   return useMutation({ mutationFn: (input: PromptTestCreate) => apiRequest<JobDetail>('/api/test-runs/prompt', { method: 'POST', ...json(input) }), onSuccess: async value => { setJobDetailData(client, value); await invalidateCatalog(client, roots.testResults); } });

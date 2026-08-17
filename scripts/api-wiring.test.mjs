@@ -19,6 +19,8 @@ const statisticsSource = read('../frontend/src/pages/StatisticsPage.tsx');
 const workspaceSource = read('../frontend/src/pages/WorkspacePage.tsx');
 const workspaceCss = read('../frontend/src/pages/WorkspacePage.css');
 const testPageSource = read('../frontend/src/pages/generate/TestPage.tsx');
+const testResourcesSource = read('../frontend/src/pages/generate/TestResources.tsx');
+const testWorkflowSource = read('../frontend/src/pages/generate/testWorkflow.ts');
 const productionPageSource = read('../frontend/src/pages/generate/ProductionPage.tsx');
 const resultsPageSource = read('../frontend/src/pages/generate/ResultsPage.tsx');
 const assistantSource = read('../frontend/src/pages/generate/AssistantPanel.tsx');
@@ -138,7 +140,6 @@ test('queries and mutations use only current backend generation and review endpo
     '/api/content-scripts',
     '/api/prompt-templates',
     '/api/prompt-template-versions',
-    '/api/prompt-preview',
     '/api/test-runs/prompt',
     '/api/test-runs/video',
     '/api/batch-drafts',
@@ -242,19 +243,22 @@ test('generation navigation has only Test, Generate and Results routes', () => {
   assert.doesNotMatch(packageSource, /job-prompts/u);
 });
 
-test('test page keeps prompt and video tests isolated and uses only current contracts', () => {
-  for (const token of ['PromptTest', 'VideoTest', 'usePromptPreviewMutation', 'useSubmitPromptTestMutation', 'useSubmitVideoTestMutation', 'useContentScenesQuery', 'verificationStatus', 'temporaryInputs', 'testCopyDraftKey']) {
+test('test page manages isolated resources and displays the exact prompt test output', () => {
+  for (const token of ['PromptTest', 'VideoTest', 'useSubmitPromptTestMutation', 'useSubmitVideoTestMutation', 'useContentScenesQuery', 'verificationStatus', 'useResultItemsQuery', 'promptOutput', 'testCopyDraftKey', 'TestResources']) {
     assert.match(testPageSource, new RegExp(token));
   }
-  assert.match(testPageSource, /form\.kind === 'PromptTest' \? \(/u);
-  assert.match(testPageSource, /promptTestMutation\.mutateAsync\(\{ \.\.\.common, model: form\.model, precision: form\.precision \}\)/u);
-  assert.match(testPageSource, /videoTestMutation\.mutateAsync\(/u);
-  assert.match(testPageSource, /temporaryChanged/u);
+  assert.match(testPageSource, /promptTestMutation\.mutateAsync/u);
+  assert.match(testPageSource, /videoTestMutation\.mutateAsync/u);
+  assert.match(testPageSource, /promptOutput\.finalPositivePrompt/u);
+  assert.match(testPageSource, /promptOutput\.negativePrompt/u);
   assert.match(testPageSource, /results\?tab=test&job=/u);
-  assert.doesNotMatch(testPageSource, /keep|promote|Sample|datasetId/u);
+  assert.doesNotMatch(testPageSource, /temporaryInputs|usePromptPreviewMutation|keep|promote|Sample|datasetId|systemInput|userInput/u);
+  for (const token of ['useCreateContentScriptMutation', 'useUpdateContentScriptMutation', 'useCreateSceneMutation', 'useUpdateSceneMutation', 'useCreatePromptTemplateVersionMutation', 'useVerifyPromptTemplateVersionMutation']) {
+    assert.match(testResourcesSource, new RegExp(token));
+  }
+  assert.match(testWorkflowSource, /sceneIds/u);
   assert.match(generationLocaleSource, /Tests do not create formal samples and never enter review or archive/u);
 });
-
 test('formal generation uses explicit valid combinations and current preview and submit contracts', () => {
   for (const token of ['useDatasetsQuery', "status: 'Active'", 'contentSelections', 'selectedSceneIds', 'demographics', 'parseSeeds', 'gpuSlots', 'usePreviewBatchMutation', 'useSubmitBatchMutation']) {
     assert.match(productionPageSource, new RegExp(token));
@@ -410,6 +414,9 @@ test('assistant renders all candidates and uses one server confirmation before v
   assert.match(assistantSource, /if \(!clean \|\| \(production && batchDraft === null\)\) return/u);
   assert.match(assistantSource, /saved = await apply\.mutateAsync/u);
   assert.match(assistantSource, /confirmedFields: selected/u);
+  assert.match(assistantSource, /createContentScript: production && createContent/u);
+  assert.match(assistantSource, /createShootingScene: production && createScene/u);
+  assert.match(assistantSource, /linkNewSceneToContent: production && linkDrafts/u);
   assert.match(assistantSource, /await onApply\(saved\.appliedValues \?\? values, saved\)/u);
   assert.match(productionPageSource, /setForm\(nextForm\)/u);
   assert.match(productionPageSource, /setSavedFormSignature\(JSON\.stringify\(nextForm\)\)/u);
