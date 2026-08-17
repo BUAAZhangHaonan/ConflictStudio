@@ -164,7 +164,7 @@ try {
   assert.equal(await prefillPage.getByRole('button', { name: 'Rejected', exact: true }).isEnabled(), true, 'An incompatible video can still be rejected.');
   const batchWritesBefore = api.state.requests.filter(request => ['POST', 'PUT', 'PATCH'].includes(request.method) && request.path.startsWith('/api/batch-drafts')).length;
   await prefillPage.getByRole('button', { name: 'Regenerate with the registered scene', exact: true }).click();
-  await prefillPage.waitForURL(`${baseUrl}/generate/batches`);
+  await prefillPage.waitForURL(`${baseUrl}/generate/production`);
   const navigationPrefill = await prefillPage.evaluate(() => history.state?.usr?.correctedSampleBatch ?? null);
   assert.deepEqual(navigationPrefill, {
     sourceDisplayId: 'CS-000002',

@@ -171,164 +171,24 @@ try {
   await nonEmptyRow.getByRole('button', { name: 'Enable', exact: true }).click();
   await page.getByRole('dialog', { name: 'Enable dataset?' }).getByRole('button', { name: 'Enable dataset' }).click();
 
-  await open(page, '/generate/batches');
-  const datasetSection = sectionWithHeading(page, '1. Destination dataset');
-  const contentSection = sectionWithHeading(page, '2. Content scripts and shooting scenes');
-  const promptSection = sectionWithHeading(page, '3. Prompt template version');
-  assert.match(await contentSection.innerText(), /Content scripts define the plot, emotions, and dialogue.*shooting scene defines the location, props, environment, and camera/su);
-  assert.match(await promptSection.innerText(), /writing style.*examples.*negative prompt/su);
-  assert.equal(await datasetSection.locator('.generation-choice-grid input[type="radio"]').count() <= 20, true);
-  await datasetSection.getByRole('button', { name: 'Create dataset' }).click();
-  dialog = await expectDialogFocus(page, 'Create dataset');
-  await dialog.getByLabel('Dataset name').fill('New formal dataset');
-  await dialog.getByLabel('Note').fill('Created from the batch form');
-  await dialog.getByRole('button', { name: 'Create', exact: true }).click();
-  await page.waitForFunction(() => [...document.querySelectorAll('input[name="target-dataset"]')].some(input => input.checked));
-  const createDatasetRequest = api.state.requests.findLast(request => request.method === 'POST' && request.path === '/api/datasets');
-  assert.deepEqual(createDatasetRequest?.body, { name: 'New formal dataset', note: 'Created from the batch form' });
-
-  const contentChecks = contentSection.locator(':scope > .generation-choice-grid input[type="checkbox"]');
-  assert.equal(await contentChecks.count(), 2);
-  await contentChecks.nth(0).click();
-  const fixedScene = contentSection.locator('.generation-content-scene').filter({ hasText: 'Restrained reply' });
-  await fixedScene.waitFor();
-  assert.match(await fixedScene.innerText(), /already includes one source scene/i);
-  assert.equal(await fixedScene.locator('input').count(), 0, 'Fixed content must not expose another scene selector.');
-  await contentChecks.nth(1).click();
-  const generatedScenes = contentSection.locator('.generation-content-scene').filter({ hasText: 'Unexpected call' });
-  await generatedScenes.waitFor();
-  const sceneChecks = generatedScenes.locator('input[type="checkbox"]');
-  assert.equal(await sceneChecks.count(), 2);
-  await generatedScenes.getByRole('button', { name: 'Select all available scenes' }).click();
-  assert.equal(await sceneChecks.evaluateAll(nodes => nodes.every(node => node.checked)), true);
-  await generatedScenes.getByRole('button', { name: 'Clear scenes' }).click();
-  await generatedScenes.getByText('Choose at least one shooting scene for this content script.').waitFor();
-  await sceneChecks.first().check();
-  await promptSection.locator('input[type="radio"]').first().check();
-  const combinations = sectionWithHeading(page, '6. Combination preview').locator('.generation-combination-list li');
-  assert.equal(await combinations.count(), 2, 'Preview must show actual content and scene pairs only.');
-  await page.getByRole('button', { name: 'Save batch draft' }).click();
-  await page.waitForFunction(() => document.querySelector('.generation-unsaved-status')?.textContent === '');
-  const batchRequest = api.state.requests.findLast(request => request.method === 'POST' && request.path === '/api/batch-drafts');
-  assert.deepEqual(batchRequest?.body.contentSelections, [
-    { contentScriptId: 1, sceneIds: [] },
-    { contentScriptId: 2, sceneIds: [1] },
+  await open(page, '/generate/production');
+  await page.getByRole('heading', { name: 'Generate', exact: true }).waitFor();
+  assert.deepEqual(await page.locator('.generation-production-section > legend').allTextContents(), [
+    '1 Batch and dataset',
+    '2 Content and scenes',
+    '3 People and seeds',
+    '4 Model and GPU',
   ]);
-  await page.getByLabel('Saved draft').selectOption('new');
-  await page.getByLabel('Saved draft').selectOption('1');
-  assert.equal(await page.locator('input[name="target-dataset"]:checked').count(), 1, 'Saved target dataset must be restored.');
-  assert.equal(await contentSection.locator(':scope > .generation-choice-grid input[type="checkbox"]:checked').count(), 2, 'Saved content selections must be restored.');
-  assert.equal(await generatedScenes.locator('input[type="checkbox"]:checked').count(), 1, 'Saved scene selections must be restored.');
-  assert.equal(await promptSection.locator('input[type="radio"]:checked').count(), 1, 'Saved prompt template version must be restored.');
-  assert.equal(await page.locator('#batch-model').inputValue(), 'LTX-2.5');
-  assert.equal(await page.locator('#batch-precision').inputValue(), 'INT8');
-  await page.locator('#batch-quantity').fill('3');
-  await page.getByRole('button', { name: 'Save batch draft' }).click();
-  await page.waitForFunction(() => document.querySelector('.generation-unsaved-status')?.textContent === '');
-  const resaveRequest = api.state.requests.findLast(request => request.method === 'PUT' && request.path === '/api/batch-drafts/1');
-  assert.deepEqual(resaveRequest?.body.contentSelections, batchRequest.body.contentSelections, 'Re-saving a restored draft must retain every content and scene selection.');
-  assert.equal(resaveRequest?.body.targetDatasetId, batchRequest.body.targetDatasetId);
-  assert.equal(resaveRequest?.body.promptTemplateVersionId, batchRequest.body.promptTemplateVersionId);
-  assert.equal('scenes' in batchRequest.body, false, 'The removed global scene contract must not be sent.');
-
-  await open(page, '/generate/content');
-  assert.equal(await page.locator('.generation-selection-list > li').count(), 20);
-  await page.locator('.generation-selection-card').filter({ hasText: /^Restrained reply/u }).click();
-  const fixedEditor = page.locator('.generation-compatible-scenes');
-  await fixedEditor.getByText('Quiet office', { exact: true }).waitFor();
-  assert.equal(await fixedEditor.locator('input').count(), 0, 'Fixed content must expose its source scene without radio or checkbox controls.');
-  assert.equal(await fixedEditor.getByRole('button', { name: /scene/u }).count(), 0, 'Fixed content must not expose scene mutation actions.');
-  await page.locator('.generation-selection-card').filter({ hasText: 'Unexpected call' }).click();
-  const compatibilityChecks = page.locator('.generation-compatible-scenes input[type="checkbox"]');
-  await page.waitForFunction(() => {
-    const inputs = [...document.querySelectorAll('.generation-compatible-scenes input[type="checkbox"]')];
-    return inputs.length === 3 && inputs.filter(input => input.checked).length === 2;
-  });
-  await compatibilityChecks.nth(1).uncheck();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await page.getByText('Content item saved.').waitFor();
-  const contentUpdateRequest = api.state.requests.findLast(request => request.method === 'PATCH' && request.path === '/api/content-scripts/2');
-  assert.deepEqual(contentUpdateRequest?.body.sceneIds, [1]);
-
-  await open(page, '/generate/template-versions');
-  assert.equal(await page.locator('body').innerText().then(text => text.includes('Scene supplement')), false, 'Prompt template versions must not show the removed scene supplement.');
-
-  api.state.jobs[0] = { ...api.state.jobs[0], status: 'Running', finishedAt: null };
-  jobItemsFixture[20].latestAttempt.failureReason = 'RendererError: CUDA device 0 failed with a private backend trace.';
-  jobItemsFixture[20].failureCode = 'invalid_prompt_schema';
-  jobItemsFixture[20].failureReason = 'Private prompt failure with internal field names.';
-  jobItemsFixture[20].failureDetails = { httpStatus: 200, finishReason: 'length', requestId: 'request-browser-secret', fields: [{ path: 'spokenText', type: 'missing', reason: 'Field required' }] };
-  jobItemsFixture[20].status = 'Failed';
-  jobItemsFixture[20].promptResult = null;
-  jobItemsFixture[20].input.fixedPositivePrompt = null;
-  jobItemsFixture[20].input.userInput = 'RAW_GENERATION_INSTRUCTION with spokenText, positivePrompt, dialogue, vtText, and the complete internal generation command.';
-  api.state.jobEvents[20] = { ...api.state.jobEvents[20], eventType: 'ItemFailed', failureCode: 'invalid_prompt_schema', failureReason: 'Private prompt failure with internal field names.', failureDetails: jobItemsFixture[20].failureDetails, payload: { ...api.state.jobEvents[20].payload, failureCode: 'invalid_prompt_schema', failureReason: 'Private prompt failure with internal field names.', failureDetails: jobItemsFixture[20].failureDetails } };
-  await open(page, '/generate/jobs?job=1');
-  const jobList = page.locator('.generation-job-list');
-  const jobPagination = page.locator('.generation-list .pagination');
-  const itemsSection = page.locator('.generation-job-section').filter({ has: page.getByRole('heading', { name: 'Video items' }) });
-  const itemPagination = itemsSection.locator('.pagination');
-  const eventsSection = page.locator('.generation-job-section').filter({ has: page.getByRole('heading', { name: 'Events' }) });
-  const eventPagination = eventsSection.locator('.pagination');
-  await expectCount(jobList.locator(':scope > li'), 20, 'Job list must render 20 rows.');
-  await expectCount(page.locator('.generation-result-card'), 20, 'Job results must render 20 rows.');
-  await expectCount(page.locator('.generation-log-list > li'), 20, 'Job logs must render 20 rows.');
-  await expectPaginationState(jobPagination, { page: 1, totalPages: 2, total: 25 });
-  await expectPaginationBelow(jobList, jobPagination, 'Job pagination');
-  await expectPaginationState(itemPagination, { page: 1, totalPages: 2, total: 25 });
-  await expectPaginationBelow(page.locator('.generation-result-cards'), itemPagination, 'Video item pagination');
-  assert.deepEqual(await page.locator('.generation-result-card').first().locator('.generation-current-input__prompt pre').allTextContents(), [
-    'Final positive prompt line one.\nFinal positive prompt line two.',
-    'Final negative prompt line one.\nFinal negative prompt line two.',
-  ], 'A normal result must show both complete final prompts.');
-  await expectPaginationState(eventPagination, { page: 1, totalPages: 3, total: 45 });
-  await expectPaginationBelow(page.locator('.generation-log-list'), eventPagination, 'Task log pagination');
-  await page.getByRole('button', { name: /Show 25 new log entries/ }).waitFor();
-  assert.equal(await page.locator('.generation-log-list > li').count(), 20, 'Live events must not grow the current log DOM.');
-  const jobDetailName = await page.locator('.generation-job-detail h2').first().textContent();
-  await jobPagination.getByRole('button', { name: 'Next', exact: true }).focus();
-  await page.keyboard.press('Enter');
-  await expectCount(jobList.locator(':scope > li'), 5, 'The final task page must render the remaining rows.');
-  await expectPaginationState(jobPagination, { page: 2, totalPages: 2, total: 25 });
-  assert.equal(await page.locator('.generation-job-detail h2').first().textContent(), jobDetailName, 'Changing the job list page must keep the selected job.');
-  await jobPagination.getByRole('button', { name: 'Previous', exact: true }).focus();
-  await page.keyboard.press('Space');
-  await expectCount(jobList.locator(':scope > li'), 20, 'Previous must return to the first task page by keyboard.');
-  await itemPagination.getByRole('button', { name: 'Next', exact: true }).click();
-  await expectCount(page.locator('.generation-result-card'), 5, 'The final video item page must render the remaining rows.');
-  await expectPaginationState(itemPagination, { page: 2, totalPages: 2, total: 25 });
-  const failedItemText = await page.locator('.generation-result-card').first().innerText();
-  assert.match(failedItemText, /Prompt not generated/u);
-  assert.doesNotMatch(failedItemText, /RAW_GENERATION_INSTRUCTION|spokenText|positivePrompt|dialogue|vtText|complete internal generation command/u, 'A failed item must not expose raw prompt input or internal fields.');
-  await page.locator('.generation-result-card').first().getByRole('button', { name: /Attempt history/ }).click();
-  await expectCount(page.locator('.generation-attempt-list > li'), 20, 'Attempt history must render 20 rows on the first page.');
-  const attemptSection = page.locator('.generation-job-section').filter({ has: page.getByRole('heading', { name: 'Attempt history' }) });
-  const attemptPagination = attemptSection.locator('.pagination');
-  await expectPaginationState(attemptPagination, { page: 1, totalPages: 2, total: 25 });
-  assert.equal((await attemptSection.innerText()).includes('RendererError:'), false, 'Attempt history must not expose the backend failure reason.');
-  assert.match(await attemptSection.innerText(), /The task could not be completed\./u, 'Attempt failures must use the stable localized message.');
-  const jobsText = await page.locator('main').innerText();
-  assert.doesNotMatch(jobsText, /request-browser-secret|spokenText|httpStatus|finishReason|Private prompt failure/u, 'The task page must not render diagnostic internals.');
-  await attemptPagination.getByRole('button', { name: 'Next', exact: true }).click();
-  await expectCount(page.locator('.generation-attempt-list > li'), 5, 'Attempt history must render the remaining rows on the final page.');
-  await expectPaginationState(attemptPagination, { page: 2, totalPages: 2, total: 25 });
-
-  await eventPagination.getByRole('button', { name: 'Next', exact: true }).click();
-  await expectCount(page.locator('.generation-log-list > li'), 20, 'The second log page must render 20 entries.');
-  await expectPaginationState(eventPagination, { page: 2, totalPages: 3, total: 45 });
-  await eventPagination.getByRole('button', { name: 'Next', exact: true }).click();
-  await expectCount(page.locator('.generation-log-list > li'), 5, 'The last log page must render the remaining entries.');
-  await expectPaginationState(eventPagination, { page: 3, totalPages: 3, total: 45 });
-
-  await open(page, '/generate/jobs?job=1', 'zh-CN');
-  const chineseItemsSection = page.locator('.generation-job-section').filter({ has: page.getByRole('heading', { name: '视频列表' }) });
-  await chineseItemsSection.locator('.pagination').getByRole('button', { name: '下一页', exact: true }).click();
-  const chineseFailedItemText = await chineseItemsSection.locator('.generation-result-card').first().innerText();
-  assert.match(chineseFailedItemText, /提示词未生成/u);
-  assert.doesNotMatch(chineseFailedItemText, /RAW_GENERATION_INSTRUCTION|spokenText|positivePrompt|dialogue|vtText|complete internal generation command/u, '中文失败条目不得显示原始指令或内部字段。');
+  assert.equal(await page.locator('.generate-nav a').count(), 3);
 
   await open(page, '/generate/test');
-  assert.equal(await page.locator('.generation-job-list > li').count() <= 20, true, 'Test history must use one server page.');
+  assert.equal(await page.locator('input[name="test-kind"]').count(), 2);
+  assert.equal(await page.locator('select[id^="test-gpu-"]').count(), 0, 'Prompt tests must not show GPU settings.');
+  await page.getByRole('radio', { name: /Video test/ }).check();
+  assert.equal(await page.locator('select[id^="test-gpu-"]').count(), 1, 'Video tests must show one GPU setting.');
+
+  await open(page, '/generate/results?tab=test');
+  await page.getByText('Tests do not create formal samples and never enter review or archive.').waitFor();
 
   await open(page, '/review');
   const reviewList = page.locator('.review-queue__list');
@@ -404,7 +264,7 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('#statistics-dataset option').length === 2);
   assert.equal(await page.locator('#statistics-dataset option').count(), 2, 'Statistics dataset search must keep the all option and one server result.');
 
-  const routes = ['/workspace', '/generate/batches', '/generate/test', '/generate/content', '/generate/scenes', '/generate/template-versions', '/generate/jobs?job=1', '/review?sampleId=1', '/archive?dataset=1&page=2', '/settings', '/me/statistics'];
+  const routes = ['/workspace', '/generate/test', '/generate/production', '/generate/results?tab=test', '/review?sampleId=1', '/archive?dataset=1&page=2', '/settings', '/me/statistics'];
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of [[1440, 900], [1024, 768], [768, 900], [390, 844]]) {
       for (const route of routes) await expectNoOverflow(page, route, locale, width, height);
