@@ -275,6 +275,22 @@ def test_prompt_tests_accept_draft_and_verified_versions_without_gpu_or_media(
         assert ltx_item["gpuSlot"] is None
         assert ltx_item["promptResult"]["negativePrompt"] == "ltx test negative"
         assert h3_item["promptResult"]["negativePrompt"] == "h3 test negative"
+        assert client.get(
+            f"/api/test-results/{ltx.json()['id']}"
+        ).json()["profiles"] == [{"model": "LTX-2.3", "precision": None}]
+        assert client.get(
+            f"/api/test-results/{h3.json()['id']}"
+        ).json()["profiles"] == [{"model": "MiniMax H3", "precision": None}]
+        listed_profiles = {
+            row["id"]: row["profiles"]
+            for row in client.get("/api/test-results").json()["items"]
+        }
+        assert listed_profiles[ltx.json()["id"]] == [
+            {"model": "LTX-2.3", "precision": None}
+        ]
+        assert listed_profiles[h3.json()["id"]] == [
+            {"model": "MiniMax H3", "precision": None}
+        ]
         assert (
             ltx_item["promptResult"]["finalPositivePrompt"]
             == h3_item["promptResult"]["finalPositivePrompt"]

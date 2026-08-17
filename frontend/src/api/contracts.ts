@@ -753,6 +753,11 @@ export interface Sample {
   updatedAt: string;
 }
 
+export interface JobProfile {
+  model: ModelName;
+  precision: ModelPrecision | null;
+}
+
 export interface JobSummary {
   id: number;
   displayName: string;
@@ -764,6 +769,7 @@ export interface JobSummary {
   conflictDirection: ConflictDirection | null;
   model: ModelName | null;
   precision: ModelPrecision | null;
+  profiles: JobProfile[];
   status: JobStatus;
   totalCount: number;
   preparedCount: number;

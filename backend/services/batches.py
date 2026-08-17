@@ -72,6 +72,7 @@ from backend.domain.schemas import (
     JobEventRead,
     JobItemRead,
     JobItemPromptResultRead,
+    JobProfileRead,
     JobSummaryRead,
     PageRead,
     PromptFailureDetails,
@@ -707,12 +708,7 @@ class BatchService:
             statement = select(Job).where(Job.source.in_(sources))
             if statuses:
                 statement = statement.where(Job.status.in_(statuses))
-            return paginate(
-                session,
-                statement.order_by(Job.created_at.desc(), Job.id.desc()),
-                page,
-                JobSummaryRead.model_validate,
-            )
+            return self._result_page(session, statement, page)
 
     def list_production_results(
         self,
@@ -723,12 +719,7 @@ class BatchService:
             statement = select(Job).where(Job.source == JobSource.PRODUCTION)
             if statuses:
                 statement = statement.where(Job.status.in_(statuses))
-            return paginate(
-                session,
-                statement.order_by(Job.created_at.desc(), Job.id.desc()),
-                page,
-                JobSummaryRead.model_validate,
-            )
+            return self._result_page(session, statement, page)
 
     def get_test_result(self, job_id: int) -> JobDetailRead:
         return self._get_result(job_id, {JobSource.PROMPT_TEST, JobSource.VIDEO_TEST})
@@ -1756,8 +1747,72 @@ class BatchService:
         )
 
     @staticmethod
+    def _result_page(
+        session: Session,
+        statement: object,
+        page: int,
+    ) -> PageRead[JobSummaryRead]:
+        rows: PageRead[Job] = paginate(
+            session,
+            statement.order_by(Job.created_at.desc(), Job.id.desc()),  # type: ignore[attr-defined]
+            page,
+            lambda job: job,
+        )
+        job_ids = [job.id for job in rows.items if job.id is not None]
+        profiles = BatchService._job_profiles_by_id(session, job_ids)
+        return PageRead(
+            items=[
+                BatchService._job_summary(job, profiles.get(job.id, []))
+                for job in rows.items
+            ],
+            page=rows.page,
+            page_size=rows.page_size,
+            total=rows.total,
+            total_pages=rows.total_pages,
+        )
+
+    @staticmethod
+    def _job_profiles_by_id(
+        session: Session,
+        job_ids: list[int],
+    ) -> dict[int, list[JobProfileRead]]:
+        if not job_ids:
+            return {}
+        rows = session.exec(
+            select(
+                JobItem.job_id,
+                BatchVideoInputSnapshot.model,
+                BatchVideoInputSnapshot.precision,
+            )
+            .join(
+                BatchVideoInputSnapshot,
+                JobItem.input_snapshot_id == BatchVideoInputSnapshot.id,
+            )
+            .where(JobItem.job_id.in_(job_ids))
+            .distinct()
+            .order_by(
+                JobItem.job_id,
+                BatchVideoInputSnapshot.model,
+                BatchVideoInputSnapshot.precision,
+            )
+        ).all()
+        profiles: dict[int, list[JobProfileRead]] = {}
+        for job_id, model, precision in rows:
+            profiles.setdefault(job_id, []).append(
+                JobProfileRead(model=model, precision=precision)
+            )
+        return profiles
+
+    @staticmethod
+    def _job_summary(job: Job, profiles: list[JobProfileRead]) -> JobSummaryRead:
+        return JobSummaryRead(**job.model_dump(), profiles=profiles)
+
+    @staticmethod
     def _job_detail(session: Session, job: Job) -> JobDetailRead:
-        return JobDetailRead.model_validate(job)
+        if job.id is None:
+            raise ValueError("Persisted jobs must have an identifier")
+        profiles = BatchService._job_profiles_by_id(session, [job.id])
+        return JobDetailRead(**job.model_dump(), profiles=profiles.get(job.id, []))
 
     @staticmethod
     def _job_item_reads(session: Session, items: list[JobItem]) -> list[JobItemRead]:

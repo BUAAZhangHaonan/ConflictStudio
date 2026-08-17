@@ -1538,6 +1538,11 @@ class JobEventRead(ApiModel):
     created_at: str
 
 
+class JobProfileRead(ApiModel):
+    model: ModelName
+    precision: Precision | None
+
+
 class JobSummaryRead(ApiModel):
     id: int
     display_name: str
@@ -1549,6 +1554,7 @@ class JobSummaryRead(ApiModel):
     conflict_direction: ConflictDirection | None
     model: ModelName | None
     precision: Precision | None
+    profiles: list[JobProfileRead]
     status: JobStatus
     total_count: int
     prepared_count: int
