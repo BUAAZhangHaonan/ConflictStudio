@@ -5,19 +5,16 @@ import { setPreferredLocale, usePreferences } from '../preferences';
 
 const primaryNavigation = [
   { to: '/workspace', key: 'workspace' },
-  { to: '/generate/batches', key: 'generate' },
+  { to: '/generate/test', key: 'generate' },
   { to: '/review', key: 'review' },
   { to: '/archive', key: 'archive' },
   { to: '/settings', key: 'settings' },
 ] as const;
 
 const generateNavigation = [
-  { to: '/generate/batches', key: 'batches' },
   { to: '/generate/test', key: 'test' },
-  { to: '/generate/content', key: 'content' },
-  { to: '/generate/scenes', key: 'scenes' },
-  { to: '/generate/template-versions', key: 'templateVersions' },
-  { to: '/generate/jobs', key: 'jobs' },
+  { to: '/generate/production', key: 'production' },
+  { to: '/generate/results', key: 'results' },
 ] as const;
 
 const focusableSelector = [

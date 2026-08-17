@@ -19,12 +19,9 @@ export function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/workspace" replace />} />
           <Route path="/workspace" element={<WorkspacePage />} />
-          <Route path="/generate/batches" element={<GeneratePage section="batches" />} />
           <Route path="/generate/test" element={<GeneratePage section="test" />} />
-          <Route path="/generate/content" element={<GeneratePage section="content" />} />
-          <Route path="/generate/scenes" element={<GeneratePage section="scenes" />} />
-          <Route path="/generate/template-versions" element={<GeneratePage section="templateVersions" />} />
-          <Route path="/generate/jobs" element={<GeneratePage section="jobs" />} />
+          <Route path="/generate/production" element={<GeneratePage section="production" />} />
+          <Route path="/generate/results" element={<GeneratePage section="results" />} />
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/archive" element={<ArchivePage />} />
           <Route path="/settings" element={<SettingsPage />} />

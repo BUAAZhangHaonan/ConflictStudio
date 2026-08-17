@@ -42,12 +42,9 @@ export function reviewLocation(sampleId: number, returnTo: string): string {
 
 const reviewReturnPaths = new Set([
   '/workspace',
-  '/generate/batches',
   '/generate/test',
-  '/generate/content',
-  '/generate/scenes',
-  '/generate/template-versions',
-  '/generate/jobs',
+  '/generate/production',
+  '/generate/results',
   '/archive',
   '/settings',
   '/me/statistics',

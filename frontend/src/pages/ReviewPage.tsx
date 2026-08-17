@@ -240,7 +240,7 @@ export function ReviewPage() {
         mode: content.mode,
       }, scene),
     };
-    navigate('/generate/batches', { state });
+    navigate('/generate/production', { state });
   };
 
   const clearFilters = () => {
