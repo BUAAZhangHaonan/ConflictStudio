@@ -6,16 +6,22 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
+from sqlmodel import select
 
 from backend.domain.enums import (
     JobItemStage,
     JobSource,
     JobStatus,
+    ContentMode,
+    GenerationAttemptStatus,
     ReviewDecision,
 )
 from backend.domain.models import (
     Asset,
     BatchVideoInputSnapshot,
+    ContentScript,
+    ContentScriptScene,
+    GenerationAttempt,
     Job,
     JobItem,
     Sample,
@@ -40,11 +46,11 @@ def sample_app(tmp_path: Path, **source_options: object):  # type: ignore[no-unt
 
 
 @pytest.mark.parametrize(
-    ("actual_scene_id", "register_scene", "expected"),
+    ("actual_scene_id", "register_scene", "expected", "compatible_scene_count"),
     [
-        (1, True, "NeedsRegeneration"),
-        (22, True, "Compatible"),
-        (22, False, "NeedsRegeneration"),
+        (1, True, "NeedsRegeneration", 1),
+        (22, True, "Compatible", 1),
+        (22, False, "NeedsRegeneration", 0),
     ],
 )
 def test_sample_derives_generation_compatibility_from_actual_content_scene_mapping(
@@ -52,6 +58,7 @@ def test_sample_derives_generation_compatibility_from_actual_content_scene_mappi
     actual_scene_id: int,
     register_scene: bool,
     expected: str,
+    compatible_scene_count: int,
 ) -> None:
     app = sample_app(
         tmp_path,
@@ -63,9 +70,38 @@ def test_sample_derives_generation_compatibility_from_actual_content_scene_mappi
 
     with TestClient(app) as client:
         sample = client.get("/api/samples").json()["items"][0]
+        detail = client.get(f"/api/samples/{sample['id']}")
 
     assert sample["generationCompatibility"] == expected
     assert sample["contentScriptNameEn"] == "Aligned response"
+    assert detail.status_code == 200
+    assert detail.json()["compatibleSceneCount"] == compatible_scene_count
+
+def test_review_detail_counts_all_current_content_script_scene_links(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(
+        tmp_path,
+        content_id=22,
+        actual_background_id=1,
+        registered_background_id=22,
+    )
+    with app.state.database.immediate_session() as session:
+        content = session.get(ContentScript, 22)
+        assert content is not None
+        content.mode = ContentMode.GENERATIVE
+        content.content_requirements_zh = "生成内容"
+        content.content_requirements_en = "Generate content"
+        session.flush()
+        session.add(ContentScriptScene(content_script_id=22, scene_id=1, position=1))
+        session.flush()
+
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+        detail = client.get(f"/api/samples/{sample['id']}")
+
+    assert detail.status_code == 200
+    assert detail.json()["compatibleSceneCount"] == 2
 
 
 def test_incompatible_generation_cannot_be_accepted_but_can_be_rejected(
@@ -223,6 +259,24 @@ def add_sample_copies(app, count: int) -> list[int]:  # type: ignore[no-untyped-
             session.flush()
             item.source_asset_id = asset.id
             item.primary_asset_id = asset.id
+            session.flush()
+            assert item.gpu_slot is not None
+            session.add(
+                GenerationAttempt(
+                    job_item_id=item.id,
+                    attempt_number=1,
+                    model=snapshot.model,
+                    precision=snapshot.precision,
+                    gpu_slot=item.gpu_slot,
+                    seed=snapshot.seed,
+                    source_asset_id=asset.id,
+                    primary_asset_id=asset.id,
+                    renderer_prompt_id=item.renderer_prompt_id,
+                    status=GenerationAttemptStatus.COMPLETED,
+                    started_at=timestamp,
+                    finished_at=timestamp,
+                )
+            )
             session.flush()
             copied = Sample(
                 **source.model_dump(
@@ -1004,6 +1058,9 @@ def test_review_detail_media_roles_and_sensitive_fields(
     with TestClient(app) as client:
         sample = client.get("/api/samples").json()["items"][0]
         va_detail = client.get(f"/api/samples/{sample['id']}")
+        media = client.get(
+            va_detail.json()["primaryMedia"]["url"], headers={"Range": "bytes=0-0"}
+        )
         reviewer = create_reviewer(client)
         with app.state.database.immediate_session() as session:
             row = session.get(Sample, sample["id"])
@@ -1055,6 +1112,30 @@ def test_review_detail_media_roles_and_sensitive_fields(
             row.dialogue = None
             row.display_text = "independent vt display text"
             row.revision += 1
+            current_attempt = session.exec(
+                select(GenerationAttempt)
+                .where(GenerationAttempt.job_item_id == item.id)
+                .order_by(GenerationAttempt.attempt_number.desc())
+            ).first()
+            assert current_attempt is not None
+            session.add(
+                GenerationAttempt(
+                    **current_attempt.model_dump(
+                        exclude={
+                            "id",
+                            "attempt_number",
+                            "primary_asset_id",
+                            "renderer_prompt_id",
+                            "finished_at",
+                        }
+                    ),
+                    attempt_number=current_attempt.attempt_number + 1,
+                    primary_asset_id=silent.id,
+                    renderer_prompt_id=item.renderer_prompt_id,
+                    finished_at=current_attempt.finished_at,
+                )
+            )
+            session.flush()
         vt_detail = client.get(f"/api/samples/{sample['id']}")
         display_search = client.get(
             "/api/samples",
@@ -1062,6 +1143,9 @@ def test_review_detail_media_roles_and_sensitive_fields(
         )
 
     assert va_detail.status_code == 200
+    assert media.status_code == 206
+    assert media.headers["content-type"] == "video/mp4"
+    assert media.content == b"v"
     assert va_detail.json()["primaryMedia"]["hasAudio"] is True
     assert va_detail.json()["sourceMedia"] is None
     assert vt_detail.status_code == 200

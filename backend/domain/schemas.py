@@ -1438,6 +1438,7 @@ class ReviewSampleListRead(ApiModel):
     apparent_emotion: str
     content_script_name_zh: str
     content_script_name_en: str
+    gender: Gender
     revision: int
     created_at: str
     updated_at: str
@@ -1455,8 +1456,10 @@ class ReviewSampleDetailRead(ReviewSampleListRead):
     psychological_background_zh: str
     psychological_background_en: str
     age: int
-    gender: Gender
     ethnicity: Ethnicity
+    model: ModelName
+    precision: Precision | None
+    compatible_scene_count: int = Field(ge=0)
 
 
 class ReviewSampleReferenceRead(ApiModel):

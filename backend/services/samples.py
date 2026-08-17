@@ -22,6 +22,7 @@ from backend.domain.models import (
     ArchiveItem,
     Asset,
     BatchVideoInputSnapshot,
+    ContentScriptScene,
     Dataset,
     GenerationAttempt,
     Job,
@@ -308,6 +309,14 @@ class SampleService:
         row: Sample,
     ) -> ReviewSampleDetailRead:
         values = self._review_common_values(session, row)
+        attempt = self._current_completed_attempt(session, row)
+        compatible_scene_count = int(
+            session.exec(
+                select(func.count()).select_from(ContentScriptScene).where(
+                    ContentScriptScene.content_script_id == row.content_script_id
+                )
+            ).one()
+        )
         protocol = protocol_for(row.category)
         source_media = None
         if protocol is Protocol.VT:
@@ -329,8 +338,10 @@ class SampleService:
             psychological_background_zh=row.psychological_background_zh,
             psychological_background_en=row.psychological_background_en,
             age=row.age,
-            gender=row.gender,
             ethnicity=row.ethnicity,
+            model=attempt.model,
+            precision=attempt.precision,
+            compatible_scene_count=compatible_scene_count,
         )
 
     def _review_common_values(self, session: Session, row: Sample) -> dict[str, object]:
@@ -371,6 +382,7 @@ class SampleService:
             "apparent_emotion": row.apparent_emotion,
             "content_script_name_zh": row.content_script_name_zh,
             "content_script_name_en": row.content_script_name_en,
+            "gender": row.gender,
             "revision": row.revision,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
@@ -387,7 +399,10 @@ class SampleService:
         return ReviewMediaRead(url=url, has_audio=asset.has_audio)
 
     @staticmethod
-    def read_in_session(session: Session, row: Sample) -> SampleRead:
+    def _current_completed_attempt(
+        session: Session,
+        row: Sample,
+    ) -> GenerationAttempt:
         if row.id is None:
             raise RuntimeError("A persisted sample must have an id")
         item = session.get(JobItem, row.job_item_id)
@@ -405,6 +420,13 @@ class SampleService:
         ).first()
         if attempt is None:
             raise state_conflict("sample", row.id, "The sample has no current successful generation attempt")
+        return attempt
+
+    @staticmethod
+    def read_in_session(session: Session, row: Sample) -> SampleRead:
+        if row.id is None:
+            raise RuntimeError("A persisted sample must have an id")
+        attempt = SampleService._current_completed_attempt(session, row)
         current = None if row.review_decision is ReviewDecision.PENDING else latest_review(session, row.id)
         archive_item = session.get(ArchiveItem, (row.dataset_id, row.id))
         archive_sync_status = archive_status_for(

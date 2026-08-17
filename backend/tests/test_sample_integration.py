@@ -756,7 +756,18 @@ def test_completed_production_result_enters_pending_review_queue(
     assert queue.json()["total"] == 1
     sample = queue.json()["items"][0]
     assert "jobItemId" not in sample
+    assert {
+        "model",
+        "precision",
+        "seed",
+        "videoPrompt",
+        "negativePrompt",
+        "generationRecord",
+        "gpuSlot",
+    }.isdisjoint(sample)
     assert sample["reviewDecision"] == "Pending"
+    assert sample["gender"] == "Female"
+    assert set(sample["primaryMedia"]) == {"url", "hasAudio"}
     assert sample["primaryMedia"]["url"] == item["primaryAssetUrl"]
     assert item["sampleId"] == sample["id"]
 
@@ -781,6 +792,7 @@ def test_attempt_api_exposes_model_precision_without_leaking_them_to_review_queu
     with TestClient(app) as client:
         response = client.get(f"/api/job-items/{item_id}/attempts")
         queue = client.get("/api/samples", params={"decision": "Pending"})
+        detail = client.get(f"/api/samples/{queue.json()['items'][0]['id']}")
 
     assert response.status_code == 200
     attempt = response.json()["items"][0]
@@ -789,6 +801,94 @@ def test_attempt_api_exposes_model_precision_without_leaking_them_to_review_queu
     sample = queue.json()["items"][0]
     assert "model" not in sample
     assert "generationRecord" not in sample
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert detail_payload["model"] == model.value
+    assert detail_payload["precision"] == (precision.value if precision else None)
+    assert {
+        "seed",
+        "videoPrompt",
+        "negativePrompt",
+        "generationRecord",
+        "jobItemId",
+        "gpuSlot",
+    }.isdisjoint(detail_payload)
+    assert set(detail_payload["primaryMedia"]) == {"url", "hasAudio"}
+
+
+def test_review_detail_uses_current_attempt_and_rejects_missing_match(
+    tmp_path: Path,
+) -> None:
+    app = make_app(tmp_path)
+    job_id, item_id, _ = add_completed_result(
+        app,
+        JobSource.PRODUCTION,
+        ModelName.LTX,
+        None,
+    )
+    app.state.job_executor._complete_item(job_id, item_id)
+
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+        with app.state.database.immediate_session() as session:
+            item = session.get(JobItem, item_id)
+            assert item is not None
+            current = session.exec(
+                select(GenerationAttempt)
+                .where(GenerationAttempt.job_item_id == item.id)
+                .order_by(GenerationAttempt.attempt_number.desc())
+            ).one()
+            current_asset = session.get(Asset, item.primary_asset_id)
+            assert current_asset is not None
+            assert item.gpu_slot is not None
+            relative_path = "media/stale-current-attempt.mp4"
+            media_path = app.state.database.data_root / relative_path
+            media_path.write_bytes(b"stale")
+            stale_asset = Asset(
+                origin_job_item_id=item.id,
+                storage_root=str(app.state.database.data_root),
+                relative_path=relative_path,
+                media_type="video/mp4",
+                byte_size=media_path.stat().st_size,
+                width=current_asset.width,
+                height=current_asset.height,
+                fps=current_asset.fps,
+                frame_count=current_asset.frame_count,
+                duration_seconds=current_asset.duration_seconds,
+                has_audio=current_asset.has_audio,
+            )
+            session.add(stale_asset)
+            session.flush()
+            session.add(
+                GenerationAttempt(
+                    job_item_id=item.id,
+                    attempt_number=current.attempt_number + 1,
+                    model=ModelName.H3,
+                    precision=None,
+                    gpu_slot=item.gpu_slot,
+                    seed=current.seed,
+                    source_asset_id=stale_asset.id,
+                    primary_asset_id=stale_asset.id,
+                    renderer_prompt_id="stale-prompt",
+                    status=GenerationAttemptStatus.COMPLETED,
+                    started_at=current.started_at,
+                    finished_at=current.finished_at,
+                )
+            )
+            session.flush()
+        detail = client.get(f"/api/samples/{sample['id']}")
+        with app.state.database.immediate_session() as session:
+            item = session.get(JobItem, item_id)
+            assert item is not None
+            item.primary_asset_id = stale_asset.id
+            item.renderer_prompt_id = "no-current-match"
+            session.flush()
+        missing = client.get(f"/api/samples/{sample['id']}")
+
+    assert detail.status_code == 200
+    assert detail.json()["model"] == ModelName.LTX.value
+    assert missing.status_code == 409
+    assert missing.json()["error"]["code"] == "state_conflict"
 
 
 def test_video_test_result_never_creates_a_sample(
