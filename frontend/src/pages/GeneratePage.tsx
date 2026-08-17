@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
-import { BatchesPage } from './generate/BatchesPage';
-import { JobsPage } from './generate/JobsPage';
+import { ProductionPage } from './generate/ProductionPage';
+import { ResultsPage } from './generate/ResultsPage';
 import { TestPage } from './generate/TestPage';
 import './generate/GenerationPage.css';
 
@@ -14,8 +14,8 @@ export function GeneratePage({ section }: { section: GenerateSection }) {
   return (
     <>
       {section === 'test' ? <TestPage /> : null}
-      {section === 'production' ? <BatchesPage /> : null}
-      {section === 'results' ? <JobsPage /> : null}
+      {section === 'production' ? <ProductionPage /> : null}
+      {section === 'results' ? <ResultsPage /> : null}
     </>
   );
 }

@@ -57,7 +57,14 @@
   .panel { padding: 12px; }
   .button, input, select { min-height: 44px; }
   .generate-nav {
-    display: none;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding-inline: 6px;
+  }
+  .generate-nav a {
+    min-width: 0;
+    padding-inline: 6px;
+    text-align: center;
   }
   .generation-page,
   .archive-page,

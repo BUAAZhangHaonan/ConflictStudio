@@ -5,7 +5,8 @@ import { invalidateJobAuthority, queryKeys } from './queries';
 import type { JobDetail, JobEvent, JobItem, JobItemStage, JobStatus, JobSummary, Page } from './contracts';
 
 function eventStatus(event: JobEvent): JobStatus | null {
-  if (event.eventType === 'JobStarted') return 'Running';
+  if (event.eventType === 'JobStarted' || event.eventType === 'JobResumed' || event.eventType === 'JobRetryQueued') return 'Running';
+  if (event.eventType === 'JobInterrupted') return 'Interrupted';
   if (event.eventType === 'JobCompleted') return 'Completed';
   if (event.eventType === 'JobFailed') return 'Failed';
   if (event.eventType === 'JobCancelled') return 'Cancelled';
@@ -72,6 +73,7 @@ export function eventRequiresAuthorityRefresh(event: JobEvent): boolean {
   return [
     'JobStarted', 'CancelRequested', 'ItemPromptReady', 'ItemRenderStarted',
     'ItemMediaProcessing', 'ItemCompleted', 'ItemFailed', 'ItemCancelled',
+    'JobResumed', 'JobRetryQueued',
     'JobInterrupted', 'JobCompleted', 'JobFailed', 'JobCancelled',
   ].includes(event.eventType);
 }
@@ -82,7 +84,11 @@ export async function invalidateAuthorityForJobEvent(client: QueryClient, event:
 
 export function applyJobEventToCache(client: QueryClient, event: JobEvent): void {
   client.setQueriesData<Page<JobSummary>>(
-    { predicate: query => query.queryKey[0] === 'jobs' && query.queryKey[1] === 'page' },
+    {
+      predicate: query =>
+        query.queryKey[0] === queryKeys.testResults[0]
+        || query.queryKey[0] === queryKeys.productionResults[0],
+    },
     current => current ? { ...current, items: current.items.map(job => job.id === event.jobId ? updateJob(job, event) : job) } : current,
   );
   client.setQueryData<JobDetail>(queryKeys.job(event.jobId), current => current ? updateJob(current, event) : current);

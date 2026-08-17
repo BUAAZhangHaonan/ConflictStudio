@@ -6,7 +6,7 @@ import {
   useCreateDatasetMutation,
   useDeleteDatasetMutation,
   useDatasetsQuery,
-  useJobsQuery,
+  useProductionResultsQuery,
   useSamplesQuery,
   useUpdateDatasetMutation,
 } from '../api/queries';
@@ -50,9 +50,9 @@ export function WorkspacePage() {
     ...(search.trim() ? { search } : {}),
     ...(status === 'All' ? {} : { status }),
   });
-  const jobsQuery = useJobsQuery(jobPage, { statuses: ['Running', 'Failed'] });
-  const runningJobsQuery = useJobsQuery(1, { statuses: ['Running'] });
-  const failedJobsQuery = useJobsQuery(1, { statuses: ['Failed'] });
+  const jobsQuery = useProductionResultsQuery(jobPage, { statuses: ['Running', 'Failed'] });
+  const runningJobsQuery = useProductionResultsQuery(1, { statuses: ['Running'] });
+  const failedJobsQuery = useProductionResultsQuery(1, { statuses: ['Failed'] });
   const pendingReviewQuery = useSamplesQuery({ decision: 'Pending' });
   const pendingArchiveQuery = useSamplesQuery({ decision: 'Accepted' });
   const createMutation = useCreateDatasetMutation();

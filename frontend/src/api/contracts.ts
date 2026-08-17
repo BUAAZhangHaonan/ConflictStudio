@@ -7,7 +7,7 @@ import type {
   ModelPrecision,
 } from '../types';
 
-export type ResourceStatus = 'Active' | 'Disabled';
+export type ResourceStatus = 'Draft' | 'Active' | 'Inactive' | 'Disabled';
 export type DatasetStatus = 'Active' | 'Inactive';
 export type DatasetPurpose = 'Formal' | 'Production' | 'Validation';
 export type GpuSlotName = 'GPU0' | 'GPU1';
@@ -15,7 +15,8 @@ export type GpuAvailability = 'Available' | 'Reserved' | 'Busy' | 'ExternalOccup
 export type Gender = 'Male' | 'Female';
 export type Ethnicity = 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
 export type Age = 25 | 35 | 45 | 60;
-export type JobStatus = 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
+export type JobSource = 'Production' | 'PromptTest' | 'VideoTest';
+export type JobStatus = 'Queued' | 'Running' | 'Interrupted' | 'Completed' | 'Failed' | 'Cancelled';
 export type GenerationAttemptStatus = 'Running' | 'Completed' | 'Failed';
 export type GenerationCompatibility = 'Compatible' | 'NeedsRegeneration';
 export type ReviewDecision = 'Pending' | 'Accepted' | 'Rejected';
@@ -98,21 +99,28 @@ export type ContentScriptUpdate = Partial<Omit<ContentScriptFields, 'category'>>
 
 export type TemplateVersionStatus = 'Draft' | 'Verified';
 
-export interface PromptTemplateVersionFields {
+export interface PromptTemplate extends RevisionedResource {
   name: string;
   category: Category;
+}
+
+export interface PromptTemplateVersion {
+  id: number;
+  templateId: number;
+  templateName: string;
+  category: Category;
   version: number;
+  organizationRules: string;
   styleGuidance: string;
   positiveExamples: string[];
   negativeExamples: string[];
   ltxNegativePrompt: string;
   h3NegativePrompt: string;
   verificationStatus: TemplateVersionStatus;
+  revision: number;
+  createdAt: string;
+  verifiedAt: string | null;
 }
-
-export interface PromptTemplateVersion extends RevisionedResource, PromptTemplateVersionFields {}
-export type PromptTemplateVersionCreate = PromptTemplateVersionFields;
-export interface PromptTemplateVersionVerify { expectedRevision: number; }
 
 export interface SceneFields {
   nameZh: string;
@@ -178,16 +186,16 @@ export interface Demographic {
 
 export interface BatchDraftFields {
   targetDatasetId: number;
+  displayName: string | null;
   category: Category;
   conflictDirection: ConflictDirection | null;
   model: ModelName;
   precision: ModelPrecision | null;
-  quantity: number;
-  seed: number | null;
   contentSelections: BatchContentSelectionInput[];
   promptTemplateVersionId: number;
   demographics: Demographic[];
   gpuSlots: GpuSlotName[];
+  seeds: number[];
 }
 
 export type BatchDraftCreate = BatchDraftFields;
@@ -196,12 +204,14 @@ export type BatchDraftUpdate = BatchDraftFields & { expectedRevision: number };
 export interface BatchDraft extends RevisionedResource {
   targetDatasetId: number;
   datasetRevision: number;
+  displayName: string | null;
   category: Category;
   conflictDirection: ConflictDirection | null;
   model: ModelName;
   precision: ModelPrecision | null;
-  quantity: number;
-  seed: number;
+  combinationCount: number;
+  totalCount: number;
+  seeds: number[];
   status: 'Draft' | 'Submitted';
   contentSelections: BatchContentSelection[];
   promptTemplateVersion: Selection;
@@ -229,7 +239,10 @@ export interface BatchAllocation {
 export interface BatchPreview {
   batchDraftId: number;
   expectedRevision: number;
-  gpuRevisions: Partial<Record<GpuSlotName, number>>;
+  combinationCount: number;
+  seedCount: number;
+  totalCount: number;
+  gpuRevisions: Record<GpuSlotName, number>;
   allocations: BatchAllocation[];
 }
 
@@ -261,7 +274,16 @@ export interface TestComparisonInput {
   gpuSlot: GpuSlotName;
 }
 
-export interface TestRunCreate {
+export interface PromptTestCreate {
+  contentScript: SourceSelection;
+  promptTemplateVersion: SourceSelection;
+  scene: SourceSelection;
+  demographic: Demographic;
+  model: ModelName;
+  precision: ModelPrecision | null;
+}
+
+export interface VideoTestCreate {
   contentScript: SourceSelection;
   promptTemplateVersion: SourceSelection;
   scene: SourceSelection;
@@ -269,8 +291,135 @@ export interface TestRunCreate {
   seed: number | null;
   comparisons: TestComparisonInput[];
   executionMode: TestExecutionMode;
-  expectedGpuRevisions: Partial<Record<GpuSlotName, number>>;
+  expectedGpuRevisions: Record<string, number>;
   confirmModelSwitch: boolean;
+}
+
+export type ConfigurationAssistantField =
+  | 'TargetDataset'
+  | 'DisplayName'
+  | 'Category'
+  | 'ConflictDirection'
+  | 'Model'
+  | 'Precision'
+  | 'ContentSelections'
+  | 'PromptTemplateVersion'
+  | 'Demographics'
+  | 'GpuSlots'
+  | 'Seeds'
+  | 'Comparisons'
+  | 'ExecutionMode';
+
+export type ConfigurationCandidateKind =
+  | 'Dataset'
+  | 'ContentScript'
+  | 'ShootingScene'
+  | 'PromptTemplateVersion';
+
+export interface AssistantSourceSelection extends SourceSelection {
+  label?: string | null;
+}
+
+export interface AssistantContentSelection {
+  contentScript: AssistantSourceSelection;
+  scenes: AssistantSourceSelection[];
+}
+
+export interface AssistantFormState {
+  targetDataset?: AssistantSourceSelection | null;
+  displayName?: string | null;
+  category?: Category | null;
+  conflictDirection?: ConflictDirection | null;
+  model?: ModelName | null;
+  precision?: ModelPrecision | null;
+  contentSelections?: AssistantContentSelection[] | null;
+  promptTemplateVersion?: AssistantSourceSelection | null;
+  demographics?: Demographic[] | null;
+  gpuSlots?: GpuSlotName[] | null;
+  seeds?: number[] | null;
+  comparisons?: TestComparisonInput[] | null;
+  executionMode?: TestExecutionMode | null;
+}
+
+export interface ConfigurationCandidate {
+  id: number;
+  revision: number;
+  label: string;
+}
+
+export interface ConfigurationCandidateGroup {
+  kind: ConfigurationCandidateKind;
+  items: ConfigurationCandidate[];
+}
+
+export interface ConfigurationRecommendations {
+  protocol: Protocol | null;
+  category: Category | null;
+  conflictDirection: ConflictDirection | null;
+  trueEmotion: string | null;
+  apparentEmotion: string | null;
+  model: ModelName | null;
+  precision: ModelPrecision | null;
+  gpuSlots: GpuSlotName[];
+}
+
+export interface ConfigurationSuggestion {
+  missingFields: ConfigurationAssistantField[];
+  prefill: AssistantFormState;
+  candidates: ConfigurationCandidateGroup[];
+  recommendations: ConfigurationRecommendations;
+  newContentScriptDraft: ContentScriptCreate | null;
+  newShootingSceneDraft: SceneCreate | null;
+  failureAdvice: string[];
+}
+
+export interface ConfigurationAssistantCreate {
+  targetSource: JobSource;
+  userRequirement: string;
+  currentForm: AssistantFormState;
+  batchDraftId?: number | null;
+  batchDraftExpectedRevision?: number | null;
+}
+
+export interface ConfigurationAssistantApply {
+  expectedRevision: number;
+  expectedTargetRevision: number;
+  confirmedFields: ConfigurationAssistantField[];
+  values: AssistantFormState;
+  createContentScript: boolean;
+  createShootingScene: boolean;
+  linkNewSceneToContent: boolean;
+}
+
+export interface GenerationTestDraft {
+  id: number;
+  source: JobSource;
+  formState: AssistantFormState;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConfigurationAssistant {
+  id: number;
+  targetSource: JobSource;
+  batchDraftId: number | null;
+  testDraft: GenerationTestDraft | null;
+  userRequirement: string;
+  modelName: 'deepseek-v4-flash';
+  currentForm: AssistantFormState;
+  suggestion: ConfigurationSuggestion;
+  appliedValues: AssistantFormState | null;
+  result: {
+    targetRevision: number | null;
+    createdContentScriptId: number | null;
+    createdShootingSceneId: number | null;
+    discarded: boolean;
+  } | null;
+  status: 'Pending' | 'Applied' | 'Discarded';
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface JobEventPayload {
@@ -304,10 +453,13 @@ export interface PromptFailureDetails {
 export type JobEventType =
   | 'JobQueued'
   | 'JobStarted'
+  | 'JobResumed'
+  | 'JobRetryQueued'
   | 'CancelRequested'
   | 'ItemPromptStarted'
   | 'ItemPromptReady'
   | 'ItemRenderStarted'
+  | 'ItemRenderMissing'
   | 'ItemRenderProgress'
   | 'ItemMediaProcessing'
   | 'ItemCompleted'
@@ -332,6 +484,7 @@ export interface Snapshot {
   sequence: number;
   datasetId: number | null;
   datasetRevision: number | null;
+  datasetName: string | null;
   contentScriptId: number;
   contentScriptRevision: number;
   promptTemplateVersionId: number;
@@ -358,12 +511,28 @@ export interface Snapshot {
   systemInput: string;
   userInput: string;
   negativePrompt: string;
-  fixedPositivePrompt: string | null;
-  fixedDialogue: string | null;
-  fixedVtText: string | null;
-  fixedTrueEmotionDescription: string | null;
   trueEmotion: string;
   apparentEmotion: string;
+  contentScriptNameZh: string;
+  contentScriptNameEn: string;
+  contentSceneZh: string;
+  contentSceneEn: string;
+  triggerEventZh: string;
+  triggerEventEn: string;
+  psychologicalBackgroundZh: string;
+  psychologicalBackgroundEn: string;
+  shootingSceneNameZh: string;
+  shootingSceneNameEn: string;
+  shootingSceneZh: string;
+  shootingSceneEn: string;
+  ambientSoundZh: string;
+  ambientSoundEn: string;
+  participantRelationshipZh: string;
+  participantRelationshipEn: string;
+  lightingZh: string;
+  lightingEn: string;
+  framingZh: string;
+  framingEn: string;
   createdAt: string;
 }
 
@@ -403,7 +572,7 @@ export interface GenerationAttempt {
 export interface JobItem {
   id: number;
   sequence: number;
-  gpuSlot: GpuSlotName;
+  gpuSlot: GpuSlotName | null;
   stage: JobItemStage;
   status: JobStatus;
   failureCode: string | null;
@@ -428,10 +597,6 @@ export interface JobItem {
   sampleId: number | null;
 }
 
-export interface KeepTestResultRequest {
-  datasetId: number;
-  expectedRevision: number;
-}
 
 export interface Reviewer extends RevisionedResource {
   name: string;
@@ -599,8 +764,9 @@ export interface Sample {
 export interface JobSummary {
   id: number;
   displayName: string;
-  source: 'Production' | 'Test';
+  source: JobSource;
   datasetId: number | null;
+  datasetNameSnapshot: string | null;
   batchDraftId: number | null;
   category: Category;
   conflictDirection: ConflictDirection | null;

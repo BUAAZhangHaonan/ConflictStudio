@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-08-17T10:00:00.000Z" agent="ConflictStudio" version="24.7.17" type="device">
+  <diagram id="settings" name="Generation settings">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="2" value="Content script&#xa;Event, emotion, dialogue, base description" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9aa8b4;fontColor=#1f2933;" vertex="1" parent="1">
+          <mxGeometry x="80" y="220" width="210" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="3" value="Allowed scene&#xa;Place, sound, light, framing" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9aa8b4;fontColor=#1f2933;" vertex="1" parent="1">
+          <mxGeometry x="340" y="220" width="210" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="4" value="Verified prompt version&#xa;Writing rules and fixed negative prompt" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9aa8b4;fontColor=#1f2933;" vertex="1" parent="1">
+          <mxGeometry x="600" y="220" width="230" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="5" value="Final model input&#xa;One positive prompt and one negative prompt" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eaf2fb;strokeColor=#3f78ad;fontColor=#1f2933;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="880" y="220" width="230" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="6" value="Only scenes linked to the selected content are valid" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f7f9;strokeColor=#c7d0d9;fontColor=#52606d;" vertex="1" parent="1">
+          <mxGeometry x="240" y="390" width="420" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#52606d;" edge="1" parent="1" source="2" target="3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#52606d;" edge="1" parent="1" source="3" target="4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3f78ad;" edge="1" parent="1" source="4" target="5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="boundaries" name="Test and formal boundaries">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="2" value="Test settings" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9aa8b4;fontColor=#1f2933;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="120" width="180" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="3" value="Prompt test&#xa;No GPU" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f7f9;strokeColor=#9aa8b4;fontColor=#1f2933;" vertex="1" parent="1">
+          <mxGeometry x="80" y="260" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="4" value="Video test&#xa;One or two model settings" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f7f9;strokeColor=#9aa8b4;fontColor=#1f2933;" vertex="1" parent="1">
+          <mxGeometry x="320" y="260" width="220" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="5" value="Test results only&#xa;Never enter dataset, review, or archive" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff4e5;strokeColor=#c88719;fontColor=#1f2933;" vertex="1" parent="1">
+          <mxGeometry x="180" y="420" width="280" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="6" value="Formal generation settings" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9aa8b4;fontColor=#1f2933;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="120" width="250" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="7" value="Saved batch and full allocation preview" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f7f9;strokeColor=#9aa8b4;fontColor=#1f2933;" vertex="1" parent="1">
+          <mxGeometry x="700" y="260" width="250" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="8" value="Formal generation results&#xa;Completed samples enter the selected active dataset" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eaf2fb;strokeColor=#3f78ad;fontColor=#1f2933;" vertex="1" parent="1">
+          <mxGeometry x="680" y="420" width="290" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#52606d;" edge="1" parent="1" source="2" target="3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#52606d;" edge="1" parent="1" source="2" target="4">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#c88719;" edge="1" parent="1" source="3" target="5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#c88719;" edge="1" parent="1" source="4" target="5">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#52606d;" edge="1" parent="1" source="6" target="7">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#3f78ad;" edge="1" parent="1" source="7" target="8">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -18,21 +18,26 @@ const settingsSource = read('../frontend/src/pages/SettingsPage.tsx');
 const statisticsSource = read('../frontend/src/pages/StatisticsPage.tsx');
 const workspaceSource = read('../frontend/src/pages/WorkspacePage.tsx');
 const workspaceCss = read('../frontend/src/pages/WorkspacePage.css');
-const batchesSource = read('../frontend/src/pages/generate/BatchesPage.tsx');
-const scenesSource = read('../frontend/src/pages/generate/ScenesPage.tsx');
-const contentSource = read('../frontend/src/pages/generate/ContentPage.tsx');
-const jobsSource = read('../frontend/src/pages/generate/JobsPage.tsx');
-const templateVersionsSource = read('../frontend/src/pages/generate/PromptTemplateVersionsPage.tsx');
+const testPageSource = read('../frontend/src/pages/generate/TestPage.tsx');
+const productionPageSource = read('../frontend/src/pages/generate/ProductionPage.tsx');
+const resultsPageSource = read('../frontend/src/pages/generate/ResultsPage.tsx');
+const assistantSource = read('../frontend/src/pages/generate/AssistantPanel.tsx');
+const generatePageSource = read('../frontend/src/pages/GeneratePage.tsx');
 const generationCss = read('../frontend/src/pages/generate/GenerationPage.css');
+const responsiveCss = read('../frontend/src/styles/responsive.css');
 const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
 const gpuStatusSource = read('../frontend/src/gpuStatus.ts');
 const archiveHelpers = read('../frontend/src/reviewArchive.ts');
 const mainSource = read('../frontend/src/main.tsx');
+const appSource = read('../frontend/src/app/App.tsx');
 const preferencesSource = read('../frontend/src/preferences.ts');
 const appShellSource = read('../frontend/src/components/AppShell.tsx');
 const firstReviewerSource = read('../frontend/src/app/FirstReviewerDialog.tsx');
 const prefillSource = read('../frontend/src/generationPrefill.ts');
-const localeSource = `${read('../frontend/src/locales/features/reviewArchive.ts')}\n${read('../frontend/src/locales/features/workspaceSettingsStatistics.ts')}\n${read('../frontend/src/locales/features/generation.ts')}`;
+const packageSource = read('../package.json');
+const drawioSource = read('../docs/generation-flow.drawio');
+const generationLocaleSource = read('../frontend/src/locales/features/generation.ts');
+const localeSource = `${read('../frontend/src/locales/features/reviewArchive.ts')}\n${read('../frontend/src/locales/features/workspaceSettingsStatistics.ts')}\n${generationLocaleSource}`;
 
 function loadClient(fetchMock) {
   const output = ts.transpileModule(clientSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -102,17 +107,10 @@ test('display name failures have plain bilingual messages without backend detail
       return true;
     },
   );
-
-  for (const editorSource of [contentSource, scenesSource]) {
-    assert.match(editorSource, /const error = createMutation\.error \?\? updateMutation\.error/u);
-    assert.match(editorSource, /<OperationFeedback error=\{error\}/u);
-  }
-  assert.match(templateVersionsSource, /const error = query\.error \?\? createMutation\.error \?\? verifyMutation\.error/u);
-  assert.match(templateVersionsSource, /<OperationFeedback error=\{error\}/u);
 });
 
-test('frontend contracts include the exact reviewer, review, statistics, archive, health and sample fields', () => {
-  for (const name of ['Reviewer', 'ReviewerCreate', 'ReviewerRename', 'ReviewCreate', 'ReviewBatchCreate', 'Review', 'ReviewerStatistics', 'ArchivePreview', 'Archive', 'Health', 'SampleClassificationUpdate']) {
+test('frontend contracts include current generation, review, statistics, archive, health and sample fields', () => {
+  for (const name of ['BatchDraft', 'BatchPreview', 'PromptTestCreate', 'VideoTestCreate', 'ConfigurationAssistant', 'JobItem', 'Reviewer', 'ReviewCreate', 'ReviewBatchCreate', 'Review', 'ReviewerStatistics', 'ArchivePreview', 'Archive', 'Health', 'SampleClassificationUpdate']) {
     assert.match(contractSource, new RegExp(`export (?:interface|type) ${name}\\b`));
   }
   for (const field of ['reviewerId', 'note', 'expectedRevision', 'expectedReviewRevision']) assert.match(contractSource, new RegExp(`${field}:`));
@@ -126,13 +124,33 @@ test('frontend contracts include the exact reviewer, review, statistics, archive
   assert.doesNotMatch(classification, /trueEmotion:/u);
 });
 
-test('queries and mutations use only the current backend endpoints', () => {
-  for (const endpoint of ['/api/content-scripts', '/api/prompt-template-versions', '/api/scenes', '/api/reviewers', '/api/reviews', '/api/reviews/batch', '/statistics', '/classification', '/api/archives', '/api/archives/preview', '/api/archives/sync', '/api/health', '/api/gpu-slots']) {
-    assert.equal(querySource.includes(endpoint), true, endpoint);
-  }
+test('queries and mutations use only current backend generation and review endpoints', () => {
+  for (const endpoint of [
+    '/api/datasets',
+    '/api/content-scripts',
+    '/api/prompt-templates',
+    '/api/prompt-template-versions',
+    '/api/prompt-preview',
+    '/api/test-runs/prompt',
+    '/api/test-runs/video',
+    '/api/batch-drafts',
+    '/api/test-results',
+    '/api/generation-results',
+    '/api/configuration-assistants',
+    '/api/jobs/',
+    '/api/gpu-slots',
+    '/api/reviewers',
+    '/api/reviews',
+    '/api/reviews/batch',
+    '/statistics',
+    '/classification',
+    '/api/archives',
+    '/api/archives/preview',
+    '/api/archives/sync',
+    '/api/health',
+  ]) assert.equal(querySource.includes(endpoint), true, endpoint);
   assert.doesNotMatch(querySource, /\/api\/samples\/\$\{id\}\/review/u);
-  assert.doesNotMatch(querySource, /content-plans|prompt-presets|video-background-presets/u);
-  assert.match(querySource, /\/api\/prompt-template-versions\/' \+ id \+ '\/verify/u);
+  assert.doesNotMatch(querySource, /content-plans|prompt-presets|video-background-presets|\/keep|\/promote/u);
   assert.match(querySource, /invalidateQueries\(\{ queryKey: \['reviewerStatistics'\]/u);
   assert.match(querySource, /client\.invalidateQueries\(\{ queryKey: roots\.archives \}\)/u);
 });
@@ -200,45 +218,92 @@ test('workspace is a card list through 1024px and keeps every action visible', (
   assert.match(localeSource, /purposeLabel: '用途'/u);
 });
 
-test('batch scene selection and result prompts use explicit independent controls', () => {
-  assert.match(batchesSource, /contentSelections: form\.contentSelections\.map/u);
-  assert.match(batchesSource, /selection\.contentScript\.mode === 'Generative'/u);
-  assert.match(batchesSource, /batches\.selectCompatibleScenes/u);
-  assert.match(batchesSource, /batches\.clearCompatibleScenes/u);
-  assert.match(batchesSource, /selected && next\.contentSelections\.length > 0 \? next : null/u);
-  assert.match(batchesSource, /role="status" aria-live="polite">\{dirty \? g\('batches\.unsavedStatus'\) : ''\}/u);
-  assert.match(localeSource, /'batches\.selectCompatibleScenes': 'Select all available scenes'/u);
-  assert.match(localeSource, /'batches\.unsavedStatus': 'Unsaved changes'/u);
-  assert.match(localeSource, /'batches\.unsavedStatus': '有未保存的更改'/u);
-  assert.match(localeSource, /'batches\.selectCompatibleScenes': '全选可用场景'/u);
-  assert.match(reviewSource, /navigate\('\/generate\/batches', \{ state \}\)/u);
-  assert.match(reviewSource, /buildCorrectedSampleBatchPrefill\(selected/u);
-  assert.match(prefillSource, /sourceDisplayId: sample\.displayId/u);
-  assert.match(batchesSource, /readCorrectedSampleBatchPrefill\(location\.state\)/u);
-  assert.match(batchesSource, /targetDatasetId: null/u);
-  assert.match(batchesSource, /quantity: 1/u);
-  assert.match(batchesSource, /dirty && prefill === null/u);
-  assert.match(localeSource, /regenerateAction: 'Regenerate with the registered scene'/u);
-  assert.match(localeSource, /regenerateAction: '使用已登记场景重新生成'/u);
-  assert.match(localeSource, /'batches\.correctedPrefill': '\{\{sample\}\} has been copied into a new unsaved batch/u);
-  assert.match(localeSource, /'batches\.correctedPrefill': '已将 \{\{sample\}\} 和登记场景预填/u);
-  assert.match(batchesSource, /useQueries\(\{ queries: selectedContentDetailIds\.map\(id => generationQueries\.contentScript\(id\)\) \}\)/u);
-  assert.match(batchesSource, /batches\.noContentOnPage/u);
-  assert.doesNotMatch(localeSource, /No active content matches this category and direction\.|没有与当前类别和方向匹配的已启用内容。/u);
-  assert.equal((jobsSource.match(/className="generation-current-input__prompt"/gu) ?? []).length, 2);
-  assert.doesNotMatch(jobsSource, /item\.input\.userInput/u);
-  assert.match(jobsSource, /jobs\.promptNotGenerated/u);
-  assert.match(generationCss, /\.generation-current-input__prompt \{[\s\S]*grid-column: 1 \/ -1/u);
-  assert.match(generationCss, /\.generation-current-input__prompt pre \{[\s\S]*white-space: pre-wrap/u);
+test('generation navigation has only Test, Generate and Results routes', () => {
+  for (const route of ['/generate/test', '/generate/production', '/generate/results']) {
+    assert.match(appSource, new RegExp(route.replaceAll('/', '\\/')));
+    assert.match(appShellSource, new RegExp(route.replaceAll('/', '\\/')));
+  }
+  assert.match(generatePageSource, /section === 'test' \? <TestPage/u);
+  assert.match(generatePageSource, /section === 'production' \? <ProductionPage/u);
+  assert.match(generatePageSource, /section === 'results' \? <ResultsPage/u);
+  assert.doesNotMatch(`${appSource}\n${appShellSource}\n${generatePageSource}`, /\/generate\/(batches|content|scenes|template-versions|jobs)/u);
+  for (const file of ['BatchesPage.tsx', 'ContentPage.tsx', 'ScenesPage.tsx', 'PromptTemplateVersionsPage.tsx', 'JobsPage.tsx']) {
+    assert.equal(existsSync(new URL('../frontend/src/pages/generate/' + file, import.meta.url)), false, file);
+  }
+  assert.doesNotMatch(generationLocaleSource, /'(?:batches|content|scenes|templates|jobs)\./u);
+  assert.doesNotMatch(packageSource, /job-prompts/u);
 });
 
-test('content scripts save fields and compatible scenes in one request', () => {
-  assert.doesNotMatch(contentSource, /useReplaceContentScenesMutation|\/scenes.*method: 'PUT'/u);
-  assert.match(contentSource, /sceneIds: \[\]/u);
-  assert.match(contentSource, /await updateMutation\.mutateAsync/u);
-  assert.match(contentSource, /draft\.mode === 'Fixed' && !creating \? \(/u);
-  assert.match(contentSource, /className="generation-fixed-scene"/u);
-  assert.match(contentSource, /useContentScenesQuery\(!creating && draft\.mode === 'Fixed'/u);
+test('test page keeps prompt and video tests isolated and uses only current contracts', () => {
+  for (const token of ['PromptTest', 'VideoTest', 'usePromptPreviewMutation', 'useSubmitPromptTestMutation', 'useSubmitVideoTestMutation', 'useContentScenesQuery', 'verificationStatus', 'temporaryInputs', 'testCopyDraftKey']) {
+    assert.match(testPageSource, new RegExp(token));
+  }
+  assert.match(testPageSource, /form\.kind === 'PromptTest' \? \(/u);
+  assert.match(testPageSource, /promptTestMutation\.mutateAsync\(\{ \.\.\.common, model: form\.model, precision: form\.precision \}\)/u);
+  assert.match(testPageSource, /videoTestMutation\.mutateAsync\(/u);
+  assert.match(testPageSource, /temporaryChanged/u);
+  assert.match(testPageSource, /results\?tab=test&job=/u);
+  assert.doesNotMatch(testPageSource, /keep|promote|Sample|datasetId/u);
+  assert.match(generationLocaleSource, /Tests do not create formal samples and never enter review or archive/u);
+});
+
+test('formal generation uses explicit valid combinations and current preview and submit contracts', () => {
+  for (const token of ['useDatasetsQuery', "status: 'Active'", 'contentSelections', 'selectedSceneIds', 'demographics', 'parseSeeds', 'gpuSlots', 'usePreviewBatchMutation', 'useSubmitBatchMutation']) {
+    assert.match(productionPageSource, new RegExp(token));
+  }
+  assert.match(productionPageSource, /item\.mode === 'Fixed' \? \[scenes\[0\]\.id\] : \[\]/u);
+  assert.match(productionPageSource, /item\.mode === 'Generative'/u);
+  assert.match(productionPageSource, /Select all on this page|production\.selectPage/u);
+  assert.equal(productionPageSource.includes('preview?.allocations.slice((previewPage - 1) * 20, previewPage * 20)'), true);
+  assert.match(productionPageSource, /expectedGpuRevisions: preview\.gpuRevisions/u);
+  assert.match(productionPageSource, /const unsavedDialog = useUnsavedChanges\(dirty\)/u);
+  assert.match(productionPageSource, /JSON\.stringify\(form\) !== savedFormSignature/u);
+  assert.match(productionPageSource, /\{unsavedDialog\}/u);
+  assert.match(productionPageSource, /queryClient\.fetchQuery\(generationQueries\.contentScript/u);
+  assert.match(productionPageSource, /queryClient\.fetchQuery\(generationQueries\.contentScenes/u);
+  assert.match(productionPageSource, /results\?tab=production&job=/u);
+  assert.match(reviewSource, /navigate\('\/generate\/production', \{ state \}\)/u);
+  assert.match(reviewSource, /buildCorrectedSampleBatchPrefill\(selected/u);
+  assert.match(prefillSource, /sourceDisplayId: sample\.displayId/u);
+  assert.match(productionPageSource, /readCorrectedSampleBatchPrefill\(location\.state\)/u);
+  assert.doesNotMatch(productionPageSource, /quantity/u);
+});
+
+test('results separate test and formal tasks and wire explicit task controls', () => {
+  for (const token of ['useTestResultsQuery', 'useProductionResultsQuery', 'useResultItemsQuery', 'useJobEventsQuery', 'useCancelJobMutation', 'useResumeJobMutation', 'useRetryFailedItemsMutation', 'expectedRevision', 'itemRevisions']) {
+    assert.match(resultsPageSource, new RegExp(token));
+  }
+  assert.match(resultsPageSource, /<Pagination page=\{listQuery\.data\?\.page/u);
+  assert.match(resultsPageSource, /<Pagination page=\{itemsQuery\.data\?\.page/u);
+  assert.match(resultsPageSource, /<Pagination page=\{eventsQuery\.data\?\.page/u);
+  assert.match(resultsPageSource, /collapseProgressEvents/u);
+  assert.match(resultsPageSource, /writeSessionDraft\(testCopyDraftKey/u);
+  assert.match(resultsPageSource, /disabled=\{copiedSettings === null\}/u);
+  assert.match(resultsPageSource, /jobFailureMessage\(detail\.failureCode/u);
+  assert.match(resultsPageSource, /jobFailureMessage\(item\.failureCode/u);
+  assert.doesNotMatch(resultsPageSource, />\{detail\.failureReason\}</u);
+  assert.doesNotMatch(resultsPageSource, /failureDetails|requestId|httpStatus|finishReason|\/keep|\/promote/u);
+});
+
+test('assistant shows complete suggestions and applies only confirmed changes', () => {
+  for (const token of ['missingFields', 'candidates', 'changedFields', 'selectedValues', 'confirmedFields', 'createContentScript', 'createShootingScene', 'ConfirmDialog']) {
+    assert.match(assistantSource, new RegExp(token));
+  }
+  assert.match(assistantSource, /group\.items\.length === 1/u);
+  assert.match(assistantSource, /if \(!clean \|\| \(production && batchDraft === null\)\) return/u);
+  assert.match(assistantSource, /await onApply\(values\)/u);
+  assert.match(assistantSource, /assistant\.selectionChanged/u);
+  assert.doesNotMatch(assistantSource, /submitBatch|createDataset|updateDataset/u);
+});
+
+test('relationship guide is accessible and the DrawIO source has two pages', () => {
+  assert.match(sharedSource, /<details className="generation-guide">/u);
+  assert.match(sharedSource, /<ol className="generation-guide__flow">/u);
+  assert.equal((drawioSource.match(/<diagram /gu) ?? []).length, 2);
+  assert.match(drawioSource, /name="Generation settings"/u);
+  assert.match(drawioSource, /name="Test and formal boundaries"/u);
+  assert.match(generationCss, /@media \(max-width: 1279px\)[\s\S]*\.generation-test-layout[\s\S]*grid-template-columns: 1fr/u);
+  assert.match(responsiveCss, /@media \(max-width: 390px\)[\s\S]*\.generate-nav[\s\S]*grid-template-columns: repeat\(3/u);
 });
 
 test('production reviewer identity comes only from the Reviewer API and user selection', () => {
@@ -257,14 +322,22 @@ test('GPU and task failures are localized from stable fields instead of raw back
   assert.match(settingsSource, /gpuStatusReason\(gpu\)/u);
   assert.match(sharedSource, /gpuStatusReason\(gpu\)/u);
   assert.doesNotMatch(sharedSource, /gpu\.statusReason \?/u);
-  assert.match(jobsSource, /jobFailureMessage\(selected\.failureCode/u);
-  assert.match(jobsSource, /jobFailureMessage\(item\.failureCode/u);
-  assert.doesNotMatch(jobsSource, />\{selected\.failureReason\}</u);
-  assert.doesNotMatch(jobsSource, /failureDetails|requestId|httpStatus|finishReason/u);
+  assert.match(resultsPageSource, /jobFailureMessage\(detail\.failureCode/u);
+  assert.match(resultsPageSource, /jobFailureMessage\(item\.failureCode/u);
+  assert.doesNotMatch(resultsPageSource, />\{detail\.failureReason\}</u);
+  assert.doesNotMatch(resultsPageSource, /failureDetails|requestId|httpStatus|finishReason/u);
   assert.match(workspaceSource, /failureKey\(job\.failureCode\)/u);
   assert.match(contractSource, /export interface PromptFailureDetails/u);
   assert.match(contractSource, /fields: PromptSchemaFieldDetail\[\] \| null/u);
   assert.match(jobEventsSource, /failureDetails: event\.payload\.failureDetails \?\? item\.failureDetails/u);
+});
+
+test('job events update interrupted and resumed task state in both result caches', () => {
+  assert.match(jobEventsSource, /event\.eventType === 'JobResumed'/u);
+  assert.match(jobEventsSource, /event\.eventType === 'JobRetryQueued'/u);
+  assert.match(jobEventsSource, /event\.eventType === 'JobInterrupted'\) return 'Interrupted'/u);
+  assert.match(jobEventsSource, /queryKeys\.testResults\[0\]/u);
+  assert.match(jobEventsSource, /queryKeys\.productionResults\[0\]/u);
 });
 
 test('GPU status reasons cover every availability without contradictory ready text', () => {
@@ -281,7 +354,7 @@ test('GPU status reasons cover every availability without contradictory ready te
 });
 
 test('production source is disconnected from the removed business mock system', () => {
-  const production = [mainSource, reviewSource, archiveSource, settingsSource, statisticsSource, sharedSource].join('\n');
+  const production = [mainSource, reviewSource, archiveSource, settingsSource, statisticsSource, sharedSource, testPageSource, productionPageSource, resultsPageSource].join('\n');
   assert.doesNotMatch(production, /MockRepository|RepositoryProvider|useExamplePageState|PageStateBoundary|\?state=/u);
   assert.doesNotMatch(localeSource, /example status|示例状态|example video|示例视频/iu);
 });
