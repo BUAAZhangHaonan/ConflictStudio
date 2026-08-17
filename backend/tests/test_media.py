@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
 
-from backend.adapters.database import Database
 from backend.adapters.media import MediaError, MediaStore
 from backend.domain.enums import (
     GenerationAttemptStatus,

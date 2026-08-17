@@ -889,12 +889,6 @@ def draft_content(name: str = "Content draft") -> dict[str, object]:
 def test_draft_creation_requires_confirmation_and_rolls_back_atomically(
     tmp_path: Path,
 ) -> None:
-    missing = [
-        "ContentSelections",
-        "PromptTemplateVersion",
-        "Demographics",
-        "Model",
-    ]
     with assistant_client(tmp_path) as (app, client, state):
         content, version, scene = create_api_sources(client)
         state["response"] = suggestion(

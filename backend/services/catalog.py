@@ -20,7 +20,6 @@ from backend.domain.models import (
     ArchiveItem,
     BatchDraft,
     BatchDraftCombination,
-    BatchDraftPromptTemplateVersion,
     BatchVideoInputSnapshot,
     ContentScript,
     ContentScriptScene,

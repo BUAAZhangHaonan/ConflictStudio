@@ -20,7 +20,6 @@ from backend.domain.enums import (
     Category,
     ContentMode,
     ContentStatus,
-    DatasetPurpose,
     Ethnicity,
     Gender,
     GpuAvailability,
@@ -977,7 +976,7 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
     database = Database(tmp_path)
     database.initialize()
     catalog, dataset, content, preset, background = fixed_resources(database)
-    second = catalog.create_scene(
+    catalog.create_scene(
         SceneCreate(
             nameZh="候车室",
             nameEn="Station waiting room",

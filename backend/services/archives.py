@@ -21,7 +21,6 @@ from backend.domain.models import (
     ArchiveItem,
     Asset,
     Dataset,
-    Review,
     Reviewer,
     Sample,
     utc_now,
