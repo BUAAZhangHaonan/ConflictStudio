@@ -54,6 +54,8 @@ test('note autosave exposes loading saving saved failure and retry states', () =
   assert.match(page, /usePutReviewNoteDraftMutation/);
   assert.match(page, /expectedRevision/);
   assert.match(page, /expectedSampleRevision/);
+  assert.match(page, /useReviewNoteDraftQuery\(sampleId, reviewerId, sampleRevision\)/);
+  assert.match(page, /const key = `\$\{sample\.id\}:\$\{reviewerId\}:\$\{sample\.revision\}`/);
   assert.match(page, /retryNoteSave/);
   assert.match(locales, /Another person changed this note\. Refresh the page before trying again\./);
   assert.doesNotMatch(page, /manual save|beforeunload|leave warning/i);
@@ -73,7 +75,14 @@ test('classification confirmation sends reviewer and direction without a reason'
   assert.match(page, /reviewerId,/);
   assert.match(page, /targetCategory,/);
   assert.match(page, /conflictDirection: needsDirection \? conversionDirection : null/);
-  assert.match(page, /await detailQuery\.refetch\(\)/);
+  assert.match(page, /apparentEmotion: conversionApparentEmotion/);
+  assert.match(page, /option !== emotionKey\(sample\.trueEmotion\)/);
+  assert.match(page, /sample\.protocol === 'VA' \? \['Vision', 'Audio'\] : \['Vision', 'Text'\]/);
+  assert.match(page, /trueEmotionDescription: conversionDescription\.trim\(\)/);
+  assert.match(page, /setNote\(''\)/);
+  assert.match(page, /setNoteRevision\(0\)/);
+  assert.match(page, /initializedDraftRef\.current = null/);
+  assert.match(page, /confirmDisabled=\{!conversionComplete\}/);
   assert.match(page, /status\.review\.Pending/);
   assert.doesNotMatch(page, /reason\s*:/);
 });

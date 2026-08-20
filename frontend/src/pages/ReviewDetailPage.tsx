@@ -11,6 +11,7 @@ import {
   useSubmitReviewMutation,
 } from '../api/queries';
 import { Button, ConfirmDialog, Field, MediaPanel, PageHeader, StatusBadge } from '../components';
+import { reviewArchiveEnUS } from '../locales/features/reviewArchive';
 import { usePreferences } from '../preferences';
 import {
   buildReviewListLocation,
@@ -24,6 +25,14 @@ import type { Category, ConflictDirection, Locale } from '../types';
 import './ReviewDetailPage.css';
 
 type NoteState = 'loading' | 'saving' | 'saved' | 'failed';
+
+const EMOTION_OPTIONS = Object.keys(reviewArchiveEnUS.emotion);
+
+function emotionKey(value: string): string {
+  return value.trim().toLocaleLowerCase('en-US')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
 
 function positiveSampleId(value: string | undefined): number | null {
   const parsed = Number(value);
@@ -69,7 +78,8 @@ export function ReviewDetailPage() {
   const reviewerId = preferences.currentReviewerId;
   const locale: Locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
   const detailQuery = useReviewSampleDetailQuery(sampleId);
-  const noteQuery = useReviewNoteDraftQuery(sampleId, reviewerId);
+  const sampleRevision = detailQuery.data?.revision ?? null;
+  const noteQuery = useReviewNoteDraftQuery(sampleId, reviewerId, sampleRevision);
   const noteMutation = usePutReviewNoteDraftMutation();
   const reviewMutation = useSubmitReviewMutation();
   const conversionMutation = useConvertSampleClassificationMutation();
@@ -83,6 +93,8 @@ export function ReviewDetailPage() {
   const [reviewDecision, setReviewDecision] = useState<Exclude<ReviewDecision, 'Pending'> | null>(null);
   const [conversionOpen, setConversionOpen] = useState(false);
   const [conversionDirection, setConversionDirection] = useState<ConflictDirection | null>(null);
+  const [conversionApparentEmotion, setConversionApparentEmotion] = useState('');
+  const [conversionDescription, setConversionDescription] = useState('');
   const [conversionSaved, setConversionSaved] = useState(false);
   const initializedDraftRef = useRef<string | null>(null);
   const noteRef = useRef(note);
@@ -98,6 +110,8 @@ export function ReviewDetailPage() {
     setReviewDecision(null);
     setConversionOpen(false);
     setConversionDirection(null);
+    setConversionApparentEmotion('');
+    setConversionDescription('');
     setConversionSaved(false);
     initializedDraftRef.current = null;
     setNote('');
@@ -117,7 +131,7 @@ export function ReviewDetailPage() {
       return;
     }
     if (!noteQuery.data) return;
-    const key = `${sample.id}:${reviewerId}`;
+    const key = `${sample.id}:${reviewerId}:${sample.revision}`;
     if (initializedDraftRef.current === key) return;
     initializedDraftRef.current = key;
     setNote(noteQuery.data.note);
@@ -195,6 +209,8 @@ export function ReviewDetailPage() {
     if (!sample || reviewerId === null) return;
     setConversionSaved(false);
     setConversionDirection(null);
+    setConversionApparentEmotion('');
+    setConversionDescription(sample.trueEmotionDescription);
     setConversionOpen(true);
   };
 
@@ -202,7 +218,10 @@ export function ReviewDetailPage() {
     if (!sample || reviewerId === null) return;
     const targetCategory = targetCategoryFor(sample);
     const needsDirection = targetCategory.startsWith('C-');
-    if (needsDirection && conversionDirection === null) return;
+    if (
+      !conversionDescription.trim()
+      || (needsDirection && (conversionDirection === null || !conversionApparentEmotion))
+    ) return;
     conversionMutation.mutate({
       sampleId: sample.id,
       input: {
@@ -210,14 +229,19 @@ export function ReviewDetailPage() {
         expectedRevision: sample.revision,
         targetCategory,
         conflictDirection: needsDirection ? conversionDirection : null,
-        ...(needsDirection ? { apparentEmotion: sample.apparentEmotion } : {}),
-        trueEmotionDescription: sample.trueEmotionDescription,
+        ...(needsDirection ? { apparentEmotion: conversionApparentEmotion } : {}),
+        trueEmotionDescription: conversionDescription.trim(),
       },
     }, {
-      onSuccess: async () => {
+      onSuccess: () => {
         setConversionOpen(false);
         setConversionSaved(true);
-        await detailQuery.refetch();
+        setNote('');
+        setSavedNote('');
+        setNoteRevision(0);
+        setNoteState('loading');
+        setNoteError(null);
+        initializedDraftRef.current = null;
       },
     });
   };
@@ -262,6 +286,13 @@ export function ReviewDetailPage() {
   const targetRelation = targetCategory.startsWith('C-') ? 'C' : 'A';
   const needsConversionDirection = targetRelation === 'C';
   const directionOptions: ConflictDirection[] = sample.protocol === 'VA' ? ['Vision', 'Audio'] : ['Vision', 'Text'];
+  const apparentEmotionOptions = EMOTION_OPTIONS.filter(option => option !== emotionKey(sample.trueEmotion));
+  const conversionComplete = Boolean(conversionDescription.trim())
+    && (!needsConversionDirection || (
+      conversionDirection !== null
+      && Boolean(conversionApparentEmotion)
+      && conversionApparentEmotion !== emotionKey(sample.trueEmotion)
+    ));
   const directionText = sample.conflictDirection === null
     ? t('review.detail.notNeeded')
     : t(`review.detail.direction.${sample.conflictDirection}`);
@@ -384,6 +415,20 @@ export function ReviewDetailPage() {
           <div className="review-detail__conversion">
             <p>{t('review.detail.conversion.target', { category: targetRelation })}</p>
             {needsConversionDirection ? (
+              <Field label={t('review.apparentEmotion')} htmlFor="review-detail-apparent-emotion" required>
+                <select
+                  id="review-detail-apparent-emotion"
+                  value={conversionApparentEmotion}
+                  onChange={event => setConversionApparentEmotion(event.target.value)}
+                >
+                  <option value="">{t('review.detail.conversion.chooseEmotion')}</option>
+                  {apparentEmotionOptions.map(emotion => (
+                    <option key={emotion} value={emotion}>{t(`emotion.${emotion}`)}</option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
+            {needsConversionDirection ? (
               <Field label={t('review.detail.directionLabel')} htmlFor="review-detail-direction" required>
                 <select
                   id="review-detail-direction"
@@ -395,13 +440,27 @@ export function ReviewDetailPage() {
                 </select>
               </Field>
             ) : null}
+            <Field
+              label={t('review.trueEmotionDescription')}
+              htmlFor="review-detail-conversion-description"
+              hint={t('review.detail.conversion.descriptionHint')}
+              required
+            >
+              <textarea
+                id="review-detail-conversion-description"
+                value={conversionDescription}
+                maxLength={1000}
+                onChange={event => setConversionDescription(event.target.value)}
+              />
+            </Field>
+            {!conversionComplete ? <p className="field-error" role="status">{t('review.detail.conversion.incomplete')}</p> : null}
           </div>
         )}
         confirmLabel={t('review.detail.conversion.confirm')}
         cancelLabel={t('actions.cancel')}
         closeLabel={t('actions.close')}
         busy={conversionMutation.isPending}
-        confirmDisabled={needsConversionDirection && conversionDirection === null}
+        confirmDisabled={!conversionComplete}
         onConfirm={submitConversion}
         onClose={() => setConversionOpen(false)}
       />
