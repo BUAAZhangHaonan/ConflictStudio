@@ -501,6 +501,7 @@ def add_completed_result(
     source: JobSource,
     model: ModelName = ModelName.LTX,
     precision: Precision | None = None,
+    category: Category = Category.A_VA,
     *,
     content_id: int | None = None,
     actual_background_id: int | None = None,
@@ -508,6 +509,7 @@ def add_completed_result(
     register_background: bool = True,
 ) -> tuple[int, int, int]:  # type: ignore[no-untyped-def]
     timestamp = utc_now()
+    is_vt = category in (Category.A_VT, Category.C_VT)
     frame_count = 124 if model is ModelName.H3 else 121
     with app.state.database.immediate_session() as session:
         dataset = Dataset(
@@ -522,7 +524,7 @@ def add_completed_result(
             name_zh_key="一致回应",
             name_en="Aligned response",
             name_en_key="aligned response",
-            category=Category.A_VA,
+            category=category,
             mode=ContentMode.FIXED,
             status=ContentStatus.DRAFT,
             true_emotion="calm",
@@ -533,14 +535,15 @@ def add_completed_result(
             trigger_event_en="A timer sounds.",
             psychological_background_zh="被摄者准备作答。",
             psychological_background_en="The subject prepares to answer.",
-            dialogue="我很好。",
+            dialogue=None if is_vt else "我很好。",
+            display_text="我很好。" if is_vt else None,
             true_emotion_description="说话者保持平静。",
             base_video_prompt="An adult answers calmly.",
         )
         prompt_identity = PromptTemplate(
             name="Natural",
             name_key="natural",
-            category=Category.A_VA,
+            category=category,
         )
         session.add(prompt_identity)
         session.flush()
@@ -595,7 +598,7 @@ def add_completed_result(
             draft = BatchDraft(
                 dataset_id=dataset.id,
                 dataset_revision=dataset.revision,
-                category=Category.A_VA,
+                category=category,
                 model=model,
                 precision=precision,
                 status=BatchDraftStatus.SUBMITTED,
@@ -635,7 +638,7 @@ def add_completed_result(
             framing_zh=background.framing_zh,
             framing_en=background.framing_en,
             policy_version="test",
-            category=Category.A_VA,
+            category=category,
             age=25,
             gender=Gender.FEMALE,
             ethnicity="EastAsian",
@@ -649,7 +652,7 @@ def add_completed_result(
             renderer_profile_version=RENDERER_PROFILE_VERSION,
             prompt_model="test",
             source_has_audio=True,
-            derive_silent_primary=False,
+            derive_silent_primary=is_vt,
             system_input="system",
             user_input="user",
             negative_prompt="subtitles",
@@ -659,12 +662,12 @@ def add_completed_result(
         session.add(snapshot)
         session.flush()
         job = Job(
-            display_name="A-VA-test",
+            display_name=f"{category.value}-test",
             source=source,
             dataset_id=dataset.id if draft else None,
             dataset_name_snapshot=dataset.name if draft else None,
             batch_draft_id=draft.id if draft else None,
-            category=Category.A_VA,
+            category=category,
             model=model if draft else None,
             precision=precision if draft else None,
             status=JobStatus.RUNNING,
@@ -705,8 +708,27 @@ def add_completed_result(
         )
         session.add(asset)
         session.flush()
+        primary_asset = asset
+        if is_vt:
+            silent_relative_path = f"media/{source.value.casefold()}-silent.mp4"
+            (app.state.database.data_root / silent_relative_path).write_bytes(b"video")
+            primary_asset = Asset(
+                origin_job_item_id=item.id,
+                storage_root=str(app.state.database.data_root),
+                relative_path=silent_relative_path,
+                media_type="video/mp4",
+                byte_size=5,
+                width=VIDEO_WIDTH,
+                height=VIDEO_HEIGHT,
+                fps=VIDEO_FPS,
+                frame_count=frame_count,
+                duration_seconds=frame_count / VIDEO_FPS,
+                has_audio=False,
+            )
+            session.add(primary_asset)
+            session.flush()
         item.source_asset_id = asset.id
-        item.primary_asset_id = asset.id
+        item.primary_asset_id = primary_asset.id
         session.flush()
         session.add(
             JobItemPromptResult(
@@ -717,7 +739,8 @@ def add_completed_result(
                 raw_structured_response="{}",
                 final_positive_prompt="An adult answers calmly.",
                 negative_prompt="subtitles",
-                dialogue="我很好。",
+                dialogue=None if is_vt else "我很好。",
+                vt_text="我很好。" if is_vt else None,
                 true_emotion_description="说话者保持平静。",
             )
         )
@@ -730,7 +753,7 @@ def add_completed_result(
                 gpu_slot=GpuSlotName.GPU0,
                 seed=77,
                 source_asset_id=asset.id,
-                primary_asset_id=asset.id,
+                primary_asset_id=primary_asset.id,
                 renderer_prompt_id="prompt-1",
                 status=GenerationAttemptStatus.COMPLETED,
                 started_at=timestamp,

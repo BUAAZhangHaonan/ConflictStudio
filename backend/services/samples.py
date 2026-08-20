@@ -29,6 +29,7 @@ from backend.domain.models import (
     JobItem,
     JobItemPromptResult,
     Reviewer,
+    ReviewNoteDraft,
     Sample,
     SampleClassificationChange,
     utc_now,
@@ -186,6 +187,13 @@ class SampleService:
             session.add(change)
             session.flush([change])
             session.refresh(row)
+            drafts = session.exec(
+                select(ReviewNoteDraft).where(
+                    ReviewNoteDraft.sample_id == row.id
+                )
+            ).all()
+            for draft in drafts:
+                session.delete(draft)
             return self.review_detail_read_in_session(session, row)
 
     def list_classification_history(

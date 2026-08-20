@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from backend.domain.enums import (
+    Category,
     JobItemStage,
     JobSource,
     JobStatus,
@@ -621,6 +622,61 @@ def test_aligned_to_conflict_requires_coherent_emotions_and_preserves_review_his
     assert removed_endpoint.status_code == 405
 
 
+@pytest.mark.parametrize(
+    ("category", "target_category", "valid_direction", "invalid_direction"),
+    [
+        (Category.A_VA, "C-VA", "Audio", "Text"),
+        (Category.A_VT, "C-VT", "Text", "Audio"),
+    ],
+)
+def test_aligned_to_conflict_requires_new_emotion_and_protocol_direction(
+    tmp_path: Path,
+    category: Category,
+    target_category: str,
+    valid_direction: str,
+    invalid_direction: str,
+) -> None:
+    app = sample_app(tmp_path, category=category)
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+        reviewer = create_reviewer(client)
+        missing_emotion = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                sample, reviewer, target_category, "The modalities conflict.",
+                direction=valid_direction,
+            ),
+        )
+        matching_emotion = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                sample, reviewer, target_category, "The modalities conflict.",
+                direction=valid_direction, apparent_emotion=sample["trueEmotion"],
+            ),
+        )
+        invalid_direction_response = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                sample, reviewer, target_category, "The modalities conflict.",
+                direction=invalid_direction, apparent_emotion="tense",
+            ),
+        )
+        moved = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                sample, reviewer, target_category, "The modalities conflict.",
+                direction=valid_direction, apparent_emotion="tense",
+            ),
+        )
+
+    assert missing_emotion.status_code == 422
+    assert matching_emotion.status_code == 422
+    assert invalid_direction_response.status_code == 422
+    assert moved.status_code == 200
+    assert moved.json()["apparentEmotion"] == "tense"
+    assert moved.json()["conflictDirection"] == valid_direction
+
+
 def test_conflict_to_aligned_uses_preserved_true_emotion_and_clears_direction(
     tmp_path: Path,
 ) -> None:
@@ -686,6 +742,56 @@ def test_conflict_to_aligned_uses_preserved_true_emotion_and_clears_direction(
     assert moved.json()["reviewRevision"] == reviewed["reviewRevision"]
     assert moved.json()["currentReview"] is None
     assert history.json()["total"] == 1
+
+
+def test_classification_deletes_note_draft_but_keeps_review_history(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+        reviewer = create_reviewer(client)
+        reviewed = client.post(
+            "/api/reviews", json=review_payload(sample, reviewer)
+        ).json()
+        saved_draft = save_note(
+            client, reviewed, reviewer, "This note belongs to the aligned revision."
+        )
+        moved = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                reviewed,
+                reviewer,
+                "C-VA",
+                "The voice stays calm while the face appears tense.",
+                direction="Audio",
+                apparent_emotion="tense",
+            ),
+        )
+        empty_draft = client.get(
+            f"/api/samples/{sample['id']}/review-note-draft",
+            params={"reviewerId": reviewer["id"]},
+        )
+        immediate_review = client.post(
+            "/api/reviews",
+            json=review_payload(
+                moved.json(), reviewer, decision="Rejected",
+                expectedNoteDraftRevision=0,
+            ),
+        )
+        history = client.get("/api/reviews", params={"sampleId": sample["id"]})
+
+    assert saved_draft["revision"] == 1
+    assert moved.status_code == 200
+    assert empty_draft.status_code == 200
+    assert empty_draft.json()["note"] == ""
+    assert empty_draft.json()["revision"] == 0
+    assert empty_draft.json()["sampleRevision"] == moved.json()["revision"]
+    assert immediate_review.status_code == 201
+    assert history.json()["total"] == 2
+    assert [row["decision"] for row in history.json()["items"]] == [
+        "Accepted", "Rejected"
+    ]
 
 
 def test_review_rows_cannot_be_updated_or_deleted_in_sqlite(tmp_path: Path) -> None:
