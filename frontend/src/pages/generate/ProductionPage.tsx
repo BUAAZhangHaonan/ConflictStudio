@@ -19,7 +19,6 @@ import { isModelSwitchConfirmationRequired } from '../../api/client';
 import type {
   AssistantFormState,
   BatchDraft,
-  ConfigurationAssistant,
   GpuSlotName,
 } from '../../api/contracts';
 import { defaultGenerationProfile, ltx25Precisions, models, precisionForModel } from '../../generationProfile';
@@ -41,6 +40,7 @@ import {
   RelationshipGuide,
   toggleValue,
   useGenerationCopy,
+  useDebouncedValue,
   useGenerationLocale,
   useUnsavedChanges,
 } from './shared';
@@ -48,7 +48,6 @@ import type { GenerationKey } from '../../locales/features/generation';
 import {
   buildBatchDraftRequest,
   demographics,
-  productionFormFromDraft,
   type ProductionForm,
   type SelectedContent,
 } from './formalGeneration';
@@ -84,6 +83,8 @@ export function ProductionPage() {
   const [form, setForm] = useState<ProductionForm>(emptyForm);
   const [datasetSearch, setDatasetSearch] = useState('');
   const [datasetPage, setDatasetPage] = useState(1);
+  const [contentSearch, setContentSearch] = useState('');
+  const debouncedContentSearch = useDebouncedValue(contentSearch);
   const [contentPage, setContentPage] = useState(1);
   const [templatePage, setTemplatePage] = useState(1);
   const [versionPage, setVersionPage] = useState(1);
@@ -98,7 +99,9 @@ export function ProductionPage() {
 
   const datasetsQuery = useDatasetsQuery(datasetPage, { status: 'Active', ...(datasetSearch.trim() ? { search: datasetSearch } : {}) });
   const selectedDatasetQuery = useDatasetQuery(form.targetDatasetId);
-  const contentQuery = useContentScriptsQuery(contentPage);
+  const contentQuery = useContentScriptsQuery(contentPage, {
+    ...(debouncedContentSearch.trim() ? { search: debouncedContentSearch } : {}),
+  });
   const templatesQuery = usePromptTemplatesQuery(templatePage);
   const versionsQuery = usePromptTemplateVersionsQuery(form.promptTemplateId, versionPage);
   const selectedVersionQuery = usePromptTemplateVersionQuery(form.promptTemplateVersionId);
@@ -334,7 +337,7 @@ export function ProductionPage() {
     conflictDirection: form.conflictDirection,
     model: form.model,
     precision: form.precision,
-    contentSelections: form.selectedContent.map(item => ({
+    contentSelections: form.selectedContent.length === 0 ? null : form.selectedContent.map(item => ({
       contentScript: {
         id: item.id,
         expectedRevision: item.revision,
@@ -356,28 +359,72 @@ export function ProductionPage() {
     seeds: seedValues,
   };
 
-  const applyAssistant = async (
-    _values: AssistantFormState,
-    applied: ConfigurationAssistant,
-  ) => {
-    const targetRevision = applied.result?.targetRevision;
-    if (!savedDraft || targetRevision === null || targetRevision === undefined) {
-      throw new Error('assistant_target_missing');
+  const applyAssistant = async (values: AssistantFormState) => {
+    const nextCategory = values.category ?? form.category;
+    const nextDirection = 'conflictDirection' in values
+      ? values.conflictDirection ?? null
+      : form.conflictDirection;
+    const classificationChanged = nextCategory !== form.category
+      || nextDirection !== form.conflictDirection;
+
+    let nextContent = classificationChanged ? [] : form.selectedContent;
+    if ('contentSelections' in values) {
+      nextContent = await Promise.all((values.contentSelections ?? []).map(async selection => {
+        const [contentScript, compatibleScenes] = await Promise.all([
+          queryClient.fetchQuery(generationQueries.contentScript(selection.contentScript.id)),
+          queryClient.fetchQuery(generationQueries.contentScenes(selection.contentScript.id)),
+        ]);
+        const selectedSceneIds = selection.scenes.map(scene => scene.id);
+        return {
+          id: contentScript.id,
+          revision: contentScript.revision,
+          nameZh: contentScript.nameZh,
+          nameEn: contentScript.nameEn,
+          mode: contentScript.mode,
+          scenes: compatibleScenes.scenes,
+          selectedSceneIds,
+        } satisfies SelectedContent;
+      }));
     }
-    const refreshed = await queryClient.fetchQuery(
-      generationQueries.batchDraft(savedDraft.id),
-    );
-    if (refreshed.revision !== targetRevision) {
-      throw new Error('assistant_target_changed');
+
+    let nextTemplateId = form.promptTemplateId;
+    let nextTemplateVersionId = form.promptTemplateVersionId;
+    if ('promptTemplateVersion' in values) {
+      nextTemplateVersionId = values.promptTemplateVersion?.id ?? null;
+      nextTemplateId = null;
+      if (nextTemplateVersionId !== null) {
+        const version = await queryClient.fetchQuery(
+          generationQueries.promptTemplateVersion(nextTemplateVersionId),
+        );
+        nextTemplateId = version.templateId;
+      }
     }
-    const templateVersion = await queryClient.fetchQuery(
-      generationQueries.promptTemplateVersion(refreshed.promptTemplateVersion.id),
-    );
-    const nextForm = productionFormFromDraft(refreshed, templateVersion.templateId);
-    setForm(nextForm);
-    setSavedDraft(refreshed);
-    setSavedFormSignature(JSON.stringify(nextForm));
-    setUserEdited(false);
+
+    const nextModel = values.model ?? form.model;
+    const nextPrecision = 'model' in values || 'precision' in values
+      ? precisionForModel(nextModel, values.precision ?? form.precision)
+      : form.precision;
+    const peopleValues = values.demographics ?? null;
+
+    setForm(current => ({
+      ...current,
+      targetDatasetId: 'targetDataset' in values ? values.targetDataset?.id ?? null : current.targetDatasetId,
+      displayName: values.displayName ?? current.displayName,
+      category: nextCategory,
+      conflictDirection: nextDirection,
+      promptTemplateId: nextTemplateId,
+      promptTemplateVersionId: nextTemplateVersionId,
+      selectedContent: nextContent,
+      selectedAges: peopleValues ? [...new Set(peopleValues.map(person => person.age))] : current.selectedAges,
+      selectedGenders: peopleValues ? [...new Set(peopleValues.map(person => person.gender))] : current.selectedGenders,
+      selectedEthnicities: peopleValues ? [...new Set(peopleValues.map(person => person.ethnicity))] : current.selectedEthnicities,
+      seeds: values.seeds ? values.seeds.join(', ') : current.seeds,
+      model: nextModel,
+      precision: nextPrecision,
+      gpuSlots: values.gpuSlots ?? current.gpuSlots,
+    }));
+    if (classificationChanged || 'contentSelections' in values) setContentPage(1);
+    setUserEdited(true);
     setValidation(false);
     previewMutation.reset();
   };
@@ -414,7 +461,8 @@ export function ProductionPage() {
         className="panel generation-form generation-production-form"
         aria-labelledby="production-form-title"
         onChangeCapture={event => {
-          if ((event.target as HTMLElement).id !== 'production-dataset-search') setUserEdited(true);
+          const id = (event.target as HTMLElement).id;
+          if (id !== 'production-dataset-search' && id !== 'production-content-search') setUserEdited(true);
         }}
       >
         <div className="section-header"><h2 id="production-form-title">{g('production.form')}</h2></div>
@@ -434,17 +482,21 @@ export function ProductionPage() {
         <fieldset className="generation-production-section">
           <legend>{g('production.sectionContent')}</legend>
           <p>{g('state.catalogLimited')}</p>
+          <Field label={g('production.contentSearch')} htmlFor="production-content-search">
+            <input id="production-content-search" type="search" value={contentSearch} onChange={event => { setContentSearch(event.target.value); setContentPage(1); }} />
+          </Field>
+          <p role="status">{g('production.selectedCount', { count: form.selectedContent.length })}</p>
           <div className="generation-selection-actions">
             <Button variant="secondary" disabled={!canSelectPage} onClick={selectPage}>{g('production.selectPage')}</Button>
             <Button variant="quiet" onClick={clearPage}>{g('production.clearPage')}</Button>
             <Button variant="quiet" onClick={() => { setUserEdited(true); setForm(current => ({ ...current, selectedContent: [] })); }}>{g('production.clearAll')}</Button>
           </div>
           <div className="generation-content-list">
-            {content.length === 0 ? <p>{g('state.filtered')}</p> : content.map(item => {
+            {content.length === 0 ? <p>{g('production.noContentMatches')}</p> : content.map(item => {
               const selected = form.selectedContent.find(value => value.id === item.id);
               const scenes = scenesByContent.get(item.id) ?? [];
               return <article className="generation-content-choice" key={item.id}>
-                <label><input type="checkbox" checked={Boolean(selected)} disabled={scenes.length === 0} onChange={() => toggleContent(item.id)} /><span><strong>{localizedName(locale, item)}</strong>{scenes.length === 0 ? g('production.noScenes') : item.mode === 'Fixed' ? g('production.fixedScene') : g('production.chooseScenes')}</span></label>
+                <label><input type="checkbox" checked={Boolean(selected)} disabled={scenes.length === 0} onChange={() => toggleContent(item.id)} /><span><strong>{localizedName(locale, item)} {categoryLabel(g, item.category)}</strong>{scenes.length === 0 ? g('production.noScenes') : item.mode === 'Fixed' ? g('production.fixedScene') : g('production.chooseScenes')}</span></label>
                 {selected ? <div className="generation-scene-choices">{selected.scenes.map(scene => <label key={scene.id}><input type="checkbox" checked={selected.selectedSceneIds.includes(scene.id)} disabled={selected.mode === 'Fixed'} onChange={() => toggleScene(selected.id, scene.id)} />{localizedName(locale, scene)}</label>)}</div> : null}
               </article>;
             })}

@@ -375,7 +375,7 @@ export interface ConfigurationAssistantCreate {
 
 export interface ConfigurationAssistantApply {
   expectedRevision: number;
-  expectedTargetRevision: number;
+  expectedTargetRevision?: number | null;
   confirmedFields: ConfigurationAssistantField[];
   values: AssistantFormState;
   createContentScript: boolean;

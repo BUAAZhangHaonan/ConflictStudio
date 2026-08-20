@@ -13,6 +13,8 @@ const typesSource = read('../frontend/src/types.ts');
 const resourcesSource = read('../frontend/src/pages/generate/TestResources.tsx');
 const pageSource = read('../frontend/src/pages/generate/TestPage.tsx');
 const assistantSource = read('../frontend/src/pages/generate/AssistantPanel.tsx');
+const productionSource = read('../frontend/src/pages/generate/ProductionPage.tsx');
+const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
 const querySource = read('../frontend/src/api/queries.ts');
 
 function loadCommonJs(source, dependencies = {}) {
@@ -152,14 +154,39 @@ test('model precision rules accept only supported combinations', () => {
 
 test('assistant applies visible Test suggestions once and cannot create resources or run tests', () => {
   assert.match(assistantSource, /ConfirmDialog/u);
-  assert.match(assistantSource, /createContentScript: production && createContent/u);
-  assert.match(assistantSource, /createShootingScene: production && createScene/u);
-  assert.match(assistantSource, /linkNewSceneToContent: production && linkDrafts/u);
+  assert.match(assistantSource, /createContentScript: false/u);
+  assert.match(assistantSource, /createShootingScene: false/u);
+  assert.match(assistantSource, /linkNewSceneToContent: false/u);
   assert.match(assistantSource, /const single = !production/u);
   assert.match(assistantSource, /\[group\.kind\]: \[item\.id\]/u);
   assert.match(assistantSource, /selection\.contentScript\.label/u);
   assert.match(assistantSource, /demographic\.ethnicity/u);
-  assert.doesNotMatch(assistantSource, /submitPromptTest|submitVideoTest/u);
+  assert.doesNotMatch(assistantSource, /submitPromptTest|submitVideoTest|createContent \|\| createScene/u);
+});
+
+test('formal assistant works before saving and applying only dirties the visible form', () => {
+  assert.match(assistantSource, /const canAsk = requirement\.trim\(\)\.length > 0/u);
+  assert.doesNotMatch(assistantSource, /production && batchDraft === null/u);
+  assert.match(assistantSource, /batchDraftId: production \? batchDraft\?\.id : null/u);
+  assert.match(productionSource, /const applyAssistant = async \(values: AssistantFormState\)/u);
+  assert.match(productionSource, /setUserEdited\(true\)/u);
+  assert.doesNotMatch(productionSource, /productionFormFromDraft|setSavedFormSignature\(JSON\.stringify\(nextForm\)\)/u);
+  assert.match(productionSource, /disabled=\{!savedDraft \|\| dirty\}/u);
+  assert.match(productionSource, /disabled=\{!preview \|\| dirty\}/u);
+});
+
+test('content search is debounced, paginated, and keeps explicit selections', () => {
+  assert.match(sharedSource, /window\.setTimeout\(\(\) => setDebounced\(value\), delay\)/u);
+  assert.match(sharedSource, /delay = 300/u);
+  assert.match(querySource, /filter\.search\?\.trim\(\)/u);
+  assert.match(querySource, /params\.set\('search', filter\.search\.trim\(\)\)/u);
+  assert.match(pageSource, /id="test-content-search"/u);
+  assert.match(productionSource, /id="production-content-search"/u);
+  assert.match(productionSource, /selectedContent: \[\.\.\.current\.selectedContent, next\]/u);
+  assert.match(productionSource, /selectedContent: \[\]/u);
+  assert.doesNotMatch(pageSource, /content\[0\]\?\.id/u);
+  assert.match(pageSource, /test\.noContentMatches/u);
+  assert.match(productionSource, /production\.noContentMatches/u);
 });
 
 test('all Test controls are state controlled and formal dataset promotion is absent', () => {

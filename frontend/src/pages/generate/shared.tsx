@@ -65,6 +65,15 @@ export function useGenerationLocale(): Locale {
   return usePreferences().locale;
 }
 
+export function useDebouncedValue<T>(value: T, delay = 300): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [delay, value]);
+  return debounced;
+}
+
 export function localizedName(locale: Locale, value: { nameZh: string; nameEn: string }): string {
   return locale === 'zh-CN' ? value.nameZh : value.nameEn;
 }

@@ -65,6 +65,7 @@ import {
   testCopyDraftKey,
   type TestCopyDraft,
   useGenerationCopy,
+  useDebouncedValue,
   useGenerationLocale,
 } from './shared';
 import type { GenerationKey } from '../../locales/features/generation';
@@ -130,6 +131,8 @@ export function TestPage() {
     comparisons: copied.comparisons,
     executionMode: copied.executionMode,
   } : emptyForm());
+  const [contentSearch, setContentSearch] = useState('');
+  const debouncedContentSearch = useDebouncedValue(contentSearch);
   const [contentPage, setContentPage] = useState(1);
   const [templatePage, setTemplatePage] = useState(1);
   const [versionPage, setVersionPage] = useState(1);
@@ -140,7 +143,9 @@ export function TestPage() {
   const [testedVersionIds, setTestedVersionIds] = useState<Set<number>>(() => new Set());
   const [hiddenIds, setHiddenIds] = useState(hiddenTestIds);
 
-  const contentQuery = useContentScriptsQuery(contentPage);
+  const contentQuery = useContentScriptsQuery(contentPage, {
+    ...(debouncedContentSearch.trim() ? { search: debouncedContentSearch } : {}),
+  });
   const selectedContentQuery = useContentScriptQuery(form.contentScriptId);
   const templatesQuery = usePromptTemplatesQuery(templatePage);
   const versionsQuery = usePromptTemplateVersionsQuery(form.promptTemplateId, versionPage);
@@ -198,12 +203,6 @@ export function TestPage() {
     ?? selectedVersionDetailQuery.error ?? scenesQuery.error ?? sceneQuery.error ?? gpuQuery.error
     ?? recentQuery.error ?? inspectedItemsQuery.error;
   const mutationError = promptTestMutation.error ?? videoTestMutation.error;
-
-  useEffect(() => {
-    if (selectedContent !== null) return;
-    if (form.contentScriptId !== null && selectedContentQuery.isPending) return;
-    setForm(current => ({ ...current, contentScriptId: content[0]?.id ?? null, sceneId: null }));
-  }, [content, form.contentScriptId, selectedContent, selectedContentQuery.isPending]);
 
   useEffect(() => {
     if (selectedVersion !== null) {
@@ -411,11 +410,16 @@ export function TestPage() {
           <div className="generation-form__grid">
             <Field label={g('test.taskType')} htmlFor="test-category"><select id="test-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
             <Field label={g('test.direction')} htmlFor="test-direction"><select id="test-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentScriptId: null, sceneId: null }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
-            <Field label={g('test.content')} htmlFor="test-content"><select id="test-content" value={form.contentScriptId ?? ''} onChange={event => setForm(current => ({ ...current, contentScriptId: event.target.value ? Number(event.target.value) : null, sceneId: null }))}>{content.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{contentOptions.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
+            <Field label={g('test.contentSearch')} htmlFor="test-content-search"><input id="test-content-search" type="search" value={contentSearch} onChange={event => { setContentSearch(event.target.value); setContentPage(1); }} /></Field>
+            <Field label={g('test.content')} htmlFor="test-content"><select id="test-content" value={form.contentScriptId ?? ''} onChange={event => setForm(current => ({ ...current, contentScriptId: event.target.value ? Number(event.target.value) : null, sceneId: null }))}>
+              <option value="">{content.length === 0 ? g('test.noContentMatches') : g('common.none')}</option>
+              {contentOptions.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)} {categoryLabel(g, item.category)}</option>)}
+            </select></Field>
             <Field label={g('test.scene')} htmlFor="test-scene"><select id="test-scene" value={form.sceneId ?? ''} disabled={scenes.length === 0} onChange={event => setForm(current => ({ ...current, sceneId: event.target.value ? Number(event.target.value) : null }))}>{scenes.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{scenes.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
             <Field label={g('test.template')} htmlFor="test-template"><select id="test-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{categoryLabel(g, item.category)}</option>)}</select></Field>
             <Field label={g('test.version')} htmlFor="test-version"><select id="test-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })} {g(item.verificationStatus === 'Verified' ? 'test.resource.verified' : 'test.resource.draft')}</option>)}</select></Field>
           </div>
+          {debouncedContentSearch.trim() && content.length === 0 ? <p role="status">{g('test.noContentMatches')}</p> : null}
 
           <div className="generation-source-pages">
             <div><span>{g('test.contentPage')}</span><Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} /></div>

@@ -23,6 +23,10 @@ export interface DatasetQueryFilter {
   status?: Dataset['status'];
 }
 
+export interface ContentScriptQueryFilter {
+  search?: string;
+}
+
 export interface ResultQueryFilter {
   statuses?: JobStatus[];
   source?: Exclude<JobSource, 'Production'>;
@@ -59,7 +63,7 @@ export const queryKeys = {
   ...roots,
   datasetsPage: (filter: DatasetQueryFilter, page: number) => [...roots.datasets, filter, page] as const,
   dataset: (id: number) => [...roots.datasets, 'detail', id] as const,
-  contentScriptsPage: (page: number) => [...roots.contentScripts, page] as const,
+  contentScriptsPage: (filter: ContentScriptQueryFilter, page: number) => [...roots.contentScripts, filter, page] as const,
   contentScript: (id: number) => [...roots.contentScripts, 'detail', id] as const,
   contentScenes: (id: number) => [...roots.contentScripts, id, 'scenes'] as const,
   promptTemplatesPage: (page: number) => [...roots.promptTemplates, page] as const,
@@ -134,7 +138,11 @@ export const generationQueries = {
     return queryOptions({ queryKey: queryKeys.datasetsPage(filter, page), queryFn: () => apiRequest<Page<Dataset>>(pagePath('/api/datasets', page, params)) });
   },
   dataset: (id: number) => queryOptions({ queryKey: queryKeys.dataset(id), queryFn: () => apiRequest<Dataset>('/api/datasets/' + id) }),
-  contentScripts: (page: number) => queryOptions({ queryKey: queryKeys.contentScriptsPage(page), queryFn: () => apiRequest<Page<ContentScript>>(pagePath('/api/content-scripts', page)) }),
+  contentScripts: (page: number, filter: ContentScriptQueryFilter = {}) => {
+    const params = new URLSearchParams();
+    if (filter.search?.trim()) params.set('search', filter.search.trim());
+    return queryOptions({ queryKey: queryKeys.contentScriptsPage(filter, page), queryFn: () => apiRequest<Page<ContentScript>>(pagePath('/api/content-scripts', page, params)) });
+  },
   contentScript: (id: number) => queryOptions({ queryKey: queryKeys.contentScript(id), queryFn: () => apiRequest<ContentScript>('/api/content-scripts/' + id) }),
   contentScenes: (id: number) => queryOptions({ queryKey: queryKeys.contentScenes(id), queryFn: () => apiRequest<ContentScriptScenes>('/api/content-scripts/' + id + '/scenes') }),
   promptTemplates: (page: number) => queryOptions({ queryKey: queryKeys.promptTemplatesPage(page), queryFn: () => apiRequest<Page<PromptTemplate>>(pagePath('/api/prompt-templates', page)) }),
@@ -191,7 +199,7 @@ export async function invalidateJobAuthority(client: QueryClient, id: number, in
 
 export function useDatasetsQuery(page = 1, filter: DatasetQueryFilter = {}) { return useQuery(generationQueries.datasets(page, filter)); }
 export function useDatasetQuery(id: number | null) { return useQuery({ ...generationQueries.dataset(id ?? 0), enabled: id !== null }); }
-export function useContentScriptsQuery(page = 1) { return useQuery(generationQueries.contentScripts(page)); }
+export function useContentScriptsQuery(page = 1, filter: ContentScriptQueryFilter = {}) { return useQuery(generationQueries.contentScripts(page, filter)); }
 export function useContentScriptQuery(id: number | null) { return useQuery({ ...generationQueries.contentScript(id ?? 0), enabled: id !== null }); }
 export function useContentScenesQuery(id: number | null) { return useQuery({ ...generationQueries.contentScenes(id ?? 0), enabled: id !== null }); }
 export function usePromptTemplatesQuery(page = 1) { return useQuery(generationQueries.promptTemplates(page)); }

@@ -111,9 +111,6 @@ export function AssistantPanel({
   const [requirement, setRequirement] = useState('');
   const [record, setRecord] = useState<ConfigurationAssistant | null>(null);
   const [selected, setSelected] = useState<ConfigurationAssistantField[]>([]);
-  const [createContent, setCreateContent] = useState(false);
-  const [createScene, setCreateScene] = useState(false);
-  const [linkDrafts, setLinkDrafts] = useState(false);
   const [candidateChoices, setCandidateChoices] = useState<CandidateChoices>({
     Dataset: null,
     ContentScript: [],
@@ -175,7 +172,7 @@ export function AssistantPanel({
 
   const requestSuggestions = async () => {
     const clean = requirement.trim();
-    if (!clean || (production && batchDraft === null)) return;
+    if (!clean) return;
     try {
       const value = await create.mutateAsync({
         targetSource,
@@ -185,9 +182,6 @@ export function AssistantPanel({
         batchDraftExpectedRevision: production ? batchDraft?.revision : null,
       });
       setRecord(value);
-      setCreateContent(false);
-      setCreateScene(false);
-      setLinkDrafts(false);
       setLocalApplyError(false);
     } catch {
       return;
@@ -198,9 +192,9 @@ export function AssistantPanel({
     if (record === null) return;
     const values = selectedValues(candidateValues, selected);
     const targetRevision = production
-      ? batchDraft?.revision
+      ? batchDraft?.revision ?? null
       : record.testDraft?.revision;
-    if (targetRevision === undefined || !candidatesReady) return;
+    if ((!production && targetRevision === undefined) || !candidatesReady) return;
     let saved: ConfigurationAssistant;
     try {
       saved = await apply.mutateAsync({
@@ -210,9 +204,9 @@ export function AssistantPanel({
           expectedTargetRevision: targetRevision,
           confirmedFields: selected,
           values,
-          createContentScript: production && createContent,
-          createShootingScene: production && createScene,
-          linkNewSceneToContent: production && linkDrafts,
+          createContentScript: false,
+          createShootingScene: false,
+          linkNewSceneToContent: false,
         },
       });
     } catch {
@@ -270,7 +264,7 @@ export function AssistantPanel({
 
   const error = create.error ?? apply.error
     ?? candidateSceneQueries.find(query => query.error)?.error;
-  const canAsk = requirement.trim().length > 0 && (!production || batchDraft !== null);
+  const canAsk = requirement.trim().length > 0;
   const text = (value: string | null | undefined): string => value?.trim() || g('common.none');
   const localized = (zh: string, en: string): string => locale === 'zh-CN' ? zh : en;
   const contentDraft = suggestion?.newContentScriptDraft ?? null;
@@ -288,7 +282,6 @@ export function AssistantPanel({
         <Field
           label={g('assistant.input')}
           htmlFor="assistant-requirement"
-          hint={production && batchDraft === null ? g('assistant.productionBlocked') : undefined}
         >
           <textarea
             id="assistant-requirement"
@@ -387,9 +380,9 @@ export function AssistantPanel({
           {record.suggestion.failureAdvice.length > 0 ? (
             <section><h3>{g('assistant.advice')}</h3><ul>{record.suggestion.failureAdvice.map(value => <li key={value}>{value}</li>)}</ul></section>
           ) : null}
-          {production && (contentDraft || sceneDraft) ? (
+          {contentDraft || sceneDraft ? (
             <fieldset className="generation-assistant__drafts">
-              <legend>{g('assistant.createDrafts')}</legend>
+              <legend>{g('assistant.proposedDrafts')}</legend>
               {contentDraft ? (
                 <section className="generation-assistant__draft-detail">
                   <h4>{g('assistant.proposedContent')}</h4>
@@ -412,7 +405,6 @@ export function AssistantPanel({
                     <div><dt>{g('assistant.draft.supplement')}</dt><dd>{text(localized(contentDraft.sceneSupplementZh, contentDraft.sceneSupplementEn))}</dd></div>
                     <div><dt>{g('assistant.draft.allowedScenes')}</dt><dd>{g('common.selected', { count: contentDraft.sceneIds.length })}</dd></div>
                   </dl>
-                  <label><input type="checkbox" checked={createContent} onChange={event => setCreateContent(event.target.checked)} />{g('assistant.createContent')}</label>
                 </section>
               ) : null}
               {sceneDraft ? (
@@ -427,17 +419,13 @@ export function AssistantPanel({
                     <div><dt>{g('assistant.draft.lighting')}</dt><dd>{text(localized(sceneDraft.lightingZh, sceneDraft.lightingEn))}</dd></div>
                     <div><dt>{g('assistant.draft.framing')}</dt><dd>{text(localized(sceneDraft.framingZh, sceneDraft.framingEn))}</dd></div>
                   </dl>
-                  <label><input type="checkbox" checked={createScene} onChange={event => setCreateScene(event.target.checked)} />{g('assistant.createScene')}</label>
                 </section>
-              ) : null}
-              {createContent && createScene ? (
-                <label><input type="checkbox" checked={linkDrafts} onChange={event => setLinkDrafts(event.target.checked)} />{g('assistant.linkDrafts')}</label>
               ) : null}
             </fieldset>
           ) : null}
           <Button
             variant="secondary"
-            disabled={!candidatesReady || record.status !== 'Pending' || (selected.length === 0 && !(production && (createContent || createScene))) || apply.isPending}
+            disabled={!candidatesReady || record.status !== 'Pending' || selected.length === 0 || apply.isPending}
             onClick={() => {
               setLocalApplyError(false);
               setConfirmOpen(true);
@@ -449,8 +437,8 @@ export function AssistantPanel({
       ) : null}
       <ConfirmDialog
         open={confirmOpen}
-        title={production && (createContent || createScene) ? g('assistant.createTitle') : g('assistant.applyTitle')}
-        body={production && (createContent || createScene) ? g('assistant.createBody') : g('assistant.applyBody')}
+        title={g('assistant.applyTitle')}
+        body={g('assistant.applyBody')}
         confirmLabel={g('common.apply')}
         cancelLabel={g('common.cancel')}
         closeLabel={g('common.close')}
