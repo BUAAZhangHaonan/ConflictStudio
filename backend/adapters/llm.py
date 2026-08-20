@@ -107,7 +107,7 @@ class OpenAICompatiblePromptModel:
                     "thinking": {"type": "disabled"},
                     "response_format": {"type": "json_object"},
                     "temperature": 0.2,
-                    "max_tokens": 2048,
+                    "max_tokens": 8192,
                 },
             )
         except httpx.TimeoutException:

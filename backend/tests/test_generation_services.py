@@ -920,7 +920,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
     assert calls[0]["model"] == "deepseek-v4-flash"
     assert calls[0]["thinking"] == {"type": "disabled"}
     assert calls[0]["response_format"] == {"type": "json_object"}
-    assert calls[0]["max_tokens"] == 2048
+    assert calls[0]["max_tokens"] == 8192
     assert (
         "The person grips a ceramic cup with the right hand and lowers both shoulders."
         in prepared.user_input

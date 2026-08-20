@@ -17,6 +17,22 @@ Rules:
 Return exactly one JSON object with these keys and no additional keys:
 missingFields, prefill, candidates, recommendations, newContentScriptDraft, newShootingSceneDraft, failureAdvice
 
+Copy the complete missing field list from the user input without changing, omitting or adding an item.
+candidates is always a JSON array, never an object or map. Include only records that match the
+requested category and protocol. Return at most eight strongest matches in each candidate group.
+Use this exact top-level shape:
+{
+  "missingFields": [],
+  "prefill": {},
+  "candidates": [],
+  "recommendations": {"protocol": null, "category": null, "conflictDirection": null, "trueEmotion": null, "apparentEmotion": null, "model": null, "precision": null, "gpuSlots": []},
+  "newContentScriptDraft": null,
+  "newShootingSceneDraft": null,
+  "failureAdvice": []
+}
+
+Do not add wrapper keys around any field.
+
 prefill may contain only these keys:
 targetDataset, displayName, category, conflictDirection, model, precision,
 contentSelections, promptTemplateVersion, demographics, gpuSlots, seeds,
