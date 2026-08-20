@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .enums import Category, ConflictDirection
 
 
-POLICY_VERSION = "2026-08-15.1"
+POLICY_VERSION = "2026-08-20.1"
 
 COMPONENT_WORD_LIMITS: Mapping[str, int] = {
     "appearance": 18,
@@ -15,7 +15,7 @@ COMPONENT_WORD_LIMITS: Mapping[str, int] = {
     "vocal_delivery": 18,
     "environmental_sound": 17,
     "setting": 18,
-    "camera": 16,
+    "camera": 19,
     "lighting": 16,
 }
 ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX = 14

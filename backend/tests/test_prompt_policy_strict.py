@@ -355,7 +355,7 @@ def test_component_budgets_bound_theoretical_assembly_without_truncation() -> No
         + ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX
         <= FINAL_POSITIVE_PROMPT_MAX_WORDS
     )
-    assert count_english_words(result.final_positive_prompt) == 147
+    assert count_english_words(result.final_positive_prompt) == 150
     for field_name in COMPONENT_WORD_LIMITS:
         assert str(values[_component_alias(field_name)]) in result.final_positive_prompt
 
