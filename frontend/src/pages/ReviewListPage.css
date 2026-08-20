@@ -43,7 +43,7 @@
   margin: 0;
 }
 
-.review-list__results .table-shell { overflow-x: visible; }
+.review-list__results .table-shell { overflow: visible; }
 .review-list__results .table-shell table {
   width: 100%;
   min-width: 0;
@@ -95,7 +95,6 @@
 
 @media (max-width: 1180px) {
   .review-list__filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .review-list__results .table-shell table { min-width: 760px; }
   .review-list__results .table-shell th,
   .review-list__results .table-shell td { white-space: normal; }
   .review-list__results .table-shell th:nth-child(4),
@@ -107,6 +106,8 @@
   .review-list__filter-grid { grid-template-columns: 1fr; }
 
   .review-list__selection-bar,
+  .review-list__results .table-shell { overflow-x: auto; }
+  .review-list__results .table-shell table { min-width: 720px; }
   .review-list__batch {
     align-items: stretch;
     flex-direction: column;

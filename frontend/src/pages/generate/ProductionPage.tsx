@@ -88,6 +88,7 @@ export function ProductionPage() {
   const [templatePage, setTemplatePage] = useState(1);
   const [versionPage, setVersionPage] = useState(1);
   const [savedDraft, setSavedDraft] = useState<BatchDraft | null>(null);
+  const [userEdited, setUserEdited] = useState(false);
   const [savedFormSignature, setSavedFormSignature] = useState(() => JSON.stringify(form));
   const [previewPage, setPreviewPage] = useState(1);
   const [validation, setValidation] = useState(false);
@@ -130,7 +131,7 @@ export function ProductionPage() {
   const selectedVersion = versions.find(item => item.id === form.promptTemplateVersionId)
     ?? (versionDetail?.category === form.category && versionDetail.verificationStatus === 'Verified' ? versionDetail : null);
   const templateOptions = selectedVersion && !templates.some(item => item.id === selectedVersion.templateId)
-    ? [{ id: selectedVersion.templateId, name: selectedVersion.templateName }, ...templates]
+    ? [{ id: selectedVersion.templateId, name: selectedVersion.templateName, category: selectedVersion.category }, ...templates]
     : templates;
   const versionOptions = selectedVersion && !versions.some(item => item.id === selectedVersion.id)
     ? [selectedVersion, ...versions]
@@ -149,12 +150,19 @@ export function ProductionPage() {
       .map(slot => slot.slot),
   );
   const request = buildBatchDraftRequest(form, parseSeeds(form.seeds), availableGpuSlots);
-  const dirty = JSON.stringify(form) !== savedFormSignature;
+  const dirty = userEdited && JSON.stringify(form) !== savedFormSignature;
   const people = demographics(form);
   const seedValues = parseSeeds(form.seeds) ?? [];
   const sceneCount = form.selectedContent.reduce((total, item) => total + item.selectedSceneIds.length, 0);
   const localTotal = sceneCount * people.length * seedValues.length;
   const preview = previewMutation.data?.batchDraftId === savedDraft?.id ? previewMutation.data : null;
+  const countSummary = (combinations: number, seeds: number, videos: number) => g('production.count', {
+    combinations: g(combinations === 1 ? 'production.combinationCount_one' : 'production.combinationCount_other', { count: combinations }),
+    seeds: g(seeds === 1 ? 'production.seedCount_one' : 'production.seedCount_other', { count: seeds }),
+    videos: g(videos === 1 ? 'production.videoCount_one' : 'production.videoCount_other', { count: videos }),
+  });
+  const submitCount = preview?.totalCount ?? localTotal;
+  const submitBodyKey = submitCount === 1 ? 'production.submitBody_one' : 'production.submitBody_other';
   const previewRows = preview?.allocations.slice((previewPage - 1) * 20, previewPage * 20) ?? [];
   const previewPages = preview ? Math.ceil(preview.allocations.length / 20) : 0;
   const queryError = datasetsQuery.error ?? selectedDatasetQuery.error ?? contentQuery.error
@@ -223,9 +231,11 @@ export function ProductionPage() {
       return next ? { ...current, selectedContent: [...current.selectedContent, next] } : current;
     });
     previewMutation.reset();
+    setUserEdited(true);
   };
 
   const selectPage = () => {
+    setUserEdited(true);
     const choices = content.map(item => contentChoice(item.id)).filter((item): item is SelectedContent => item !== null);
     setForm(current => ({
       ...current,
@@ -240,6 +250,7 @@ export function ProductionPage() {
   };
 
   const clearPage = () => {
+    setUserEdited(true);
     setForm(current => ({
       ...current,
       selectedContent: current.selectedContent.filter(item => !content.some(pageItem => pageItem.id === item.id)),
@@ -270,6 +281,7 @@ export function ProductionPage() {
       setSavedDraft(value);
       setSavedFormSignature(JSON.stringify(form));
       previewMutation.reset();
+      setUserEdited(false);
       setValidation(false);
     } finally {
       setSaveConfirmOpen(false);
@@ -337,7 +349,7 @@ export function ProductionPage() {
     promptTemplateVersion: selectedVersion ? {
       id: selectedVersion.id,
       expectedRevision: selectedVersion.revision,
-      label: selectedVersion.templateName + ' ' + selectedVersion.version,
+      label: g('test.versionOption', { category: categoryLabel(g, selectedVersion.category), version: selectedVersion.version }),
     } : null,
     demographics: people,
     gpuSlots: form.gpuSlots,
@@ -365,6 +377,7 @@ export function ProductionPage() {
     setForm(nextForm);
     setSavedDraft(refreshed);
     setSavedFormSignature(JSON.stringify(nextForm));
+    setUserEdited(false);
     setValidation(false);
     previewMutation.reset();
   };
@@ -397,7 +410,13 @@ export function ProductionPage() {
         submitMutation.reset();
       }} /> : null}
 
-      <section className="panel generation-form generation-production-form" aria-labelledby="production-form-title">
+      <section
+        className="panel generation-form generation-production-form"
+        aria-labelledby="production-form-title"
+        onChangeCapture={event => {
+          if ((event.target as HTMLElement).id !== 'production-dataset-search') setUserEdited(true);
+        }}
+      >
         <div className="section-header"><h2 id="production-form-title">{g('production.form')}</h2></div>
 
         <fieldset className="generation-production-section">
@@ -418,7 +437,7 @@ export function ProductionPage() {
           <div className="generation-selection-actions">
             <Button variant="secondary" disabled={!canSelectPage} onClick={selectPage}>{g('production.selectPage')}</Button>
             <Button variant="quiet" onClick={clearPage}>{g('production.clearPage')}</Button>
-            <Button variant="quiet" onClick={() => setForm(current => ({ ...current, selectedContent: [] }))}>{g('production.clearAll')}</Button>
+            <Button variant="quiet" onClick={() => { setUserEdited(true); setForm(current => ({ ...current, selectedContent: [] })); }}>{g('production.clearAll')}</Button>
           </div>
           <div className="generation-content-list">
             {content.length === 0 ? <p>{g('state.filtered')}</p> : content.map(item => {
@@ -432,8 +451,8 @@ export function ProductionPage() {
           </div>
           <Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} />
           <div className="generation-form__grid">
-            <Field label={g('production.template')} htmlFor="production-template"><select id="production-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{templateOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-            <Field label={g('production.version')} htmlFor="production-version"><select id="production-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{versionOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{item.templateName} {item.version}</option>)}</select></Field>
+            <Field label={g('production.template')} htmlFor="production-template"><select id="production-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{templateOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{categoryLabel(g, item.category)}</option>)}</select></Field>
+            <Field label={g('production.version')} htmlFor="production-version"><select id="production-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{versionOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })}</option>)}</select></Field>
           </div>
           <div className="generation-source-pages">
             <div><span>{g('production.templatePage')}</span><Pagination page={templatesQuery.data?.page ?? templatePage} totalPages={templatesQuery.data?.totalPages ?? 0} total={templatesQuery.data?.total ?? 0} onPageChange={setTemplatePage} /></div>
@@ -464,7 +483,7 @@ export function ProductionPage() {
           <GpuPanel />
         </fieldset>
 
-        <p className="generation-count" role="status">{g('production.count', { combinations: sceneCount * people.length, seeds: seedValues.length, total: localTotal })}</p>
+        <p className="generation-count" role="status">{countSummary(sceneCount * people.length, seedValues.length, localTotal)}</p>
         {validation ? <p className="field__error" role="alert">{g('production.validation')}</p> : null}
         <div className="generation-form__actions">
           <Button variant="secondary" onClick={() => setSaveConfirmOpen(true)}>{g('production.save')}</Button>
@@ -476,7 +495,7 @@ export function ProductionPage() {
       <section className="panel generation-preview" aria-labelledby="production-preview-title">
         <div className="section-header"><div><h2 id="production-preview-title">{g('production.previewTitle')}</h2><p>{g('production.previewHint')}</p></div></div>
         {!preview ? <p>{g('state.empty')}</p> : <>
-          <p>{g('production.count', { combinations: preview.combinationCount, seeds: preview.seedCount, total: preview.totalCount })}</p>
+          <p>{countSummary(preview.combinationCount, preview.seedCount, preview.totalCount)}</p>
           <TableShell caption={g('production.previewTitle')} columns={[
             { key: 'sequence', label: g('production.sequence') },
             { key: 'content', label: g('production.content') },
@@ -498,7 +517,7 @@ export function ProductionPage() {
 
       {unsavedDialog}
       <ConfirmDialog open={saveConfirmOpen} title={g('production.saveTitle')} body={g('production.saveBody')} confirmLabel={g('production.save')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void save()} onClose={() => setSaveConfirmOpen(false)} busy={saveMutation.isPending} />
-      <ConfirmDialog open={submitConfirmOpen} title={g('production.submitTitle')} body={g('production.submitBody', { count: preview?.totalCount ?? localTotal, dataset: selectedDatasetName })} confirmLabel={g('production.submit')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void submit(false)} onClose={() => setSubmitConfirmOpen(false)} busy={submitMutation.isPending} />
+      <ConfirmDialog open={submitConfirmOpen} title={g('production.submitTitle')} body={g(submitBodyKey, { count: submitCount, dataset: selectedDatasetName })} confirmLabel={g('production.submit')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void submit(false)} onClose={() => setSubmitConfirmOpen(false)} busy={submitMutation.isPending} />
       <ConfirmDialog open={switchConfirmOpen} title={g('production.switchTitle')} body={g('production.switchBody')} confirmLabel={g('common.confirm')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void submit(true)} onClose={() => setSwitchConfirmOpen(false)} busy={submitMutation.isPending} />
     </GenerationScaffold>
   );

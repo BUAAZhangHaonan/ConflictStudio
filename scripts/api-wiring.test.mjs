@@ -197,7 +197,9 @@ test('settings uses real health, dataset, GPU and reviewer queries with explicit
 test('archive uses preview, sync, manifest download and canonical return locations', () => {
   for (const hook of ['useArchivesQuery', 'usePreviewArchiveMutation', 'useSyncArchiveMutation']) assert.match(archiveSource, new RegExp(hook));
   assert.match(archiveSource, /\/api\/archives\/\$\{archive\.datasetId\}\/manifest/u);
-  assert.match(archiveSource, /<Pagination page=\{samplesQuery\.data\?\.page/u);
+  assert.match(archiveSource, /const archiveTotal = archive\?\.currentCount \?\? 0/u);
+  assert.match(archiveSource, /archiveTotal === 0/u);
+  assert.doesNotMatch(archiveSource, /rows\.length === 0[\s\S]{0,300}<Pagination/u);
   assert.match(archiveSource, /buildArchiveLocation/u);
   assert.match(archiveSource, /reviewDetailLocation\(sample\.id, returnTo\)/u);
   assert.match(archiveSource, /sample\.primaryMedia\.url/u);
@@ -219,6 +221,8 @@ test('workspace is a card list through 1024px and keeps every action visible', (
 
 test('generation navigation has only Test, Generate and Results routes', () => {
   for (const route of ['/generate/test', '/generate/production', '/generate/results']) {
+  assert.match(appShellSource, /function currentPrimaryPath\(pathname: string\)/u);
+  assert.match(appShellSource, /pathname\.startsWith\('\/review'\)/u);
     assert.match(appSource, new RegExp(route.replaceAll('/', '\\/')));
     assert.match(appShellSource, new RegExp(route.replaceAll('/', '\\/')));
   }
@@ -259,7 +263,9 @@ test('formal generation uses explicit valid combinations and current preview and
   assert.equal(productionPageSource.includes('preview?.allocations.slice((previewPage - 1) * 20, previewPage * 20)'), true);
   assert.match(productionPageSource, /expectedGpuRevisions: preview\.gpuRevisions/u);
   assert.match(productionPageSource, /const unsavedDialog = useUnsavedChanges\(dirty\)/u);
-  assert.match(productionPageSource, /JSON\.stringify\(form\) !== savedFormSignature/u);
+  assert.match(productionPageSource, /userEdited && JSON\.stringify\(form\) !== savedFormSignature/u);
+  assert.match(productionPageSource, /setUserEdited\(false\)/u);
+  assert.match(productionPageSource, /production-dataset-search/);
   assert.match(productionPageSource, /\{unsavedDialog\}/u);
   assert.match(productionPageSource, /queryClient\.fetchQuery\([\s\S]*generationQueries\.batchDraft/u);
   assert.match(productionPageSource, /productionFormFromDraft\(refreshed, templateVersion\.templateId\)/u);

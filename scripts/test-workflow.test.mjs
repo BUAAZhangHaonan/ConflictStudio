@@ -172,3 +172,14 @@ test('all Test controls are state controlled and formal dataset promotion is abs
   }
   assert.doesNotMatch(`${pageSource}\n${resourcesSource}`, /promote|formal dataset control|datasetId|targetDataset/iu);
 });
+
+test('frequent Test controls come before collapsed resource management and templates show their class', () => {
+  const formIndex = pageSource.indexOf('generation-test-layout');
+  const historyIndex = pageSource.indexOf('generation-test-history');
+  const resourcesIndex = pageSource.indexOf('generation-resources-disclosure');
+  assert.equal(formIndex >= 0 && historyIndex > formIndex && resourcesIndex > historyIndex, true);
+  assert.match(pageSource, /<details className="panel generation-resources-disclosure">/u);
+  assert.doesNotMatch(pageSource, /<details className="panel generation-resources-disclosure" open/u);
+  assert.match(pageSource, /categoryLabel\(g, item\.category\)/u);
+  assert.match(pageSource, /test\.versionOption/u);
+});

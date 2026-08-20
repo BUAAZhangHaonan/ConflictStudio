@@ -181,7 +181,7 @@ export function TestPage() {
     ? [selectedContent, ...content]
     : content;
   const templateOptions = selectedVersion && !templates.some(item => item.id === selectedVersion.templateId)
-    ? [{ id: selectedVersion.templateId, name: selectedVersion.templateName }, ...templates]
+    ? [{ id: selectedVersion.templateId, name: selectedVersion.templateName, category: selectedVersion.category }, ...templates]
     : templates;
   const versionOptions = selectedVersion && !versions.some(item => item.id === selectedVersion.id)
     ? [selectedVersion, ...versions]
@@ -325,7 +325,7 @@ export function TestPage() {
     promptTemplateVersion: selectedVersion ? {
       id: selectedVersion.id,
       expectedRevision: selectedVersion.revision,
-      label: selectedVersion.templateName + ' ' + selectedVersion.version,
+      label: g('test.versionOption', { category: categoryLabel(g, selectedVersion.category), version: selectedVersion.version }),
     } : null,
     demographics: [{ age: form.age, gender: form.gender, ethnicity: form.ethnicity }],
     seeds,
@@ -382,15 +382,6 @@ export function TestPage() {
         onApply={applyAssistant}
       />
       <RelationshipGuide production={false} />
-      <TestResources
-        testedVersionIds={testedVersionIds}
-        onVersionCreated={(id, templateId) => setForm(current => ({
-          ...current,
-          promptTemplateId: templateId,
-          promptTemplateVersionId: id,
-        }))}
-        onVersionVerified={id => setForm(current => ({ ...current, promptTemplateVersionId: id }))}
-      />
       {copied ? <p className="generation-isolation-note" role="status">{g('test.copied')}</p> : null}
       {queryError ? <OperationFeedback error={queryError} onDismiss={() => void Promise.all([
         contentQuery.refetch(), selectedContentQuery.refetch(), templatesQuery.refetch(), versionsQuery.refetch(),
@@ -422,8 +413,8 @@ export function TestPage() {
             <Field label={g('test.direction')} htmlFor="test-direction"><select id="test-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, contentScriptId: null, sceneId: null }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
             <Field label={g('test.content')} htmlFor="test-content"><select id="test-content" value={form.contentScriptId ?? ''} onChange={event => setForm(current => ({ ...current, contentScriptId: event.target.value ? Number(event.target.value) : null, sceneId: null }))}>{content.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{contentOptions.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
             <Field label={g('test.scene')} htmlFor="test-scene"><select id="test-scene" value={form.sceneId ?? ''} disabled={scenes.length === 0} onChange={event => setForm(current => ({ ...current, sceneId: event.target.value ? Number(event.target.value) : null }))}>{scenes.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{scenes.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
-            <Field label={g('test.template')} htmlFor="test-template"><select id="test-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-            <Field label={g('test.version')} htmlFor="test-version"><select id="test-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{item.templateName} {item.version} {g(item.verificationStatus === 'Verified' ? 'test.resource.verified' : 'test.resource.draft')}</option>)}</select></Field>
+            <Field label={g('test.template')} htmlFor="test-template"><select id="test-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{categoryLabel(g, item.category)}</option>)}</select></Field>
+            <Field label={g('test.version')} htmlFor="test-version"><select id="test-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })} {g(item.verificationStatus === 'Verified' ? 'test.resource.verified' : 'test.resource.draft')}</option>)}</select></Field>
           </div>
 
           <div className="generation-source-pages">
@@ -485,6 +476,19 @@ export function TestPage() {
         <p className="generation-isolation-note">{g('test.isolation')}</p>
         {recent.length === 0 ? <p>{g('state.empty')}</p> : <ul className="generation-job-list">{recent.map(job => <li key={job.id}><div className="generation-job-row"><div><strong>{job.displayName}</strong><span>{g(('source.' + job.source) as GenerationKey)}</span></div><StatusBadge label={g(('job.' + job.status) as GenerationKey)} kind={jobStatusKind(job.status)} /><span>{profileLabel(job.model, job.precision)}</span><time dateTime={job.updatedAt}>{formatDateTime(job.updatedAt)}</time><div className="generation-row-actions"><Link className="button button--quiet" to={'/generate/results?tab=test&job=' + job.id}>{g('common.view')}</Link><Button variant="quiet" onClick={() => setHiddenIds(hideTestResult(job.id))}>{g('common.hide')}</Button></div></div></li>)}</ul>}
       </section>
+
+      <details className="panel generation-resources-disclosure">
+        <summary>{g('test.resource.manage')}</summary>
+        <TestResources
+          testedVersionIds={testedVersionIds}
+          onVersionCreated={(id, templateId) => setForm(current => ({
+            ...current,
+            promptTemplateId: templateId,
+            promptTemplateVersionId: id,
+          }))}
+          onVersionVerified={id => setForm(current => ({ ...current, promptTemplateVersionId: id }))}
+        />
+      </details>
 
       <ConfirmDialog open={runConfirmOpen} title={g('test.runTitle')} body={g('test.runBody')} confirmLabel={g('test.run')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void runTest(false)} onClose={() => setRunConfirmOpen(false)} busy={promptTestMutation.isPending || videoTestMutation.isPending} />
       <ConfirmDialog open={switchConfirmOpen} title={g('production.switchTitle')} body={g('production.switchBody')} confirmLabel={g('common.confirm')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void runTest(true)} onClose={() => setSwitchConfirmOpen(false)} busy={videoTestMutation.isPending} />

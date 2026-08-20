@@ -283,5 +283,7 @@ test('list localizes emotion values and fits the desktop content width', () => {
   assert.match(locales, /contentment: '满足'/u);
   assert.match(locales, /sadness: '悲伤'/u);
   assert.match(css, /table-layout: fixed/u);
+  assert.match(css, /\.review-list__results \.table-shell \{ overflow: visible; \}/u);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*overflow-x: auto/u);
   assert.doesNotMatch(css, /min-width: 1240px/u);
 });

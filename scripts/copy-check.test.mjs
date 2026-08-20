@@ -12,6 +12,7 @@ const validTimeSource = [
 ].join('\n');
 const enUSSource = readFileSync(new URL('../frontend/src/locales/en-US.ts', import.meta.url), 'utf8');
 const zhCNSource = readFileSync(new URL('../frontend/src/locales/zh-CN.ts', import.meta.url), 'utf8');
+const generationLocaleSource = readFileSync(new URL('../frontend/src/locales/features/generation.ts', import.meta.url), 'utf8');
 const workspaceLocaleSource = readFileSync(new URL('../frontend/src/locales/features/workspaceSettingsStatistics.ts', import.meta.url), 'utf8');
 
 function fixture(files) {
@@ -96,6 +97,13 @@ test('keeps blocked, mixed-language, and local-time checks active', () => {
     assert.equal(failures.some(value => value.includes('local time formatting bypass')), true);
     assert.equal(failures.filter(value => value.includes('mixed language')).length, 2);
   });
+  assert.match(workspaceLocaleSource, /datasetCount_one: '\{\{count\}\} dataset'/u);
+});
+
+test('generation English copy has singular and plural counts', () => {
+  assert.match(generationLocaleSource, /combinationCount_one': '\{\{count\}\} combination'/u);
+  assert.match(generationLocaleSource, /seedCount_one': '\{\{count\}\} seed'/u);
+  assert.match(generationLocaleSource, /videoCount_one': '\{\{count\}\} video'/u);
 });
 
 test('dataset states and reviewer read-only guidance have complete English and Chinese copy', () => {

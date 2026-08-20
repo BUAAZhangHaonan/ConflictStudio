@@ -944,6 +944,21 @@
   gap: 14px;
 }
 
+.generation-resources-disclosure > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.generation-resources-disclosure[open] > summary {
+  margin-bottom: 16px;
+}
+
+.generation-resources-disclosure > .generation-resources {
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
 .generation-resource-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(300px, 1fr));
