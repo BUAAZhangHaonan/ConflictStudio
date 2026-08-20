@@ -26,7 +26,7 @@ if (!existsSync(entryScript)) {
 } else if (statSync(entryScript).size >= 450_000) {
   failures.push(`frontend/dist/assets/app.js is ${statSync(entryScript).size} bytes; route splitting is not effective`);
 }
-for (const chunkName of ['GeneratePage.js', 'ReviewPage.js', 'ArchivePage.js', 'SettingsPage.js', 'StatisticsPage.js']) {
+for (const chunkName of ['GeneratePage.js', 'ReviewListPage.js', 'ReviewDetailPage.js', 'ArchivePage.js', 'SettingsPage.js', 'StatisticsPage.js']) {
   if (!existsSync(join(distRoot, 'assets', chunkName))) {
     failures.push(`frontend/dist/assets/${chunkName} is missing`);
   }

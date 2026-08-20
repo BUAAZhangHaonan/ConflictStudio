@@ -29,7 +29,7 @@ const focusableSelector = [
 function pageTitleKey(pathname: string): string {
   if (pathname === '/workspace') return 'workspace.title';
   if (pathname.startsWith('/generate')) return 'generate.title';
-  if (pathname === '/review') return 'review.title';
+  if (pathname.startsWith('/review')) return 'review.title';
   if (pathname === '/archive') return 'archive.title';
   if (pathname === '/settings') return 'settings.title';
   if (pathname === '/me/statistics') return 'statistics.title';
@@ -145,7 +145,9 @@ export function AppShell({ children }: PropsWithChildren) {
         {primaryNavigation.map(item => {
           const isCurrent = item.key === 'generate'
             ? location.pathname.startsWith('/generate')
-            : location.pathname === item.to;
+            : item.key === 'review'
+              ? location.pathname.startsWith('/review')
+              : location.pathname === item.to;
           return (
             <Link
               key={item.key}

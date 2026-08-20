@@ -603,19 +603,6 @@ export interface ReviewerRename {
   expectedRevision: number;
 }
 
-export interface ReviewCreate {
-  sampleId: number;
-  reviewerId: number;
-  decision: Exclude<ReviewDecision, 'Pending'>;
-  note: string;
-  expectedRevision: number;
-  expectedReviewRevision: number;
-}
-
-export interface ReviewBatchCreate {
-  items: ReviewCreate[];
-}
-
 export interface Review {
   id: number;
   sampleId: number;
@@ -756,14 +743,6 @@ export interface SampleClassificationConversionUpdate {
   targetCategory: Category;
   conflictDirection: ConflictDirection | null;
   apparentEmotion?: string | null;
-  trueEmotionDescription: string;
-}
-
-export interface SampleClassificationUpdate {
-  expectedRevision: number;
-  targetCategory: Category;
-  conflictDirection: ConflictDirection | null;
-  apparentEmotion?: string;
   trueEmotionDescription: string;
 }
 

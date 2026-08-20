@@ -264,7 +264,7 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('#statistics-dataset option').length === 2);
   assert.equal(await page.locator('#statistics-dataset option').count(), 2, 'Statistics dataset search must keep the all option and one server result.');
 
-  const routes = ['/workspace', '/generate/test', '/generate/production', '/generate/results?tab=test', '/review?sampleId=1', '/archive?dataset=1&page=2', '/settings', '/me/statistics'];
+  const routes = ['/workspace', '/generate/test', '/generate/production', '/generate/results?tab=test', '/review/1', '/archive?dataset=1&page=2', '/settings', '/me/statistics'];
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of [[1440, 900], [1024, 768], [768, 900], [390, 844]]) {
       for (const route of routes) await expectNoOverflow(page, route, locale, width, height);

@@ -182,6 +182,35 @@ export function installPreferences(context, locale = 'en-US') {
   }, { keys: preferenceKeys, selectedLocale: locale });
 }
 
+function reviewSampleView(sample, detail = false) {
+  const protocol = sample.category.endsWith('-VA') ? 'VA' : 'VT';
+  const relation = sample.category.startsWith('A-') ? 'Aligned' : 'Conflict';
+  const base = {
+    id: sample.id, displayId: sample.displayId, datasetId: sample.datasetId, datasetName: sample.datasetName,
+    category: sample.category, protocol, relation, conflictDirection: sample.conflictDirection,
+    reviewDecision: sample.reviewDecision, reviewRevision: sample.reviewRevision, currentReview: sample.currentReview,
+    inArchive: sample.inArchive, archiveSyncStatus: sample.archiveSyncStatus,
+    generationCompatibility: sample.generationCompatibility,
+    primaryMedia: { url: sample.primaryAssetUrl, hasAudio: protocol === 'VA' },
+    trueEmotion: sample.trueEmotion, apparentEmotion: sample.apparentEmotion,
+    contentScriptNameZh: sample.contentScriptNameZh, contentScriptNameEn: sample.contentScriptNameEn,
+    gender: sample.gender, revision: sample.revision, createdAt: sample.createdAt, updatedAt: sample.updatedAt,
+  };
+  if (!detail) return base;
+  return {
+    ...base,
+    sourceMedia: protocol === 'VT' ? { url: sample.primaryAssetUrl, hasAudio: true } : null,
+    dialogue: sample.dialogue, displayText: sample.displayText,
+    trueEmotionDescription: sample.trueEmotionDescription,
+    sceneZh: sample.sceneZh, sceneEn: sample.sceneEn,
+    triggerEventZh: sample.triggerEventZh, triggerEventEn: sample.triggerEventEn,
+    psychologicalBackgroundZh: sample.psychologicalBackgroundZh,
+    psychologicalBackgroundEn: sample.psychologicalBackgroundEn,
+    age: sample.age, ethnicity: sample.ethnicity, model: sample.model,
+    precision: sample.generationRecord.precision, compatibleSceneCount: sample.id === 1 ? 0 : 1,
+  };
+}
+
 export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, name: index === 0 ? 'Lin' : `Reviewer ${index + 1}`, revision: 1, createdAt: timestamp, updatedAt: timestamp })) } = {}) {
   const state = {
     datasets: datasetsFixture.map(dataset => ({ ...dataset })),
@@ -195,6 +224,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
       ...Array.from({ length: 25 }, (_, index) => sampleFixture(index + 31, 'Accepted', 'C-VA')),
     ],
     reviews: [],
+    noteDrafts: new Map(),
     batchDrafts: [],
     jobs: [
       jobFixture,
@@ -224,13 +254,13 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
       id: 7000 + state.reviews.length + 1, sampleId: original.id, reviewerId: input.reviewerId,
       reviewerName: reviewer?.name ?? '', datasetId: original.datasetId,
       protocol: original.category.endsWith('-VA') ? 'VA' : 'VT', relation: original.category.startsWith('A-') ? 'Aligned' : 'Conflict',
-      decision: input.decision, note: input.note, sampleRevision: original.revision,
+      decision: input.decision, note: state.noteDrafts.get(`${original.id}:${input.reviewerId}`)?.note ?? '', sampleRevision: original.revision,
       revision: nextReviewRevision, createdAt: timestamp,
     };
     const next = { ...original, reviewDecision: input.decision, reviewRevision: nextReviewRevision, currentReview: review, revision: original.revision + 1, archiveSyncStatus: 'NeedsUpdate', updatedAt: timestamp };
     state.reviews.push(review);
     state.samples[index] = next;
-    return next;
+    return reviewSampleView(next, true);
   };
 
   const statistics = url => {
@@ -390,11 +420,26 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           return fulfillJson(route, reviewer);
         }
         if (method === 'GET' && /^\/api\/reviewers\/\d+\/statistics$/u.test(path)) return fulfillJson(route, statistics(url));
-        if (method === 'GET' && path === '/api/reviews') return fulfillJson(route, pageValue(url, state.reviews.filter(review => review.sampleId === Number(url.searchParams.get('sampleId')))));
+        const noteDraftMatch = /^\/api\/samples\/(\d+)\/review-note-draft$/u.exec(path);
+        if (noteDraftMatch) {
+          const sampleId = Number(noteDraftMatch[1]);
+          const reviewerId = method === 'GET' ? Number(url.searchParams.get('reviewerId')) : body.reviewerId;
+          const key = `${sampleId}:${reviewerId}`;
+          const current = state.noteDrafts.get(key) ?? { sampleId, reviewerId, sampleRevision: state.samples.find(sample => sample.id === sampleId)?.revision ?? 1, note: '', revision: 0, updatedAt: null };
+          if (method === 'GET') return fulfillJson(route, current);
+          if (method === 'PUT') {
+            if (body.expectedRevision !== current.revision) return fulfillJson(route, { error: { code: 'note_draft_revision_conflict', message: 'The note changed.', details: null } }, 409);
+            const saved = { ...current, note: body.note, revision: current.revision + 1, updatedAt: timestamp };
+            state.noteDrafts.set(key, saved);
+            return fulfillJson(route, saved);
+          }
+        }
         if (method === 'POST' && path === '/api/reviews') {
           const sample = state.samples.find(item => item.id === body.sampleId);
           if (body.decision === 'Accepted' && sample?.generationCompatibility === 'NeedsRegeneration') return fulfillJson(route, { error: { code: 'generation_incompatible', message: 'The generation is incompatible.', details: { resource: 'sample', id: sample.id, generationCompatibility: 'NeedsRegeneration' } } }, 422);
-          return fulfillJson(route, updateSampleWithReview(body), 201);
+          const updated = updateSampleWithReview(body);
+          const next = state.samples.find(sample => sample.id > body.sampleId && sample.reviewDecision === 'Pending');
+          return fulfillJson(route, { ...updated, nextReference: next ? { id: next.id, displayId: next.displayId, page: Math.ceil(next.id / 20) } : null }, 201);
         }
         if (method === 'POST' && path === '/api/reviews/batch') {
           if (body.items.some(input => input.decision === 'Accepted' && state.samples.find(sample => sample.id === input.sampleId)?.generationCompatibility === 'NeedsRegeneration')) return fulfillJson(route, { error: { code: 'generation_incompatible', message: 'The generation is incompatible.', details: {} } }, 422);
@@ -404,17 +449,22 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           const decision = url.searchParams.get('decision');
           const datasetId = Number(url.searchParams.get('datasetId'));
           const protocol = url.searchParams.get('protocol');
-          const category = url.searchParams.get('category');
+          const relation = url.searchParams.get('relation');
+          const direction = url.searchParams.get('direction');
           const search = (url.searchParams.get('search') ?? '').trim().toLocaleLowerCase('en-US');
           const values = state.samples.filter(sample => (!decision || sample.reviewDecision === decision)
             && (!datasetId || sample.datasetId === datasetId)
             && (!protocol || sample.category.endsWith(`-${protocol}`))
-            && (!category || sample.category === category)
+            && (!relation || (sample.category.startsWith('A-') ? 'Aligned' : 'Conflict') === relation)
+            && (!direction || sample.conflictDirection === direction)
             && (!search || `${sample.displayId} ${sample.datasetName}`.toLocaleLowerCase('en-US').includes(search)));
-          return fulfillJson(route, pageValue(url, values));
+          return fulfillJson(route, pageValue(url, values.map(sample => reviewSampleView(sample))));
         }
         const sampleMatch = /^\/api\/samples\/(\d+)$/u.exec(path);
-        if (method === 'GET' && sampleMatch) return fulfillJson(route, state.samples.find(sample => sample.id === Number(sampleMatch[1])));
+        if (method === 'GET' && sampleMatch) {
+          const sample = state.samples.find(item => item.id === Number(sampleMatch[1]));
+          return fulfillJson(route, sample ? reviewSampleView(sample, true) : null, sample ? 200 : 404);
+        }
         const classificationMatch = /^\/api\/samples\/(\d+)\/classification$/u.exec(path);
         if (method === 'PATCH' && classificationMatch) {
           const id = Number(classificationMatch[1]);
@@ -438,7 +488,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
             updatedAt: timestamp,
           };
           state.samples[index] = next;
-          return fulfillJson(route, next);
+          return fulfillJson(route, reviewSampleView(next, true));
         }
         if (method === 'GET' && path === '/api/archives') return fulfillJson(route, pageValue(url, state.archives));
         if (method === 'POST' && path === '/api/archives/preview') {

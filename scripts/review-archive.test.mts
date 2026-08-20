@@ -3,27 +3,63 @@ import test from 'node:test';
 import {
   ARCHIVE_PAGE_SIZE,
   buildArchiveLocation,
+  buildReviewListLocation,
   clampPage,
   pageItems,
-  reviewLocation,
+  readReviewListLocation,
+  restoreReviewListState,
+  reviewDetailLocation,
+  safeReviewListReturnTarget,
   safeReviewReturnTarget,
+  saveReviewListState,
 } from '../frontend/src/reviewArchive.ts';
-import {
-  buildCorrectedSampleBatchPrefill,
-  readCorrectedSampleBatchPrefill,
-} from '../frontend/src/generationPrefill.ts';
 
-test('archive locations are canonical and retain active filters and page', () => {
+function storage() {
+  const values = new Map<string, string>();
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+  };
+}
+
+test('archive links open the detail route and preserve a safe return address', () => {
   const location = buildArchiveLocation({ datasetId: 4, search: 'CS-000021', category: 'C-VT', page: 2 });
   assert.equal(location, '/archive?dataset=4&search=CS-000021&category=C-VT&page=2');
-  assert.equal(reviewLocation(21, location), '/review?sampleId=21&returnTo=%2Farchive%3Fdataset%3D4%26search%3DCS-000021%26category%3DC-VT%26page%3D2');
+  assert.equal(
+    reviewDetailLocation(21, location),
+    '/review/21?returnTo=%2Farchive%3Fdataset%3D4%26search%3DCS-000021%26category%3DC-VT%26page%3D2',
+  );
   assert.equal(safeReviewReturnTarget(location), location);
 });
 
-test('unsafe return targets are rejected', () => {
+test('unsafe return targets never enter a detail link', () => {
   assert.equal(safeReviewReturnTarget('https://example.com/archive'), null);
   assert.equal(safeReviewReturnTarget('/not-allowed'), null);
-  assert.equal(safeReviewReturnTarget('/archive?dataset=1&page=2'), '/archive?dataset=1&page=2');
+  assert.equal(reviewDetailLocation(21, 'https://example.com/archive'), '/review/21');
+});
+
+test('review list location keeps filters and page without a sample query parameter', () => {
+  const location = buildReviewListLocation({
+    search: 'CS-000021',
+    datasetId: 4,
+    decision: 'Pending',
+    protocol: 'VT',
+    relation: 'Conflict',
+    direction: 'Text',
+    page: 3,
+  });
+  assert.equal(location, '/review?search=CS-000021&datasetId=4&decision=Pending&protocol=VT&relation=Conflict&direction=Text&page=3');
+  assert.equal(readReviewListLocation(location).page, 3);
+  assert.equal(new URL(location, 'https://conflictstudio.local').searchParams.has('sampleId'), false);
+  assert.equal(safeReviewListReturnTarget(location), location);
+});
+
+test('review list state restores the exact URL, page and scroll position', () => {
+  const stateStorage = storage();
+  const returnTo = '/review?decision=Pending&page=2';
+  assert.equal(saveReviewListState({ returnTo, page: 2, scrollY: 480 }, stateStorage), true);
+  assert.deepEqual(restoreReviewListState(returnTo, stateStorage), { returnTo, page: 2, scrollY: 480 });
+  assert.equal(restoreReviewListState('/review?page=1', stateStorage), null);
 });
 
 test('archive pagination always uses twenty rows and clamps invalid pages', () => {
@@ -32,44 +68,4 @@ test('archive pagination always uses twenty rows and clamps invalid pages', () =
   assert.deepEqual(pageItems(values, 2), values.slice(20, 40));
   assert.equal(clampPage(0, values.length), 1);
   assert.equal(clampPage(9, values.length), 3);
-});
-
-test('CS-000002 regeneration keeps content 22 and scene 22 in the unsaved prefill', () => {
-  const prefill = buildCorrectedSampleBatchPrefill({
-    displayId: 'CS-000002',
-    category: 'A-VA',
-    conflictDirection: null,
-    promptTemplateVersionId: 7,
-    generationRecord: { model: 'LTX-2.5', precision: 'BF16' },
-    age: 25,
-    gender: 'Female',
-    ethnicity: 'EastAsian',
-  }, {
-    id: 22,
-    nameZh: '随意邀请',
-    nameEn: 'Casual invitation',
-    revision: 4,
-    mode: 'Fixed',
-  }, {
-    id: 22,
-    nameZh: '明亮客厅',
-    nameEn: 'Bright living room',
-    revision: 3,
-  });
-
-  assert.equal(prefill.sourceDisplayId, 'CS-000002');
-  assert.deepEqual(prefill.contentScript, {
-    id: 22,
-    nameZh: '随意邀请',
-    nameEn: 'Casual invitation',
-    revision: 4,
-    mode: 'Fixed',
-  });
-  assert.deepEqual(prefill.scene, {
-    id: 22,
-    nameZh: '明亮客厅',
-    nameEn: 'Bright living room',
-    revision: 3,
-  });
-  assert.deepEqual(readCorrectedSampleBatchPrefill({ correctedSampleBatch: prefill }), prefill);
 });

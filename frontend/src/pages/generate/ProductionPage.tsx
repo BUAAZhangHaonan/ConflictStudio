@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Button, ConfirmDialog, Field, Pagination, TableShell } from '../../components';
 import {
   generationQueries,
@@ -23,7 +23,6 @@ import type {
   GpuSlotName,
 } from '../../api/contracts';
 import { defaultGenerationProfile, ltx25Precisions, models, precisionForModel } from '../../generationProfile';
-import { readCorrectedSampleBatchPrefill } from '../../generationPrefill';
 import { allowedDirections, type Category, type ConflictDirection, type ModelName, type ModelPrecision } from '../../types';
 import { formatCompactDateTime } from '../../time';
 import { AssistantPanel } from './AssistantPanel';
@@ -80,7 +79,6 @@ function emptyForm(): ProductionForm {
 export function ProductionPage() {
   const g = useGenerationCopy();
   const locale = useGenerationLocale();
-  const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProductionForm>(emptyForm);
@@ -184,33 +182,6 @@ export function ProductionPage() {
     if (form.promptTemplateVersionId !== null && selectedVersionQuery.isPending) return;
     setForm(current => ({ ...current, promptTemplateVersionId: versions[0]?.id ?? null }));
   }, [form.promptTemplateVersionId, selectedVersion, selectedVersionQuery.isPending, versions]);
-
-  useEffect(() => {
-    const prefill = readCorrectedSampleBatchPrefill(location.state);
-    if (!prefill) return;
-    setForm(current => ({
-      ...current,
-      category: prefill.category,
-      conflictDirection: prefill.conflictDirection,
-      displayName: defaultName(prefill.category),
-      promptTemplateVersionId: prefill.promptTemplateVersionId,
-      selectedContent: [{
-        id: prefill.contentScript.id,
-        revision: prefill.contentScript.revision,
-        nameZh: prefill.contentScript.nameZh,
-        nameEn: prefill.contentScript.nameEn,
-        mode: prefill.contentScript.mode,
-        scenes: [prefill.scene],
-        selectedSceneIds: [prefill.scene.id],
-      }],
-      selectedAges: [prefill.demographic.age],
-      selectedGenders: [prefill.demographic.gender],
-      selectedEthnicities: [prefill.demographic.ethnicity],
-      model: prefill.model,
-      precision: prefill.precision,
-    }));
-    navigate(location.pathname, { replace: true, state: null });
-  }, [location.pathname, location.state, navigate]);
 
   const changeCategory = (category: Category) => {
     setForm(current => ({

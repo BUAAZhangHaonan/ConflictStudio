@@ -73,9 +73,11 @@ export function buildReviewListLocation(state: ReviewListLocationState): string 
   return query ? `/review?${query}` : '/review';
 }
 
-export function reviewDetailLocation(sampleId: number): string {
+export function reviewDetailLocation(sampleId: number, returnTo?: string): string {
   if (!Number.isInteger(sampleId) || sampleId <= 0) throw new RangeError('sampleId must be a positive integer');
-  return `/review/${sampleId}`;
+  const safeReturnTo = safeReviewReturnTarget(returnTo ?? null);
+  if (safeReturnTo === null) return `/review/${sampleId}`;
+  return `/review/${sampleId}?${new URLSearchParams({ returnTo: safeReturnTo }).toString()}`;
 }
 
 export function safeReviewListReturnTarget(value: string | null): string | null {
@@ -193,13 +195,6 @@ export function buildArchiveLocation(state: ArchiveLocationState): string {
   if (state.page > 1) params.set('page', String(state.page));
   const query = params.toString();
   return query ? `/archive?${query}` : '/archive';
-}
-
-export function reviewLocation(sampleId: number, returnTo: string): string {
-  const params = new URLSearchParams({ sampleId: String(sampleId) });
-  const safeReturnTo = safeReviewReturnTarget(returnTo);
-  if (safeReturnTo) params.set('returnTo', safeReturnTo);
-  return `/review?${params.toString()}`;
 }
 
 const reviewReturnPaths = new Set([

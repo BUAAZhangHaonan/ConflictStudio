@@ -12,7 +12,8 @@ const contractSource = read('../frontend/src/api/contracts.ts');
 const querySource = read('../frontend/src/api/queries.ts');
 const queryClientSource = read('../frontend/src/api/queryClient.ts');
 const jobEventsSource = read('../frontend/src/api/jobEvents.ts');
-const reviewSource = read('../frontend/src/pages/ReviewPage.tsx');
+const reviewListSource = read('../frontend/src/pages/ReviewListPage.tsx');
+const reviewDetailSource = read('../frontend/src/pages/ReviewDetailPage.tsx');
 const archiveSource = read('../frontend/src/pages/ArchivePage.tsx');
 const settingsSource = read('../frontend/src/pages/SettingsPage.tsx');
 const statisticsSource = read('../frontend/src/pages/StatisticsPage.tsx');
@@ -41,7 +42,6 @@ const appSource = read('../frontend/src/app/App.tsx');
 const preferencesSource = read('../frontend/src/preferences.ts');
 const appShellSource = read('../frontend/src/components/AppShell.tsx');
 const firstReviewerSource = read('../frontend/src/app/FirstReviewerDialog.tsx');
-const prefillSource = read('../frontend/src/generationPrefill.ts');
 const packageSource = read('../package.json');
 const drawioSource = read('../docs/generation-flow.drawio');
 const generationLocaleSource = read('../frontend/src/locales/features/generation.ts');
@@ -125,18 +125,14 @@ test('display name failures have plain bilingual messages without backend detail
 });
 
 test('frontend contracts include current generation, review, statistics, archive, health and sample fields', () => {
-  for (const name of ['BatchDraft', 'BatchPreview', 'PromptTestCreate', 'VideoTestCreate', 'ConfigurationAssistant', 'JobItem', 'Reviewer', 'ReviewCreate', 'ReviewBatchCreate', 'Review', 'ReviewerStatistics', 'ArchivePreview', 'Archive', 'Health', 'SampleClassificationUpdate']) {
+  for (const name of ['BatchDraft', 'BatchPreview', 'PromptTestCreate', 'VideoTestCreate', 'ConfigurationAssistant', 'JobItem', 'Reviewer', 'ReviewSampleListRead', 'ReviewSampleDetailRead', 'ReviewNoteDraftRead', 'ReviewSubmissionCreate', 'ReviewBatchSubmissionCreate', 'SampleClassificationConversionUpdate', 'ReviewerStatistics', 'ArchivePreview', 'Archive', 'Health']) {
     assert.match(contractSource, new RegExp(`export (?:interface|type) ${name}\\b`));
   }
-  for (const field of ['reviewerId', 'note', 'expectedRevision', 'expectedReviewRevision']) assert.match(contractSource, new RegExp(`${field}:`));
-  for (const field of ['currentReview', 'inArchive', 'archiveSyncStatus', 'actualContentSummary', 'actualSceneSummary', 'generationCompatibility']) assert.match(contractSource, new RegExp(`${field}:`));
-  const sample = contractSource.match(/export interface Sample \{([\s\S]*?)\n\}/u)?.[1] ?? '';
-  assert.doesNotMatch(sample, /precision:/u);
-  assert.match(sample, /generationRecord: GenerationAttempt;/u);
-  const classification = contractSource.match(/export interface SampleClassificationUpdate \{([\s\S]*?)\n\}/u)?.[1] ?? '';
-  assert.match(classification, /apparentEmotion\?: string;/u);
-  assert.match(classification, /trueEmotionDescription: string;/u);
-  assert.doesNotMatch(classification, /trueEmotion:/u);
+  for (const field of ['reviewerId', 'expectedRevision', 'expectedReviewRevision', 'expectedNoteDraftRevision']) assert.match(contractSource, new RegExp(`${field}:`));
+  const detail = contractSource.match(/export interface ReviewSampleDetailRead extends ReviewSampleListRead \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+  for (const field of ['sourceMedia', 'dialogue', 'displayText', 'trueEmotionDescription', 'model', 'precision', 'compatibleSceneCount']) assert.match(detail, new RegExp(`${field}:`));
+  assert.doesNotMatch(detail, /seed|prompt|attempt|gpu|vlm/iu);
+  assert.doesNotMatch(contractSource, /export interface (?:ReviewCreate|ReviewBatchCreate|SampleClassificationUpdate)\b/u);
 });
 
 test('queries and mutations use only current backend generation and review endpoints', () => {
@@ -169,25 +165,13 @@ test('queries and mutations use only current backend generation and review endpo
   assert.match(querySource, /client\.invalidateQueries\(\{ queryKey: roots\.archives \}\)/u);
 });
 
-test('review uses persistent reviews and a revisioned classification form with coherent emotions', () => {
-  for (const token of ['useCreateReviewMutation', 'useCreateReviewsBatchMutation', 'useUpdateSampleClassificationMutation', 'currentReviewerId', 'expectedReviewRevision', 'expectedRevision', 'batchConfirmOpen', 'classificationOpen', 'targetApparentEmotion', 'targetDescription', 'matchingEmotion']) assert.match(reviewSource, new RegExp(token));
-  assert.match(reviewSource, /conflictTarget \? \{ apparentEmotion:/u);
-  assert.match(reviewSource, /trueEmotionDescription: targetDescription\.trim\(\)/u);
-  assert.match(reviewSource, /preservedTrueEmotion/u);
-  assert.match(reviewSource, /window\.scrollY/u);
-  assert.match(reviewSource, /queueListRef\.current\?\.scrollTop/u);
-  assert.match(reviewSource, /useLayoutEffect/u);
-  assert.match(reviewSource, /focus\(\{ preventScroll: true \}\)/u);
-  assert.match(reviewSource, /navigate\(returnTarget, \{ replace: true \}\)/u);
-  assert.doesNotMatch(reviewSource, /navigate\(-1\)|useMockRepository|useRepositorySnapshot/u);
-  assert.match(reviewSource, /selected\.generationCompatibility === 'NeedsRegeneration'/u);
-  assert.match(reviewSource, /selected\.actualContentSummary\.nameZh/u);
-  assert.match(reviewSource, /selected\.actualSceneSummary\.nameZh/u);
-  assert.match(reviewSource, /disabled=\{preferences\.currentReviewerId === null \|\| selectedNeedsRegeneration\}/u);
-  assert.match(reviewSource, /disabled=\{preferences\.currentReviewerId === null \|\| batchAcceptBlocked\}/u);
-  assert.match(reviewSource, /reviewer\.readOnlyHint/u);
-  assert.match(localeSource, /actualScene: 'Actual shooting scene'/u);
-  assert.match(localeSource, /actualScene: '实际拍摄场景'/u);
+test('review uses separate list and detail routes with current mutations and safe return state', () => {
+  for (const token of ['useReviewSampleListQuery', 'useSubmitReviewBatchMutation', 'saveReviewListState', 'reviewDetailLocation', 'window.scrollY']) assert.match(reviewListSource, new RegExp(token));
+  for (const token of ['useReviewSampleDetailQuery', 'useReviewNoteDraftQuery', 'usePutReviewNoteDraftMutation', 'useSubmitReviewMutation', 'useConvertSampleClassificationMutation', 'expectedNoteDraftRevision', 'nextReference', 'safeReviewReturnTarget']) assert.match(reviewDetailSource, new RegExp(token));
+  assert.match(appSource, /path="\/review" element=\{<ReviewListPage \/>\}/u);
+  assert.match(appSource, /path="\/review\/:sampleId" element=\{<ReviewDetailPage \/>\}/u);
+  assert.doesNotMatch(`${reviewListSource}\n${reviewDetailSource}`, /seed|positivePrompt|negativePrompt|generationRecord|gpuSlot|shortcut/iu);
+  assert.doesNotMatch(querySource, /useCreateReviewMutation|useCreateReviewsBatchMutation|useUpdateSampleClassificationMutation/u);
 });
 
 test('statistics reads one real reviewer statistics response and renders only eight metrics plus activity', () => {
@@ -215,7 +199,8 @@ test('archive uses preview, sync, manifest download and canonical return locatio
   assert.match(archiveSource, /\/api\/archives\/\$\{archive\.datasetId\}\/manifest/u);
   assert.match(archiveSource, /<Pagination page=\{samplesQuery\.data\?\.page/u);
   assert.match(archiveSource, /buildArchiveLocation/u);
-  assert.match(archiveSource, /reviewLocation\(sample\.id, returnTo\)/u);
+  assert.match(archiveSource, /reviewDetailLocation\(sample\.id, returnTo\)/u);
+  assert.match(archiveSource, /sample\.primaryMedia\.url/u);
   assert.match(archiveHelpers, /if \(state\.page > 1\) params\.set\('page'/u);
   assert.doesNotMatch(archiveSource, /archiveJsonl|Blob|URL\.createObjectURL|navigate\(-1\)/u);
   assert.doesNotMatch(archiveSource, /previewSamples\(|byId\.get\(item\.sampleId\)/u);
@@ -279,10 +264,7 @@ test('formal generation uses explicit valid combinations and current preview and
   assert.match(productionPageSource, /queryClient\.fetchQuery\([\s\S]*generationQueries\.batchDraft/u);
   assert.match(productionPageSource, /productionFormFromDraft\(refreshed, templateVersion\.templateId\)/u);
   assert.match(productionPageSource, /results\?tab=production&job=/u);
-  assert.match(reviewSource, /navigate\('\/generate\/production', \{ state \}\)/u);
-  assert.match(reviewSource, /buildCorrectedSampleBatchPrefill\(selected/u);
-  assert.match(prefillSource, /sourceDisplayId: sample\.displayId/u);
-  assert.match(productionPageSource, /readCorrectedSampleBatchPrefill\(location\.state\)/u);
+  assert.doesNotMatch(productionPageSource, /generationPrefill|readCorrectedSampleBatchPrefill|correctedSampleBatch/u);
   assert.doesNotMatch(productionPageSource, /quantity/u);
 });
 
@@ -492,7 +474,7 @@ test('GPU status reasons cover every availability without contradictory ready te
 });
 
 test('production source is disconnected from the removed business mock system', () => {
-  const production = [mainSource, reviewSource, archiveSource, settingsSource, statisticsSource, sharedSource, testPageSource, productionPageSource, resultsPageSource].join('\n');
+  const production = [mainSource, reviewListSource, reviewDetailSource, archiveSource, settingsSource, statisticsSource, sharedSource, testPageSource, productionPageSource, resultsPageSource].join('\n');
   assert.doesNotMatch(production, /MockRepository|RepositoryProvider|useExamplePageState|PageStateBoundary|\?state=/u);
   assert.doesNotMatch(localeSource, /example status|示例状态|example video|示例视频/iu);
 });

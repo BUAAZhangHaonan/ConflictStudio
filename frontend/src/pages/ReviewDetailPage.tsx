@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError, apiErrorMessage } from '../api/client';
 import type { ReviewDecision, ReviewQueue, ReviewSampleDetailRead } from '../api/contracts';
 import {
@@ -17,6 +17,7 @@ import {
   readReviewListLocation,
   readSavedReviewListState,
   reviewDetailLocation,
+  safeReviewReturnTarget,
   saveReviewListState,
 } from '../reviewArchive';
 import type { Category, ConflictDirection, Locale } from '../types';
@@ -62,6 +63,7 @@ export function ReviewDetailPage() {
   const { sampleId: sampleIdParam } = useParams<{ sampleId: string }>();
   const sampleId = positiveSampleId(sampleIdParam);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
   const preferences = usePreferences();
   const reviewerId = preferences.currentReviewerId;
@@ -87,7 +89,7 @@ export function ReviewDetailPage() {
   noteRef.current = note;
 
   const savedListState = useMemo(() => readSavedReviewListState(), []);
-  const returnTo = savedListState?.returnTo ?? '/review';
+  const returnTo = safeReviewReturnTarget(searchParams.get('returnTo')) ?? savedListState?.returnTo ?? '/review';
   const sample = detailQuery.data;
   const canReview = reviewerId !== null;
 

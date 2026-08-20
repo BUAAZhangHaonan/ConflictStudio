@@ -13,7 +13,7 @@ const locales = readFileSync(new URL('../frontend/src/locales/features/reviewArc
 test('detail reads the path sample and restores a safe list return address', () => {
   assert.match(page, /useParams<\{ sampleId: string \}>/);
   assert.match(page, /readSavedReviewListState\(\)/);
-  assert.match(page, /returnTo = savedListState\?\.returnTo \?\? '\/review'/);
+  assert.match(page, /safeReviewReturnTarget\(searchParams\.get\('returnTo'\)\) \?\? savedListState\?\.returnTo \?\? '\/review'/);
   const values = new Map<string, string>();
   const storage = {
     getItem: (key: string) => values.get(key) ?? null,
