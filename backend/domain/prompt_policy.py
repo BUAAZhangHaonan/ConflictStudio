@@ -11,15 +11,15 @@ POLICY_VERSION = "2026-08-20.1"
 
 COMPONENT_WORD_LIMITS: Mapping[str, int] = {
     "appearance": 18,
-    "body_action": 30,
+    "body_action": 36,
     "vocal_delivery": 18,
     "environmental_sound": 17,
-    "setting": 18,
+    "setting": 22,
     "camera": 19,
     "lighting": 16,
 }
 ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX = 14
-FINAL_POSITIVE_PROMPT_MAX_WORDS = 150
+FINAL_POSITIVE_PROMPT_MAX_WORDS = 160
 
 assert (
     sum(COMPONENT_WORD_LIMITS.values()) + ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX
@@ -372,7 +372,7 @@ def validate_final_positive_prompt(
     word_count = count_english_words(narrative)
     if not 80 <= word_count <= FINAL_POSITIVE_PROMPT_MAX_WORDS:
         violations.append(
-            f"positivePrompt must contain 80 to 150 English words; found {word_count}"
+            f"positivePrompt must contain 80 to {FINAL_POSITIVE_PROMPT_MAX_WORDS} English words; found {word_count}"
         )
     if _CJK_RE.search(narrative):
         violations.append(

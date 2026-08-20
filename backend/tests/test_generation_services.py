@@ -929,7 +929,7 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
         "The person sits still with both hands on the table."
         not in result.final_positive_prompt
     )
-    assert "80 to 150 English words" in prepared.system_input
+    assert "80 to 160 English words" in prepared.system_input
     assert "Use present tense only" in prepared.system_input
     assert (
         "obviously, definitely, unmistakably, undeniably, evidently"

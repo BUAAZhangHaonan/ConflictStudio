@@ -328,16 +328,16 @@ def test_domain_validation_enforces_each_component_word_boundary(
         )
 
 
-def test_setting_accepts_18_words_and_rejects_19_words() -> None:
-    setting_at_limit = component_boundary_sentence("setting", 18)
+def test_setting_accepts_22_words_and_rejects_23_words() -> None:
+    setting_at_limit = component_boundary_sentence("setting", 22)
 
     assert validate_generated_component(setting_at_limit, "setting") == setting_at_limit
     with pytest.raises(
         PromptPolicyViolation,
-        match="setting must contain no more than 18 English words; found 19",
+        match="setting must contain no more than 22 English words; found 23",
     ):
         validate_generated_component(
-            component_boundary_sentence("setting", 19), "setting"
+            component_boundary_sentence("setting", 23), "setting"
         )
 
 
@@ -355,7 +355,7 @@ def test_component_budgets_bound_theoretical_assembly_without_truncation() -> No
         + ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX
         <= FINAL_POSITIVE_PROMPT_MAX_WORDS
     )
-    assert count_english_words(result.final_positive_prompt) == 150
+    assert count_english_words(result.final_positive_prompt) == 160
     for field_name in COMPONENT_WORD_LIMITS:
         assert str(values[_component_alias(field_name)]) in result.final_positive_prompt
 
@@ -365,8 +365,8 @@ def test_system_prompt_states_budgets_target_and_complete_valid_json_example() -
         prompt_context(mode=ContentMode.GENERATIVE)
     )
 
-    assert "Target 100 to 135 English words" in prepared.system_input
-    assert "hard final limit remains 80 to 150 English words" in prepared.system_input
+    assert "Target 100 to 140 English words" in prepared.system_input
+    assert "hard final limit remains 80 to 160 English words" in prepared.system_input
     for field_name, max_words in COMPONENT_WORD_LIMITS.items():
         assert f"{_component_alias(field_name)} {max_words}" in prepared.system_input
     example = prepared.system_input.rsplit("\n", 1)[-1]
@@ -376,7 +376,7 @@ def test_system_prompt_states_budgets_target_and_complete_valid_json_example() -
         component_words = count_english_words(getattr(output, field_name))
         assert component_words <= max_words
         example_component_words += component_words
-    assert 100 <= example_component_words + ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX <= 135
+    assert 100 <= example_component_words + ASSEMBLY_ENGLISH_WORD_OVERHEAD_MAX <= 140
 
 
 @pytest.mark.parametrize(
@@ -450,7 +450,7 @@ def test_four_categories_use_distinct_components_and_map_spoken_text(
     assert result.vt_text is None if is_va else result.vt_text == values["spokenText"]
     assert str(values["bodyAction"]) in result.final_positive_prompt
     assert str(values["vocalDelivery"]) in result.final_positive_prompt
-    assert 80 <= count_english_words(result.final_positive_prompt) <= 150
+    assert 80 <= count_english_words(result.final_positive_prompt) <= FINAL_POSITIVE_PROMPT_MAX_WORDS
     for field_name in COMPONENT_WORD_LIMITS:
         assert str(values[_component_alias(field_name)]) in result.final_positive_prompt
     assert direction_rule(category, direction) in prepared.system_input
