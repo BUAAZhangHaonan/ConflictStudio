@@ -195,6 +195,7 @@ async def create_running_request(
     model: ModelName = ModelName.LTX,
     precision: Precision | None = None,
     confirm_model_switch: bool = False,
+    seeds: list[int] | None = None,
 ) -> tuple[Database, RenderRequest]:
     data_root.mkdir()
     database = Database(data_root)
@@ -277,7 +278,7 @@ async def create_running_request(
                 )
             ],
             gpuSlots=[GpuSlotName.GPU0],
-            seeds=[1208],
+            seeds=seeds or [1208],
         )
     )
     with database.immediate_session() as session:
@@ -296,7 +297,12 @@ async def create_running_request(
     )
     with database.immediate_session() as session:
         job = session.get(Job, submitted.id)
-        item = session.exec(select(JobItem).where(JobItem.job_id == submitted.id)).one()
+        item = session.exec(
+            select(JobItem)
+            .where(JobItem.job_id == submitted.id)
+            .order_by(JobItem.sequence)
+        ).first()
+        assert item is not None
         snapshot = session.get(BatchVideoInputSnapshot, item.input_snapshot_id)
         slot = session.get(GpuSlot, GpuSlotName.GPU0)
         assert job is not None and snapshot is not None and slot is not None
@@ -927,8 +933,23 @@ def test_gateway_cancels_accepted_prompt_and_records_only_current_item_failure(
         database, request = await create_running_request(
             tmp_path / "submit-state-failure",
             category=Category.A_VA,
+            seeds=[1208, 1209],
         )
         gateway, gpu0, _, _ = make_gateway(database)
+
+        with database.read_session() as session:
+            job_before = session.get(Job, request.job_id)
+            item_before = session.get(JobItem, request.job_item_id)
+            sibling_before = session.exec(
+                select(JobItem).where(
+                    JobItem.job_id == request.job_id,
+                    JobItem.id != request.job_item_id,
+                )
+            ).one()
+            event_count_before = len(
+                session.exec(select(JobEvent).where(JobEvent.job_id == request.job_id)).all()
+            )
+        assert job_before is not None and item_before is not None
 
         def fail_record_running(_: RenderRequest, __: str) -> tuple[int, int]:
             raise RuntimeError("database write failed")
@@ -943,16 +964,36 @@ def test_gateway_cancels_accepted_prompt_and_records_only_current_item_failure(
         with database.read_session() as session:
             job = session.get(Job, request.job_id)
             item = session.get(JobItem, request.job_item_id)
+            sibling = session.get(JobItem, sibling_before.id)
             attempts = session.exec(select(GenerationAttempt)).all()
-            events = session.exec(
-                select(JobEvent).where(JobEvent.event_type == "ItemFailed")
+            job_events = session.exec(
+                select(JobEvent).where(JobEvent.job_id == request.job_id)
             ).all()
             slot = session.get(GpuSlot, request.gpu_slot)
-        assert job is not None and job.status is JobStatus.RUNNING
+        assert job is not None and job.status is JobStatus.FAILED
         assert job.failed_count == 1
+        assert job.failure_code == "renderer_state_persist_failed"
+        assert job.failure_reason == "The accepted render could not be recorded and was cancelled"
+        assert job.finished_at is not None
+        assert job.revision == job_before.revision + 1
         assert item is not None and item.status is JobStatus.FAILED
         assert item.failure_code == "renderer_state_persist_failed"
-        assert len(events) == 1 and events[0].item_id == item.id
+        assert item.revision == item_before.revision + 1
+        assert sibling is not None
+        assert sibling.status is sibling_before.status
+        assert sibling.stage is sibling_before.stage
+        assert sibling.failure_code == sibling_before.failure_code
+        assert sibling.failure_reason == sibling_before.failure_reason
+        assert sibling.revision == sibling_before.revision
+        assert len(job_events) == event_count_before + 1
+        failure_events = [
+            event
+            for event in job_events
+            if event.event_type in {"ItemFailed", "JobFailed"}
+        ]
+        assert len(failure_events) == 1
+        assert failure_events[0].event_type == "ItemFailed"
+        assert failure_events[0].item_id == item.id
         assert attempts == []
         assert slot is not None and slot.availability is GpuAvailability.BUSY
         assert slot.active_job_id == job.id

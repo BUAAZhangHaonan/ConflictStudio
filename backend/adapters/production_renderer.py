@@ -973,7 +973,11 @@ class ProductionRendererGateway:
             items = session.exec(
                 select(JobItem).where(JobItem.job_id == request.job_id)
             ).all()
+            job.status = JobStatus.FAILED
             job.failed_count = sum(row.status is JobStatus.FAILED for row in items)
+            job.failure_code = code
+            job.failure_reason = reason
+            job.finished_at = timestamp
             job.updated_at = timestamp
             job.revision += 1
 
