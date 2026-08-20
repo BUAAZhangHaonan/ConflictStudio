@@ -28,6 +28,9 @@ test('detail reads the path sample and restores a safe list return address', () 
 });
 
 test('VA stays sounded and VT offers one source audio toggle only when source media exists', () => {
+  assert.match(page, /displayedMedia = showSourceToggle && useSourceAudio && sample\.sourceMedia \? sample\.sourceMedia : sample\.primaryMedia/);
+  assert.match(page, /key=\{displayedMedia\.url\}/);
+  assert.match(page, /src=\{displayedMedia\.url\}/);
   assert.match(page, /showSourceToggle = sample\.protocol === 'VT' && sample\.sourceMedia !== null/);
   assert.match(page, /muted=\{sample\.protocol === 'VT' && !useSourceAudio\}/);
   assert.match(page, /showSourceToggle \? \(/);
@@ -97,6 +100,9 @@ test('responsive CSS contains the wide split and three narrow widths', () => {
   assert.match(css, /grid-template-columns: minmax\(0, 1\.1fr\) minmax\(26rem, 0\.9fr\)/);
   assert.match(css, /@media \(max-width: 1279px\)/);
   assert.match(css, /grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(css, /aspect-ratio: 16 \/ 9/);
+  assert.match(css, /height: auto/);
+  assert.doesNotMatch(css, /70vh|52rem|44rem/);
   assert.match(css, /width: 100%/);
   assert.match(css, /object-fit: contain/);
   assert.match(css, /overflow-x: hidden/);

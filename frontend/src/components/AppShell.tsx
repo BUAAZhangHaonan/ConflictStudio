@@ -26,6 +26,13 @@ const focusableSelector = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+function currentPrimaryPath(pathname: string): string | null {
+  if (pathname.startsWith('/generate')) return '/generate/test';
+  if (pathname.startsWith('/review')) return '/review';
+  if (pathname === '/workspace' || pathname === '/archive' || pathname === '/settings') return pathname;
+  return null;
+}
+
 function pageTitleKey(pathname: string): string {
   if (pathname === '/workspace') return 'workspace.title';
   if (pathname.startsWith('/generate')) return 'generate.title';
@@ -41,6 +48,7 @@ export function AppShell({ children }: PropsWithChildren) {
   const location = useLocation();
   const preferences = usePreferences();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const activePrimaryPath = currentPrimaryPath(location.pathname);
   const drawerRef = useRef<HTMLDialogElement>(null);
   const reviewerMenuRef = useRef<HTMLDetailsElement>(null);
   const drawerButtonRef = useRef<HTMLButtonElement>(null);
@@ -143,11 +151,7 @@ export function AppShell({ children }: PropsWithChildren) {
       <div className="app-shell__brand">{t('app.product')}</div>
       <nav className="primary-nav" aria-label={t('app.mainNavigation')}>
         {primaryNavigation.map(item => {
-          const isCurrent = item.key === 'generate'
-            ? location.pathname.startsWith('/generate')
-            : item.key === 'review'
-              ? location.pathname.startsWith('/review')
-              : location.pathname === item.to;
+          const isCurrent = activePrimaryPath === item.to;
           return (
             <Link
               key={item.key}

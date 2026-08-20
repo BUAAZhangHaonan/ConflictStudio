@@ -274,3 +274,14 @@ test('list rows use only the ten approved visible data fields and batch confirma
   assert.match(confirmation, /selectedSamples\.length/u);
   assert.match(confirmation, /batchConfirmConsequence/u);
 });
+
+test('list localizes emotion values and fits the desktop content width', () => {
+  const css = readFileSync(new URL('../frontend/src/pages/ReviewListPage.css', import.meta.url), 'utf8');
+  const locales = readFileSync(new URL('../frontend/src/locales/features/reviewArchive.ts', import.meta.url), 'utf8');
+  assert.match(pageSource, /emotionKey\(sample\.trueEmotion\)/u);
+  assert.match(pageSource, /emotionKey\(sample\.apparentEmotion\)/u);
+  assert.match(locales, /contentment: '满足'/u);
+  assert.match(locales, /sadness: '悲伤'/u);
+  assert.match(css, /table-layout: fixed/u);
+  assert.doesNotMatch(css, /min-width: 1240px/u);
+});

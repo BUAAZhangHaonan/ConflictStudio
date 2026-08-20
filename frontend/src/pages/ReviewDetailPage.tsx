@@ -285,6 +285,7 @@ export function ReviewDetailPage() {
       <div className="review-detail__layout">
         <section className="panel review-detail__media" aria-label={t('review.detail.aria.media')}>
           <MediaPanel
+            key={displayedMedia.url}
             title={useSourceAudio ? t('review.detail.sourceVideo') : t('review.detail.primaryVideo')}
             mediaLabel={t('review.mediaLabel', { id: sample.displayId, protocol: sample.protocol })}
             src={displayedMedia.url}

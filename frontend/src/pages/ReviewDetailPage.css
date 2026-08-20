@@ -34,7 +34,8 @@
 
 .review-detail__media video {
   display: block;
-  height: min(70vh, 52rem);
+  aspect-ratio: 16 / 9;
+  height: auto;
   object-fit: contain;
   background: var(--color-surface-muted);
 }
@@ -105,21 +106,12 @@
   .review-detail__layout {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .review-detail__media video {
-    height: min(68vh, 44rem);
-  }
 }
 
 @media (max-width: 639px) {
   .review-detail__facts > div {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-1);
-  }
-
-  .review-detail__media video {
-    height: auto;
-    max-height: 70vh;
   }
 
   .review-detail__actions {

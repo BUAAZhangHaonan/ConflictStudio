@@ -38,6 +38,12 @@ function protocolCode(value: ReviewSampleListRead['protocol']): string {
   return value === 'VA' ? 'VA' : 'VT';
 }
 
+function emotionKey(value: string): string {
+  return value.trim().toLocaleLowerCase('en-US')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 function reviewStatusKind(decision: ReviewDecision): 'neutral' | 'complete' | 'problem' {
   if (decision === 'Accepted') return 'complete';
   if (decision === 'Rejected') return 'problem';
@@ -313,8 +319,8 @@ export function ReviewListPage() {
                 <td>{sample.datasetName}</td>
                 <td>{relationCode(sample.relation)}</td>
                 <td>{protocolCode(sample.protocol)}</td>
-                <td className="review-list__emotion">{sample.trueEmotion}</td>
-                <td className="review-list__emotion">{sample.apparentEmotion}</td>
+                <td className="review-list__emotion">{t(`emotion.${emotionKey(sample.trueEmotion)}`)}</td>
+                <td className="review-list__emotion">{t(`emotion.${emotionKey(sample.apparentEmotion)}`)}</td>
                 <td>{sample.conflictDirection ? t(`direction.${sample.conflictDirection}`) : t('review.list.directionNotNeeded')}</td>
                 <td>{t(`review.gender.${sample.gender}`)}</td>
                 <td><StatusBadge label={t(`status.review.${sample.reviewDecision}`)} kind={reviewStatusKind(sample.reviewDecision)} /></td>
