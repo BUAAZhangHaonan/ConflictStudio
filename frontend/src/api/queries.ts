@@ -11,7 +11,10 @@ import type {
   PromptTemplateVersionCreate, PromptTemplateVersionVerify,
   PromptTestCreate, Reviewer, ReviewerCreate,
   ReviewerRename, ReviewerStatistics, ReviewerStatisticsFilter, Review,
-  ReviewBatchCreate, ReviewCreate, ReviewDecision, Sample, SampleClassificationUpdate,
+  ReviewBatchCreate, ReviewBatchSubmissionCreate, ReviewCreate, ReviewDecision,
+  ReviewNoteDraftRead, ReviewNoteDraftUpdate, ReviewQueue, ReviewSampleDetailRead,
+  ReviewSampleListRead, ReviewSubmissionCreate, ReviewSubmissionRead, Sample,
+  SampleClassificationConversionUpdate, SampleClassificationUpdate,
   Scene, SceneCreate, SceneUpdate, VideoTestCreate,
 } from './contracts';
 import type { Category } from '../types';
@@ -34,6 +37,10 @@ export interface SampleQueryFilter {
   search?: string;
 }
 
+export interface ReviewSampleListParams extends ReviewQueue {
+  page: number;
+}
+
 const roots = {
   datasets: ['datasets'] as const,
   contentScripts: ['contentScripts'] as const,
@@ -47,6 +54,8 @@ const roots = {
   reviews: ['reviews'] as const,
   archives: ['archives'] as const,
   samples: ['samples'] as const,
+  reviewSamples: ['reviewSamples'] as const,
+  reviewNoteDrafts: ['reviewNoteDrafts'] as const,
 };
 
 export const queryKeys = {
@@ -78,6 +87,9 @@ export const queryKeys = {
   archivesPage: (page: number) => [...roots.archives, page] as const,
   sample: (id: number) => [...roots.samples, 'detail', id] as const,
   samplesPage: (filter: SampleQueryFilter, page: number) => [...roots.samples, filter, page] as const,
+  reviewSamplesPage: (params: ReviewSampleListParams) => [...roots.reviewSamples, 'list', params] as const,
+  reviewSampleDetail: (id: number) => [...roots.reviewSamples, 'detail', id] as const,
+  reviewNoteDraft: (sampleId: number, reviewerId: number) => [...roots.reviewNoteDrafts, sampleId, reviewerId] as const,
 };
 
 function pagePath(path: string, page: number, params = new URLSearchParams()): string {
@@ -91,6 +103,33 @@ function resultParams(filter: ResultQueryFilter): URLSearchParams {
   if (filter.source !== undefined) params.set('source', filter.source);
   return params;
 }
+
+export function reviewSampleListPath(input: ReviewSampleListParams): string {
+  const params = new URLSearchParams();
+  if (input.search?.trim()) params.set('search', input.search.trim());
+  if (input.datasetId !== null) params.set('datasetId', String(input.datasetId));
+  params.set('decision', input.decision);
+  if (input.protocol !== null) params.set('protocol', input.protocol);
+  if (input.relation !== null) params.set('relation', input.relation);
+  if (input.direction !== null) params.set('direction', input.direction);
+  params.set('page', String(input.page));
+  return `/api/samples?${params.toString()}`;
+}
+
+export const reviewSampleQueries = {
+  list: (params: ReviewSampleListParams) => queryOptions({
+    queryKey: queryKeys.reviewSamplesPage(params),
+    queryFn: () => apiRequest<Page<ReviewSampleListRead>>(reviewSampleListPath(params)),
+  }),
+  detail: (id: number) => queryOptions({
+    queryKey: queryKeys.reviewSampleDetail(id),
+    queryFn: () => apiRequest<ReviewSampleDetailRead>(`/api/samples/${id}`),
+  }),
+  note: (sampleId: number, reviewerId: number) => queryOptions({
+    queryKey: queryKeys.reviewNoteDraft(sampleId, reviewerId),
+    queryFn: () => apiRequest<ReviewNoteDraftRead>(`/api/samples/${sampleId}/review-note-draft?${new URLSearchParams({ reviewerId: String(reviewerId) }).toString()}`),
+  }),
+};
 
 export const generationQueries = {
   datasets: (page: number, filter: DatasetQueryFilter = {}) => {
@@ -186,6 +225,9 @@ export function useSamplesQuery(filter: SampleQueryFilter = {}, page = 1) { retu
 export function useSampleQuery(id: number | null) { return useQuery({ ...generationQueries.sample(id ?? 0), enabled: id !== null }); }
 export function useReviewsQuery(sampleId: number | null, page = 1) { return useQuery({ ...generationQueries.reviews(sampleId ?? 0, page), enabled: sampleId !== null }); }
 export function useReviewerStatisticsQuery(reviewerId: number | null, filter: ReviewerStatisticsFilter) { return useQuery({ ...generationQueries.reviewerStatistics(reviewerId ?? 0, filter), enabled: reviewerId !== null && filter.startDate !== undefined && filter.endDate !== undefined }); }
+export function useReviewSampleListQuery(params: ReviewSampleListParams) { return useQuery(reviewSampleQueries.list(params)); }
+export function useReviewSampleDetailQuery(id: number | null) { return useQuery({ ...reviewSampleQueries.detail(id ?? 0), enabled: id !== null }); }
+export function useReviewNoteDraftQuery(sampleId: number | null, reviewerId: number | null) { return useQuery({ ...reviewSampleQueries.note(sampleId ?? 0, reviewerId ?? 0), enabled: sampleId !== null && reviewerId !== null }); }
 
 export function useReleaseGpuMutation() {
   const client = useQueryClient();
@@ -256,7 +298,7 @@ export function useDiscardConfigurationAssistantMutation() {
 }
 
 async function invalidateReviewData(client: QueryClient): Promise<void> {
-  await Promise.all([client.invalidateQueries({ queryKey: roots.samples }), client.invalidateQueries({ queryKey: roots.reviews }), client.invalidateQueries({ queryKey: ['reviewerStatistics'] }), client.invalidateQueries({ queryKey: roots.archives })]);
+  await Promise.all([client.invalidateQueries({ queryKey: roots.samples }), client.invalidateQueries({ queryKey: roots.reviews }), client.invalidateQueries({ queryKey: roots.reviewSamples }), client.invalidateQueries({ queryKey: roots.reviewNoteDrafts }), client.invalidateQueries({ queryKey: ['reviewerStatistics'] }), client.invalidateQueries({ queryKey: roots.archives })]);
 }
 export function useCreateReviewerMutation() {
   const client = useQueryClient();
@@ -269,6 +311,34 @@ export function useRenameReviewerMutation() {
 export function useCreateReviewMutation() { const client = useQueryClient(); return useMutation({ mutationFn: (input: ReviewCreate) => apiRequest<Sample>('/api/reviews', { method: 'POST', ...json(input) }), onSuccess: () => invalidateReviewData(client) }); }
 export function useCreateReviewsBatchMutation() { const client = useQueryClient(); return useMutation({ mutationFn: (input: ReviewBatchCreate) => apiRequest<Sample[]>('/api/reviews/batch', { method: 'POST', ...json(input) }), onSuccess: () => invalidateReviewData(client) }); }
 export function useUpdateSampleClassificationMutation() { const client = useQueryClient(); return useMutation({ mutationFn: ({ id, input }: { id: number; input: SampleClassificationUpdate }) => apiRequest<Sample>('/api/samples/' + id + '/classification', { method: 'PATCH', ...json(input) }), onSuccess: () => invalidateReviewData(client) }); }
+export function usePutReviewNoteDraftMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sampleId, input }: { sampleId: number; input: ReviewNoteDraftUpdate }) => apiRequest<ReviewNoteDraftRead>(`/api/samples/${sampleId}/review-note-draft`, { method: 'PUT', ...json(input) }),
+    onSuccess: value => { client.setQueryData(queryKeys.reviewNoteDraft(value.sampleId, value.reviewerId), value); },
+  });
+}
+export function useSubmitReviewMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReviewSubmissionCreate) => apiRequest<ReviewSubmissionRead>('/api/reviews', { method: 'POST', ...json(input) }),
+    onSuccess: async value => { client.setQueryData(queryKeys.reviewSampleDetail(value.id), value); await invalidateReviewData(client); },
+  });
+}
+export function useSubmitReviewBatchMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ReviewBatchSubmissionCreate) => apiRequest<ReviewSampleDetailRead[]>('/api/reviews/batch', { method: 'POST', ...json(input) }),
+    onSuccess: async values => { values.forEach(value => client.setQueryData(queryKeys.reviewSampleDetail(value.id), value)); await invalidateReviewData(client); },
+  });
+}
+export function useConvertSampleClassificationMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sampleId, input }: { sampleId: number; input: SampleClassificationConversionUpdate }) => apiRequest<ReviewSampleDetailRead>(`/api/samples/${sampleId}/classification`, { method: 'PATCH', ...json(input) }),
+    onSuccess: async value => { client.setQueryData(queryKeys.reviewSampleDetail(value.id), value); await invalidateReviewData(client); },
+  });
+}
 export function usePreviewArchiveMutation() { return useMutation({ mutationFn: (input: ArchivePreviewRequest) => apiRequest<ArchivePreview>('/api/archives/preview', { method: 'POST', ...json(input) }) }); }
 export function useSyncArchiveMutation() { const client = useQueryClient(); return useMutation({ mutationFn: (input: ArchiveSyncRequest) => apiRequest<Archive>('/api/archives/sync', { method: 'POST', ...json(input) }), onSuccess: () => invalidateReviewData(client) }); }
 export function useCancelJobMutation() {

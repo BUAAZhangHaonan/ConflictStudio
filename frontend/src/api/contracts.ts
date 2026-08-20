@@ -631,6 +631,134 @@ export interface Review {
   createdAt: string;
 }
 
+export interface ReviewQueue {
+  decision: 'All' | ReviewDecision;
+  datasetId: number | null;
+  protocol: Protocol | null;
+  relation: Relation | null;
+  direction: ConflictDirection | null;
+  search: string | null;
+}
+
+export type ReviewQueueFilter = ReviewQueue;
+
+export interface ReviewMediaRead {
+  url: string;
+  hasAudio: boolean;
+}
+
+export interface ReviewResultRead {
+  id: number;
+  sampleId: number;
+  reviewerId: number;
+  reviewerName: string;
+  protocol: Protocol;
+  relation: Relation;
+  decision: ReviewDecision;
+  note: string;
+  sampleRevision: number;
+  revision: number;
+  createdAt: string;
+}
+
+export interface ReviewSampleListRead {
+  id: number;
+  displayId: string;
+  datasetId: number;
+  datasetName: string;
+  category: Category;
+  protocol: Protocol;
+  relation: Relation;
+  conflictDirection: ConflictDirection | null;
+  reviewDecision: ReviewDecision;
+  reviewRevision: number;
+  currentReview: ReviewResultRead | null;
+  inArchive: boolean;
+  archiveSyncStatus: ArchiveSyncStatus;
+  generationCompatibility: GenerationCompatibility;
+  primaryMedia: ReviewMediaRead;
+  trueEmotion: string;
+  apparentEmotion: string;
+  contentScriptNameZh: string;
+  contentScriptNameEn: string;
+  gender: Gender;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewSampleDetailRead extends ReviewSampleListRead {
+  sourceMedia: ReviewMediaRead | null;
+  dialogue: string | null;
+  displayText: string | null;
+  trueEmotionDescription: string;
+  sceneZh: string;
+  sceneEn: string;
+  triggerEventZh: string;
+  triggerEventEn: string;
+  psychologicalBackgroundZh: string;
+  psychologicalBackgroundEn: string;
+  age: number;
+  ethnicity: Ethnicity;
+  model: ModelName;
+  precision: ModelPrecision | null;
+  compatibleSceneCount: number;
+}
+
+export interface ReviewNoteDraftRead {
+  sampleId: number;
+  reviewerId: number;
+  sampleRevision: number;
+  note: string;
+  revision: number;
+  updatedAt: string | null;
+}
+
+export interface ReviewNoteDraftUpdate {
+  reviewerId: number;
+  note: string;
+  expectedRevision: number;
+  expectedSampleRevision: number;
+}
+
+export interface ReviewSampleReferenceRead {
+  id: number;
+  displayId: string;
+  page: number;
+}
+
+export interface ReviewSubmissionRead extends ReviewSampleDetailRead {
+  nextReference: ReviewSampleReferenceRead | null;
+}
+
+export interface ReviewMutationRequest {
+  sampleId: number;
+  reviewerId: number;
+  decision: Exclude<ReviewDecision, 'Pending'>;
+  expectedRevision: number;
+  expectedReviewRevision: number;
+  expectedNoteDraftRevision: number;
+}
+
+export interface ReviewSubmissionCreate extends ReviewMutationRequest {
+  queue: ReviewQueue;
+}
+
+export interface ReviewBatchItemCreate extends ReviewMutationRequest {}
+
+export interface ReviewBatchSubmissionCreate {
+  items: ReviewBatchItemCreate[];
+}
+
+export interface SampleClassificationConversionUpdate {
+  reviewerId: number;
+  expectedRevision: number;
+  targetCategory: Category;
+  conflictDirection: ConflictDirection | null;
+  apparentEmotion?: string | null;
+  trueEmotionDescription: string;
+}
+
 export interface SampleClassificationUpdate {
   expectedRevision: number;
   targetCategory: Category;

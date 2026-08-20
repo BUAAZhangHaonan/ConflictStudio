@@ -2,12 +2,16 @@ import type { Locale } from '../types';
 
 export type ApiErrorTransport = 'http' | 'network' | 'malformed';
 export type ApiErrorRecovery = 'none' | 'reload' | 'retry' | 'confirmModelSwitch';
-type ApiErrorKind = 'notFound' | 'revision' | 'reference' | 'gpu' | 'database' | 'renderer' | 'promptEnvelope' | 'promptEmpty' | 'promptJson' | 'promptDuplicateKey' | 'promptSchema' | 'displayName' | 'http' | 'network' | 'invalidInput' | 'modelSwitchConfirmationRequired' | 'unavailable';
+type ApiErrorKind = 'notFound' | 'revision' | 'reviewRevision' | 'noteDraftRevision' | 'reference' | 'gpu' | 'database' | 'renderer' | 'promptEnvelope' | 'promptEmpty' | 'promptJson' | 'promptDuplicateKey' | 'promptSchema' | 'displayName' | 'http' | 'network' | 'invalidInput' | 'modelSwitchConfirmationRequired' | 'unavailable';
 
-const reloadCodes = new Set(['revision_conflict', 'referenced_resource_changed', 'gpu_state_changed']);
+const reloadCodes = new Set(['revision_conflict', 'review_revision_conflict', 'note_draft_revision_conflict', 'referenced_resource_changed', 'gpu_state_changed']);
 const referenceCodes = new Set(['referenced_resource_changed']);
 const gpuCodes = new Set(['gpu_state_changed', 'gpu_unavailable', 'gpu_not_available']);
 const rendererCodes = new Set(['renderer_not_configured', 'renderer_unavailable', 'renderer_execution_failed', 'renderer_output_invalid', 'model_service_unavailable', 'model_service_readiness_timeout']);
+const conflictMessages = new Map([
+  ['review_revision_conflict', 'This review changed. Reload it and try again.'],
+  ['note_draft_revision_conflict', 'This note changed. Reload it and try again.'],
+]);
 
 function recoveryFor(status: number, code: string): ApiErrorRecovery {
   if (code === 'model_switch_confirmation_required') return 'confirmModelSwitch';
@@ -24,6 +28,8 @@ function kindFor(status: number, code: string): ApiErrorKind {
   if (code === 'duplicate_prompt_key') return 'promptDuplicateKey';
   if (code === 'invalid_prompt_schema') return 'promptSchema';
   if (code === 'invalid_display_name') return 'displayName';
+  if (code === 'review_revision_conflict') return 'reviewRevision';
+  if (code === 'note_draft_revision_conflict') return 'noteDraftRevision';
   if (code === 'revision_conflict') return 'revision';
   if (referenceCodes.has(code)) return 'reference';
   if (gpuCodes.has(code)) return 'gpu';
@@ -79,7 +85,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   if (!response.ok) {
     const parsed = await responseJson(response);
     const error = parsed.parsed ? canonicalError(parsed.value) : null;
-    throw new ApiError(error ? { status: response.status, ...error, transport: 'http' } : { status: response.status, code: 'malformed_error_response', message: 'The service returned an invalid error response.', transport: 'malformed' });
+    throw new ApiError(error ? { status: response.status, ...error, message: conflictMessages.get(error.code) ?? error.message, transport: 'http' } : { status: response.status, code: 'malformed_error_response', message: 'The service returned an invalid error response.', transport: 'malformed' });
   }
   if (response.status === 204) return undefined as T;
   const parsed = await responseJson(response);
@@ -89,10 +95,10 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
 
 const messages: Record<Locale, Record<ApiErrorKind, string>> = {
   'en-US': {
-    notFound: 'The requested record no longer exists.', revision: 'This record changed elsewhere. Reload it, then try again.', reference: 'A referenced record changed. Reload the form, then try again.', gpu: 'The selected GPU is no longer available. Reload GPU status and choose again.', database: 'The data store is busy. Try again shortly.', renderer: 'The renderer or model service is unavailable. Try again after it is ready.', promptEnvelope: 'The generation service returned an invalid response. Try again.', promptEmpty: 'The generation service returned no content. Try again.', promptJson: 'The generation service returned content that could not be read. Try again.', promptDuplicateKey: 'The generation service returned repeated fields. Try again.', promptSchema: 'The generation service returned missing or invalid fields. Try again.', displayName: 'Use a clear English name of 1 to 60 characters. Do not use import labels, slugs, statuses, or version tags.', http: 'The generation service is unavailable. Try again shortly.', network: 'The service could not be reached. Check the connection and try again.', invalidInput: 'Some fields need attention. Check the form and try again.', modelSwitchConfirmationRequired: 'The selected GPU has another model loaded. Confirm the model switch to submit.', unavailable: 'The service is unavailable. Try again shortly.',
+    notFound: 'The requested record no longer exists.', revision: 'This record changed elsewhere. Reload it, then try again.', reviewRevision: 'This review changed. Reload it and try again.', noteDraftRevision: 'This note changed. Reload it and try again.', reference: 'A referenced record changed. Reload the form, then try again.', gpu: 'The selected GPU is no longer available. Reload GPU status and choose again.', database: 'The data store is busy. Try again shortly.', renderer: 'The renderer or model service is unavailable. Try again after it is ready.', promptEnvelope: 'The generation service returned an invalid response. Try again.', promptEmpty: 'The generation service returned no content. Try again.', promptJson: 'The generation service returned content that could not be read. Try again.', promptDuplicateKey: 'The generation service returned repeated fields. Try again.', promptSchema: 'The generation service returned missing or invalid fields. Try again.', displayName: 'Use a clear English name of 1 to 60 characters. Do not use import labels, slugs, statuses, or version tags.', http: 'The generation service is unavailable. Try again shortly.', network: 'The service could not be reached. Check the connection and try again.', invalidInput: 'Some fields need attention. Check the form and try again.', modelSwitchConfirmationRequired: 'The selected GPU has another model loaded. Confirm the model switch to submit.', unavailable: 'The service is unavailable. Try again shortly.',
   },
   'zh-CN': {
-    notFound: '请求的记录已不存在。', revision: '记录已被其他操作修改。请重新加载后再试。', reference: '引用的记录已发生变化。请重新加载表单后再试。', gpu: '所选 GPU 已不可用。请刷新 GPU 状态后重新选择。', database: '数据存储正忙。请稍后再试。', renderer: '渲染器或模型服务不可用。请等待服务就绪后再试。', promptEnvelope: '生成服务返回了无效响应。请重试。', promptEmpty: '生成服务没有返回内容。请重试。', promptJson: '生成服务返回的内容无法读取。请重试。', promptDuplicateKey: '生成服务返回了重复字段。请重试。', promptSchema: '生成服务返回的字段缺失或有误。请重试。', displayName: '请输入 1 至 60 个字符的清晰英文名称。不要使用导入标记、短标识、状态值或版本号。', http: '生成服务暂时不可用。请稍后再试。', network: '无法连接服务。请检查网络后再试。', invalidInput: '部分字段需要修改。请检查表单后再试。', modelSwitchConfirmationRequired: '所选 GPU 已加载其他模型。请确认切换模型后再提交。', unavailable: '服务暂时不可用。请稍后再试。',
+    notFound: '请求的记录已不存在。', revision: '记录已被其他操作修改。请重新加载后再试。', reviewRevision: '审核结果已更新。请重新加载后再试。', noteDraftRevision: '备注已更新。请重新加载后再试。', reference: '引用的记录已发生变化。请重新加载表单后再试。', gpu: '所选 GPU 已不可用。请刷新 GPU 状态后重新选择。', database: '数据存储正忙。请稍后再试。', renderer: '渲染器或模型服务不可用。请等待服务就绪后再试。', promptEnvelope: '生成服务返回了无效响应。请重试。', promptEmpty: '生成服务没有返回内容。请重试。', promptJson: '生成服务返回的内容无法读取。请重试。', promptDuplicateKey: '生成服务返回了重复字段。请重试。', promptSchema: '生成服务返回的字段缺失或有误。请重试。', displayName: '请输入 1 至 60 个字符的清晰英文名称。不要使用导入标记、短标识、状态值或版本号。', http: '生成服务暂时不可用。请稍后再试。', network: '无法连接服务。请检查网络后再试。', invalidInput: '部分字段需要修改。请检查表单后再试。', modelSwitchConfirmationRequired: '所选 GPU 已加载其他模型。请确认切换模型后再提交。', unavailable: '服务暂时不可用。请稍后再试。',
   },
 };
 
