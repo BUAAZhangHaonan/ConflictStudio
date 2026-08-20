@@ -116,3 +116,10 @@ test('dataset states and reviewer read-only guidance have complete English and C
   assert.match(workspaceLocaleSource, /Disabled: 'Disabled',[\s\S]*?Inactive: 'Inactive'/u);
   assert.match(workspaceLocaleSource, /Disabled: '已禁用',[\s\S]*?Inactive: '已停用'/u);
 });
+
+test('pagination copy handles singular pages and records', () => {
+  assert.match(enUSSource, /pageCount_one: '\{\{count\}\} page'/u);
+  assert.match(enUSSource, /pageCount_other: '\{\{count\}\} pages'/u);
+  assert.match(enUSSource, /recordCount_one: '\{\{count\}\} record'/u);
+  assert.match(enUSSource, /recordCount_other: '\{\{count\}\} records'/u);
+});

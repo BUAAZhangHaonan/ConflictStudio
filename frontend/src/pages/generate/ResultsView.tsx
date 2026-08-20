@@ -124,6 +124,7 @@ export function ResultsView() {
   const retryMutation = useRetryFailedItemsMutation();
 
   const detail = detailQuery.data;
+  const jobs = listQuery.data?.items ?? [];
   const items = itemsQuery.data?.items ?? [];
   const events = collapseProgressEvents(eventsQuery.data?.items ?? []);
   const terminal = detail
@@ -278,7 +279,7 @@ export function ResultsView() {
                 { key: 'actions', label: g('results.actions') },
               ]}
             >
-              {(listQuery.data?.items ?? []).map(job => {
+              {jobs.map(job => {
                 const progress = completedProgress(job);
                 return (
                   <tr key={job.id}>
@@ -323,6 +324,31 @@ export function ResultsView() {
                 );
               })}
             </TableShell>
+            <ul className="generation-results-cards" aria-label={g('results.tasks')}>
+              {jobs.map(job => {
+                const progress = completedProgress(job);
+                const failure = job.failureCode || job.status === 'Failed'
+                  ? jobFailureMessage(job.failureCode, g)
+                  : null;
+                return (
+                  <li key={job.id}>
+                    <h3>{resultTaskName(job.source, job.createdAt, sourceLabels)}</h3>
+                    <dl>
+                      <div><dt>{g('results.taskType')}</dt><dd>{categoryLabel(g, job.category)}</dd></div>
+                      <div><dt>{g('results.status')}</dt><dd><StatusBadge label={g(('job.' + job.status) as GenerationKey)} kind={jobStatusKind(job.status)} /></dd></div>
+                      <div><dt>{g('results.progress')}</dt><dd>{progress.current}/{progress.total}</dd></div>
+                      <div><dt>{g('results.model')}</dt><dd>{profilesText(job.profiles, job.model, job.precision)}</dd></div>
+                      <div><dt>{g('results.updated')}</dt><dd><time dateTime={job.updatedAt}>{formatDateTime(job.updatedAt)}</time></dd></div>
+                      <div><dt>{g('results.kind')}</dt><dd>{sourceLabels[job.source]}</dd></div>
+                      {failure ? <div className="generation-results-card__failure"><dt>{g('results.failure')}</dt><dd>{failure}</dd></div> : null}
+                    </dl>
+                    <Button variant="secondary" onClick={() => updateParams({ job: String(job.id) })}>
+                      {g('common.view')}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
             <Pagination
               page={listQuery.data?.page ?? page}
               totalPages={listQuery.data?.totalPages ?? 0}

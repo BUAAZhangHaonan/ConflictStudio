@@ -94,6 +94,10 @@ export function ReviewListPage() {
   const restoredLocationRef = useRef<string | null>(null);
   const canReview = preferences.currentReviewerId !== null;
   const locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
+  const emotionLabel = (value: string) => {
+    const key = `emotion.${emotionKey(value)}`;
+    return value.trim() && i18n.exists(key) ? t(key) : t('review.list.emotionNotProvided');
+  };
   const samples = listQuery.data?.items ?? [];
   const pageSelection = currentPageSelection(selectedIds, samples.map(sample => sample.id));
   const selectedSamples = samples.filter(sample => pageSelection.has(sample.id));
@@ -319,8 +323,8 @@ export function ReviewListPage() {
                 <td>{sample.datasetName}</td>
                 <td>{relationCode(sample.relation)}</td>
                 <td>{protocolCode(sample.protocol)}</td>
-                <td className="review-list__emotion">{t(`emotion.${emotionKey(sample.trueEmotion)}`)}</td>
-                <td className="review-list__emotion">{t(`emotion.${emotionKey(sample.apparentEmotion)}`)}</td>
+                <td className="review-list__emotion">{emotionLabel(sample.trueEmotion)}</td>
+                <td className="review-list__emotion">{emotionLabel(sample.apparentEmotion)}</td>
                 <td>{sample.conflictDirection ? t(`direction.${sample.conflictDirection}`) : t('review.list.directionNotNeeded')}</td>
                 <td>{t(`review.gender.${sample.gender}`)}</td>
                 <td><StatusBadge label={t(`status.review.${sample.reviewDecision}`)} kind={reviewStatusKind(sample.reviewDecision)} /></td>

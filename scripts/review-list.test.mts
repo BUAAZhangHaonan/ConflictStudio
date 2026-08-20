@@ -278,12 +278,25 @@ test('list rows use only the ten approved visible data fields and batch confirma
 test('list localizes emotion values and fits the desktop content width', () => {
   const css = readFileSync(new URL('../frontend/src/pages/ReviewListPage.css', import.meta.url), 'utf8');
   const locales = readFileSync(new URL('../frontend/src/locales/features/reviewArchive.ts', import.meta.url), 'utf8');
-  assert.match(pageSource, /emotionKey\(sample\.trueEmotion\)/u);
-  assert.match(pageSource, /emotionKey\(sample\.apparentEmotion\)/u);
+  assert.match(pageSource, /emotionLabel\(sample\.trueEmotion\)/u);
+  assert.match(pageSource, /emotionLabel\(sample\.apparentEmotion\)/u);
   assert.match(locales, /contentment: '满足'/u);
   assert.match(locales, /sadness: '悲伤'/u);
   assert.match(css, /table-layout: fixed/u);
   assert.match(css, /\.review-list__results \.table-shell \{ overflow: visible; \}/u);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*overflow-x: auto/u);
   assert.doesNotMatch(css, /min-width: 1240px/u);
+});
+
+test('review emotions use the locale namespace and never expose raw values or keys', () => {
+  const localeSource = read('../frontend/src/locales/features/reviewArchive.ts');
+  const enSource = read('../frontend/src/locales/en-US.ts');
+  const zhSource = read('../frontend/src/locales/zh-CN.ts');
+  assert.match(enSource, /emotion: reviewArchiveEnUS\.emotion/u);
+  assert.match(zhSource, /emotion: reviewArchiveZhCN\.emotion/u);
+  for (const value of ['contentment', 'sadness', 'joy', 'anger', 'fear', 'surprise']) {
+    assert.match(localeSource, new RegExp(value + ':'));
+  }
+  assert.match(pageSource, /i18n\.exists\(key\) \? t\(key\) : t\('review\.list\.emotionNotProvided'\)/u);
+  assert.equal(pageSource.includes('<td className="review-list__emotion">{t(`emotion.'), false);
 });

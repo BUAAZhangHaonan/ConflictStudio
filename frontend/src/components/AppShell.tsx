@@ -146,7 +146,7 @@ export function AppShell({ children }: PropsWithChildren) {
     if (reviewerMenuRef.current) reviewerMenuRef.current.open = false;
   };
 
-  const navigation = (
+  const renderNavigation = (closeAfterNavigate = false) => (
     <>
       <div className="app-shell__brand">{t('app.product')}</div>
       <nav className="primary-nav" aria-label={t('app.mainNavigation')}>
@@ -158,6 +158,7 @@ export function AppShell({ children }: PropsWithChildren) {
               to={item.to}
               className={`primary-nav__link ${isCurrent ? 'is-active' : ''}`}
               aria-current={isCurrent ? 'page' : undefined}
+              onClick={closeAfterNavigate ? () => setDrawerOpen(false) : undefined}
             >
               <span>{t(`nav.${item.key}`)}</span>
             </Link>
@@ -170,7 +171,7 @@ export function AppShell({ children }: PropsWithChildren) {
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">{t('app.skipToContent')}</a>
-      <aside className="app-shell__sidebar">{navigation}</aside>
+      <aside className="app-shell__sidebar">{renderNavigation()}</aside>
       <dialog
         ref={drawerRef}
         id={drawerId}
@@ -191,10 +192,15 @@ export function AppShell({ children }: PropsWithChildren) {
           tabIndex={-1}
         />
         <aside className="mobile-drawer__panel">
-          <h2 className="mobile-drawer__title" id={drawerTitleId}>
-            {t('app.mainNavigation')}
-          </h2>
-          {navigation}
+          <div className="mobile-drawer__header">
+            <h2 className="mobile-drawer__title" id={drawerTitleId}>
+              {t('app.mainNavigation')}
+            </h2>
+            <button type="button" className="icon-button mobile-drawer__close" aria-label={t('app.closeNavigation')} onClick={() => setDrawerOpen(false)}>
+              <span className="dialog__close-icon" aria-hidden="true" />
+            </button>
+          </div>
+          {renderNavigation(true)}
           <button type="button" className="text-button mobile-drawer__language" onClick={toggleLocale}>
             {t('app.changeLanguage')}
           </button>
@@ -232,7 +238,9 @@ export function AppShell({ children }: PropsWithChildren) {
             >
               <summary aria-label={t('app.reviewerMenu')}>
                 <span className="reviewer-menu__symbol" aria-hidden="true" />
-                {preferences.currentReviewerName ?? t('reviewer.noCurrent')}
+                <span className="reviewer-menu__name">
+                  {preferences.currentReviewerName ?? t('reviewer.noCurrent')}
+                </span>
               </summary>
               <div className="reviewer-menu__panel">
                 <span>{t('app.currentReviewer')}</span>

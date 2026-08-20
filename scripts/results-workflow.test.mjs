@@ -176,3 +176,12 @@ test('Test handoff copies visible configuration and never promotes assets', () =
   const combined = viewSource + outputSource + modelSource;
   assert.doesNotMatch(combined, /promote|promotion|keepAsSample|reuseAsset|datasetId/u);
 });
+
+test('Results uses task cards without horizontal scrolling at phone width', () => {
+  assert.match(viewSource, /className="generation-results-cards"/u);
+  for (const key of ['results.taskType', 'results.status', 'results.progress', 'results.model', 'results.updated', 'results.kind']) {
+    assert.match(viewSource, new RegExp(key.replace('.', '\\.')));
+  }
+  assert.match(cssSource, /@media \(max-width: 600px\) \{[\s\S]*?\.generation-results-list \.table-shell \{ display: none; \}[\s\S]*?\.generation-results-cards \{[\s\S]*?display: grid;/u);
+  assert.match(cssSource, /\.generation-results-cards \.button \{ width: 100%; \}/u);
+});

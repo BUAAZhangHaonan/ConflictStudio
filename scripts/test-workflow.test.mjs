@@ -183,3 +183,10 @@ test('frequent Test controls come before collapsed resource management and templ
   assert.match(pageSource, /categoryLabel\(g, item\.category\)/u);
   assert.match(pageSource, /test\.versionOption/u);
 });
+
+test('resource template selectors show category and version instead of internal names', () => {
+  assert.match(resourcesSource, /categoryLabel\(g, item\.category\)/u);
+  assert.match(resourcesSource, /g\('test\.versionOption', \{ category: categoryLabel\(g, item\.category\), version: item\.version \}\)/u);
+  assert.doesNotMatch(resourcesSource, />\{item\.name\}<\/option>/u);
+  assert.doesNotMatch(resourcesSource, />\{item\.templateName\} \{item\.version\}<\/option>/u);
+});

@@ -48,7 +48,11 @@ const zhCN = {
   },
   pagination: {
     label: '分页',
-    summary: '第 {{page}} 页，共 {{totalPages}} 页，{{total}} 条',
+    summary: '第 {{page}} 页，共 {{pageCount}}，{{recordCount}}',
+    pageCount_one: '{{count}} 页',
+    pageCount_other: '{{count}} 页',
+    recordCount_one: '{{count}} 条',
+    recordCount_other: '{{count}} 条',
     previous: '上一页',
     next: '下一页',
   },
@@ -69,6 +73,7 @@ const zhCN = {
     'C-VA': 'C-VA（视觉与声音冲突）',
     'C-VT': 'C-VT（视觉与文本冲突）',
   },
+  emotion: reviewArchiveZhCN.emotion,
   direction: {
     label: '真实情感所在模态',
     Vision: '视觉',

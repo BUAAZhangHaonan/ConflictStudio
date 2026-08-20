@@ -45,11 +45,12 @@
   .topbar { min-width: 0; }
   .topbar__title { min-width: 0; flex: 1 1 auto; }
   .topbar__title > span { min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .topbar__actions { gap: 4px; }
+  .topbar__actions { flex: 0 1 min(46vw, 180px); min-width: 0; gap: 4px; }
   .topbar__language { display: none; }
   .text-button { padding-inline: 5px; }
-  .reviewer-menu { flex: 0 1 auto; min-width: 0; }
-  .reviewer-menu > summary { max-width: 124px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .reviewer-menu { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+  .reviewer-menu > summary { width: 100%; max-width: 100%; }
+  .reviewer-menu__symbol { flex: 0 0 auto; }
   .page-header { flex-direction: column; }
   .page-header__actions, .page-header__actions .button { width: 100%; }
   .metric-grid, .metric-grid--five { grid-template-columns: repeat(2, minmax(0, 1fr)); }

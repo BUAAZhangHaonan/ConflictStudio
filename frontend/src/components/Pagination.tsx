@@ -14,7 +14,11 @@ export function Pagination({ page, totalPages, total, onPageChange, className = 
   if (total === 0 || totalPages === 0) return null;
   return (
     <nav className={`pagination ${className}`.trim()} aria-label={t('pagination.label')}>
-      <p>{t('pagination.summary', { page, totalPages, total })}</p>
+      <p>{t('pagination.summary', {
+        page,
+        pageCount: t('pagination.pageCount', { count: totalPages }),
+        recordCount: t('pagination.recordCount', { count: total }),
+      })}</p>
       <div>
         <Button variant="secondary" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
           {t('pagination.previous')}

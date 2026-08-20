@@ -484,3 +484,14 @@ test('production source is disconnected from the removed business mock system', 
   assert.doesNotMatch(production, /MockRepository|RepositoryProvider|useExamplePageState|PageStateBoundary|\?state=/u);
   assert.doesNotMatch(localeSource, /example status|示例状态|example video|示例视频/iu);
 });
+
+test('mobile navigation follows the pathname and closes through every visible action', () => {
+  assert.match(appShellSource, /if \(pathname\.startsWith\('\/review'\)\) return '\/review';/u);
+  assert.match(appShellSource, /const isCurrent = activePrimaryPath === item\.to;/u);
+  assert.match(appShellSource, /aria-current=\{isCurrent \? 'page' : undefined\}/u);
+  assert.match(appShellSource, /onClick=\{closeAfterNavigate \? \(\) => setDrawerOpen\(false\) : undefined\}/u);
+  assert.match(appShellSource, /className="icon-button mobile-drawer__close"[\s\S]*?setDrawerOpen\(false\)/u);
+  assert.match(appShellSource, /className="mobile-drawer__backdrop"[\s\S]*?setDrawerOpen\(false\)/u);
+  assert.match(appShellSource, /\{renderNavigation\(true\)\}/u);
+  assert.match(responsiveCss, /@media \(max-width: 390px\)[\s\S]*?\.reviewer-menu > summary \{ width: 100%; max-width: 100%; \}/u);
+});

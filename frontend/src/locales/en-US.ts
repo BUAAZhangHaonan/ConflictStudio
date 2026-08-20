@@ -43,7 +43,11 @@ const enUS = {
   },
   pagination: {
     label: 'Pagination',
-    summary: 'Page {{page}} of {{totalPages}}, {{total}} records',
+    summary: 'Page {{page}} of {{pageCount}}, {{recordCount}}',
+    pageCount_one: '{{count}} page',
+    pageCount_other: '{{count}} pages',
+    recordCount_one: '{{count}} record',
+    recordCount_other: '{{count}} records',
     previous: 'Previous',
     next: 'Next',
   },
@@ -64,6 +68,7 @@ const enUS = {
     'C-VA': 'C-VA (Vision and audio conflict)',
     'C-VT': 'C-VT (Vision and text conflict)',
   },
+  emotion: reviewArchiveEnUS.emotion,
   direction: {
     label: 'Modality carrying the true emotion',
     Vision: 'Vision',

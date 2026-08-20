@@ -63,6 +63,7 @@ export const reviewArchiveEnUS = {
       directionNotNeeded: 'Not needed',
       gender: 'Gender',
       selectSample: 'Select {{id}}',
+      emotionNotProvided: 'Not provided',
     },
     detail: {
       aria: {
@@ -309,6 +310,7 @@ export const reviewArchiveZhCN = {
       directionNotNeeded: '无需填写',
       gender: '性别',
       selectSample: '选择 {{id}}',
+      emotionNotProvided: '未填写',
     },
     detail: {
       aria: {
