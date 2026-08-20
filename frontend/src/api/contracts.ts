@@ -603,21 +603,6 @@ export interface ReviewerRename {
   expectedRevision: number;
 }
 
-export interface Review {
-  id: number;
-  sampleId: number;
-  reviewerId: number;
-  reviewerName: string;
-  datasetId: number;
-  protocol: Protocol;
-  relation: Relation;
-  decision: Exclude<ReviewDecision, 'Pending'>;
-  note: string;
-  sampleRevision: number;
-  revision: number;
-  createdAt: string;
-}
-
 export interface ReviewQueue {
   decision: 'All' | ReviewDecision;
   datasetId: number | null;
@@ -808,56 +793,6 @@ export interface Archive {
   manifestAvailable: boolean;
   currentCount: number;
   needsUpdateCount: number;
-}
-
-export interface Sample {
-  id: number;
-  displayId: string;
-  jobItemId: number;
-  datasetId: number;
-  datasetName: string;
-  category: Category;
-  conflictDirection: ConflictDirection | null;
-  reviewDecision: ReviewDecision;
-  reviewRevision: number;
-  currentReview: Review | null;
-  inArchive: boolean;
-  archiveSyncStatus: ArchiveSyncStatus;
-  model: ModelName;
-  generationRecord: GenerationAttempt;
-  actualContentSummary: BilingualSelection;
-  actualSceneSummary: BilingualSelection;
-  generationCompatibility: GenerationCompatibility;
-  gpuSlot: GpuSlotName;
-  contentScriptId: number;
-  contentScriptRevision: number;
-  promptTemplateVersionId: number;
-  sourceAssetId: number | null;
-  sourceAssetUrl: string | null;
-  primaryAssetId: number;
-  primaryAssetUrl: string;
-  dialogue: string | null;
-  displayText: string | null;
-  videoPrompt: string;
-  negativePrompt: string;
-  trueEmotionDescription: string;
-  trueEmotion: string;
-  apparentEmotion: string;
-  contentScriptNameZh: string;
-  contentScriptNameEn: string;
-  sceneZh: string;
-  sceneEn: string;
-  triggerEventZh: string;
-  triggerEventEn: string;
-  psychologicalBackgroundZh: string;
-  psychologicalBackgroundEn: string;
-  age: Age;
-  gender: Gender;
-  ethnicity: Ethnicity;
-  seed: number;
-  revision: number;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface JobProfile {

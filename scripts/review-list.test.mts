@@ -20,6 +20,7 @@ const contractSource = read('../frontend/src/api/contracts.ts');
 const querySource = read('../frontend/src/api/queries.ts');
 const clientSource = read('../frontend/src/api/client.ts');
 const pageSource = read('../frontend/src/pages/ReviewListPage.tsx');
+const workspaceSource = read('../frontend/src/pages/WorkspacePage.tsx');
 const backendRouteSource = read('../backend/api/routes.py');
 const paginationSource = read('../backend/services/pagination.py');
 const contractFile = ts.createSourceFile('contracts.ts', contractSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -104,6 +105,29 @@ test('new review contracts match the list and detail backend slice without gener
   assert.doesNotMatch(interfaceBody('ReviewBatchItemCreate'), /queue:/u);
   assert.match(interfaceBody('SampleClassificationConversionUpdate'), /reviewerId: number;/u);
   assert.match(interfaceBody('ReviewSubmissionRead'), /nextReference: ReviewSampleReferenceRead \| null;/u);
+});
+
+test('every sample list consumer uses the current review list contract', () => {
+  assert.equal(interfaceDeclaration('Sample'), undefined);
+  assert.doesNotMatch(contractSource, /export interface Review \{/u);
+  assert.doesNotMatch(
+    querySource,
+    /Page<Sample>|filter\.category|category\?: Category/u,
+  );
+  assert.match(
+    querySource,
+    /apiRequest<Page<ReviewSampleListRead>>\(reviewSampleListPath\(params\)\)/u,
+  );
+  assert.match(
+    querySource,
+    /samples: \(filter: SampleQueryFilter, page: number\)[\s\S]*?apiRequest<Page<ReviewSampleListRead>>\(pagePath\('\/api\/samples', page, params\)\)/u,
+  );
+  assert.equal((workspaceSource.match(/useSamplesQuery\(\{/gu) ?? []).length, 2);
+  assert.match(workspaceSource, /decision: 'Pending'/u);
+  assert.match(workspaceSource, /decision: 'Accepted'/u);
+  assert.match(workspaceSource, /const pendingReview = pendingReviewQuery\.data\?\.total \?\? 0;/u);
+  assert.match(workspaceSource, /const pendingArchive = pendingArchiveQuery\.data\?\.total \?\? 0;/u);
+  assert.doesNotMatch(workspaceSource, /pending(?:Review|Archive)Query\.data\?\.items/u);
 });
 
 test('new review API helpers are separate and use the current endpoints and revision fields', () => {

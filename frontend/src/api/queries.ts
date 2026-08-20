@@ -13,11 +13,10 @@ import type {
   ReviewerRename, ReviewerStatistics, ReviewerStatisticsFilter,
   ReviewBatchSubmissionCreate, ReviewDecision,
   ReviewNoteDraftRead, ReviewNoteDraftUpdate, ReviewQueue, ReviewSampleDetailRead,
-  ReviewSampleListRead, ReviewSubmissionCreate, ReviewSubmissionRead, Sample,
+  ReviewSampleListRead, ReviewSubmissionCreate, ReviewSubmissionRead,
   SampleClassificationConversionUpdate,
   Scene, SceneCreate, SceneUpdate, VideoTestCreate,
 } from './contracts';
-import type { Category } from '../types';
 
 export interface DatasetQueryFilter {
   search?: string;
@@ -33,7 +32,6 @@ export interface SampleQueryFilter {
   decision?: ReviewDecision;
   datasetId?: number;
   protocol?: 'VA' | 'VT';
-  category?: Category;
   search?: string;
 }
 
@@ -170,9 +168,8 @@ export const generationQueries = {
     if (filter.decision !== undefined) params.set('decision', filter.decision);
     if (filter.datasetId !== undefined) params.set('datasetId', String(filter.datasetId));
     if (filter.protocol !== undefined) params.set('protocol', filter.protocol);
-    if (filter.category !== undefined) params.set('category', filter.category);
     if (filter.search?.trim()) params.set('search', filter.search.trim());
-    return queryOptions({ queryKey: queryKeys.samplesPage(filter, page), queryFn: () => apiRequest<Page<Sample>>(pagePath('/api/samples', page, params)) });
+    return queryOptions({ queryKey: queryKeys.samplesPage(filter, page), queryFn: () => apiRequest<Page<ReviewSampleListRead>>(pagePath('/api/samples', page, params)) });
   },
 };
 
