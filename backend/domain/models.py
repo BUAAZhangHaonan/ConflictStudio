@@ -617,9 +617,10 @@ class ConfigurationAssistant(SQLModel, table=True):
             name="ck_configuration_assistants_json",
         ),
         CheckConstraint(
-            "(target_source = 'Production' AND batch_draft_id IS NOT NULL "
-            "AND batch_draft_revision IS NOT NULL AND test_draft_id IS NULL "
-            "AND test_draft_revision IS NULL) OR "
+            "(target_source = 'Production' "
+            "AND ((batch_draft_id IS NULL AND batch_draft_revision IS NULL) OR "
+            "(batch_draft_id IS NOT NULL AND batch_draft_revision IS NOT NULL)) "
+            "AND test_draft_id IS NULL AND test_draft_revision IS NULL) OR "
             "(target_source IN ('PromptTest', 'VideoTest') "
             "AND batch_draft_id IS NULL AND batch_draft_revision IS NULL "
             "AND test_draft_id IS NOT NULL AND test_draft_revision IS NOT NULL)",

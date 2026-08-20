@@ -16,7 +16,6 @@ from backend.domain.enums import (
     ConfigurationAssistantField,
     ConfigurationAssistantStatus,
     ConfigurationCandidateKind,
-    ContentMode,
     DatasetPurpose,
     JobSource,
     JobStatus,
@@ -41,8 +40,6 @@ from backend.domain.models import (
 from backend.domain.schemas import (
     AssistantFormState,
     AssistantSourceSelection,
-    BatchContentSelectionInput,
-    BatchDraftUpdate,
     ConfigurationAssistantApply,
     ConfigurationAssistantCreate,
     ConfigurationAssistantRead,
@@ -159,7 +156,10 @@ class ConfigurationAssistantService:
                 payload.target_source,
                 payload.current_form,
             )
-            if payload.target_source is JobSource.PRODUCTION:
+            if (
+                payload.target_source is JobSource.PRODUCTION
+                and batch_revision is not None
+            ):
                 current_revision = self._batch_revision(
                     session, payload.batch_draft_id
                 )
@@ -170,6 +170,8 @@ class ConfigurationAssistantService:
                         batch_revision or 0,
                         current_revision,
                     )
+                test_draft = None
+            elif payload.target_source is JobSource.PRODUCTION:
                 test_draft = None
             else:
                 test_draft = GenerationTestDraft(
@@ -229,6 +231,14 @@ class ConfigurationAssistantService:
                 payload.values,
             )
             created_scene = None
+            if row.target_source is JobSource.PRODUCTION and (
+                payload.create_content_script
+                or payload.create_shooting_scene
+                or payload.link_new_scene_to_content
+            ):
+                raise ServiceError(
+                    422, "validation_error", "Formal generation assistance only fills the current form"
+                )
             if payload.create_shooting_scene:
                 if suggestion.new_shooting_scene_draft is None:
                     raise ServiceError(
@@ -263,7 +273,7 @@ class ConfigurationAssistantService:
                     session, content_payload
                 )
             target_revision = (
-                self._apply_production(session, row, payload)
+                self._verify_production_target(session, row, payload)
                 if row.target_source is JobSource.PRODUCTION
                 else self._apply_test_draft(session, row, payload)
             )
@@ -310,18 +320,22 @@ class ConfigurationAssistantService:
             session.flush()
             return self._read(session, row)
 
-    def _apply_production(
+    def _verify_production_target(
         self,
         session: Session,
         row: ConfigurationAssistant,
         payload: ConfigurationAssistantApply,
-    ) -> int:
+    ) -> int | None:
+        if row.batch_draft_id is None and row.batch_draft_revision is None:
+            if payload.expected_target_revision is not None:
+                raise ServiceError(
+                    422,
+                    "validation_error",
+                    "An unsaved form does not have a target revision",
+                )
+            return None
         if row.batch_draft_id is None or row.batch_draft_revision is None:
-            raise state_conflict(
-                "configurationAssistant",
-                row.id or 0,
-                "The assistant target is incomplete",
-            )
+            raise state_conflict("configurationAssistant", row.id or 0, "The assistant target is incomplete")
         draft = session.get(BatchDraft, row.batch_draft_id)
         if draft is None:
             raise not_found("batchDraft", row.batch_draft_id)
@@ -330,90 +344,9 @@ class ConfigurationAssistantService:
             or draft.revision != row.batch_draft_revision
         ):
             raise revision_conflict(
-                "batchDraft",
-                draft.id or 0,
-                payload.expected_target_revision,
-                draft.revision,
+                "batchDraft", draft.id or 0, payload.expected_target_revision, draft.revision
             )
-        current = self.batches._draft_read(
-            self.batches._load_aggregate(session, draft.id)
-        )
-        values: dict[str, object] = {
-            "targetDatasetId": current.target_dataset_id,
-            "displayName": current.display_name,
-            "category": current.category,
-            "conflictDirection": current.conflict_direction,
-            "model": current.model,
-            "precision": current.precision,
-            "contentSelections": [
-                {
-                    "contentScriptId": selection.content_script.id,
-                    "sceneIds": (
-                        []
-                        if selection.mode is ContentMode.FIXED
-                        else [scene.id for scene in selection.scenes]
-                    ),
-                }
-                for selection in current.content_selections
-            ],
-            "promptTemplateVersionId": current.prompt_template_version.id,
-            "demographics": [
-                value.model_dump(by_alias=True) for value in current.demographics
-            ],
-            "gpuSlots": current.gpu_slots,
-            "seeds": current.seeds,
-            "expectedRevision": payload.expected_target_revision,
-        }
-        confirmed = payload.values
-        if "target_dataset" in confirmed.model_fields_set:
-            assert confirmed.target_dataset is not None
-            values["targetDatasetId"] = confirmed.target_dataset.id
-        if "display_name" in confirmed.model_fields_set:
-            values["displayName"] = confirmed.display_name
-        for field_name, target_name in (
-            ("category", "category"),
-            ("conflict_direction", "conflictDirection"),
-            ("model", "model"),
-            ("precision", "precision"),
-            ("demographics", "demographics"),
-            ("gpu_slots", "gpuSlots"),
-            ("seeds", "seeds"),
-        ):
-            if field_name in confirmed.model_fields_set:
-                values[target_name] = getattr(confirmed, field_name)
-        if "content_selections" in confirmed.model_fields_set:
-            content_values: list[dict[str, object]] = []
-            for selection in confirmed.content_selections or []:
-                content = session.get(ContentScript, selection.content_script.id)
-                assert content is not None
-                content_values.append(
-                    BatchContentSelectionInput(
-                        content_script_id=content.id,
-                        scene_ids=(
-                            []
-                            if content.mode is ContentMode.FIXED
-                            else [scene.id for scene in selection.scenes]
-                        ),
-                    ).model_dump(by_alias=True)
-                )
-            values["contentSelections"] = content_values
-        if "prompt_template_version" in confirmed.model_fields_set:
-            assert confirmed.prompt_template_version is not None
-            values["promptTemplateVersionId"] = (
-                confirmed.prompt_template_version.id
-            )
-        if {"comparisons", "execution_mode"} & confirmed.model_fields_set:
-            raise ServiceError(
-                422,
-                "validation_error",
-                "Test comparison settings cannot be applied to a formal batch",
-            )
-        updated = self.batches.apply_confirmed_batch_draft(
-            session,
-            draft.id or 0,
-            BatchDraftUpdate.model_validate(values),
-        )
-        return updated.revision
+        return draft.revision
 
     def _apply_test_draft(
         self,
@@ -424,6 +357,12 @@ class ConfigurationAssistantService:
         if row.test_draft_id is None or row.test_draft_revision is None:
             raise state_conflict(
                 "configurationAssistant", row.id or 0, "The assistant target is incomplete"
+            )
+        if payload.expected_target_revision is None:
+            raise ServiceError(
+                422,
+                "validation_error",
+                "A test draft revision is required",
             )
         draft = session.get(GenerationTestDraft, row.test_draft_id)
         if draft is None:
@@ -469,7 +408,10 @@ class ConfigurationAssistantService:
         session: Session,
         payload: ConfigurationAssistantCreate,
     ) -> int | None:
-        if payload.target_source is not JobSource.PRODUCTION:
+        if (
+            payload.target_source is not JobSource.PRODUCTION
+            or payload.batch_draft_id is None
+        ):
             return None
         revision = self._batch_revision(session, payload.batch_draft_id)
         if revision != payload.batch_draft_expected_revision:

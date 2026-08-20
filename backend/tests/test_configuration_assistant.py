@@ -676,7 +676,7 @@ def test_invalid_json_duplicate_keys_and_forbidden_operations_fail_whole_request
     assert "/api/" not in rendered
 
 
-def test_production_apply_updates_only_confirmed_value_and_is_terminal(
+def test_production_assistant_can_fill_unsaved_form_without_saving_batch(
     tmp_path: Path,
 ) -> None:
     with assistant_client(tmp_path) as (_, client, state):
@@ -686,7 +686,6 @@ def test_production_apply_updates_only_confirmed_value_and_is_terminal(
             client,
             target="Production",
             current_form=complete_form(batch, content, version, scene),
-            batch=batch,
         )
         assert created.status_code == 201, created.text
         assistant = created.json()
@@ -694,7 +693,7 @@ def test_production_apply_updates_only_confirmed_value_and_is_terminal(
             f"/api/configuration-assistants/{assistant['id']}/apply",
             json={
                 "expectedRevision": assistant["revision"],
-                "expectedTargetRevision": batch["revision"],
+                "expectedTargetRevision": None,
                 "confirmedFields": ["DisplayName"],
                 "values": {"displayName": "A-VA-formal"},
             },
@@ -709,9 +708,33 @@ def test_production_apply_updates_only_confirmed_value_and_is_terminal(
     assert applied.status_code == 200, applied.text
     assert applied.json()["status"] == "Applied"
     assert applied.json()["appliedValues"]["displayName"] == "A-VA-formal"
-    assert applied.json()["result"]["targetRevision"] == batch["revision"] + 1
-    assert updated.json()["displayName"] == "A-VA-formal"
+    assert applied.json()["result"]["targetRevision"] is None
+    assert updated.json()["displayName"] != "A-VA-formal"
     assert repeated.status_code == 409
+
+
+def test_content_script_search_is_name_based_and_paginated(tmp_path: Path) -> None:
+    with assistant_client(tmp_path) as (_, client, _):
+        _, content, _, _ = create_batch(client)
+        chinese = client.get(
+            "/api/content-scripts",
+            params={"search": content["nameZh"], "page": 1},
+        )
+        english = client.get(
+            "/api/content-scripts",
+            params={"search": content["nameEn"].upper(), "page": 1},
+        )
+        missing = client.get(
+            "/api/content-scripts",
+            params={"search": "no such content", "page": 1},
+        )
+
+    assert chinese.status_code == 200
+    assert [item["id"] for item in chinese.json()["items"]] == [content["id"]]
+    assert english.status_code == 200
+    assert [item["id"] for item in english.json()["items"]] == [content["id"]]
+    assert missing.json()["items"] == []
+    assert missing.json()["total"] == 0
 
 
 def test_target_or_candidate_revision_change_returns_conflict_without_apply(

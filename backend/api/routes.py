@@ -229,8 +229,9 @@ def delete_dataset(
 def list_content_scripts(
     request: Request,
     page: int = Query(default=1, ge=1),
+    search: str | None = Query(default=None, min_length=1, max_length=120),
 ) -> PageRead[ContentScriptRead]:
-    return catalog(request).list_content_scripts(page)
+    return catalog(request).list_content_scripts(page, search)
 
 
 @router.post(

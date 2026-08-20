@@ -958,11 +958,10 @@ class ConfigurationAssistantCreate(ApiModel):
     @model_validator(mode="after")
     def validate_target(self) -> Self:
         if self.target_source is JobSource.PRODUCTION:
-            if (
-                self.batch_draft_id is None
-                or self.batch_draft_expected_revision is None
+            if (self.batch_draft_id is None) != (
+                self.batch_draft_expected_revision is None
             ):
-                raise ValueError("Production assistance requires a batch draft")
+                raise ValueError("Batch draft id and revision must be provided together")
         elif self.target_source in {JobSource.PROMPT_TEST, JobSource.VIDEO_TEST}:
             if (
                 self.batch_draft_id is not None
@@ -976,7 +975,7 @@ class ConfigurationAssistantCreate(ApiModel):
 
 class ConfigurationAssistantApply(ApiModel):
     expected_revision: int = Field(ge=1)
-    expected_target_revision: int = Field(ge=1)
+    expected_target_revision: int | None = Field(default=None, ge=1)
     confirmed_fields: list[ConfigurationAssistantField]
     values: AssistantFormState
     create_content_script: bool = False

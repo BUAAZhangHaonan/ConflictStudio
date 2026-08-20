@@ -242,11 +242,24 @@ class CatalogService:
                 )
             session.delete(row)
 
-    def list_content_scripts(self, page: int) -> PageRead[ContentScriptRead]:
+    def list_content_scripts(
+        self,
+        page: int,
+        search: str | None = None,
+    ) -> PageRead[ContentScriptRead]:
         with self.database.read_session() as session:
+            statement = select(ContentScript)
+            if search is not None and search.strip():
+                needle = search.strip().casefold()
+                statement = statement.where(
+                    or_(
+                        func.lower(ContentScript.name_zh).contains(needle),
+                        func.lower(ContentScript.name_en).contains(needle),
+                    )
+                )
             return paginate(
                 session,
-                select(ContentScript).order_by(
+                statement.order_by(
                     ContentScript.category,
                     ContentScript.name_zh,
                     ContentScript.name_en,
