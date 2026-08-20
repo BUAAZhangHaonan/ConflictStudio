@@ -67,7 +67,7 @@ class UnconfiguredPromptModel:
     ) -> PromptModelResponse:
         raise PromptAdapterError(
             "external_configuration_missing",
-            "Prompt generation requires CONFLICTSTUDIO_LLM_API_KEY",
+            "Prompt generation requires a configured service key",
         )
 
     async def close(self) -> None:

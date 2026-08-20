@@ -1598,3 +1598,52 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
         Gender.MALE,
         Ethnicity.SOUTH_ASIAN,
     )
+@pytest.mark.parametrize("value", ["", "   ", "\t"])
+def test_prompt_model_treats_blank_key_as_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("CONFLICTSTUDIO_LLM_API_KEY", value)
+
+    assert isinstance(
+        OpenAICompatiblePromptModel.from_environment(),
+        UnconfiguredPromptModel,
+    )
+
+
+def test_formal_batch_requires_configured_prompt_service(tmp_path: Path) -> None:
+    database = Database(tmp_path)
+    database.initialize()
+    _, dataset, content, preset, background = fixed_resources(database)
+    batches = BatchService(
+        database,
+        PromptService(UnconfiguredPromptModel()),
+        _ConfiguredRendererGateway(),
+    )
+    draft = make_batch(
+        batches,
+        dataset,
+        content,
+        preset,
+        background,
+        [GpuSlotName.GPU0],
+    )
+    preview = asyncio.run(batches.preview_batch(draft.id, draft.revision))
+
+    with pytest.raises(ServiceError) as error:
+        asyncio.run(
+            batches.submit_batch(
+                draft.id,
+                BatchSubmitRequest(
+                    expectedRevision=draft.revision,
+                    expectedGpuRevisions=preview.gpu_revisions,
+                ),
+            )
+        )
+
+    assert error.value.status_code == 503
+    assert error.value.code == "external_configuration_missing"
+    assert error.value.message == "Prompt generation requires a configured service key"
+    with database.read_session() as session:
+        assert session.exec(select(Job)).all() == []
+        assert session.exec(select(BatchVideoInputSnapshot)).all() == []

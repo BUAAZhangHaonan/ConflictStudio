@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
+from backend.adapters.llm import UnconfiguredPromptModel
 from backend.domain.enums import (
     GpuSlotName,
     JobItemStage,
@@ -593,3 +594,23 @@ def test_test_result_filters_are_applied_before_fixed_pagination(
     assert all(row["source"] == "VideoTest" for row in video_page.json()["items"])
     assert production.json()["total"] == 0
     assert invalid.status_code == 422
+
+
+def test_prompt_test_missing_key_returns_readable_error(tmp_path: Path) -> None:
+    app = make_app(tmp_path, UnconfiguredPromptModel())
+    with TestClient(app) as client:
+        content, version, scene = create_api_sources(client)
+        response = client.post(
+            "/api/test-runs/prompt",
+            json=prompt_test_payload(content, version, scene, ModelName.LTX),
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "external_configuration_missing",
+            "message": "Prompt generation requires a configured service key",
+            "details": {},
+        }
+    }
+    assert "CONFLICTSTUDIO_LLM_API_KEY" not in response.text

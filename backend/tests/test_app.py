@@ -8,17 +8,27 @@ from pydantic import ValidationError
 
 from backend.adapters.config import Settings
 from backend.adapters.gpu import SlotInspection
-from backend.adapters.llm import UnconfiguredPromptModel
+from backend.adapters.llm import OpenAICompatiblePromptModel, UnconfiguredPromptModel
 from backend.adapters.renderer import CancelOutcome, RendererInstallationStatus
 from backend.api.gpu_contracts import GpuSlotRead
 from backend.app import create_app
 from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName, Precision
 
 
-def client_for(tmp_path: Path, renderer: object | None = None) -> TestClient:
+def client_for(
+    tmp_path: Path,
+    renderer: object | None = None,
+    prompt_model: object | None = None,
+) -> TestClient:
     frontend = tmp_path / "frontend"
     frontend.mkdir()
-    return TestClient(create_app(Settings(data_root=tmp_path, frontend_dist=frontend), UnconfiguredPromptModel(), renderer))
+    return TestClient(
+        create_app(
+            Settings(data_root=tmp_path, frontend_dist=frontend),
+            prompt_model or UnconfiguredPromptModel(),  # type: ignore[arg-type]
+            renderer,  # type: ignore[arg-type]
+        )
+    )
 
 
 def write_frontend(frontend: Path) -> None:
@@ -496,7 +506,9 @@ def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) ->
 
 def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> None:
     renderer = _ConfiguredRendererGateway()
-    with client_for(tmp_path, renderer) as client:
+    with client_for(
+        tmp_path, renderer, OpenAICompatiblePromptModel("test-key")
+    ) as client:
         dataset = client.post(
             "/api/datasets",
             json={"name": "Production", "note": ""},
@@ -650,3 +662,22 @@ def test_gpu_release_rejects_stale_revision_before_stopping(tmp_path: Path) -> N
         },
     }
     assert renderer.release_calls == []
+def test_health_exposes_only_prompt_configuration_state(tmp_path: Path) -> None:
+    frontend = tmp_path / "configured-frontend"
+    frontend.mkdir()
+    data_root = tmp_path / "configured-data"
+    data_root.mkdir()
+    model = OpenAICompatiblePromptModel("private-test-key")
+
+    with TestClient(
+        create_app(
+            Settings(data_root=data_root, frontend_dist=frontend),
+            model,
+        )
+    ) as client:
+        response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["promptServiceConfigured"] is True
+    assert "private-test-key" not in response.text
+    assert "apiKey" not in response.text

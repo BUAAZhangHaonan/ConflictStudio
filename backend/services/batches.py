@@ -556,6 +556,13 @@ class BatchService:
                 "renderer_not_configured",
                 "Rendering requires a configured renderer gateway",
             )
+        if not self.prompts.configured:
+            raise ServiceError(
+                503,
+                "external_configuration_missing",
+                "Prompt generation requires a configured service key",
+            )
+
 
         with self.database.read_session() as session:
             aggregate = self._load_aggregate(session, draft_id)

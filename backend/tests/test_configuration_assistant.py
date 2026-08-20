@@ -9,7 +9,7 @@ import httpx
 from fastapi.testclient import TestClient
 from sqlmodel import select
 
-from backend.adapters.llm import OpenAICompatiblePromptModel
+from backend.adapters.llm import OpenAICompatiblePromptModel, UnconfiguredPromptModel
 from backend.domain.models import (
     Asset,
     ConfigurationAssistant,
@@ -1170,3 +1170,21 @@ def test_video_test_apply_updates_only_its_draft_and_never_executes(
     assert jobs == []
     assert attempts == []
     assert assets == []
+def test_assistant_missing_key_returns_readable_error(tmp_path: Path) -> None:
+    app = make_app(tmp_path, UnconfiguredPromptModel())
+    with TestClient(app) as client:
+        response = create_assistant(
+            client,
+            target="PromptTest",
+            current_form={},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "external_configuration_missing",
+            "message": "Prompt generation requires a configured service key",
+            "details": {},
+        }
+    }
+    assert "CONFLICTSTUDIO_LLM_API_KEY" not in response.text

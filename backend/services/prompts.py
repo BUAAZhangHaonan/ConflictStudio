@@ -154,6 +154,10 @@ class PromptService:
         self.system_template = self.environment.get_template("prompt_system.j2")
         self.user_template = self.environment.get_template("prompt_user.j2")
         self.model = model
+    @property
+    def configured(self) -> bool:
+        return self.model.configured
+
 
     def prepare(self, context: PromptContext) -> PreparedPrompt:
         try:
