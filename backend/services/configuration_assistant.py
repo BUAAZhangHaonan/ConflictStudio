@@ -984,15 +984,6 @@ class ConfigurationAssistantService:
                     )
             if (
                 group is not None
-                and len(group.items) == 1
-                and not self._prefill_has_kind(current, kind)
-                and not references
-            ):
-                raise self._invalid_response(
-                    "The assistant did not prefill the unique candidate"
-                )
-            if (
-                group is not None
                 and len(group.items) > 1
                 and references
             ):
@@ -1024,20 +1015,6 @@ class ConfigurationAssistantService:
             for scene in selection.scenes
         ]
 
-    @staticmethod
-    def _prefill_has_kind(
-        form: AssistantFormState,
-        kind: ConfigurationCandidateKind,
-    ) -> bool:
-        if kind is ConfigurationCandidateKind.DATASET:
-            return form.target_dataset is not None
-        if kind is ConfigurationCandidateKind.PROMPT_TEMPLATE_VERSION:
-            return form.prompt_template_version is not None
-        if kind is ConfigurationCandidateKind.CONTENT_SCRIPT:
-            return bool(form.content_selections)
-        return any(
-            selection.scenes for selection in form.content_selections or []
-        )
 
     @staticmethod
     def _catalog_snapshot(session: Session) -> dict[str, object]:
