@@ -133,6 +133,27 @@ export function restoreReviewListState(
   }
 }
 
+export function readSavedReviewListState(
+  storage: ReviewListStateStorage = window.sessionStorage,
+): ReviewListSavedState | null {
+  try {
+    const value = JSON.parse(storage.getItem(REVIEW_LIST_STATE_STORAGE_KEY) ?? 'null') as Partial<ReviewListSavedState> | null;
+    const returnTo = safeReviewListReturnTarget(value?.returnTo ?? null);
+    if (
+      value === null
+      || returnTo === null
+      || !Number.isInteger(value.page)
+      || (value.page ?? 0) < 1
+      || !Number.isFinite(value.scrollY)
+      || (value.scrollY ?? -1) < 0
+      || readReviewListLocation(returnTo).page !== value.page
+    ) return null;
+    return { returnTo, page: value.page, scrollY: value.scrollY } as ReviewListSavedState;
+  } catch {
+    return null;
+  }
+}
+
 export function currentPageSelection(
   selectedIds: ReadonlySet<number>,
   currentPageIds: readonly number[],
