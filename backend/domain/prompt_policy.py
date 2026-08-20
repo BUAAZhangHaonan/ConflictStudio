@@ -298,40 +298,6 @@ BACKGROUND_DATABASE_FORBIDDEN_PHRASES: tuple[str, ...] = tuple(
     )
 )
 
-_PAST_TENSE_MARKERS: tuple[str, ...] = (
-    "was",
-    "were",
-    "had",
-    "did",
-    "went",
-    "said",
-    "told",
-    "spoke",
-    "came",
-    "gave",
-    "took",
-    "made",
-    "got",
-    "saw",
-    "knew",
-    "felt",
-    "sat",
-    "stood",
-    "turned",
-    "smiled",
-    "cried",
-    "laughed",
-    "walked",
-    "talked",
-    "looked",
-    "started",
-    "began",
-    "stopped",
-    "ran",
-    "fell",
-    "arranged",
-)
-
 _ENGLISH_WORD_RE = re.compile(r"\b[A-Za-z]+(?:[-'][A-Za-z]+)*\b")
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _BULLET_RE = re.compile(r"(?:^|\s)(?:[-*\u2022]|\d+\.)\s")
@@ -472,14 +438,6 @@ def validate_final_positive_prompt(
     ):
         violations.append("positivePrompt appearance must match the selected age")
 
-    prompt_without_quote = (
-        prompt.replace(quoted_spoken_text, "", 1) if quoted_spoken_text else prompt
-    )
-    past_markers = _find_phrases(prompt_without_quote, _PAST_TENSE_MARKERS)
-    if past_markers:
-        violations.append(
-            f"positivePrompt must use present tense; found: {', '.join(past_markers)}"
-        )
 
     if violations:
         raise PromptPolicyViolation(violations)
@@ -517,11 +475,6 @@ def validate_generated_component(value: str, field_name: str) -> str:
             violations.append(
                 f"{field_name} must not contain {label}: {', '.join(found)}"
             )
-    past_markers = _find_phrases(value, _PAST_TENSE_MARKERS)
-    if past_markers:
-        violations.append(
-            f"{field_name} must use present tense; found: {', '.join(past_markers)}"
-        )
     if violations:
         raise PromptPolicyViolation(violations)
     return value
