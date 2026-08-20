@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -55,6 +56,9 @@ from backend.domain.models import (
     JobItem,
     utc_now,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -216,14 +220,38 @@ class ProductionRendererGateway:
         try:
             attempt_id, attempt_number = self._record_running(request, prompt_id)
         except Exception as error:
+            cancel_error: BaseException | None = None
             try:
                 await self.clients[request.gpu_slot].cancel(prompt_id)
-            except Exception:
-                pass
-            raise RendererGatewayError(
-                "renderer_state_persist_failed",
-                "The submitted render could not be recorded",
-            ) from error
+            except asyncio.CancelledError as caught:
+                cancel_error = caught
+            except Exception as caught:
+                cancel_error = caught
+            failure_code = (
+                "renderer_compensation_failed"
+                if cancel_error is not None
+                else "renderer_state_persist_failed"
+            )
+            failure_reason = (
+                "The accepted render could not be recorded or cancelled"
+                if cancel_error is not None
+                else "The accepted render could not be recorded and was cancelled"
+            )
+            try:
+                self._record_submit_failure(request, failure_code, failure_reason)
+            except Exception as persist_error:
+                logger.exception(
+                    "Could not record renderer submission failure for job %s item %s",
+                    request.job_id,
+                    request.job_item_id,
+                )
+                raise RendererGatewayError(
+                    "renderer_failure_record_failed",
+                    "The render request failed, but the failure could not be recorded",
+                ) from persist_error
+            raise RendererGatewayError(failure_code, failure_reason) from (
+                cancel_error or error
+            )
 
         context = _RenderContext(
             request=request,
@@ -256,8 +284,7 @@ class ProductionRendererGateway:
             raise
         except Exception as error:
             safe = self._safe_error(error)
-            self._mark_attempt_failed(context, safe.message)
-            self._contexts.pop((slot, prompt_id), None)
+            self._fail_context(context, safe.message)
             raise safe from error
 
     async def resume(
@@ -295,8 +322,7 @@ class ProductionRendererGateway:
             raise
         except Exception as error:
             safe = self._safe_error(error)
-            self._mark_attempt_failed(context, safe.message)
-            self._contexts.pop((request.gpu_slot, prompt_id), None)
+            self._fail_context(context, safe.message)
             raise safe from error
 
     async def cancel(self, slot: GpuSlotName, prompt_id: str) -> CancelOutcome:
@@ -321,25 +347,21 @@ class ProductionRendererGateway:
                     self._persist_output(context, source_relative_path)
                 except Exception as completion_error:
                     safe = self._safe_error(completion_error)
-                    self._mark_attempt_failed(context, safe.message)
-                    self._contexts.pop((slot, prompt_id), None)
+                    self._fail_context(context, safe.message)
                     raise safe from completion_error
                 self._contexts.pop((slot, prompt_id), None)
                 return CancelOutcome.ALREADY_COMPLETED
             safe = self._safe_error(error)
             if context is not None:
-                self._mark_attempt_failed(context, safe.message)
-                self._contexts.pop((slot, prompt_id), None)
+                self._fail_context(context, safe.message)
             raise safe from error
         except Exception as error:
             safe = self._safe_error(error)
             if context is not None:
-                self._mark_attempt_failed(context, safe.message)
-                self._contexts.pop((slot, prompt_id), None)
+                self._fail_context(context, safe.message)
             raise safe from error
         if context is not None:
-            self._mark_attempt_failed(context, "The render was cancelled")
-            self._contexts.pop((slot, prompt_id), None)
+            self._fail_context(context, "The render was cancelled")
         return CancelOutcome.CANCELLED
 
     async def close(self) -> None:
@@ -911,8 +933,75 @@ class ProductionRendererGateway:
                 attempt.status = GenerationAttemptStatus.FAILED
                 attempt.failure_reason = reason
                 attempt.finished_at = utc_now()
-        except Exception:
-            return
+        except Exception as error:
+            logger.exception(
+                "Could not record renderer failure for job %s item %s",
+                context.request.job_id,
+                context.request.job_item_id,
+            )
+            raise RendererGatewayError(
+                "renderer_failure_record_failed",
+                "The render failed, but the failure could not be recorded",
+            ) from error
+
+    def _record_submit_failure(
+        self,
+        request: RenderRequest,
+        code: str,
+        reason: str,
+    ) -> None:
+        with self.database.immediate_session() as session:
+            job = session.get(Job, request.job_id)
+            item = session.get(JobItem, request.job_item_id)
+            if job is None or item is None or item.job_id != request.job_id:
+                raise RuntimeError("The renderer job state no longer exists")
+            if item.status in {
+                JobStatus.COMPLETED,
+                JobStatus.FAILED,
+                JobStatus.CANCELLED,
+            }:
+                return
+
+            timestamp = utc_now()
+            item.status = JobStatus.FAILED
+            item.failure_code = code
+            item.failure_reason = reason
+            item.failure_details_json = None
+            item.updated_at = timestamp
+            item.revision += 1
+
+            items = session.exec(
+                select(JobItem).where(JobItem.job_id == request.job_id)
+            ).all()
+            job.failed_count = sum(row.status is JobStatus.FAILED for row in items)
+            job.updated_at = timestamp
+            job.revision += 1
+
+            payload = self._event_payload(job, item)
+            payload["failureCode"] = code
+            payload["failureReason"] = reason
+            session.add(
+                JobEvent(
+                    job_id=job.id,
+                    item_id=item.id,
+                    event_type="ItemFailed",
+                    payload_json=json.dumps(
+                        payload, ensure_ascii=False, separators=(",", ":")
+                    ),
+                    created_at=timestamp,
+                )
+            )
+        self._notify_events()
+
+    def _fail_context(self, context: _RenderContext, reason: str) -> None:
+        try:
+            self._mark_attempt_failed(context, reason)
+        finally:
+            self._contexts.pop(
+                (context.request.gpu_slot, context.prompt_id),
+                None,
+            )
+
 
     @staticmethod
     def _event(job: Job, item: JobItem, event_type: str) -> JobEvent:

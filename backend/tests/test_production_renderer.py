@@ -14,7 +14,7 @@ from sqlmodel import select
 from backend.adapters.comfyui import AdapterError
 from backend.adapters.database import Database
 from backend.adapters.gpu import SlotInspection
-from backend.adapters.llm import UnconfiguredPromptModel
+from backend.adapters.llm import OpenAICompatiblePromptModel
 from backend.adapters.media import MediaStore
 from backend.adapters.production_renderer import ProductionRendererGateway
 from backend.adapters.renderer import (
@@ -48,6 +48,7 @@ from backend.domain.models import (
     GenerationAttempt,
     GpuSlot,
     Job,
+    JobEvent,
     JobItem,
 )
 from backend.domain.schemas import (
@@ -255,7 +256,7 @@ async def create_running_request(
         PromptTemplateVersionVerify(expectedRevision=preset.revision),
     )
     content = catalog.get_content_script(content.id)
-    prompts = PromptService(UnconfiguredPromptModel())
+    prompts = PromptService(OpenAICompatiblePromptModel("test-key"))
     batches = BatchService(database, prompts, ReservationRenderer())  # type: ignore[arg-type]
     draft = batches.create_batch_draft(
         BatchDraftCreate(
@@ -916,4 +917,132 @@ def test_gateway_accepts_output_completed_while_application_was_stopped(
         assert len(gpu0.submit_calls) == 1
 
     install_media_tools(monkeypatch)
+    run(scenario())
+
+def test_gateway_cancels_accepted_prompt_and_records_only_current_item_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "submit-state-failure",
+            category=Category.A_VA,
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+
+        def fail_record_running(_: RenderRequest, __: str) -> tuple[int, int]:
+            raise RuntimeError("database write failed")
+
+        monkeypatch.setattr(gateway, "_record_running", fail_record_running)
+
+        with pytest.raises(RendererGatewayError) as error:
+            await gateway.submit(request)
+
+        assert error.value.code == "renderer_state_persist_failed"
+        assert gpu0.cancel_calls == ["prompt-1"]
+        with database.read_session() as session:
+            job = session.get(Job, request.job_id)
+            item = session.get(JobItem, request.job_item_id)
+            attempts = session.exec(select(GenerationAttempt)).all()
+            events = session.exec(
+                select(JobEvent).where(JobEvent.event_type == "ItemFailed")
+            ).all()
+            slot = session.get(GpuSlot, request.gpu_slot)
+        assert job is not None and job.status is JobStatus.RUNNING
+        assert job.failed_count == 1
+        assert item is not None and item.status is JobStatus.FAILED
+        assert item.failure_code == "renderer_state_persist_failed"
+        assert len(events) == 1 and events[0].item_id == item.id
+        assert attempts == []
+        assert slot is not None and slot.availability is GpuAvailability.BUSY
+        assert slot.active_job_id == job.id
+
+    run(scenario())
+
+
+def test_gateway_records_cancel_failure_without_retrying(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "submit-cancel-failure",
+            category=Category.A_VA,
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+        gpu0.cancel_error = AdapterError(
+            "renderer_cancel_failed",
+            "The accepted prompt could not be cancelled",
+        )
+
+        def fail_record_running(_: RenderRequest, __: str) -> tuple[int, int]:
+            raise RuntimeError("database write failed")
+
+        monkeypatch.setattr(gateway, "_record_running", fail_record_running)
+
+        with pytest.raises(RendererGatewayError) as error:
+            await gateway.submit(request)
+
+        assert error.value.code == "renderer_compensation_failed"
+        assert gpu0.cancel_calls == ["prompt-1"]
+        assert len(gpu0.submit_calls) == 1
+        with database.read_session() as session:
+            item = session.get(JobItem, request.job_item_id)
+            events = session.exec(
+                select(JobEvent).where(JobEvent.event_type == "ItemFailed")
+            ).all()
+        assert item is not None and item.status is JobStatus.FAILED
+        assert item.failure_code == "renderer_compensation_failed"
+        assert len(events) == 1
+
+    run(scenario())
+
+
+def test_gateway_surfaces_failure_when_database_cannot_record_terminal_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "submit-persistent-database-failure",
+            category=Category.A_VA,
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+
+        def fail_record_running(_: RenderRequest, __: str) -> tuple[int, int]:
+            raise RuntimeError("database write failed")
+
+        def fail_record_failure(
+            _: RenderRequest,
+            __: str,
+            ___: str,
+        ) -> None:
+            raise RuntimeError("database still unavailable")
+
+        monkeypatch.setattr(gateway, "_record_running", fail_record_running)
+        monkeypatch.setattr(gateway, "_record_submit_failure", fail_record_failure)
+
+        with pytest.raises(RendererGatewayError) as error:
+            await gateway.submit(request)
+
+        assert error.value.code == "renderer_failure_record_failed"
+        assert gpu0.cancel_calls == ["prompt-1"]
+        assert len(gpu0.submit_calls) == 1
+        matching_logs = [
+            record
+            for record in caplog.records
+            if "Could not record renderer submission failure" in record.message
+        ]
+        assert len(matching_logs) == 1
+        with database.read_session() as session:
+            item = session.get(JobItem, request.job_item_id)
+            attempts = session.exec(select(GenerationAttempt)).all()
+            events = session.exec(
+                select(JobEvent).where(JobEvent.event_type == "ItemFailed")
+            ).all()
+        assert item is not None and item.status is JobStatus.RUNNING
+        assert attempts == []
+        assert events == []
+
     run(scenario())
