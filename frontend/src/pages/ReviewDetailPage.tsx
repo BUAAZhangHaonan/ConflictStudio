@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError, apiErrorMessage } from '../api/client';
@@ -104,6 +104,10 @@ export function ReviewDetailPage() {
   const returnTo = safeReviewReturnTarget(searchParams.get('returnTo')) ?? savedListState?.returnTo ?? '/review';
   const sample = detailQuery.data;
   const canReview = reviewerId !== null;
+
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [sampleId]);
 
   useEffect(() => {
     setUseSourceAudio(false);
@@ -296,11 +300,13 @@ export function ReviewDetailPage() {
   const directionText = sample.conflictDirection === null
     ? t('review.detail.notNeeded')
     : t(`review.detail.direction.${sample.conflictDirection}`);
-  const noteMessage = noteState === 'failed'
-    ? noteError instanceof ApiError && noteError.code === 'note_draft_revision_conflict'
-      ? t('review.detail.note.conflict')
-      : apiErrorMessage(noteError, locale)
-    : t(`review.detail.note.${noteState}`);
+  const noteMessage = !canReview
+    ? t('review.detail.note.readOnly')
+    : noteState === 'failed'
+      ? noteError instanceof ApiError && noteError.code === 'note_draft_revision_conflict'
+        ? t('review.detail.note.conflict')
+        : apiErrorMessage(noteError, locale)
+      : t(`review.detail.note.${noteState}`);
   const noteReady = !canReview || (noteQuery.isSuccess && noteState === 'saved');
   const writeBusy = reviewMutation.isPending || conversionMutation.isPending;
 
@@ -369,10 +375,12 @@ export function ReviewDetailPage() {
             <Field label={t('fields.note')} htmlFor="review-detail-note" hint={noteMessage} error={noteState === 'failed' ? noteMessage : undefined}>
               <textarea
                 id="review-detail-note"
+                className={!canReview ? 'is-read-only' : undefined}
                 value={note}
                 maxLength={2000}
                 readOnly={!canReview}
-                disabled={canReview && !noteQuery.isSuccess}
+                aria-readonly={!canReview}
+                disabled={!canReview || !noteQuery.isSuccess}
                 onChange={event => {
                   setNote(event.target.value);
                   setNoteError(null);

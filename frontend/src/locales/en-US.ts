@@ -43,9 +43,7 @@ const enUS = {
   },
   pagination: {
     label: 'Pagination',
-    summary: 'Page {{page}} of {{pageCount}}, {{recordCount}}',
-    pageCount_one: '{{count}} page',
-    pageCount_other: '{{count}} pages',
+    summary: 'Page {{page}} of {{totalPages}}, {{recordCount}}',
     recordCount_one: '{{count}} record',
     recordCount_other: '{{count}} records',
     previous: 'Previous',

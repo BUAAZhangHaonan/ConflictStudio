@@ -85,6 +85,14 @@
   resize: vertical;
 }
 
+.review-detail__decision textarea.is-read-only {
+  border-color: var(--color-border);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
 .review-detail__actions {
   display: flex;
   flex-wrap: wrap;

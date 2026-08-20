@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiErrorMessage } from '../api/client';
 import type { ReviewDecision, ReviewQueue, ReviewSampleListRead } from '../api/contracts';
-import { useReviewSampleListQuery, useSubmitReviewBatchMutation } from '../api/queries';
+import { useDatasetsQuery, useReviewSampleListQuery, useSubmitReviewBatchMutation } from '../api/queries';
 import { Button, ConfirmDialog, Field, PageHeader, Pagination, StatusBadge, TableShell } from '../components';
 import { usePreferences } from '../preferences';
 import {
@@ -87,6 +87,7 @@ export function ReviewListPage() {
     ...queue,
     page: locationState.page,
   });
+  const datasetsQuery = useDatasetsQuery(1);
   const batchMutation = useSubmitReviewBatchMutation();
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchDecision, setBatchDecision] = useState<Exclude<ReviewDecision, 'Pending'>>('Accepted');
@@ -99,6 +100,7 @@ export function ReviewListPage() {
     return value.trim() && i18n.exists(key) ? t(key) : t('review.list.emotionNotProvided');
   };
   const samples = listQuery.data?.items ?? [];
+  const datasets = datasetsQuery.data?.items ?? [];
   const pageSelection = currentPageSelection(selectedIds, samples.map(sample => sample.id));
   const selectedSamples = samples.filter(sample => pageSelection.has(sample.id));
 
@@ -220,18 +222,16 @@ export function ReviewListPage() {
               onChange={event => updateFilter({ search: event.target.value || null })}
             />
           </Field>
-          <Field label={t('review.list.datasetNumber')} htmlFor="review-list-dataset">
-            <input
+          <Field label={t('fields.dataset')} htmlFor="review-list-dataset">
+            <select
               id="review-list-dataset"
-              type="number"
-              min={1}
-              step={1}
-              value={locationState.datasetId ?? ''}
-              onChange={event => {
-                const value = Number(event.target.value);
-                updateFilter({ datasetId: Number.isInteger(value) && value > 0 ? value : null });
-              }}
-            />
+              disabled={datasets.length === 0}
+              value={datasets.length === 0 ? '' : locationState.datasetId ?? ''}
+              onChange={event => updateFilter({ datasetId: event.target.value ? Number(event.target.value) : null })}
+            >
+              <option value="">{t('review.list.allDatasets')}</option>
+              {datasets.map(dataset => <option key={dataset.id} value={dataset.id}>{dataset.name}</option>)}
+            </select>
           </Field>
           <Field label={t('review.decisionFilter')} htmlFor="review-list-decision">
             <select id="review-list-decision" value={locationState.decision} onChange={event => updateFilter({ decision: event.target.value as ReviewListLocationState['decision'] })}>
@@ -331,6 +331,47 @@ export function ReviewListPage() {
               </tr>
             ))}
           </TableShell>
+
+          <ul className="review-list__cards" aria-label={t('table.samplesCaption')}>
+            {samples.map(sample => (
+              <li key={sample.id} className={pageSelection.has(sample.id) ? 'is-selected' : undefined}>
+                <div className="review-list__card-header">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={pageSelection.has(sample.id)}
+                      disabled={!canReview}
+                      aria-label={t('review.list.selectSample', { id: sample.displayId })}
+                      onChange={event => toggleSample(sample.id, event.target.checked)}
+                    />
+                    <span>{sample.displayId}</span>
+                  </label>
+                  <StatusBadge label={t(`status.review.${sample.reviewDecision}`)} kind={reviewStatusKind(sample.reviewDecision)} />
+                </div>
+                <video
+                  src={sample.primaryMedia.url}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  aria-label={t('review.primaryMediaAlt', { id: sample.displayId })}
+                />
+                <dl>
+                  <div><dt>{t('fields.dataset')}</dt><dd>{sample.datasetName}</dd></div>
+                  <div><dt>{t('review.list.relationFilter')}</dt><dd>{relationCode(sample.relation)}</dd></div>
+                  <div><dt>{t('review.protocolFilter')}</dt><dd>{protocolCode(sample.protocol)}</dd></div>
+                  <div><dt>{t('review.trueEmotion')}</dt><dd>{emotionLabel(sample.trueEmotion)}</dd></div>
+                  <div><dt>{t('review.apparentEmotion')}</dt><dd>{emotionLabel(sample.apparentEmotion)}</dd></div>
+                  <div>
+                    <dt>{t('review.list.directionFilter')}</dt>
+                    <dd>{sample.conflictDirection ? t(`direction.${sample.conflictDirection}`) : t('review.list.directionNotNeeded')}</dd>
+                  </div>
+                  <div><dt>{t('review.list.gender')}</dt><dd>{t(`review.gender.${sample.gender}`)}</dd></div>
+                  <div><dt>{t('review.decisionFilter')}</dt><dd>{t(`status.review.${sample.reviewDecision}`)}</dd></div>
+                </dl>
+                <Button variant="secondary" onClick={() => openDetail(sample)}>{t('review.list.openSample')}</Button>
+              </li>
+            ))}
+          </ul>
 
           <Pagination
             page={listQuery.data.page}

@@ -3,7 +3,12 @@ import { useTranslation } from 'react-i18next';
 import { apiErrorMessage } from '../api/client';
 import { useCreateReviewerMutation, useReviewersQuery } from '../api/queries';
 import { Button, Dialog, Field, Pagination } from '../components';
-import { setCurrentReviewer, usePreferences } from '../preferences';
+import {
+  dismissReviewerPrompt,
+  isReviewerPromptDismissed,
+  setCurrentReviewer,
+  usePreferences,
+} from '../preferences';
 
 export function FirstReviewerDialog() {
   const { t } = useTranslation();
@@ -15,7 +20,7 @@ export function FirstReviewerDialog() {
   const [name, setName] = useState('');
   const [mode, setMode] = useState<'existing' | 'new'>('new');
   const [selectedReviewerId, setSelectedReviewerId] = useState<number | null>(null);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(isReviewerPromptDismissed);
   const currentReviewer = useMemo(() => preferences.currentReviewerId === null ? null : {
     id: preferences.currentReviewerId,
     name: preferences.currentReviewerName ?? '',
@@ -59,7 +64,15 @@ export function FirstReviewerDialog() {
       onClose={() => setDismissed(true)}
       footer={
         <>
-          <Button variant="secondary" onClick={() => setDismissed(true)}>{t('reviewer.continueReadOnly')}</Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              dismissReviewerPrompt();
+              setDismissed(true);
+            }}
+          >
+            {t('reviewer.continueReadOnly')}
+          </Button>
           <Button type="submit" form="first-reviewer-form" variant="primary" busy={createMutation.isPending}>
             {t('actions.confirmName')}
           </Button>

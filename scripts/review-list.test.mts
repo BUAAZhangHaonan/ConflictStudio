@@ -233,6 +233,7 @@ test('review return state accepts only the list path and restores exact page and
   assert.equal(saveReviewListState({ ...saved, page: 3 }, storage), false);
   assert.match(pageSource, /if \(!listQuery\.isSuccess \|\| restoredLocationRef\.current === returnTo\) return;/u);
   assert.match(pageSource, /window\.scrollTo\(\{ top: saved\.scrollY, left: 0, behavior: 'auto' \}\)/u);
+  assert.match(read('../frontend/src/pages/ReviewDetailPage.tsx'), /useLayoutEffect\(\(\) => \{[\s\S]*window\.scrollTo\(\{ top: 0, left: 0, behavior: 'auto' \}\)[\s\S]*\}, \[sampleId\]\)/u);
 });
 
 test('selection stays on the current page and read only mode keeps detail browsing available', () => {
@@ -299,4 +300,16 @@ test('review emotions use the locale namespace and never expose raw values or ke
   }
   assert.match(pageSource, /i18n\.exists\(key\) \? t\(key\) : t\('review\.list\.emotionNotProvided'\)/u);
   assert.equal(pageSource.includes('<td className="review-list__emotion">{t(`emotion.'), false);
+});
+
+test('review list uses a named dataset select and complete cards at 600 pixels', () => {
+  const css = read('../frontend/src/pages/ReviewListPage.css');
+  assert.match(pageSource, /useDatasetsQuery\(1\)/u);
+  assert.match(pageSource, /<select[\s\S]*id="review-list-dataset"[\s\S]*disabled=\{datasets\.length === 0\}[\s\S]*datasets\.map\(dataset/u);
+  assert.doesNotMatch(pageSource, /type="number"[\s\S]{0,180}review-list-dataset/u);
+  for (const field of ['displayId', 'primaryMedia', 'datasetName', 'relation', 'protocol', 'trueEmotion', 'apparentEmotion', 'conflictDirection', 'gender', 'reviewDecision']) {
+    assert.match(pageSource, new RegExp(`sample\\.${field}`));
+  }
+  assert.match(pageSource, /className="review-list__cards"/u);
+  assert.match(css, /@media \(max-width: 600px\)[\s\S]*\.review-list__results \.table-shell \{ display: none; \}[\s\S]*\.review-list__cards \{[\s\S]*display: grid/u);
 });

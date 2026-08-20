@@ -48,9 +48,7 @@ const zhCN = {
   },
   pagination: {
     label: '分页',
-    summary: '第 {{page}} 页，共 {{pageCount}}，{{recordCount}}',
-    pageCount_one: '{{count}} 页',
-    pageCount_other: '{{count}} 页',
+    summary: '第 {{page}} 页，共 {{totalPages}} 页，{{recordCount}}',
     recordCount_one: '{{count}} 条',
     recordCount_other: '{{count}} 条',
     previous: '上一页',

@@ -16,7 +16,7 @@ export function Pagination({ page, totalPages, total, onPageChange, className = 
     <nav className={`pagination ${className}`.trim()} aria-label={t('pagination.label')}>
       <p>{t('pagination.summary', {
         page,
-        pageCount: t('pagination.pageCount', { count: totalPages }),
+        totalPages,
         recordCount: t('pagination.recordCount', { count: total }),
       })}</p>
       <div>

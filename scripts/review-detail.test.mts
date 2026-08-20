@@ -42,9 +42,13 @@ test('VA stays sounded and VT offers one source audio toggle only when source me
 test('missing reviewer is read only and disables every write action', () => {
   assert.match(page, /const canReview = reviewerId !== null/);
   assert.match(page, /readOnly=\{!canReview\}/);
+  assert.match(page, /disabled=\{!canReview \|\| !noteQuery\.isSuccess\}/);
+  assert.match(page, /const noteMessage = !canReview[\s\S]*review\.detail\.note\.readOnly/u);
   assert.match(page, /disabled=\{!canReview \|\| !noteReady \|\| writeBusy\}/);
   assert.match(page, /disabled=\{!canReview \|\| writeBusy\}/);
   assert.match(page, /review\.detail\.readOnly/);
+  assert.match(css, /textarea\.is-read-only[\s\S]*background: var\(--color-surface-muted\)[\s\S]*cursor: not-allowed/u);
+  assert.match(locales, /readOnly: 'Read-only browsing\./u);
 });
 
 test('note autosave exposes loading saving saved failure and retry states', () => {

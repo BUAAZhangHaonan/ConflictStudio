@@ -4,6 +4,7 @@ import type { Locale } from './types';
 export const LOCALE_STORAGE_KEY = 'conflictstudio.locale';
 const REVIEWER_ID_STORAGE_KEY = 'conflictstudio.reviewer.id';
 const REVIEWER_NAME_STORAGE_KEY = 'conflictstudio.reviewer.name';
+export const REVIEWER_PROMPT_DISMISSED_STORAGE_KEY = 'conflictstudio.reviewer.readOnly';
 
 export interface BrowserPreferences {
   locale: Locale;
@@ -50,6 +51,14 @@ export function setPreferredLocale(locale: Locale): void {
   publish({ ...snapshot, locale });
 }
 
+export function isReviewerPromptDismissed(): boolean {
+  return window.localStorage.getItem(REVIEWER_PROMPT_DISMISSED_STORAGE_KEY) === 'true';
+}
+
+export function dismissReviewerPrompt(): void {
+  window.localStorage.setItem(REVIEWER_PROMPT_DISMISSED_STORAGE_KEY, 'true');
+}
+
 export function setCurrentReviewer(reviewer: { id: number; name: string } | null): void {
   if (reviewer === null) {
     window.localStorage.removeItem(REVIEWER_ID_STORAGE_KEY);
@@ -57,6 +66,7 @@ export function setCurrentReviewer(reviewer: { id: number; name: string } | null
     publish({ ...snapshot, currentReviewerId: null, currentReviewerName: null });
     return;
   }
+  window.localStorage.removeItem(REVIEWER_PROMPT_DISMISSED_STORAGE_KEY);
   window.localStorage.setItem(REVIEWER_ID_STORAGE_KEY, String(reviewer.id));
   window.localStorage.setItem(REVIEWER_NAME_STORAGE_KEY, reviewer.name);
   publish({ ...snapshot, currentReviewerId: reviewer.id, currentReviewerName: reviewer.name });

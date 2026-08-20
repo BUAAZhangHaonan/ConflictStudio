@@ -439,7 +439,8 @@ test('production reviewer identity comes only from the Reviewer API and user sel
   assert.match(appShellSource, /preferences\.currentReviewerName/u);
   assert.match(firstReviewerSource, /useReviewersQuery\(reviewerPage\)/u);
   assert.match(firstReviewerSource, /reviewers\.length === 0/u);
-  assert.match(firstReviewerSource, /const \[dismissed, setDismissed\] = useState\(false\)/u);
+  assert.match(firstReviewerSource, /const \[dismissed, setDismissed\] = useState\(isReviewerPromptDismissed\)/u);
+  assert.match(firstReviewerSource, /dismissReviewerPrompt\(\)/u);
   assert.match(firstReviewerSource, /reviewer\.continueReadOnly/u);
   assert.doesNotMatch(firstReviewerSource, /dismissible=\{false\}|onClose=\{\(\) => undefined\}/u);
 });
