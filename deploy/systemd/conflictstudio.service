@@ -6,8 +6,8 @@ After=network.target
 WorkingDirectory=/home/team/zhanghaonan/ConflictStudio
 Environment=CONFLICTSTUDIO_DATA_ROOT=/home/team/zhanghaonan/ConflictStudio-data
 Environment=CONFLICTSTUDIO_HOST=127.0.0.1
-Environment=CONFLICTSTUDIO_PORT=8000
-Environment=CONFLICTSTUDIO_PYTHON=/home/team/zhanghaonan/miniconda3/envs/mprisk/bin/python
+Environment=CONFLICTSTUDIO_PORT=8001
+Environment=CONFLICTSTUDIO_PYTHON=/home/team/zhanghaonan/ConflictStudio/.venv/bin/python
 Environment=CONFLICTSTUDIO_LTX23_WORKFLOW_PATH=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json
 Environment=CONFLICTSTUDIO_H3_WORKFLOW_PATH=/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json
 Environment=CONFLICTSTUDIO_GPU0_URL=http://127.0.0.1:8188
