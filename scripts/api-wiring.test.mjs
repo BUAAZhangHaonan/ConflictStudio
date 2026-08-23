@@ -227,13 +227,17 @@ test('workspace is a card list through 1024px and keeps every action visible', (
 });
 
 test('generation navigation has Resources, Test, Generate and Results routes', () => {
-  for (const route of ['/generate/test', '/generate/production', '/generate/results']) {
-  assert.match(appShellSource, /function currentPrimaryPath\(pathname: string\)/u);
-  assert.match(appShellSource, /pathname\.startsWith\('\/review'\)/u);
+  for (const route of ['/generate/test', '/generate/production', '/generate/results', '/generate/resources']) {
     assert.match(appSource, new RegExp(route.replaceAll('/', '\\/')));
     assert.match(appShellSource, new RegExp(route.replaceAll('/', '\\/')));
   }
-  assert.match(appShellSource, /\/generate\/resources/u);
+  assert.match(appShellSource, /function currentPrimaryPath\(pathname: string\)/u);
+  assert.match(appShellSource, /pathname\.startsWith\('\/review'\)/u);
+  assert.match(appSource, /const GeneratePage = lazy/u);
+  assert.match(appSource, /path="\/generate\/resources" element=\{<GeneratePage section="resources" \/>\}/u);
+  const navigationOrder = ['/generate/test', '/generate/production', '/generate/results', '/generate/resources']
+    .map(route => appShellSource.indexOf(`to: '${route}'`));
+  assert.deepEqual([...navigationOrder].sort((left, right) => left - right), navigationOrder);
   assert.match(generatePageSource, /section === 'resources' \? <ResourcesPage/u);
   assert.match(generatePageSource, /section === 'test' \? <TestPage/u);
   assert.match(generatePageSource, /section === 'production' \? <ProductionPage/u);
@@ -259,9 +263,13 @@ test('test page displays exact isolated test output while Resources owns resourc
   assert.doesNotMatch(testPageSource, /TestResources|ResourceEditors|AssistantPanel/u);
   assert.match(resourcesPageSource, /ResourceAssistantPanel/u);
   assert.match(testResourcesSource, /role="tablist"/u);
-  for (const token of ['useCreateContentScriptMutation', 'useUpdateContentScriptMutation', 'useCreateSceneMutation', 'useUpdateSceneMutation', 'useCreatePromptTemplateVersionMutation', 'useVerifyPromptTemplateVersionMutation']) {
+  for (const token of ['useCreateContentScriptMutation', 'useUpdateContentScriptMutation', 'useCreateSceneMutation', 'useUpdateSceneMutation', 'useCreatePromptTemplateVersionMutation']) {
     assert.match(testResourcesSource, new RegExp(token));
   }
+  assert.match(testPageSource, /useVerifyPromptTemplateVersionMutation/u);
+  assert.match(testPageSource, /inspectedItem\?\.status === 'Completed'/u);
+  assert.match(testPageSource, /promptOutput !== null/u);
+  assert.doesNotMatch(testResourcesSource, /useVerifyPromptTemplateVersionMutation|setConfirmAction\('verify'\)/u);
   assert.match(testWorkflowSource, /sceneIds/u);
   assert.match(generationLocaleSource, /Test results never enter a formal dataset, review, or archive/u);
 });
@@ -350,6 +358,8 @@ test('resource assistant proposes and applies one editable atomic bundle', () =>
   assert.match(querySource, /\/api\/resource-assistant\/propose/u);
   assert.match(querySource, /\/api\/resource-assistant\/apply/u);
   assert.doesNotMatch(`${querySource}\n${contractSource}`, /configuration-assistants|ConfigurationAssistant/u);
+  assert.match(contractSource, /ResourceAssistantContentDraft = Omit<ContentScriptCreate, 'sceneIds' \| 'status'>[\s\S]*?status: 'Draft'/u);
+  assert.match(contractSource, /scenes: ResourceAssistantSceneDraft\[\]/u);
   assert.doesNotMatch(resourceAssistantSource, /submitBatch|createDataset|updateDataset|renameDataset|deleteDataset|mergeDataset/u);
 });
 

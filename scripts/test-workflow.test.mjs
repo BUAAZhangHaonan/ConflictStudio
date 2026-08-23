@@ -19,6 +19,7 @@ const productionSource = read('../frontend/src/pages/generate/ProductionPage.tsx
 const resultsModelSource = read('../frontend/src/pages/generate/resultsModel.ts');
 const querySource = read('../frontend/src/api/queries.ts');
 const contractSource = read('../frontend/src/api/contracts.ts');
+const appSource = read('../frontend/src/app/App.tsx');
 const appShellSource = read('../frontend/src/components/AppShell.tsx');
 const responsiveSource = read('../frontend/src/styles/responsive.css');
 
@@ -97,14 +98,18 @@ test('manual content, scene, and prompt resources remain explicit Draft writes',
     ltxNegativePrompt: 'blur', h3NegativePrompt: 'blur',
   }, 3).expectedTemplateRevision, 3);
   assert.match(editorsSource, /useCreatePromptTemplateVersionMutation/u);
-  assert.match(editorsSource, /selectedVersion\?\.verificationStatus !== 'Draft'/u);
-  assert.doesNotMatch(helperSource, /canVerifyTestedVersion|testedVersionIds/u);
+  assert.doesNotMatch(editorsSource, /useVerifyPromptTemplateVersionMutation|setConfirmAction\('verify'\)|sealVersion/u);
 });
 
 test('Resources is a separate four-item destination with three focused tabs', () => {
   for (const route of ['/generate/resources', '/generate/test', '/generate/production', '/generate/results']) {
     assert.match(appShellSource, new RegExp(route.replaceAll('/', '\\/')));
   }
+  assert.match(appSource, /const GeneratePage = lazy/u);
+  assert.match(appSource, /path="\/generate\/resources" element=\{<GeneratePage section="resources" \/>\}/u);
+  const navigationOrder = ['/generate/test', '/generate/production', '/generate/results', '/generate/resources']
+    .map(route => appShellSource.indexOf(`to: '${route}'`));
+  assert.deepEqual([...navigationOrder].sort((left, right) => left - right), navigationOrder);
   assert.match(resourcesPageSource, /ResourceAssistantPanel/u);
   assert.match(resourcesPageSource, /ResourceEditors/u);
   for (const tab of ['content', 'scenes', 'prompts']) assert.match(editorsSource, new RegExp(`'${tab}'`));
@@ -121,6 +126,9 @@ test('resource assistant proposes, exposes the full editable bundle, confirms, t
   assert.match(querySource, /\/api\/resource-assistant\/propose/u);
   assert.match(querySource, /\/api\/resource-assistant\/apply/u);
   assert.doesNotMatch(querySource + contractSource, /configuration-assistants|ConfigurationAssistant/u);
+  assert.match(contractSource, /ResourceAssistantContentDraft = Omit<ContentScriptCreate, 'sceneIds' \| 'status'>[\s\S]*?status: 'Draft'/u);
+  assert.match(contractSource, /ResourceAssistantSceneDraft = Omit<SceneCreate, 'status'>[\s\S]*?status: 'Draft'/u);
+  assert.match(contractSource, /scenes: ResourceAssistantSceneDraft\[\]/u);
   assert.match(assistantSource, /userRequirement: requirement\.trim\(\)/u);
   assert.match(assistantSource, /expectedRevision: proposal\.promptTemplate\.revision/u);
   assert.match(assistantSource, /bundle: proposal\.bundle/u);
@@ -128,6 +136,22 @@ test('resource assistant proposes, exposes the full editable bundle, confirms, t
   assert.match(assistantSource, /<ConfirmDialog/u);
   assert.match(assistantSource, /content\.mode === 'Generative'/u);
   assert.match(assistantSource, /content\.mode === 'Fixed'/u);
+});
+
+test('a prompt version can be verified only from its completed visible Prompt Test', () => {
+  assert.match(testPageSource, /useVerifyPromptTemplateVersionMutation/u);
+  assert.match(testPageSource, /setPromptTestJobId\(form\.kind === 'PromptTest' \? job\.id : null\)/u);
+  assert.match(testPageSource, /testedDraftVersion = inspectedJobId === promptTestJobId[\s\S]*?inspectedItem\?\.status === 'Completed'[\s\S]*?promptOutput !== null[\s\S]*?verificationStatus === 'Draft'/u);
+  assert.match(testPageSource, /verifyVersionMutation\.mutateAsync/u);
+  assert.match(testPageSource, /open=\{verifyConfirmOpen\}/u);
+  assert.doesNotMatch(editorsSource, /useVerifyPromptTemplateVersionMutation|verifyVersion\.mutateAsync|setConfirmAction\('verify'\)/u);
+});
+
+test('internal batch drafts have no browse or restore query', () => {
+  assert.doesNotMatch(querySource, /useBatchDraftsQuery|useBatchDraftQuery|batchDraftsPage|batchDraft: \(id/u);
+  assert.doesNotMatch(querySource, /apiRequest<Page<BatchDraft>>|generationQueries\.batchDraft/u);
+  assert.match(querySource, /id === null \? apiRequest<BatchDraft>\('\/api\/batch-drafts'/u);
+  assert.match(querySource, /apiRequest<BatchPreview>\('\/api\/batch-drafts\/' \+ id \+ '\/preview'/u);
 });
 
 test('content list filtering is sent to the server before pagination', () => {

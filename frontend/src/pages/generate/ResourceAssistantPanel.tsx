@@ -8,7 +8,7 @@ import {
 import type {
   ResourceAssistantBundle,
   ResourceAssistantProposal,
-  SceneCreate,
+  ResourceAssistantSceneDraft,
 } from '../../api/contracts';
 import { allowedDirections, type ConflictDirection } from '../../types';
 import {
@@ -42,7 +42,7 @@ const sceneTextFields = [
   ['framingEn', 'test.resource.framingEn'],
 ] as const;
 
-function emptyScene(): SceneCreate {
+function emptyScene(): ResourceAssistantSceneDraft {
   return {
     nameZh: '',
     nameEn: '',

@@ -14,6 +14,7 @@ import {
   useSubmitPromptTestMutation,
   useSubmitVideoTestMutation,
   useTestResultsQuery,
+  useVerifyPromptTemplateVersionMutation,
 } from '../../api/queries';
 import { isModelSwitchConfirmationRequired } from '../../api/client';
 import type {
@@ -138,7 +139,9 @@ export function TestPage() {
   const [validation, setValidation] = useState(false);
   const [runConfirmOpen, setRunConfirmOpen] = useState(false);
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
+  const [verifyConfirmOpen, setVerifyConfirmOpen] = useState(false);
   const [inspectedJobId, setInspectedJobId] = useState<number | null>(null);
+  const [promptTestJobId, setPromptTestJobId] = useState<number | null>(null);
   const [hiddenIds, setHiddenIds] = useState(hiddenTestIds);
 
   const contentQuery = useContentScriptsQuery(contentPage, {
@@ -158,6 +161,7 @@ export function TestPage() {
   const inspectedItemsQuery = useResultItemsQuery('test', inspectedJobId, 1);
   const promptTestMutation = useSubmitPromptTestMutation();
   const videoTestMutation = useSubmitVideoTestMutation();
+  const verifyVersionMutation = useVerifyPromptTemplateVersionMutation();
 
   const content = useMemo(() => contentQuery.data?.items ?? [], [contentQuery.data]);
   const templates = useMemo(
@@ -198,10 +202,17 @@ export function TestPage() {
   const recent = (recentQuery.data?.items ?? []).filter(item => !hiddenIds.includes(item.id)).slice(0, 5);
   const inspectedItem = inspectedItemsQuery.data?.items[0] ?? null;
   const promptOutput = inspectedItem?.promptResult ?? null;
+  const testedDraftVersion = inspectedJobId === promptTestJobId
+    && inspectedItem?.status === 'Completed'
+    && promptOutput !== null
+    && inspectedItem.input.promptTemplateVersionId === selectedVersion?.id
+    && selectedVersion.verificationStatus === 'Draft'
+    ? selectedVersion
+    : null;
   const queryError = contentQuery.error ?? selectedContentQuery.error ?? templatesQuery.error ?? versionsQuery.error
     ?? selectedVersionDetailQuery.error ?? scenesQuery.error ?? sceneQuery.error ?? gpuQuery.error
     ?? recentQuery.error ?? inspectedItemsQuery.error;
-  const mutationError = promptTestMutation.error ?? videoTestMutation.error;
+  const mutationError = promptTestMutation.error ?? videoTestMutation.error ?? verifyVersionMutation.error;
 
   useEffect(() => {
     if (selectedVersion !== null) {
@@ -310,11 +321,25 @@ export function TestPage() {
           confirmModelSwitch,
         });
       setInspectedJobId(job.id);
+      setPromptTestJobId(form.kind === 'PromptTest' ? job.id : null);
       setValidation(false);
     } catch (error) {
       if (!confirmModelSwitch && isModelSwitchConfirmationRequired(error)) setSwitchConfirmOpen(true);
     } finally {
       setRunConfirmOpen(false);
+    }
+  };
+
+  const verifyTestedVersion = async () => {
+    if (testedDraftVersion === null) return;
+    try {
+      await verifyVersionMutation.mutateAsync({
+        id: testedDraftVersion.id,
+        input: { expectedRevision: testedDraftVersion.revision },
+      });
+      setVerifyConfirmOpen(false);
+    } catch {
+      return;
     }
   };
 
@@ -345,6 +370,7 @@ export function TestPage() {
       {mutationError && !switchConfirmOpen ? <OperationFeedback error={mutationError} onDismiss={() => {
         promptTestMutation.reset();
         videoTestMutation.reset();
+        verifyVersionMutation.reset();
       }} /> : null}
 
       <div className="generation-test-layout">
@@ -431,6 +457,7 @@ export function TestPage() {
               <Field label={g('test.positive')} htmlFor="test-positive-output"><textarea id="test-positive-output" value={promptOutput.finalPositivePrompt} readOnly /></Field>
               <Field label={g('test.negative')} htmlFor="test-negative-output"><textarea id="test-negative-output" value={promptOutput.negativePrompt} readOnly /></Field>
             </div> : <p>{g('test.outputPending')}</p>}
+            {testedDraftVersion ? <Button variant="secondary" onClick={() => setVerifyConfirmOpen(true)}>{g('test.resource.verify')}</Button> : null}
             <Link className="button button--secondary" to={'/generate/results?tab=test&job=' + inspectedJobId}>{g('test.inspectResult')}</Link>
           </>}
         </section>
@@ -444,6 +471,7 @@ export function TestPage() {
 
       <ConfirmDialog open={runConfirmOpen} title={g('test.runTitle')} body={g('test.runBody')} confirmLabel={g('test.run')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void runTest(false)} onClose={() => setRunConfirmOpen(false)} busy={promptTestMutation.isPending || videoTestMutation.isPending} />
       <ConfirmDialog open={switchConfirmOpen} title={g('production.switchTitle')} body={g('production.switchBody')} confirmLabel={g('common.confirm')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void runTest(true)} onClose={() => setSwitchConfirmOpen(false)} busy={videoTestMutation.isPending} />
+      <ConfirmDialog open={verifyConfirmOpen} title={g('test.resource.verifyTitle')} body={g('test.resource.verifyBody')} confirmLabel={g('test.resource.verify')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void verifyTestedVersion()} onClose={() => setVerifyConfirmOpen(false)} busy={verifyVersionMutation.isPending} />
     </GenerationScaffold>
   );
 }

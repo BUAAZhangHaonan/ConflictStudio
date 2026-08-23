@@ -13,7 +13,6 @@ import {
   useScenesQuery,
   useUpdateContentScriptMutation,
   useUpdateSceneMutation,
-  useVerifyPromptTemplateVersionMutation,
 } from '../../api/queries';
 import { allowedDirections, type Category, type ConflictDirection } from '../../types';
 import type { GenerationKey } from '../../locales/features/generation';
@@ -42,7 +41,7 @@ import {
 } from './testWorkflow';
 
 type EditorMode = 'create' | 'edit';
-type ConfirmAction = 'content' | 'scene' | 'version' | 'verify' | null;
+type ConfirmAction = 'content' | 'scene' | 'version' | null;
 type ResourceTab = 'content' | 'scenes' | 'prompts';
 
 export function ResourceEditors() {
@@ -76,7 +75,6 @@ export function ResourceEditors() {
   const createScene = useCreateSceneMutation();
   const updateScene = useUpdateSceneMutation();
   const createVersion = useCreatePromptTemplateVersionMutation();
-  const verifyVersion = useVerifyPromptTemplateVersionMutation();
 
   const draftContents = contentQuery.data?.items ?? [];
   const draftScenes = (scenesQuery.data?.items ?? []).filter(item => item.status === 'Draft');
@@ -184,36 +182,18 @@ export function ResourceEditors() {
     }
   };
 
-  const sealVersion = async () => {
-    if (selectedVersion === null || selectedVersion.verificationStatus !== 'Draft') return;
-    try {
-      const saved = await verifyVersion.mutateAsync({
-        id: selectedVersion.id,
-        input: { expectedRevision: selectedVersion.revision },
-      });
-      setConfirmAction(null);
-    } catch {
-      return;
-    }
-  };
-
   const queryError = contentQuery.error ?? selectedContentQuery.error ?? scenesQuery.error
     ?? selectedSceneQuery.error ?? templatesQuery.error ?? versionsQuery.error ?? selectedVersionQuery.error;
   const mutationError = createContent.error ?? updateContent.error ?? createScene.error
-    ?? updateScene.error ?? createVersion.error ?? verifyVersion.error;
+    ?? updateScene.error ?? createVersion.error;
   const contentBusy = createContent.isPending || updateContent.isPending;
   const sceneBusy = createScene.isPending || updateScene.isPending;
-  const versionBusy = createVersion.isPending || verifyVersion.isPending;
   const confirmTitle = confirmAction === 'content'
     ? g(contentMode === 'create' ? 'test.resource.contentCreateTitle' : 'test.resource.contentSaveTitle')
     : confirmAction === 'scene'
       ? g(sceneMode === 'create' ? 'test.resource.sceneCreateTitle' : 'test.resource.sceneSaveTitle')
-      : confirmAction === 'version'
-        ? g('test.resource.versionCreateTitle')
-        : g('test.resource.verifyTitle');
-  const confirmBody = confirmAction === 'verify'
-    ? g('test.resource.verifyBody')
-    : g('test.resource.saveBody');
+      : g('test.resource.versionCreateTitle');
+  const confirmBody = g('test.resource.saveBody');
 
   return (
     <section className="generation-resources" aria-labelledby="resources-manual-title">
@@ -226,7 +206,7 @@ export function ResourceEditors() {
       ])} /> : null}
       {mutationError ? <OperationFeedback error={mutationError} onDismiss={() => {
         createContent.reset(); updateContent.reset(); createScene.reset(); updateScene.reset();
-        createVersion.reset(); verifyVersion.reset();
+        createVersion.reset();
       }} /> : null}
 
       <div className="generation-resource-tabs" role="tablist" aria-label={g('resources.manual.title')}>
@@ -316,7 +296,6 @@ export function ResourceEditors() {
             <Field label={g('test.resource.ltxNegative')} htmlFor="selected-version-ltx-negative"><textarea id="selected-version-ltx-negative" value={selectedVersion.ltxNegativePrompt} readOnly /></Field>
             <Field label={g('test.resource.h3Negative')} htmlFor="selected-version-h3-negative"><textarea id="selected-version-h3-negative" value={selectedVersion.h3NegativePrompt} readOnly /></Field>
           </div> : null}
-          <Button variant="secondary" busy={verifyVersion.isPending} disabled={selectedVersion?.verificationStatus !== 'Draft'} onClick={() => setConfirmAction('verify')}>{g('test.resource.verify')}</Button>
           <Pagination page={versionsQuery.data?.page ?? versionPage} totalPages={versionsQuery.data?.totalPages ?? 0} total={versionsQuery.data?.total ?? 0} onPageChange={setVersionPage} />
           <div className="section-header"><h4>{g('test.resource.newVersion')}</h4></div>
           <Field label={g('test.resource.rules')} htmlFor="new-version-rules"><textarea id="new-version-rules" value={versionForm.organizationRules} onChange={event => setVersionForm(current => ({ ...current, organizationRules: event.target.value }))} /></Field>
@@ -340,10 +319,9 @@ export function ResourceEditors() {
           if (confirmAction === 'content') void saveContent();
           else if (confirmAction === 'scene') void saveScene();
           else if (confirmAction === 'version') void saveVersion();
-          else if (confirmAction === 'verify') void sealVersion();
         }}
         onClose={() => setConfirmAction(null)}
-        busy={(confirmAction === 'content' && contentBusy) || (confirmAction === 'scene' && sceneBusy) || ((confirmAction === 'version' || confirmAction === 'verify') && versionBusy)}
+        busy={(confirmAction === 'content' && contentBusy) || (confirmAction === 'scene' && sceneBusy) || (confirmAction === 'version' && createVersion.isPending)}
       />
     </section>
   );

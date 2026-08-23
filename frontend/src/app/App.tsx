@@ -20,6 +20,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/workspace" replace />} />
           <Route path="/workspace" element={<WorkspacePage />} />
+          <Route path="/generate/resources" element={<GeneratePage section="resources" />} />
           <Route path="/generate/test" element={<GeneratePage section="test" />} />
           <Route path="/generate/production" element={<GeneratePage section="production" />} />
           <Route path="/generate/results" element={<GeneratePage section="results" />} />

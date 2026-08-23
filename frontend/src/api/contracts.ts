@@ -292,7 +292,12 @@ export interface ResourceAssistantPromptTemplateReference {
   expectedRevision: number;
 }
 
-export type ResourceAssistantContentDraft = Omit<ContentScriptCreate, 'sceneIds'>;
+export type ResourceAssistantContentDraft = Omit<ContentScriptCreate, 'sceneIds' | 'status'> & {
+  status: 'Draft';
+};
+export type ResourceAssistantSceneDraft = Omit<SceneCreate, 'status'> & {
+  status: 'Draft';
+};
 export type ResourceAssistantPromptVersionDraft = Omit<
   PromptTemplateVersionCreate,
   'expectedTemplateRevision'
@@ -300,7 +305,7 @@ export type ResourceAssistantPromptVersionDraft = Omit<
 
 export interface ResourceAssistantBundle {
   contentScript: ResourceAssistantContentDraft;
-  scenes: SceneCreate[];
+  scenes: ResourceAssistantSceneDraft[];
   promptTemplateVersion: ResourceAssistantPromptVersionDraft;
 }
 

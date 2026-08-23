@@ -12,10 +12,10 @@ const primaryNavigation = [
 ] as const;
 
 const generateNavigation = [
-  { to: '/generate/resources', key: 'resources' },
   { to: '/generate/test', key: 'test' },
   { to: '/generate/production', key: 'production' },
   { to: '/generate/results', key: 'results' },
+  { to: '/generate/resources', key: 'resources' },
 ] as const;
 
 const focusableSelector = [
