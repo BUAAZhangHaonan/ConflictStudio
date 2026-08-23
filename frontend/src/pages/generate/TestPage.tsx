@@ -23,6 +23,7 @@ import type {
   Gender,
   GpuSlotName,
   JobSource,
+  Scene,
   TestComparisonInput,
   TestExecutionMode,
 } from '../../api/contracts';
@@ -89,6 +90,8 @@ interface TestForm {
   comparisons: TestComparisonInput[];
   executionMode: TestExecutionMode;
 }
+
+const EMPTY_SCENES: readonly Scene[] = [];
 
 function emptyForm(): TestForm {
   return {
@@ -173,7 +176,7 @@ export function TestPage() {
     () => (versionsQuery.data?.items ?? []).filter(item => item.category === form.category),
     [form.category, versionsQuery.data],
   );
-  const scenes = scenesQuery.data?.scenes ?? [];
+  const scenes = scenesQuery.data?.scenes ?? EMPTY_SCENES;
   const contentDetail = selectedContentQuery.data;
   const selectedContent = content.find(item => item.id === form.contentScriptId)
     ?? (contentDetail?.status === 'Active'
@@ -192,6 +195,8 @@ export function TestPage() {
     ? [selectedVersion, ...versions]
     : versions;
   const selectedScene = scenes.find(item => item.id === form.sceneId) ?? null;
+  const selectedSceneExists = selectedScene !== null;
+  const firstSceneId = scenes[0]?.id ?? null;
   const selectedSceneIsActive = sceneQuery.data?.status === 'Active';
   const gpuBySlot = new Map((gpuQuery.data ?? []).map(slot => [slot.slot, slot]));
   const seeds = parseSeeds(form.seed);
@@ -228,10 +233,15 @@ export function TestPage() {
   }, [form.promptTemplateVersionId, selectedVersion, selectedVersionDetailQuery.isPending, versions]);
 
   useEffect(() => {
-    if (scenes.some(item => item.id === form.sceneId)) return;
-    if (form.sceneId !== null && scenesQuery.isPending) return;
-    setForm(current => ({ ...current, sceneId: scenes[0]?.id ?? null }));
-  }, [form.sceneId, scenes, scenesQuery.isPending]);
+    if (
+      selectedSceneExists
+      || (form.sceneId !== null && scenesQuery.isPending)
+      || form.sceneId === firstSceneId
+    ) return;
+    setForm(current => current.sceneId === firstSceneId
+      ? current
+      : { ...current, sceneId: firstSceneId });
+  }, [firstSceneId, form.sceneId, scenesQuery.isPending, selectedSceneExists]);
 
   const changeCategory = (category: Category) => {
     setForm(current => ({

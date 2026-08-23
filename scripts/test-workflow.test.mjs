@@ -189,6 +189,14 @@ test('content search is debounced, paginated, and keeps explicit selections', ()
   assert.match(productionSource, /production\.noContentMatches/u);
 });
 
+test('Test scene selection stays stable while scene data is empty', () => {
+  assert.match(pageSource, /const EMPTY_SCENES: readonly Scene\[\] = \[\];/u);
+  assert.match(pageSource, /const scenes = scenesQuery\.data\?\.scenes \?\? EMPTY_SCENES;/u);
+  assert.doesNotMatch(pageSource, /scenesQuery\.data\?\.scenes \?\? \[\]/u);
+  assert.match(pageSource, /current\.sceneId === firstSceneId\s*\?\s*current\s*:\s*\{ \.\.\.current, sceneId: firstSceneId \}/u);
+  assert.match(pageSource, /\}, \[firstSceneId, form\.sceneId, scenesQuery\.isPending, selectedSceneExists\]\);/u);
+});
+
 test('all Test controls are state controlled and formal dataset promotion is absent', () => {
   assert.doesNotMatch(`${pageSource}\n${resourcesSource}`, /defaultValue=/u);
   for (const id of ['test-category', 'test-content', 'test-scene', 'test-template', 'test-version', 'test-model']) {
