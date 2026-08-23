@@ -351,7 +351,7 @@ def test_formal_batch_rejects_inactive_and_nonformal_datasets(tmp_path: Path) ->
     assert nonformal.value.status_code == 422
 
 
-def test_incomplete_migrated_draft_can_be_reopened_but_not_previewed(tmp_path: Path) -> None:
+def test_incomplete_migrated_draft_cannot_be_previewed(tmp_path: Path) -> None:
     database = Database(tmp_path)
     database.initialize()
     _, dataset, content, template_version, _ = fixed_resources(database)
@@ -385,10 +385,8 @@ def test_incomplete_migrated_draft_can_be_reopened_but_not_previewed(tmp_path: P
             )
         )
 
-    reopened = service.get_batch_draft(draft.id)
-    assert reopened.content_selections == []
     with pytest.raises(ServiceError, match="incomplete source selections") as incomplete:
-        asyncio.run(service.preview_batch(draft.id, reopened.revision))
+        asyncio.run(service.preview_batch(draft.id, draft.revision))
     assert incomplete.value.status_code == 409
 
 

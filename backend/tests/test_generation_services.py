@@ -383,20 +383,12 @@ def test_batch_draft_crud_preview_and_submitted_read_only(tmp_path: Path) -> Non
             BatchDraftUpdate(expectedRevision=updated.revision + 1, **fields),
         )
     assert read_only.value.status_code == 409
-    with pytest.raises(ServiceError):
-        batches.delete_batch_draft(updated.id, updated.revision + 1)
     with pytest.raises(IntegrityError, match="submitted batch inputs are immutable"):
         with database.engine.begin() as connection:
             connection.exec_driver_sql(
                 "UPDATE batch_draft_seeds SET seed = 99 WHERE batch_draft_id = ?",
                 (updated.id,),
             )
-
-    removable = batches.create_batch_draft(BatchDraftCreate(**fields))
-    batches.delete_batch_draft(removable.id, removable.revision)
-    with pytest.raises(ServiceError) as missing:
-        batches.get_batch_draft(removable.id)
-    assert missing.value.status_code == 404
 
 
 def test_expanded_allocations_use_seed_major_order_and_deterministic_gpu_split(

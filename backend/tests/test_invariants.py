@@ -414,7 +414,7 @@ def test_expected_revision_only_updates_return_422_without_incrementing_revision
             assert current["revision"] == revision
 
 
-def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
+def test_batch_preview_rejects_sources_changed_after_save(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
         records = create_catalog_records(client)
         draft_response = client.post(
@@ -458,12 +458,9 @@ def test_batch_detail_uses_saved_source_revisions(tmp_path: Path) -> None:
             (path, 200) for path, _ in updates
         ]
 
-        saved = client.get(f"/api/batch-drafts/{draft['id']}")
-        assert saved.status_code == 200
-        body = saved.json()
-        assert body["datasetRevision"] == 1
-        assert body["contentSelections"][0]["contentScript"]["revision"] == 1
-        assert body["contentSelections"][0]["mode"] == "Generative"
-        assert body["promptTemplateVersion"]["revision"] == records["prompt"]["revision"]
-        assert body["contentSelections"][0]["scenes"][0]["revision"] == 1
-        assert body["contentSelections"][0]["compatibleScenes"][0]["id"] == records["background"]["id"]
+        preview = client.post(
+            f"/api/batch-drafts/{draft['id']}/preview",
+            json={"expectedRevision": draft["revision"]},
+        )
+        assert preview.status_code == 409
+        assert preview.json()["error"]["code"] == "referenced_resource_changed"

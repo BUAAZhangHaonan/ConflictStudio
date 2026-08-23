@@ -161,22 +161,6 @@ class BatchService:
         self.renderer = renderer or UnconfiguredRendererGateway()
         self.gpu_slots = GpuSlotService(database, self.renderer)
 
-    def list_batch_drafts(self, page: int) -> PageRead[BatchDraftRead]:
-        with self.database.read_session() as session:
-            return paginate(
-                session,
-                select(BatchDraft).order_by(
-                    BatchDraft.created_at.desc(),
-                    BatchDraft.id.desc(),
-                ),
-                page,
-                lambda row: self._draft_read(self._load_aggregate(session, row.id)),
-            )
-
-    def get_batch_draft(self, draft_id: int) -> BatchDraftRead:
-        with self.database.read_session() as session:
-            return self._draft_read(self._load_aggregate(session, draft_id))
-
     def create_batch_draft(self, payload: BatchDraftCreate) -> BatchDraftRead:
         with self.database.immediate_session() as session:
             dataset, selections, preset = self._resolve_selections(session, payload)
@@ -229,16 +213,6 @@ class BatchService:
         self._replace_links(session, draft_id, payload, selections, preset)
         session.flush()
         return self._draft_read(self._load_aggregate(session, draft_id))
-
-    def delete_batch_draft(self, draft_id: int, expected_revision: int) -> None:
-        with self.database.immediate_session() as session:
-            row = self._get_draft(session, draft_id)
-            self._check_draft_revision(row, expected_revision)
-            if row.status is not BatchDraftStatus.DRAFT:
-                raise state_conflict(
-                    "batchDraft", draft_id, "A submitted batch cannot be deleted"
-                )
-            session.delete(row)
 
     async def preview_batch(
         self, draft_id: int, expected_revision: int

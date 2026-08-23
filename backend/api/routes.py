@@ -481,14 +481,6 @@ async def submit_video_test(payload: VideoTestCreate, request: Request) -> Respo
     )
 
 
-@router.get("/batch-drafts", response_model=PageRead[BatchDraftRead])
-def list_batch_drafts(
-    request: Request,
-    page: int = Query(default=1, ge=1),
-) -> PageRead[BatchDraftRead]:
-    return batches(request).list_batch_drafts(page)
-
-
 @router.post(
     "/batch-drafts", response_model=BatchDraftRead, status_code=status.HTTP_201_CREATED
 )
@@ -496,26 +488,11 @@ def create_batch_draft(payload: BatchDraftCreate, request: Request) -> BatchDraf
     return batches(request).create_batch_draft(payload)
 
 
-@router.get("/batch-drafts/{draft_id}", response_model=BatchDraftRead)
-def get_batch_draft(draft_id: int, request: Request) -> BatchDraftRead:
-    return batches(request).get_batch_draft(draft_id)
-
-
 @router.put("/batch-drafts/{draft_id}", response_model=BatchDraftRead)
 def update_batch_draft(
     draft_id: int, payload: BatchDraftUpdate, request: Request
 ) -> BatchDraftRead:
     return batches(request).update_batch_draft(draft_id, payload)
-
-
-@router.delete("/batch-drafts/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_batch_draft(
-    draft_id: int,
-    request: Request,
-    expected_revision: int = Query(alias="expectedRevision", ge=1),
-) -> Response:
-    batches(request).delete_batch_draft(draft_id, expected_revision)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/batch-drafts/{draft_id}/preview", response_model=BatchPreviewRead)

@@ -243,6 +243,33 @@ def test_openapi_contains_review_statistics_and_archive_contracts(tmp_path: Path
     assert "/api/samples/{sample_id}/review" not in paths
 
 
+def test_batch_drafts_are_write_only_until_preview_or_submit(tmp_path: Path) -> None:
+    with client_for(tmp_path) as client:
+        paths = client.get("/openapi.json").json()["paths"]
+        list_response = client.get("/api/batch-drafts")
+        detail_response = client.get("/api/batch-drafts/1")
+        delete_response = client.delete("/api/batch-drafts/1")
+        missing_preview = client.post(
+            "/api/batch-drafts/999/preview",
+            json={"expectedRevision": 1},
+        )
+
+    assert "get" not in paths["/api/batch-drafts"]
+    assert "get" not in paths["/api/batch-drafts/{draft_id}"]
+    assert "delete" not in paths["/api/batch-drafts/{draft_id}"]
+    assert "post" in paths["/api/batch-drafts"]
+    assert "put" in paths["/api/batch-drafts/{draft_id}"]
+    assert "post" in paths["/api/batch-drafts/{draft_id}/preview"]
+    assert "post" in paths["/api/batch-drafts/{draft_id}/submit"]
+    assert list_response.status_code == 404
+    assert list_response.json()["error"]["code"] == "not_found"
+    assert detail_response.status_code == 404
+    assert detail_response.json()["error"]["code"] == "not_found"
+    assert delete_response.status_code == 405
+    assert missing_preview.status_code == 404
+    assert missing_preview.json()["error"]["code"] == "not_found"
+
+
 def test_dataset_crud_uses_camel_case_and_stable_conflict(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
         created = client.post(
