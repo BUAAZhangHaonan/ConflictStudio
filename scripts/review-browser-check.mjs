@@ -106,6 +106,7 @@ try {
   assert.equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/datasets' && request.query.page === '2'), true);
   await datasetSelect.selectOption('22');
   await page.waitForURL(url => url.searchParams.get('datasetId') === '22');
+  await page.waitForFunction(() => document.querySelector('#review-list-dataset')?.value === '22');
   assert.equal(await datasetSelect.inputValue(), '22');
   await open(page, listRoute);
   await page.evaluate(() => window.scrollTo({ top: 360, behavior: 'instant' }));
