@@ -58,7 +58,9 @@ test('accepted and rejected samples can be returned to Pending with history reta
   assert.match(page, /useState<ReviewDecision \| null>\(null\)/u);
   assert.match(page, /sample\.reviewDecision !== 'Pending'[\s\S]*chooseReviewDecision\('Pending'\)/u);
   assert.match(page, /decision: reviewDecision/u);
-  assert.match(page, /expectedSampleRevision: sample\.revision/u);
+  const reviewPayload = page.slice(page.indexOf('reviewMutation.mutate({'), page.indexOf('}, {', page.indexOf('reviewMutation.mutate({')));
+  assert.match(reviewPayload, /expectedRevision: sample\.revision/u);
+  assert.doesNotMatch(reviewPayload, /expectedSampleRevision/u);
   assert.match(page, /withdrawConfirmBody/u);
   assert.match(locales, /The latest decision will be withdrawn\. Review history will remain\./u);
   assert.match(locales, /将撤回当前决定，审核历史会保留。/u);

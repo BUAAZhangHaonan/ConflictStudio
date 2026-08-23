@@ -623,7 +623,7 @@ export interface ReviewMutationRequest {
   sampleId: number;
   reviewerId: number;
   decision: ReviewDecision;
-  expectedSampleRevision: number;
+  expectedRevision: number;
   expectedReviewRevision: number;
   expectedNoteDraftRevision: number;
 }
@@ -632,7 +632,9 @@ export interface ReviewSubmissionCreate extends ReviewMutationRequest {
   queue: ReviewQueue;
 }
 
-export interface ReviewBatchItemCreate extends ReviewMutationRequest {}
+export interface ReviewBatchItemCreate extends Omit<ReviewMutationRequest, 'decision'> {
+  decision: Exclude<ReviewDecision, 'Pending'>;
+}
 
 export interface ReviewBatchSubmissionCreate {
   items: ReviewBatchItemCreate[];

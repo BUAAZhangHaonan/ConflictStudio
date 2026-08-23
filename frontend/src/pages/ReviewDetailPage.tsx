@@ -300,7 +300,7 @@ export function ReviewDetailPage() {
       sampleId: sample.id,
       reviewerId,
       decision: reviewDecision,
-      expectedSampleRevision: sample.revision,
+      expectedRevision: sample.revision,
       expectedReviewRevision: sample.reviewRevision,
       expectedNoteDraftRevision: noteRevision,
       queue: queueFromReturnTarget(returnTo),

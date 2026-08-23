@@ -68,13 +68,18 @@ test('list scroll restoration is tied to the exact filter and page URL', () => {
 
 test('batch review fetches every selected note draft before opening confirmation', () => {
   assert.match(page, /Promise\.all\(selectedSamples\.map\(sample => \([\s\S]*queryClient\.fetchQuery\(reviewSampleQueries\.note\(sample\.id, reviewer\.id, sample\.revision\)\)/u);
-  assert.match(page, /expectedSampleRevision: sample\.revision/u);
+  const batchPayload = page.slice(page.indexOf('setBatchItems('), page.indexOf('setBatchConfirmOpen(true)'));
+  assert.match(batchPayload, /expectedRevision: sample\.revision/u);
+  assert.doesNotMatch(batchPayload, /expectedSampleRevision/u);
   assert.match(page, /expectedReviewRevision: sample\.reviewRevision/u);
   assert.match(page, /expectedNoteDraftRevision: drafts\[index\]\.revision/u);
   assert.match(page, /setBatchItems\([\s\S]*setBatchConfirmOpen\(true\)/u);
   assert.doesNotMatch(page, /expectedNoteDraftRevision: 0/u);
   assert.match(contracts, /decision: ReviewDecision;/u);
-  assert.match(contracts, /expectedSampleRevision: number;/u);
+  const reviewMutation = /export interface ReviewMutationRequest \{([\s\S]*?)\n\}/u.exec(contracts)?.[1] ?? '';
+  assert.match(reviewMutation, /expectedRevision: number;/u);
+  assert.doesNotMatch(reviewMutation, /expectedSampleRevision/u);
+  assert.match(contracts, /ReviewBatchItemCreate extends Omit<ReviewMutationRequest, 'decision'>[\s\S]*decision: Exclude<ReviewDecision, 'Pending'>;/u);
 });
 
 test('batch decisions stay accept or reject and block incompatible acceptance', () => {

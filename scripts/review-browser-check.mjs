@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer } from '../frontend/node_modules/vite/dist/node/index.js';
 import { createBrowserApiFixture, installPreferences, preferenceKeys } from './browser-fixtures.mjs';
+import { reviewOpenApiFixture } from './review-openapi-fixture.mjs';
 
 const playwrightModule = process.env.CONFLICTSTUDIO_PLAYWRIGHT_MODULE;
 if (!playwrightModule) throw new Error('CONFLICTSTUDIO_PLAYWRIGHT_MODULE is required.');
@@ -161,6 +162,29 @@ try {
   await page.waitForFunction(() => document.querySelector('#review-list-dataset')?.value === '22');
   assert.equal(await datasetSelect.inputValue(), '22');
   await open(page, listRoute);
+  const legacyConsoleErrorStart = consoleErrors.length;
+  const legacyReviewResponse = await page.evaluate(async payload => {
+    const response = await fetch('/api/reviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return { status: response.status, value: await response.json() };
+  }, {
+    sampleId: 3,
+    reviewerId: 25,
+    decision: 'Rejected',
+    expectedSampleRevision: 1,
+    expectedReviewRevision: 0,
+    expectedNoteDraftRevision: 0,
+    queue: { decision: 'All' },
+  });
+  assert.equal(legacyReviewResponse.status, 422);
+  assert.deepEqual(legacyReviewResponse.value.error.details.unknown, ['expectedSampleRevision']);
+  assert.deepEqual(legacyReviewResponse.value.error.details.missing, ['expectedRevision']);
+  const legacyConsoleErrors = consoleErrors.splice(legacyConsoleErrorStart);
+  assert.deepEqual(legacyConsoleErrors, ['Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)']);
+
   await page.evaluate(() => window.scrollTo({ top: 360, behavior: 'instant' }));
   const firstDetailButton = page.getByRole('button', { name: 'CS-000021', exact: true });
   await firstDetailButton.scrollIntoViewIfNeeded();
@@ -209,7 +233,14 @@ try {
   const preparedRequests = api.state.requests.slice(requestStart);
   assert.equal(preparedRequests.some(request => request.method === 'GET' && request.path === '/api/samples/2/review-note-draft'), true);
   assert.equal(preparedRequests.some(request => request.method === 'POST' && request.path === '/api/reviews/batch'), false);
-  await page.getByRole('dialog', { name: 'Confirm batch decision' }).getByRole('button', { name: 'Cancel', exact: true }).click();
+  const batchResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/reviews/batch' && response.request().method() === 'POST');
+  await page.getByRole('dialog', { name: 'Confirm batch decision' }).getByRole('button', { name: 'Apply Accepted', exact: true }).click();
+  assert.equal((await batchResponse).status(), 201);
+  const batchRequest = [...api.state.requests].reverse().find(request => request.method === 'POST' && request.path === '/api/reviews/batch');
+  assert.deepEqual(Object.keys(batchRequest.body), reviewOpenApiFixture.ReviewBatchCreate.properties);
+  assert.deepEqual(Object.keys(batchRequest.body.items[0]).sort(), [...reviewOpenApiFixture.ReviewBatchItem.properties].sort());
+  assert.equal(batchRequest.body.items[0].expectedRevision, 1);
+  assert.equal(Object.hasOwn(batchRequest.body.items[0], 'expectedSampleRevision'), false);
 
   await page.evaluate(() => sessionStorage.clear());
   await open(page, '/review/1');
@@ -243,6 +274,10 @@ try {
   const resultsPutIndex = resultsReviewRequests.findIndex(request => request.method === 'PUT' && request.path === '/api/samples/5/review-note-draft');
   const resultsPostIndex = resultsReviewRequests.findIndex(request => request.method === 'POST' && request.path === '/api/reviews');
   assert.equal(resultsPutIndex >= 0 && resultsPostIndex > resultsPutIndex, true);
+  const resultsReviewRequest = resultsReviewRequests[resultsPostIndex];
+  assert.deepEqual(Object.keys(resultsReviewRequest.body).sort(), [...reviewOpenApiFixture.ReviewCreate.properties].sort());
+  assert.equal(resultsReviewRequest.body.expectedRevision, 1);
+  assert.equal(Object.hasOwn(resultsReviewRequest.body, 'expectedSampleRevision'), false);
   await page.getByRole('button', { name: 'Back to generation results', exact: true }).click();
   await page.waitForURL(`${baseUrl}${resultsReturnTo}`);
 

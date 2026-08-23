@@ -186,7 +186,7 @@ export function ReviewListPage() {
         sampleId: sample.id,
         reviewerId: reviewer.id,
         decision: batchDecision,
-        expectedSampleRevision: sample.revision,
+        expectedRevision: sample.revision,
         expectedReviewRevision: sample.reviewRevision,
         expectedNoteDraftRevision: drafts[index].revision,
       })));

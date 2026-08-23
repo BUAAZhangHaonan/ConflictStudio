@@ -3,12 +3,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
+import { reviewOpenApiFixture, validateReviewOpenApiPayload } from './review-openapi-fixture.mjs';
 
 const require = createRequire(import.meta.url);
 const ts = require('../frontend/node_modules/typescript');
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const clientSource = read('../frontend/src/api/client.ts');
 const contractSource = read('../frontend/src/api/contracts.ts');
+const backendSchemaSource = read('../backend/domain/schemas.py');
 const querySource = read('../frontend/src/api/queries.ts');
 const queryClientSource = read('../frontend/src/api/queryClient.ts');
 const jobEventsSource = read('../frontend/src/api/jobEvents.ts');
@@ -129,11 +131,46 @@ test('frontend contracts include current generation, review, statistics, archive
   for (const name of ['BatchDraft', 'BatchPreview', 'PromptTestCreate', 'VideoTestCreate', 'ResourceAssistantBundle', 'ResourceAssistantProposal', 'JobItem', 'Reviewer', 'ReviewSampleListRead', 'ReviewSampleDetailRead', 'ReviewNoteDraftRead', 'ReviewSubmissionCreate', 'ReviewBatchSubmissionCreate', 'SampleClassificationConversionUpdate', 'ReviewerStatistics', 'ArchivePreview', 'Archive', 'Health']) {
     assert.match(contractSource, new RegExp(`export (?:interface|type) ${name}\\b`));
   }
-  for (const field of ['reviewerId', 'expectedSampleRevision', 'expectedReviewRevision', 'expectedNoteDraftRevision']) assert.match(contractSource, new RegExp(`${field}:`));
+  for (const field of ['reviewerId', 'expectedRevision', 'expectedReviewRevision', 'expectedNoteDraftRevision']) assert.match(contractSource, new RegExp(`${field}:`));
   const detail = contractSource.match(/export interface ReviewSampleDetailRead extends ReviewSampleListRead \{([\s\S]*?)\n\}/u)?.[1] ?? '';
   for (const field of ['sourceMedia', 'dialogue', 'displayText', 'trueEmotionDescription', 'model', 'precision', 'compatibleSceneCount']) assert.match(detail, new RegExp(`${field}:`));
   assert.doesNotMatch(detail, /seed|prompt|attempt|gpu|vlm/iu);
   assert.doesNotMatch(contractSource, /export interface (?:ReviewCreate|ReviewBatchCreate|SampleClassificationUpdate)\b/u);
+});
+
+test('review mutation payloads match the strict backend OpenAPI revision contract', () => {
+  assert.deepEqual(reviewOpenApiFixture.ReviewCreate.required, [
+    'sampleId', 'reviewerId', 'expectedRevision', 'expectedReviewRevision', 'expectedNoteDraftRevision', 'decision', 'queue',
+  ]);
+  assert.deepEqual(reviewOpenApiFixture.ReviewBatchItem.required, [
+    'sampleId', 'reviewerId', 'expectedRevision', 'expectedReviewRevision', 'expectedNoteDraftRevision', 'decision',
+  ]);
+  assert.equal(reviewOpenApiFixture.ReviewCreate.additionalProperties, false);
+  assert.equal(reviewOpenApiFixture.ReviewBatchItem.additionalProperties, false);
+  const backendMutation = /class ReviewMutation\(ApiModel\):([\s\S]*?)\n\nclass ReviewCreate/u.exec(backendSchemaSource)?.[1] ?? '';
+  assert.match(backendMutation, /expected_revision: int/u);
+  assert.doesNotMatch(backendMutation, /expected_sample_revision/u);
+  assert.match(backendSchemaSource, /class ApiModel\(BaseModel\):[\s\S]*extra="forbid"/u);
+
+  const contract = /export interface ReviewMutationRequest \{([\s\S]*?)\n\}/u.exec(contractSource)?.[1] ?? '';
+  assert.match(contract, /expectedRevision: number;/u);
+  assert.doesNotMatch(contract, /expectedSampleRevision/u);
+  assert.match(contractSource, /ReviewBatchItemCreate extends Omit<ReviewMutationRequest, 'decision'>[\s\S]*decision: Exclude<ReviewDecision, 'Pending'>;/u);
+
+  const singleStart = reviewDetailSource.indexOf('reviewMutation.mutate({');
+  const singlePayload = reviewDetailSource.slice(singleStart, reviewDetailSource.indexOf('}, {', singleStart));
+  assert.match(singlePayload, /expectedRevision: sample\.revision/u);
+  assert.doesNotMatch(singlePayload, /expectedSampleRevision/u);
+  const batchStart = reviewListSource.indexOf('setBatchItems(');
+  const batchPayload = reviewListSource.slice(batchStart, reviewListSource.indexOf('setBatchConfirmOpen(true)', batchStart));
+  assert.match(batchPayload, /expectedRevision: sample\.revision/u);
+  assert.doesNotMatch(batchPayload, /expectedSampleRevision/u);
+
+  const legacy = Object.fromEntries(reviewOpenApiFixture.ReviewCreate.required.map(field => [field, 1]));
+  delete legacy.expectedRevision;
+  legacy.expectedSampleRevision = 1;
+  const validation = validateReviewOpenApiPayload('ReviewCreate', legacy);
+  assert.deepEqual(validation, { valid: false, unknown: ['expectedSampleRevision'], missing: ['expectedRevision'] });
 });
 
 test('queries and mutations use only current backend generation and review endpoints', () => {
@@ -170,7 +207,7 @@ test('queries and mutations use only current backend generation and review endpo
 
 test('review uses separate list and detail routes with current mutations and safe return state', () => {
   for (const token of ['useReviewGateReviewer', 'useReviewSampleListQuery', 'useSubmitReviewBatchMutation', 'reviewSampleQueries.note', 'saveReviewListState', 'reviewDetailLocation', 'window.scrollY']) assert.match(reviewListSource, new RegExp(token.replace('.', '\\.')));
-  for (const token of ['useReviewGateReviewer', 'useReviewSampleDetailQuery', 'useReviewHistoryQuery', 'useReviewNoteDraftQuery', 'usePutReviewNoteDraftMutation', 'useSubmitReviewMutation', 'useConvertSampleClassificationMutation', 'expectedSampleRevision', 'expectedNoteDraftRevision', 'nextReference', 'safeReviewListReturnTarget', 'flushNote']) assert.match(reviewDetailSource, new RegExp(token));
+  for (const token of ['useReviewGateReviewer', 'useReviewSampleDetailQuery', 'useReviewHistoryQuery', 'useReviewNoteDraftQuery', 'usePutReviewNoteDraftMutation', 'useSubmitReviewMutation', 'useConvertSampleClassificationMutation', 'expectedNoteDraftRevision', 'nextReference', 'safeReviewListReturnTarget', 'flushNote']) assert.match(reviewDetailSource, new RegExp(token));
   assert.match(appSource, /<Route element=\{<ReviewGate \/>\}>/u);
   assert.match(appSource, /path="\/review" element=\{<ReviewListPage \/>\}/u);
   assert.match(appSource, /path="\/review\/:sampleId" element=\{<ReviewDetailPage \/>\}/u);

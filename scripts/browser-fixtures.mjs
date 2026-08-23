@@ -1,3 +1,5 @@
+import { validateReviewOpenApiPayload } from './review-openapi-fixture.mjs';
+
 const timestamp = '2026-08-14T08:00:00.000Z';
 
 export const preferenceKeys = {
@@ -296,6 +298,17 @@ export function createBrowserApiFixture({
   };
 
   const fulfillJson = (route, value, status = 200) => route.fulfill({ status, json: value, headers: { 'Cache-Control': 'no-store' } });
+  const rejectInvalidReviewPayload = (route, schemaName, value) => {
+    const validation = validateReviewOpenApiPayload(schemaName, value);
+    if (validation.valid) return null;
+    return fulfillJson(route, {
+      error: {
+        code: 'request_validation_error',
+        message: 'The review request does not match the OpenAPI schema.',
+        details: { schema: schemaName, unknown: validation.unknown, missing: validation.missing },
+      },
+    }, 422);
+  };
   const pageValue = (url, values) => {
     const page = Math.max(1, Number(url.searchParams.get('page') ?? '1'));
     const start = (page - 1) * 20;
@@ -450,9 +463,14 @@ export function createBrowserApiFixture({
           }
         }
         if (method === 'POST' && path === '/api/reviews') {
+          const invalid = rejectInvalidReviewPayload(route, 'ReviewCreate', body);
+          if (invalid) return invalid;
           const sample = state.samples.find(item => item.id === body.sampleId);
           if (!sample) return fulfillJson(route, { error: { code: 'not_found', message: 'Sample not found.', details: null } }, 404);
-          if (body.expectedSampleRevision !== sample.revision || body.expectedReviewRevision !== sample.reviewRevision) return fulfillJson(route, { error: { code: 'review_revision_conflict', message: 'The review changed.', details: null } }, 409);
+          if (body.expectedRevision !== sample.revision) return fulfillJson(route, { error: { code: 'revision_conflict', message: 'The sample changed.', details: null } }, 409);
+          if (body.expectedReviewRevision !== sample.reviewRevision) return fulfillJson(route, { error: { code: 'review_revision_conflict', message: 'The review changed.', details: null } }, 409);
+          const noteDraftRevision = state.noteDrafts.get(`${sample.id}:${body.reviewerId}`)?.revision ?? 0;
+          if (body.expectedNoteDraftRevision !== noteDraftRevision) return fulfillJson(route, { error: { code: 'note_draft_revision_conflict', message: 'The note changed.', details: null } }, 409);
           if (body.decision === 'Pending' && sample.reviewDecision === 'Pending') return fulfillJson(route, { error: { code: 'invalid_request', message: 'Pending review cannot be withdrawn.', details: null } }, 422);
           if (body.decision === 'Accepted' && sample?.generationCompatibility === 'NeedsRegeneration') return fulfillJson(route, { error: { code: 'generation_incompatible', message: 'The generation is incompatible.', details: { resource: 'sample', id: sample.id, generationCompatibility: 'NeedsRegeneration' } } }, 422);
           const updated = updateSampleWithReview(body);
@@ -466,6 +484,23 @@ export function createBrowserApiFixture({
           return fulfillJson(route, { ...updated, nextReference: next ? { id: next.id, displayId: next.displayId, page: Math.ceil(next.id / 20) } : null }, 201);
         }
         if (method === 'POST' && path === '/api/reviews/batch') {
+          const invalidBatch = rejectInvalidReviewPayload(route, 'ReviewBatchCreate', body);
+          if (invalidBatch) return invalidBatch;
+          if (!Array.isArray(body.items) || body.items.length === 0) return fulfillJson(route, { error: { code: 'request_validation_error', message: 'The review batch is empty.', details: null } }, 422);
+          for (const input of body.items) {
+            const invalidItem = rejectInvalidReviewPayload(route, 'ReviewBatchItem', input);
+            if (invalidItem) return invalidItem;
+          }
+          if (new Set(body.items.map(input => input.sampleId)).size !== body.items.length) return fulfillJson(route, { error: { code: 'request_validation_error', message: 'The review batch contains duplicate samples.', details: null } }, 422);
+          if (body.items.some(input => input.decision !== 'Accepted' && input.decision !== 'Rejected')) return fulfillJson(route, { error: { code: 'request_validation_error', message: 'The batch decision is invalid.', details: null } }, 422);
+          for (const input of body.items) {
+            const sample = state.samples.find(item => item.id === input.sampleId);
+            if (!sample) return fulfillJson(route, { error: { code: 'not_found', message: 'Sample not found.', details: null } }, 404);
+            if (input.expectedRevision !== sample.revision) return fulfillJson(route, { error: { code: 'revision_conflict', message: 'The sample changed.', details: null } }, 409);
+            if (input.expectedReviewRevision !== sample.reviewRevision) return fulfillJson(route, { error: { code: 'review_revision_conflict', message: 'The review changed.', details: null } }, 409);
+            const noteDraftRevision = state.noteDrafts.get(`${sample.id}:${input.reviewerId}`)?.revision ?? 0;
+            if (input.expectedNoteDraftRevision !== noteDraftRevision) return fulfillJson(route, { error: { code: 'note_draft_revision_conflict', message: 'The note changed.', details: null } }, 409);
+          }
           if (body.items.some(input => input.decision === 'Accepted' && state.samples.find(sample => sample.id === input.sampleId)?.generationCompatibility === 'NeedsRegeneration')) return fulfillJson(route, { error: { code: 'generation_incompatible', message: 'The generation is incompatible.', details: {} } }, 422);
           return fulfillJson(route, body.items.map(updateSampleWithReview), 201);
         }
