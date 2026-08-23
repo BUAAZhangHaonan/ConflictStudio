@@ -174,12 +174,12 @@ function datesBetween(startDate, endDate) {
   return values;
 }
 
-export function installPreferences(context, locale = 'en-US') {
-  return context.addInitScript(({ keys, selectedLocale }) => {
+export function installPreferences(context, locale = 'en-US', reviewer = { id: 1, name: 'Lin' }) {
+  return context.addInitScript(({ keys, selectedLocale, selectedReviewer }) => {
     if (!localStorage.getItem(keys.locale)) localStorage.setItem(keys.locale, selectedLocale);
-    if (!localStorage.getItem(keys.reviewerId)) localStorage.setItem(keys.reviewerId, '1');
-    if (!localStorage.getItem(keys.reviewerName)) localStorage.setItem(keys.reviewerName, 'Lin');
-  }, { keys: preferenceKeys, selectedLocale: locale });
+    if (!localStorage.getItem(keys.reviewerId)) localStorage.setItem(keys.reviewerId, String(selectedReviewer.id));
+    if (!localStorage.getItem(keys.reviewerName)) localStorage.setItem(keys.reviewerName, selectedReviewer.name);
+  }, { keys: preferenceKeys, selectedLocale: locale, selectedReviewer: reviewer });
 }
 
 function reviewSampleView(sample, detail = false) {
@@ -211,7 +211,16 @@ function reviewSampleView(sample, detail = false) {
   };
 }
 
-export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, name: index === 0 ? 'Lin' : `Reviewer ${index + 1}`, revision: 1, createdAt: timestamp, updatedAt: timestamp })) } = {}) {
+export function createBrowserApiFixture({
+  reviewers = Array.from({ length: 25 }, (_, index) => ({
+    id: index + 1,
+    name: index === 0 ? 'Lin' : index === 24 ? 'zhanghaonan' : `Reviewer ${index + 1}`,
+    revision: 1,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  })),
+  noteDraftDelayMs = 0,
+} = {}) {
   const state = {
     datasets: datasetsFixture.map(dataset => ({ ...dataset })),
     contentScripts: contentScriptsFixture.map(item => ({ ...item })),
@@ -433,6 +442,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           const current = state.noteDrafts.get(key) ?? { sampleId, reviewerId, sampleRevision: state.samples.find(sample => sample.id === sampleId)?.revision ?? 1, note: '', revision: 0, updatedAt: null };
           if (method === 'GET') return fulfillJson(route, current);
           if (method === 'PUT') {
+            if (noteDraftDelayMs > 0) await new Promise(resolve => setTimeout(resolve, noteDraftDelayMs));
             if (body.expectedRevision !== current.revision) return fulfillJson(route, { error: { code: 'note_draft_revision_conflict', message: 'The note changed.', details: null } }, 409);
             const saved = { ...current, note: body.note, revision: current.revision + 1, updatedAt: timestamp };
             state.noteDrafts.set(key, saved);

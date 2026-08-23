@@ -39,31 +39,55 @@ const server = await createServer({
 let browser;
 let context;
 let gateContext;
+let createGateContext;
 let tracingStarted = false;
 try {
   await server.listen();
   browser = await chromium.launch({ channel: 'chrome', headless: true });
 
   gateContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await installPreferences(gateContext);
   const gateApi = createBrowserApiFixture();
   const gatePage = await gateContext.newPage();
   await gateApi.install(gatePage);
   await open(gatePage, '/review');
-  await gatePage.getByRole('heading', { name: 'Choose a reviewer', exact: true }).waitFor();
-  await gatePage.getByRole('radio', { name: 'Lin', exact: true }).check();
-  await gatePage.getByRole('button', { name: 'Enter review', exact: true }).click();
   await gatePage.getByRole('heading', { name: 'Review', exact: true }).waitFor();
-  assert.equal(await gatePage.getByText('Continue without a name', { exact: true }).count(), 0);
+  assert.equal(await gatePage.evaluate(key => localStorage.getItem(key), preferenceKeys.reviewerId), '25');
+  assert.equal(await gatePage.evaluate(key => localStorage.getItem(key), preferenceKeys.reviewerName), 'zhanghaonan');
+  assert.equal(gateApi.state.requests.some(request => request.method === 'GET' && request.path === '/api/reviewers' && request.query.page === '2'), true);
   await gateContext.close();
   gateContext = null;
 
+  createGateContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const createGateApi = createBrowserApiFixture({
+    reviewers: Array.from({ length: 24 }, (_, index) => ({
+      id: index + 1,
+      name: index === 0 ? 'Lin' : `Reviewer ${index + 1}`,
+      revision: 1,
+      createdAt: '2026-08-14T08:00:00.000Z',
+      updatedAt: '2026-08-14T08:00:00.000Z',
+    })),
+  });
+  const createGatePage = await createGateContext.newPage();
+  await createGateApi.install(createGatePage);
+  await open(createGatePage, '/review');
+  await createGatePage.getByRole('heading', { name: 'Reviewer required', exact: true }).waitFor();
+  assert.equal(await createGatePage.getByRole('textbox').count(), 0);
+  assert.equal(await createGatePage.getByRole('radio').count(), 0);
+  await createGatePage.getByRole('button', { name: 'Create zhanghaonan and enter review', exact: true }).click();
+  await createGatePage.getByRole('heading', { name: 'Review', exact: true }).waitFor();
+  const createReviewerRequest = createGateApi.state.requests.find(request => request.method === 'POST' && request.path === '/api/reviewers');
+  assert.equal(createReviewerRequest?.body?.name, 'zhanghaonan');
+  await createGateContext.close();
+  createGateContext = null;
+
   context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  await installPreferences(context);
+  await installPreferences(context, 'en-US', { id: 25, name: 'zhanghaonan' });
   if (artifactRoot) {
     await context.tracing.start({ screenshots: true, snapshots: true });
     tracingStarted = true;
   }
-  const api = createBrowserApiFixture();
+  const api = createBrowserApiFixture({ noteDraftDelayMs: 180 });
   const page = await context.newPage();
   await api.install(page);
   const pageErrors = [];
@@ -76,6 +100,14 @@ try {
   const listRoute = '/review?decision=Pending&page=2';
   await open(page, listRoute);
   assert.equal(await page.locator('details.review-list__filters').getAttribute('open'), null);
+  await page.locator('details.review-list__filters > summary').click();
+  const datasetSelect = page.locator('#review-list-dataset');
+  await datasetSelect.getByRole('option', { name: 'Dataset 22', exact: true }).waitFor({ state: 'attached' });
+  assert.equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/datasets' && request.query.page === '2'), true);
+  await datasetSelect.selectOption('22');
+  await page.waitForURL(url => url.searchParams.get('datasetId') === '22');
+  assert.equal(await datasetSelect.inputValue(), '22');
+  await open(page, listRoute);
   await page.evaluate(() => window.scrollTo({ top: 360, behavior: 'instant' }));
   const savedScroll = await page.evaluate(() => window.scrollY);
   await page.getByRole('button', { name: 'CS-000021', exact: true }).click();
@@ -97,6 +129,22 @@ try {
   await page.getByRole('button', { name: 'Back to review list', exact: true }).click();
   await page.waitForURL(`${baseUrl}${listRoute}`);
   await page.waitForFunction(expected => Math.abs(window.scrollY - expected) < 4, savedScroll);
+
+  await open(page, '/review/4?returnTo=%2Freview');
+  const quickNote = page.getByLabel('Note');
+  await quickNote.fill('Saved before a quick return.');
+  const quickReturnRequestStart = api.state.requests.length;
+  const quickReturnClick = page.getByRole('button', { name: 'Back to review list', exact: true }).click();
+  await page.getByText('Saving', { exact: true }).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/review/4');
+  assert.equal(await page.getByRole('button', { name: 'Previous', exact: true }).isDisabled(), true);
+  await quickReturnClick;
+  await page.waitForURL(`${baseUrl}/review`);
+  const quickReturnRequests = api.state.requests.slice(quickReturnRequestStart);
+  assert.equal(quickReturnRequests.some(request => request.method === 'PUT' && request.path === '/api/samples/4/review-note-draft'), true);
+  await open(page, '/review/4?returnTo=%2Freview');
+  await page.getByLabel('Note').waitFor();
+  assert.equal(await page.getByLabel('Note').inputValue(), 'Saved before a quick return.');
 
   await open(page, '/review?decision=Pending');
   await page.getByRole('checkbox', { name: 'Select CS-000002', exact: true }).check();
@@ -123,15 +171,27 @@ try {
   await page.getByRole('button', { name: 'Play source video with audio', exact: true }).click();
   assert.equal(await page.getByRole('button', { name: 'Show silent primary video', exact: true }).count(), 1);
 
-  const note = page.getByLabel('Note');
-  await note.fill('Checked media and emotion.');
-  await page.getByText('Saved', { exact: true }).waitFor({ timeout: 3000 });
-  assert.equal(api.state.requests.some(request => request.method === 'PUT' && request.path === '/api/samples/4/review-note-draft'), true);
-  await page.getByRole('button', { name: 'Accepted', exact: true }).click();
+  const resultsReturnTo = '/generate/results?tab=production&job=1&page=2';
+  await open(page, `/review/5?returnTo=${encodeURIComponent(resultsReturnTo)}`);
+  const resultsReviewRequestStart = api.state.requests.length;
+  await page.getByLabel('Note').fill('Saved before the Results review decision.');
+  const decisionClick = page.getByRole('button', { name: 'Accepted', exact: true }).click();
+  await page.getByText('Saving', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Back to review list', exact: true }).isDisabled(), true);
+  await decisionClick;
+  await page.getByRole('dialog', { name: 'Confirm review' }).waitFor();
   await page.getByRole('dialog', { name: 'Confirm review' }).getByRole('button', { name: 'Save and continue', exact: true }).click();
-  await page.waitForURL(url => /^\/review\/\d+$/u.test(url.pathname));
+  await page.waitForURL(url => url.pathname === '/review/6');
+  detailUrl = new URL(page.url());
+  assert.equal(detailUrl.searchParams.get('returnTo'), resultsReturnTo);
+  const resultsReviewRequests = api.state.requests.slice(resultsReviewRequestStart);
+  const resultsPutIndex = resultsReviewRequests.findIndex(request => request.method === 'PUT' && request.path === '/api/samples/5/review-note-draft');
+  const resultsPostIndex = resultsReviewRequests.findIndex(request => request.method === 'POST' && request.path === '/api/reviews');
+  assert.equal(resultsPutIndex >= 0 && resultsPostIndex > resultsPutIndex, true);
+  await page.getByRole('button', { name: 'Back to review list', exact: true }).click();
+  await page.waitForURL(`${baseUrl}${resultsReturnTo}`);
 
-  await open(page, '/review/4?returnTo=%2Freview');
+  await open(page, '/review/5?returnTo=%2Freview');
   await page.getByText('Review history (1)', { exact: true }).click();
   await page.locator('.review-detail__history-list').getByText('Accepted', { exact: true }).waitFor();
   assert.equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/reviews'), true);
@@ -170,6 +230,7 @@ try {
   console.log('Review browser checks passed.');
 } finally {
   if (gateContext) await gateContext.close();
+  if (createGateContext) await createGateContext.close();
   if (context && tracingStarted && artifactRoot) await context.tracing.stop({ path: join(artifactRoot, 'review-browser-trace.zip') });
   if (browser) await browser.close();
   await server.close();

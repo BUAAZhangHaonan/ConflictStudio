@@ -8,11 +8,6 @@
   gap: var(--space-4);
 }
 
-.review-gate__choices {
-  max-height: 28rem;
-  overflow-y: auto;
-}
-
 .review-gate__actions {
   display: flex;
   justify-content: flex-end;

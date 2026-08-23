@@ -25,12 +25,22 @@ class MemoryStorage {
   setItem(_key: string, value: string): void { this.value = value; }
 }
 
-test('review routes are gated by one validated reviewer without a read-only bypass', () => {
+test('review routes are gated by the fixed zhanghaonan reviewer without a bypass', () => {
   assert.match(app, /<Route element=\{<ReviewGate \/>\}>[\s\S]*path="\/review"[\s\S]*path="\/review\/:sampleId"/u);
-  assert.match(gate, /useReviewerState\(reviewerPage\)/u);
-  assert.match(gate, /<Outlet context=\{\{ reviewer: currentReviewer \}/u);
+  assert.match(gate, /FIXED_REVIEWER_NAME = 'zhanghaonan'/u);
+  assert.match(gate, /useReviewerByNameQuery\(FIXED_REVIEWER_NAME\)/u);
+  assert.match(gate, /<Outlet context=\{\{ reviewer: fixedReviewer \}/u);
   assert.match(page, /const reviewer = useReviewGateReviewer\(\)/u);
   assert.doesNotMatch(`${app}\n${gate}\n${page}`, /FirstReviewerDialog|continueReadOnly|readOnlyHint|canReview/u);
+  assert.doesNotMatch(gate, /reviewers\.map|type="radio"|maxLength/u);
+});
+
+test('dataset filter loads every server page into one selectable collection', () => {
+  assert.match(page, /const datasetsQuery = useAllDatasetsQuery\(\)/u);
+  assert.match(page, /const datasets = datasetsQuery\.data \?\? \[\]/u);
+  assert.match(queries, /async function allPageItems<T>[\s\S]*first\.totalPages - 1[\s\S]*pagePath\(path, index \+ 2\)/u);
+  assert.match(queries, /allDatasets: \(\) => queryOptions\([\s\S]*allPageItems<Dataset>\('\/api\/datasets'\)/u);
+  assert.match(queries, /export function useAllDatasetsQuery\(\)/u);
 });
 
 test('review URLs preserve all filters and pass an explicit safe return address', () => {

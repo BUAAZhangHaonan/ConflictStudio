@@ -170,7 +170,7 @@ test('queries and mutations use only current backend generation and review endpo
 
 test('review uses separate list and detail routes with current mutations and safe return state', () => {
   for (const token of ['useReviewGateReviewer', 'useReviewSampleListQuery', 'useSubmitReviewBatchMutation', 'reviewSampleQueries.note', 'saveReviewListState', 'reviewDetailLocation', 'window.scrollY']) assert.match(reviewListSource, new RegExp(token.replace('.', '\\.')));
-  for (const token of ['useReviewGateReviewer', 'useReviewSampleDetailQuery', 'useReviewHistoryQuery', 'useReviewNoteDraftQuery', 'usePutReviewNoteDraftMutation', 'useSubmitReviewMutation', 'useConvertSampleClassificationMutation', 'expectedSampleRevision', 'expectedNoteDraftRevision', 'nextReference', 'safeReviewListReturnTarget']) assert.match(reviewDetailSource, new RegExp(token));
+  for (const token of ['useReviewGateReviewer', 'useReviewSampleDetailQuery', 'useReviewHistoryQuery', 'useReviewNoteDraftQuery', 'usePutReviewNoteDraftMutation', 'useSubmitReviewMutation', 'useConvertSampleClassificationMutation', 'expectedSampleRevision', 'expectedNoteDraftRevision', 'nextReference', 'safeReviewListReturnTarget', 'flushNote']) assert.match(reviewDetailSource, new RegExp(token));
   assert.match(appSource, /<Route element=\{<ReviewGate \/>\}>/u);
   assert.match(appSource, /path="\/review" element=\{<ReviewListPage \/>\}/u);
   assert.match(appSource, /path="\/review\/:sampleId" element=\{<ReviewDetailPage \/>\}/u);
@@ -373,18 +373,21 @@ test('relationship guide is accessible and the DrawIO source has two pages', () 
   assert.match(responsiveCss, /@media \(max-width: 390px\)[\s\S]*\.generate-nav[\s\S]*grid-template-columns: repeat\(2/u);
 });
 
-test('production reviewer identity uses validated Reviewer API state and clears missing selections', () => {
+test('review gate fixes reviewer identity while settings keep validated Reviewer API state', () => {
   const sources = `${settingsSource}\n${preferencesSource}\n${appShellSource}\n${reviewGateSource}`;
   assert.doesNotMatch(sources, /林然|陈宁|Lin Ran|Chen Ning/u);
   assert.doesNotMatch(sources, /DEFAULT_REVIEWER|presetReviewer|mockReviewer/u);
   assert.match(appShellSource, /preferences\.currentReviewerName/u);
-  assert.match(reviewGateSource, /useReviewerState\(reviewerPage\)/u);
-  assert.match(reviewGateSource, /if \(currentReviewer !== null\) return <Outlet context=/u);
+  assert.match(reviewGateSource, /FIXED_REVIEWER_NAME = 'zhanghaonan'/u);
+  assert.match(reviewGateSource, /useReviewerByNameQuery\(FIXED_REVIEWER_NAME\)/u);
+  assert.match(reviewGateSource, /preferences\.currentReviewerId !== fixedReviewer\?\.id[\s\S]*setCurrentReviewer\(null\)/u);
+  assert.match(reviewGateSource, /if \(reviewerReady\) return <Outlet context=/u);
   assert.match(preferencesSource, /const currentReviewer: Reviewer \| null = reviewersQuery\.isSuccess[\s\S]*listedReviewer \?\? currentReviewerQuery\.data \?\? null/u);
   assert.match(preferencesSource, /currentReviewerId: currentReviewer\?\.id \?\? null/u);
   assert.match(preferencesSource, /const missingReviewer = currentReviewerQuery\.error instanceof ApiError && currentReviewerQuery\.error\.status === 404/u);
   assert.match(preferencesSource, /if \(missingReviewer\) setCurrentReviewer\(null\)/u);
-  assert.match(reviewGateSource, /reviewers\.length === 0/u);
+  assert.match(reviewGateSource, /createMutation\.mutate\(\{ name: FIXED_REVIEWER_NAME \}/u);
+  assert.doesNotMatch(reviewGateSource, /reviewers\.map|type="radio"|<input|maxLength/u);
   assert.doesNotMatch(`${reviewGateSource}\n${preferencesSource}`, /readOnly|dismissReviewerPrompt|isReviewerPromptDismissed|PROMPT_DISMISSED/iu);
 });
 

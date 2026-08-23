@@ -66,6 +66,7 @@ const roots = {
 export const queryKeys = {
   ...roots,
   datasetsPage: (filter: DatasetQueryFilter, page: number) => [...roots.datasets, filter, page] as const,
+  datasetsAll: [...roots.datasets, 'all'] as const,
   dataset: (id: number) => [...roots.datasets, 'detail', id] as const,
   contentScriptsPage: (filter: ContentScriptQueryFilter, page: number) => [...roots.contentScripts, filter, page] as const,
   contentScript: (id: number) => [...roots.contentScripts, 'detail', id] as const,
@@ -84,6 +85,7 @@ export const queryKeys = {
   gpuSlots: ['gpuSlots'] as const,
   health: ['health'] as const,
   reviewersPage: (page: number) => [...roots.reviewers, 'page', page] as const,
+  reviewerByName: (name: string) => [...roots.reviewers, 'name', name] as const,
   reviewer: (id: number) => [...roots.reviewers, 'detail', id] as const,
   reviewerStatistics: (reviewerId: number, filter: ReviewerStatisticsFilter) => ['reviewerStatistics', reviewerId, filter] as const,
   archivesPage: (page: number) => [...roots.archives, page] as const,
@@ -97,6 +99,16 @@ export const queryKeys = {
 function pagePath(path: string, page: number, params = new URLSearchParams()): string {
   params.set('page', String(page));
   return path + '?' + params.toString();
+}
+
+async function allPageItems<T>(path: string): Promise<T[]> {
+  const first = await apiRequest<Page<T>>(pagePath(path, 1));
+  if (first.totalPages <= 1) return first.items;
+  const remaining = await Promise.all(Array.from(
+    { length: first.totalPages - 1 },
+    (_, index) => apiRequest<Page<T>>(pagePath(path, index + 2)),
+  ));
+  return [first, ...remaining].flatMap(page => page.items);
 }
 
 function resultParams(filter: ResultQueryFilter): URLSearchParams {
@@ -144,6 +156,7 @@ export const generationQueries = {
     if (filter.status !== undefined) params.set('status', filter.status);
     return queryOptions({ queryKey: queryKeys.datasetsPage(filter, page), queryFn: () => apiRequest<Page<Dataset>>(pagePath('/api/datasets', page, params)) });
   },
+  allDatasets: () => queryOptions({ queryKey: queryKeys.datasetsAll, queryFn: () => allPageItems<Dataset>('/api/datasets') }),
   dataset: (id: number) => queryOptions({ queryKey: queryKeys.dataset(id), queryFn: () => apiRequest<Dataset>('/api/datasets/' + id) }),
   contentScripts: (page: number, filter: ContentScriptQueryFilter = {}) => {
     const params = new URLSearchParams();
@@ -170,6 +183,10 @@ export const generationQueries = {
   gpuSlots: () => queryOptions({ queryKey: queryKeys.gpuSlots, queryFn: () => apiRequest<GpuSlot[]>('/api/gpu-slots'), refetchOnWindowFocus: true }),
   health: () => queryOptions({ queryKey: queryKeys.health, queryFn: () => apiRequest<Health>('/api/health') }),
   reviewers: (page: number) => queryOptions({ queryKey: queryKeys.reviewersPage(page), queryFn: () => apiRequest<Page<Reviewer>>(pagePath('/api/reviewers', page)) }),
+  reviewerByName: (name: string) => queryOptions({
+    queryKey: queryKeys.reviewerByName(name),
+    queryFn: async () => (await allPageItems<Reviewer>('/api/reviewers')).find(reviewer => reviewer.name === name) ?? null,
+  }),
   reviewer: (id: number) => queryOptions({ queryKey: queryKeys.reviewer(id), queryFn: () => apiRequest<Reviewer>('/api/reviewers/' + id) }),
   reviewerStatistics: (reviewerId: number, filter: ReviewerStatisticsFilter) => {
     const params = new URLSearchParams();
@@ -206,6 +223,7 @@ export async function invalidateJobAuthority(client: QueryClient, id: number, in
 }
 
 export function useDatasetsQuery(page = 1, filter: DatasetQueryFilter = {}) { return useQuery(generationQueries.datasets(page, filter)); }
+export function useAllDatasetsQuery() { return useQuery(generationQueries.allDatasets()); }
 export function useDatasetQuery(id: number | null) { return useQuery({ ...generationQueries.dataset(id ?? 0), enabled: id !== null }); }
 export function useContentScriptsQuery(page = 1, filter: ContentScriptQueryFilter = {}) { return useQuery(generationQueries.contentScripts(page, filter)); }
 export function useContentScriptQuery(id: number | null) { return useQuery({ ...generationQueries.contentScript(id ?? 0), enabled: id !== null }); }
@@ -225,6 +243,7 @@ export function useJobEventsQuery(id: number | null, page = 1) { return useQuery
 export function useGpuSlotsQuery() { return useQuery(generationQueries.gpuSlots()); }
 export function useHealthQuery() { return useQuery(generationQueries.health()); }
 export function useReviewersQuery(page = 1) { return useQuery(generationQueries.reviewers(page)); }
+export function useReviewerByNameQuery(name: string) { return useQuery(generationQueries.reviewerByName(name)); }
 export function useReviewerQuery(id: number | null, enabled = true) { return useQuery({ ...generationQueries.reviewer(id ?? 0), enabled: enabled && id !== null }); }
 export function useArchivesQuery(page = 1) { return useQuery(generationQueries.archives(page)); }
 export function useSamplesQuery(filter: SampleQueryFilter = {}, page = 1) { return useQuery(generationQueries.samples(filter, page)); }

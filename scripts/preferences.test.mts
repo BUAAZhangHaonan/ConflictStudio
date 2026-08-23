@@ -46,12 +46,13 @@ test('reviewer selection persists and clears without a read-only bypass', () => 
   assert.doesNotMatch(source, /reviewer\.readOnly|PROMPT_DISMISSED|dismissReviewerPrompt|isReviewerPromptDismissed/u);
 });
 
-test('review routes require one API-validated reviewer and keep the requested route', () => {
+test('review routes resolve or create only the fixed zhanghaonan reviewer', () => {
   assert.match(appSource, /<Route element=\{<ReviewGate \/>\}>[\s\S]*path="\/review"[\s\S]*path="\/review\/:sampleId"/u);
   assert.doesNotMatch(appSource, /FirstReviewerDialog/u);
-  assert.match(gateSource, /const reviewerState = useReviewerState\(reviewerPage\)/u);
-  assert.match(gateSource, /if \(currentReviewer !== null\) return <Outlet context=/u);
-  assert.match(gateSource, /setCurrentReviewer\(reviewer\)/u);
-  assert.match(gateSource, /useCreateReviewerMutation/u);
-  assert.doesNotMatch(gateSource, /readOnly|dismiss|navigate\(/iu);
+  assert.match(gateSource, /FIXED_REVIEWER_NAME = 'zhanghaonan'/u);
+  assert.match(gateSource, /useReviewerByNameQuery\(FIXED_REVIEWER_NAME\)/u);
+  assert.match(gateSource, /preferences\.currentReviewerId !== fixedReviewer\?\.id[\s\S]*setCurrentReviewer\(null\)/u);
+  assert.match(gateSource, /createMutation\.mutate\(\{ name: FIXED_REVIEWER_NAME \}/u);
+  assert.match(gateSource, /if \(reviewerReady\) return <Outlet context=/u);
+  assert.doesNotMatch(gateSource, /reviewers\.map|type="radio"|<input|<Pagination|maxLength|useReviewerState|readOnly|dismiss|navigate\(/iu);
 });

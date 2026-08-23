@@ -32,17 +32,24 @@ test('detail receives the API-validated reviewer from ReviewGate', () => {
   assert.doesNotMatch(page, /useReviewerState|canReview|readOnly|aria-readonly|is-read-only/u);
 });
 
-test('note autosave supplies the live draft revision to every review decision', () => {
-  assert.match(page, /type NoteState = 'loading' \| 'saving' \| 'saved' \| 'failed'/u);
-  assert.match(page, /window\.setTimeout\(\(\) => \{[\s\S]*expectedRevision,[\s\S]*expectedSampleRevision: sample\.revision[\s\S]*\}, 400\)/u);
+test('note autosave and every exit flush the live draft revision before continuing', () => {
+  assert.match(page, /type NoteState = 'loading' \| 'dirty' \| 'saving' \| 'saved' \| 'failed'/u);
+  assert.match(page, /const flushNote = useCallback\(async \(\): Promise<boolean>/u);
+  assert.match(page, /noteMutation\.mutateAsync\([\s\S]*expectedRevision: noteRevisionRef\.current[\s\S]*expectedSampleRevision: sample\.revision/u);
+  assert.match(page, /window\.setTimeout\(\(\) => \{ void flushNote\(\); \}, 400\)/u);
+  assert.match(page, /if \(!await flushNote\(\)\) return;[\s\S]*navigate\(reviewDetailLocation/u);
+  assert.match(page, /if \(await flushNote\(\)\) navigate\(returnTo\)/u);
+  assert.match(page, /if \(await flushNote\(\)\) setReviewDecision\(decision\)/u);
+  assert.match(page, /disabled=\{navigationPending \|\| noteSaving\}/u);
   assert.match(page, /useReviewNoteDraftQuery\(sampleId, reviewerId, sampleRevision\)/u);
   assert.match(page, /expectedNoteDraftRevision: noteRevision/u);
-  assert.match(page, /const noteReady = noteQuery\.isSuccess && noteState === 'saved'/u);
+  assert.match(page, /const noteReady = noteQuery\.isSuccess && noteState === 'saved' && note === savedNote/u);
+  assert.match(locales, /dirty: 'Not saved yet'/u);
 });
 
 test('accepted and rejected samples can be returned to Pending with history retained', () => {
   assert.match(page, /useState<ReviewDecision \| null>\(null\)/u);
-  assert.match(page, /sample\.reviewDecision !== 'Pending'[\s\S]*setReviewDecision\('Pending'\)/u);
+  assert.match(page, /sample\.reviewDecision !== 'Pending'[\s\S]*chooseReviewDecision\('Pending'\)/u);
   assert.match(page, /decision: reviewDecision/u);
   assert.match(page, /expectedSampleRevision: sample\.revision/u);
   assert.match(page, /withdrawConfirmBody/u);
@@ -52,7 +59,7 @@ test('accepted and rejected samples can be returned to Pending with history reta
 
 test('generation compatibility is the only acceptance block', () => {
   assert.match(page, /const acceptanceBlocked = sample\.generationCompatibility === 'NeedsRegeneration'/u);
-  assert.match(page, /disabled=\{writeBusy \|\| acceptanceBlocked\}[\s\S]*setReviewDecision\('Accepted'\)/u);
+  assert.match(page, /disabled=\{writeBusy \|\| acceptanceBlocked\}[\s\S]*chooseReviewDecision\('Accepted'\)/u);
   assert.match(page, /reviewDecision === 'Accepted' && sample\.generationCompatibility === 'NeedsRegeneration'/u);
   assert.doesNotMatch(page, /compatibleSceneCount === 0/u);
   assert.match(locales, /needs regeneration before it can be accepted/u);
@@ -73,6 +80,12 @@ test('previous and next navigation cross page boundaries and retain explicit ret
   assert.match(page, /reviewDetailLocation\(target\.id, nextReturnTo\)/u);
   assert.match(page, /reviewDetailLocation\(nextReference\.id, nextListLocation\)/u);
   assert.doesNotMatch(page, /saveReviewListState/u);
+});
+
+test('review submission preserves a non-list Results return while list queues keep their page', () => {
+  assert.match(page, /if \(listReturnTo === null\) \{[\s\S]*reviewDetailLocation\(nextReference\.id, returnTo\)/u);
+  assert.match(page, /readReviewListLocation\(listReturnTo\)[\s\S]*page: nextReference\.page/u);
+  assert.match(page, /reviewDetailLocation\(nextReference\.id, nextListLocation\)/u);
 });
 
 test('class conversion is secondary and still enforces the full target class input', () => {

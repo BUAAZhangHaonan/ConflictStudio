@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -28,7 +28,7 @@ import {
 import type { Category, ConflictDirection, Locale } from '../types';
 import './ReviewDetailPage.css';
 
-type NoteState = 'loading' | 'saving' | 'saved' | 'failed';
+type NoteState = 'loading' | 'dirty' | 'saving' | 'saved' | 'failed';
 
 const EMOTION_OPTIONS = Object.keys(reviewArchiveEnUS.emotion);
 
@@ -94,7 +94,6 @@ export function ReviewDetailPage() {
   const [noteRevision, setNoteRevision] = useState(0);
   const [noteState, setNoteState] = useState<NoteState>('loading');
   const [noteError, setNoteError] = useState<unknown>(null);
-  const [retryNumber, setRetryNumber] = useState(0);
   const [reviewDecision, setReviewDecision] = useState<ReviewDecision | null>(null);
   const [conversionOpen, setConversionOpen] = useState(false);
   const [conversionDirection, setConversionDirection] = useState<ConflictDirection | null>(null);
@@ -106,7 +105,12 @@ export function ReviewDetailPage() {
   const [navigationPending, setNavigationPending] = useState(false);
   const initializedDraftRef = useRef<string | null>(null);
   const noteRef = useRef(note);
+  const savedNoteRef = useRef(savedNote);
+  const noteRevisionRef = useRef(noteRevision);
+  const noteSavePromiseRef = useRef<Promise<boolean> | null>(null);
   noteRef.current = note;
+  savedNoteRef.current = savedNote;
+  noteRevisionRef.current = noteRevision;
 
   const savedListState = useMemo(() => readSavedReviewListState(), []);
   const explicitReturnTo = safeReviewListReturnTarget(searchParams.get('returnTo'))
@@ -145,6 +149,10 @@ export function ReviewDetailPage() {
     setHistoryPage(1);
     setNavigationPending(false);
     initializedDraftRef.current = null;
+    noteRef.current = '';
+    savedNoteRef.current = '';
+    noteRevisionRef.current = 0;
+    noteSavePromiseRef.current = null;
     setNote('');
     setSavedNote('');
     setNoteRevision(0);
@@ -157,6 +165,9 @@ export function ReviewDetailPage() {
     const key = `${sample.id}:${reviewerId}:${sample.revision}`;
     if (initializedDraftRef.current === key) return;
     initializedDraftRef.current = key;
+    noteRef.current = noteQuery.data.note;
+    savedNoteRef.current = noteQuery.data.note;
+    noteRevisionRef.current = noteQuery.data.revision;
     setNote(noteQuery.data.note);
     setSavedNote(noteQuery.data.note);
     setNoteRevision(noteQuery.data.revision);
@@ -164,46 +175,62 @@ export function ReviewDetailPage() {
     setNoteError(null);
   }, [noteQuery.data, reviewerId, sample]);
 
-  useEffect(() => {
-    if (!sample || !noteQuery.isSuccess || note === savedNote || noteState === 'failed') return;
-    setNoteState('saving');
-    const value = note;
-    const expectedRevision = noteRevision;
-    const timer = window.setTimeout(() => {
-      noteMutation.mutate({
+  const flushNote = useCallback(async (): Promise<boolean> => {
+    while (true) {
+      if (noteSavePromiseRef.current !== null) {
+        if (!await noteSavePromiseRef.current) return false;
+        continue;
+      }
+      if (noteRef.current === savedNoteRef.current) {
+        setNoteState('saved');
+        return true;
+      }
+      if (!sample || !noteQuery.isSuccess) return false;
+
+      const value = noteRef.current;
+      const request = noteMutation.mutateAsync({
         sampleId: sample.id,
         input: {
           reviewerId,
           note: value,
-          expectedRevision,
+          expectedRevision: noteRevisionRef.current,
           expectedSampleRevision: sample.revision,
         },
-      }, {
-        onSuccess: saved => {
-          setNoteRevision(saved.revision);
-          setSavedNote(value);
-          setNoteError(null);
-          setNoteState(noteRef.current === value ? 'saved' : 'saving');
-        },
-        onError: error => {
-          setNoteError(error);
-          setNoteState('failed');
-        },
+      }).then(saved => {
+        noteRevisionRef.current = saved.revision;
+        savedNoteRef.current = value;
+        setNoteRevision(saved.revision);
+        setSavedNote(value);
+        setNoteError(null);
+        setNoteState(noteRef.current === value ? 'saved' : 'dirty');
+        return true;
+      }).catch(error => {
+        setNoteError(error);
+        setNoteState('failed');
+        return false;
       });
-    }, 400);
-    return () => window.clearTimeout(timer);
-  }, [note, noteQuery.isSuccess, noteRevision, noteState, retryNumber, reviewerId, sample, savedNote]);
+      noteSavePromiseRef.current = request;
+      setNoteError(null);
+      setNoteState('saving');
+      const saved = await request;
+      if (noteSavePromiseRef.current === request) noteSavePromiseRef.current = null;
+      if (!saved) return false;
+    }
+  }, [noteMutation, noteQuery.isSuccess, reviewerId, sample]);
 
-  const retryNoteSave = () => {
-    setNoteError(null);
-    setNoteState('saving');
-    setRetryNumber(value => value + 1);
-  };
+  useEffect(() => {
+    if (note === savedNote || noteState === 'failed' || noteState === 'saving') return;
+    const timer = window.setTimeout(() => { void flushNote(); }, 400);
+    return () => window.clearTimeout(timer);
+  }, [flushNote, note, noteState, savedNote]);
+
+  const retryNoteSave = () => { void flushNote(); };
 
   const navigateAdjacent = async (direction: 'previous' | 'next') => {
     if (listReturnTo === null || queueIndex < 0) return;
     setNavigationPending(true);
     try {
+      if (!await flushNote()) return;
       let targetPage = listLocation.page;
       let target = queueItems[queueIndex + (direction === 'previous' ? -1 : 1)] ?? null;
       if (target === null) {
@@ -230,11 +257,33 @@ export function ReviewDetailPage() {
       navigate(returnTo, { replace: true });
       return;
     }
+    if (listReturnTo === null) {
+      navigate(reviewDetailLocation(nextReference.id, returnTo), { replace: true });
+      return;
+    }
     const nextListLocation = buildReviewListLocation({
-      ...readReviewListLocation(returnTo),
+      ...readReviewListLocation(listReturnTo),
       page: nextReference.page,
     });
     navigate(reviewDetailLocation(nextReference.id, nextListLocation), { replace: true });
+  };
+
+  const navigateBack = async () => {
+    setNavigationPending(true);
+    try {
+      if (await flushNote()) navigate(returnTo);
+    } finally {
+      setNavigationPending(false);
+    }
+  };
+
+  const chooseReviewDecision = async (decision: ReviewDecision) => {
+    setNavigationPending(true);
+    try {
+      if (await flushNote()) setReviewDecision(decision);
+    } finally {
+      setNavigationPending(false);
+    }
   };
 
   const submitReview = () => {
@@ -288,6 +337,9 @@ export function ReviewDetailPage() {
       onSuccess: () => {
         setConversionOpen(false);
         setConversionSaved(true);
+        noteRef.current = '';
+        savedNoteRef.current = '';
+        noteRevisionRef.current = 0;
         setNote('');
         setSavedNote('');
         setNoteRevision(0);
@@ -353,8 +405,9 @@ export function ReviewDetailPage() {
       ? t('review.detail.note.conflict')
       : apiErrorMessage(noteError, locale)
     : t(`review.detail.note.${noteState}`);
-  const noteReady = noteQuery.isSuccess && noteState === 'saved';
-  const writeBusy = reviewMutation.isPending || conversionMutation.isPending;
+  const noteReady = noteQuery.isSuccess && noteState === 'saved' && note === savedNote;
+  const noteSaving = noteState === 'saving';
+  const writeBusy = reviewMutation.isPending || conversionMutation.isPending || noteSaving || navigationPending;
   const acceptanceBlocked = sample.generationCompatibility === 'NeedsRegeneration';
 
   return (
@@ -363,9 +416,9 @@ export function ReviewDetailPage() {
         title={sample.displayId}
         actions={(
           <div className="review-detail__navigation">
-            <Button variant="quiet" disabled={!canGoPrevious || navigationPending} onClick={() => void navigateAdjacent('previous')}>{t('review.detail.previous')}</Button>
-            <Button variant="quiet" disabled={!canGoNext || navigationPending} onClick={() => void navigateAdjacent('next')}>{t('review.detail.next')}</Button>
-            <Button variant="secondary" onClick={() => navigate(returnTo)}>{t('review.detail.backToList')}</Button>
+            <Button variant="quiet" disabled={!canGoPrevious || navigationPending || noteSaving} onClick={() => void navigateAdjacent('previous')}>{t('review.detail.previous')}</Button>
+            <Button variant="quiet" disabled={!canGoNext || navigationPending || noteSaving} onClick={() => void navigateAdjacent('next')}>{t('review.detail.next')}</Button>
+            <Button variant="secondary" disabled={navigationPending || noteSaving} onClick={() => void navigateBack()}>{t('review.detail.backToList')}</Button>
           </div>
         )}
       />
@@ -461,9 +514,10 @@ export function ReviewDetailPage() {
                 maxLength={2000}
                 disabled={!noteQuery.isSuccess}
                 onChange={event => {
+                  noteRef.current = event.target.value;
                   setNote(event.target.value);
                   setNoteError(null);
-                  setNoteState('saving');
+                  setNoteState('dirty');
                 }}
               />
             </Field>
@@ -471,10 +525,10 @@ export function ReviewDetailPage() {
             {noteState === 'failed' ? <Button variant="secondary" onClick={retryNoteSave}>{t('review.detail.note.retry')}</Button> : null}
 
             <div className="review-detail__actions">
-              <Button disabled={writeBusy || acceptanceBlocked} onClick={() => setReviewDecision('Accepted')}>{t('status.review.Accepted')}</Button>
-              <Button variant="secondary" disabled={writeBusy} onClick={() => setReviewDecision('Rejected')}>{t('status.review.Rejected')}</Button>
+              <Button disabled={writeBusy || acceptanceBlocked} onClick={() => void chooseReviewDecision('Accepted')}>{t('status.review.Accepted')}</Button>
+              <Button variant="secondary" disabled={writeBusy} onClick={() => void chooseReviewDecision('Rejected')}>{t('status.review.Rejected')}</Button>
               {sample.reviewDecision !== 'Pending' ? (
-                <Button variant="quiet" disabled={writeBusy} onClick={() => setReviewDecision('Pending')}>{t('review.detail.withdraw')}</Button>
+                <Button variant="quiet" disabled={writeBusy} onClick={() => void chooseReviewDecision('Pending')}>{t('review.detail.withdraw')}</Button>
               ) : null}
             </div>
 

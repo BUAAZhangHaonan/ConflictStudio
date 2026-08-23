@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiErrorMessage } from '../api/client';
 import type { ReviewBatchItemCreate, ReviewDecision, ReviewQueue, ReviewSampleListRead } from '../api/contracts';
-import { reviewSampleQueries, useDatasetsQuery, useReviewSampleListQuery, useSubmitReviewBatchMutation } from '../api/queries';
+import { reviewSampleQueries, useAllDatasetsQuery, useReviewSampleListQuery, useSubmitReviewBatchMutation } from '../api/queries';
 import { useReviewGateReviewer } from '../app/ReviewGate';
 import { Button, ConfirmDialog, Field, PageHeader, Pagination, StatusBadge, TableShell } from '../components';
 import {
@@ -89,7 +89,7 @@ export function ReviewListPage() {
     ...queue,
     page: locationState.page,
   });
-  const datasetsQuery = useDatasetsQuery(1);
+  const datasetsQuery = useAllDatasetsQuery();
   const batchMutation = useSubmitReviewBatchMutation();
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchDecision, setBatchDecision] = useState<Exclude<ReviewDecision, 'Pending'>>('Accepted');
@@ -104,7 +104,7 @@ export function ReviewListPage() {
     return value.trim() && i18n.exists(key) ? t(key) : t('review.list.emotionNotProvided');
   };
   const samples = listQuery.data?.items ?? [];
-  const datasets = datasetsQuery.data?.items ?? [];
+  const datasets = datasetsQuery.data ?? [];
   const pageSelection = currentPageSelection(selectedIds, samples.map(sample => sample.id));
   const selectedSamples = samples.filter(sample => pageSelection.has(sample.id));
   const acceptedBlockedCount = batchDecision === 'Accepted'

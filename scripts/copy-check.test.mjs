@@ -110,8 +110,8 @@ test('generation English copy has singular and plural counts', () => {
 test('dataset states and review gate guidance have complete English and Chinese copy', () => {
   assert.match(enUSSource, /dataset: \{ Active: 'Active', Disabled: 'Disabled', Inactive: 'Inactive' \}/u);
   assert.match(zhCNSource, /dataset: \{ Active: '已启用', Disabled: '已禁用', Inactive: '已停用' \}/u);
-  assert.match(reviewLocaleSource, /title: 'Choose a reviewer'[\s\S]*title: '选择审核人'/u);
-  assert.match(reviewLocaleSource, /body: 'Review decisions and notes are saved under this name\.'/u);
+  assert.match(reviewLocaleSource, /title: 'Reviewer required'[\s\S]*title: '需要审核人'/u);
+  assert.match(reviewLocaleSource, /body: 'Reviews in this workspace use the fixed reviewer \{\{name\}\}\.'/u);
   assert.doesNotMatch(`${enUSSource}\n${zhCNSource}`, /continueReadOnly|readOnlyHint/u);
   assert.match(workspaceLocaleSource, /Disabled: 'Disabled',[\s\S]*?Inactive: 'Inactive'/u);
   assert.match(workspaceLocaleSource, /Disabled: '已禁用',[\s\S]*?Inactive: '已停用'/u);
