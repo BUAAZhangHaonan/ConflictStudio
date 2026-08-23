@@ -20,7 +20,9 @@ from starlette.background import BackgroundTask
 
 from backend.adapters.renderer import RendererInstallationStatus
 from backend.domain.enums import (
+    Category,
     ConflictDirection,
+    ContentStatus,
     GpuSlotName,
     JobSource,
     JobStatus,
@@ -44,10 +46,6 @@ from backend.domain.schemas import (
     ContentScriptSceneRead,
     ContentScriptRead,
     ContentScriptUpdate,
-    ConfigurationAssistantApply,
-    ConfigurationAssistantCreate,
-    ConfigurationAssistantDiscard,
-    ConfigurationAssistantRead,
     DatasetCreate,
     DatasetMergeRead,
     DatasetMergeRequest,
@@ -80,6 +78,10 @@ from backend.domain.schemas import (
     ReviewerRead,
     ReviewerRename,
     ReviewerStatisticsRead,
+    ResourceAssistantApply,
+    ResourceAssistantApplyRead,
+    ResourceAssistantProposalRead,
+    ResourceAssistantPropose,
     ReviewRead,
     ReviewSampleDetailRead,
     ReviewSampleListRead,
@@ -97,7 +99,7 @@ from backend.services.assets import AssetService
 from backend.services.archives import ArchiveService
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
-from backend.services.configuration_assistant import ConfigurationAssistantService
+from backend.services.resource_assistant import ResourceAssistantService
 from backend.services.gpu_slots import GpuSlotSnapshot
 from backend.services.job_executor import JobExecutor
 from backend.services.samples import SampleService
@@ -123,10 +125,8 @@ def batches(request: Request) -> BatchService:
     return request.app.state.batch_service
 
 
-def configuration_assistants(
-    request: Request,
-) -> ConfigurationAssistantService:
-    return request.app.state.configuration_assistant_service
+def resource_assistant(request: Request) -> ResourceAssistantService:
+    return request.app.state.resource_assistant_service
 
 
 def assets(request: Request) -> AssetService:
@@ -230,8 +230,17 @@ def list_content_scripts(
     request: Request,
     page: int = Query(default=1, ge=1),
     search: str | None = Query(default=None, min_length=1, max_length=120),
+    status_filter: ContentStatus | None = Query(default=None, alias="status"),
+    category: Category | None = Query(default=None),
+    direction: ConflictDirection | None = Query(default=None),
 ) -> PageRead[ContentScriptRead]:
-    return catalog(request).list_content_scripts(page, search)
+    return catalog(request).list_content_scripts(
+        page,
+        search,
+        status_filter,
+        category,
+        direction,
+    )
 
 
 @router.post(
@@ -418,53 +427,26 @@ def preview_prompt(
 
 
 @router.post(
-    "/configuration-assistants",
-    response_model=ConfigurationAssistantRead,
+    "/resource-assistant/propose",
+    response_model=ResourceAssistantProposalRead,
+)
+async def propose_resources(
+    payload: ResourceAssistantPropose,
+    request: Request,
+) -> ResourceAssistantProposalRead:
+    return await resource_assistant(request).propose(payload)
+
+
+@router.post(
+    "/resource-assistant/apply",
+    response_model=ResourceAssistantApplyRead,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_configuration_assistant(
-    payload: ConfigurationAssistantCreate,
+def apply_resources(
+    payload: ResourceAssistantApply,
     request: Request,
-) -> ConfigurationAssistantRead:
-    return await configuration_assistants(request).create(payload)
-
-
-@router.get(
-    "/configuration-assistants/{assistant_id}",
-    response_model=ConfigurationAssistantRead,
-)
-def get_configuration_assistant(
-    assistant_id: int,
-    request: Request,
-) -> ConfigurationAssistantRead:
-    return configuration_assistants(request).get(assistant_id)
-
-
-@router.post(
-    "/configuration-assistants/{assistant_id}/apply",
-    response_model=ConfigurationAssistantRead,
-)
-def apply_configuration_assistant(
-    assistant_id: int,
-    payload: ConfigurationAssistantApply,
-    request: Request,
-) -> ConfigurationAssistantRead:
-    return configuration_assistants(request).apply(assistant_id, payload)
-
-
-@router.post(
-    "/configuration-assistants/{assistant_id}/discard",
-    response_model=ConfigurationAssistantRead,
-)
-def discard_configuration_assistant(
-    assistant_id: int,
-    payload: ConfigurationAssistantDiscard,
-    request: Request,
-) -> ConfigurationAssistantRead:
-    return configuration_assistants(request).discard(
-        assistant_id,
-        payload.expected_revision,
-    )
+) -> ResourceAssistantApplyRead:
+    return resource_assistant(request).apply(payload)
 
 
 @router.post(

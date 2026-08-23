@@ -38,6 +38,15 @@ def test_statistics_use_latest_review_snapshots_and_shanghai_calendar_days(tmp_p
                 "/api/reviews",
                 json=review_payload(current, reviewer, decision="Rejected"),
             )
+        with patch("backend.services.reviews.utc_now", return_value="2026-08-03T01:00:00Z"):
+            withdrawn = client.post(
+                "/api/reviews",
+                json=review_payload(
+                    second.json(),
+                    reviewer,
+                    decision="Pending",
+                ),
+            )
         statistics = client.get(
             f"/api/reviewers/{reviewer['id']}/statistics",
             params={"startDate": "2026-08-01", "endDate": "2026-08-03"},
@@ -63,17 +72,20 @@ def test_statistics_use_latest_review_snapshots_and_shanghai_calendar_days(tmp_p
     payload = statistics.json()
     assert payload["uniqueReviewedCount"] == 1
     assert payload["acceptedCount"] == 0
-    assert payload["rejectedCount"] == 1
+    assert payload["rejectedCount"] == 0
     assert payload["vaCount"] == 1
     assert payload["vtCount"] == 0
     assert payload["revisedSampleCount"] == 1
     assert payload["activity"] == [
         {"date": "2026-08-01", "reviewedCount": 1},
         {"date": "2026-08-02", "reviewedCount": 0},
-        {"date": "2026-08-03", "reviewedCount": 1},
+        {"date": "2026-08-03", "reviewedCount": 2},
     ]
     assert first["currentReview"]["protocol"] == "VA"
     assert second.json()["currentReview"]["relation"] == "Conflict"
+    assert withdrawn.status_code == 201
+    assert withdrawn.json()["reviewDecision"] == "Pending"
+    assert withdrawn.json()["currentReview"] is None
     assert filtered.status_code == 200
     assert filtered.json()["uniqueReviewedCount"] == 0
     assert [row["reviewedCount"] for row in filtered.json()["activity"]] == [0, 0, 0]

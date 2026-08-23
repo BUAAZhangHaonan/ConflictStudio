@@ -10,7 +10,6 @@ from backend.domain.schemas import (
     ReviewBatchCreate,
     ReviewBatchItem,
     ReviewCreate,
-    ReviewMutation,
     ReviewNoteDraftRead,
     ReviewNoteDraftUpdate,
     ReviewRead,
@@ -172,8 +171,8 @@ class ReviewService:
     @staticmethod
     def _validate(
         session: Session,
-        payload: ReviewMutation | ReviewBatchItem,
-    ) -> tuple[ReviewMutation | ReviewBatchItem, Sample, str, ReviewNoteDraft | None]:
+        payload: ReviewCreate | ReviewBatchItem,
+    ) -> tuple[ReviewCreate | ReviewBatchItem, Sample, str, ReviewNoteDraft | None]:
         sample = session.get(Sample, payload.sample_id)
         if sample is None:
             raise not_found("sample", payload.sample_id)
@@ -186,6 +185,13 @@ class ReviewService:
                 sample.id,
                 payload.expected_review_revision,
                 sample.review_revision,
+            )
+        if (
+            payload.decision is ReviewDecision.PENDING
+            and sample.review_decision is ReviewDecision.PENDING
+        ):
+            raise invalid_request(
+                "Only an accepted or rejected review can be withdrawn"
             )
         if (
             payload.decision is ReviewDecision.ACCEPTED
@@ -225,13 +231,11 @@ class ReviewService:
     @staticmethod
     def _append(
         session: Session,
-        payload: ReviewMutation | ReviewBatchItem,
+        payload: ReviewCreate | ReviewBatchItem,
         sample: Sample,
         note: str,
         draft: ReviewNoteDraft | None,
     ) -> Review:
-        if payload.decision is ReviewDecision.PENDING:
-            raise invalid_request("Pending is not a review decision")
         timestamp = utc_now()
         row = Review(
             sample_id=sample.id,

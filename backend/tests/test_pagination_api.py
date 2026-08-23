@@ -103,3 +103,84 @@ def test_dataset_and_reviewer_context_remains_addressable_after_page_twenty(
     assert dataset_search.json()["items"][0]["id"] == datasets[-1]["id"]
     assert matching_jobs.json()["total"] == 1
     assert nonmatching_jobs.json()["total"] == 0
+
+
+def test_content_script_filters_run_before_pagination(tmp_path: Path) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        for index in range(20):
+            response = client.post(
+                "/api/content-scripts",
+                json={
+                    "nameZh": f"分页占位内容{index:02d}",
+                    "nameEn": f"Pagination decoy {index:02d}",
+                    "category": "A-VA",
+                    "conflictDirection": None,
+                    "mode": "Generative",
+                    "status": "Draft",
+                    "trueEmotion": "calm",
+                    "apparentEmotion": "calm",
+                    "sceneZh": "一间安静的办公室。",
+                    "sceneEn": "A quiet office.",
+                    "triggerEventZh": "门轻轻关上。",
+                    "triggerEventEn": "The door closes softly.",
+                    "psychologicalBackgroundZh": "被摄者准备回应。",
+                    "psychologicalBackgroundEn": "The subject prepares to respond.",
+                    "dialogue": None,
+                    "displayText": None,
+                    "trueEmotionDescription": "",
+                    "baseVideoPrompt": "",
+                    "contentRequirementsZh": "生成一句简短回应。",
+                    "contentRequirementsEn": "Generate one brief response.",
+                    "sceneSupplementZh": "",
+                    "sceneSupplementEn": "",
+                    "sceneIds": [],
+                },
+            )
+            assert response.status_code == 201, response.text
+        target = client.post(
+            "/api/content-scripts",
+            json={
+                "nameZh": "音频冲突目标",
+                "nameEn": "Audio conflict target",
+                "category": "C-VA",
+                "conflictDirection": "Audio",
+                "mode": "Generative",
+                "status": "Draft",
+                "trueEmotion": "worried",
+                "apparentEmotion": "calm",
+                "sceneZh": "一间安静的办公室。",
+                "sceneEn": "A quiet office.",
+                "triggerEventZh": "门轻轻关上。",
+                "triggerEventEn": "The door closes softly.",
+                "psychologicalBackgroundZh": "被摄者试图隐藏担忧。",
+                "psychologicalBackgroundEn": "The subject tries to hide concern.",
+                "dialogue": None,
+                "displayText": None,
+                "trueEmotionDescription": "",
+                "baseVideoPrompt": "",
+                "contentRequirementsZh": "生成一句平静但声音担忧的回应。",
+                "contentRequirementsEn": "Generate a calm reply with worried vocal delivery.",
+                "sceneSupplementZh": "",
+                "sceneSupplementEn": "",
+                "sceneIds": [],
+            },
+        ).json()
+        filtered = client.get(
+            "/api/content-scripts",
+            params={
+                "page": 1,
+                "status": "Draft",
+                "category": "C-VA",
+                "direction": "Audio",
+            },
+        )
+        wrong_direction = client.get(
+            "/api/content-scripts",
+            params={"category": "C-VA", "direction": "Vision"},
+        )
+
+    assert filtered.status_code == 200
+    assert filtered.json()["total"] == 1
+    assert [row["id"] for row in filtered.json()["items"]] == [target["id"]]
+    assert wrong_direction.json()["total"] == 0

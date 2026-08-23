@@ -259,7 +259,7 @@ def test_sqlite_schema_contains_enum_and_numeric_checks_and_gpu_foreign_keys(tmp
         "generation_attempts": ("ck_generation_attempts_model_precision",),
         "samples": ("ck_samples_content_revision", "ck_samples_seed", "ck_samples_review_revision", "ck_samples_revision"),
         "reviewers": ("ck_reviewers_revision",),
-        "reviews": ("ck_reviews_sample_revision", "ck_reviews_revision", "ck_reviews_decision"),
+        "reviews": ("ck_reviews_sample_revision", "ck_reviews_revision"),
         "archives": ("ck_archives_revision",),
         "archive_items": ("ck_archive_items_sample_revision",),
         "gpu_slots": ("ck_gpu_slots_revision", "ck_gpu_slots_loaded_model_precision"),

@@ -61,9 +61,9 @@ def test_archive_preview_and_sync_cover_add_update_remove_and_unchanged(tmp_path
         stale = client.post("/api/archives/sync", json=unchanged.json())
         second_sync = client.post("/api/archives/sync", json=updated.json())
 
-        rejected = client.post(
+        withdrawn = client.post(
             "/api/reviews",
-            json=review_payload(changed, reviewer, decision="Rejected"),
+            json=review_payload(changed, reviewer, decision="Pending"),
         ).json()
         removed = client.post("/api/archives/preview", json={"datasetId": sample["datasetId"]})
         third_sync = client.post("/api/archives/sync", json=removed.json())
@@ -94,8 +94,10 @@ def test_archive_preview_and_sync_cover_add_update_remove_and_unchanged(tmp_path
     assert stale.status_code == 409
     assert stale.json()["error"]["code"] == "archive_preview_stale"
     assert second_sync.json()["revision"] == 2
+    assert withdrawn["reviewDecision"] == "Pending"
+    assert withdrawn["archiveSyncStatus"] == "NeedsUpdate"
     assert [(row["sampleId"], row["expectedRevision"]) for row in removed.json()["removed"]] == [
-        (sample["id"], rejected["revision"])
+        (sample["id"], withdrawn["revision"])
     ]
     assert third_sync.json()["revision"] == 3
     assert third_sync.json()["currentCount"] == 0

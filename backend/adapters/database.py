@@ -184,61 +184,6 @@ class Database:
             """
         )
         connection.exec_driver_sql(
-            "DROP TRIGGER IF EXISTS protect_generation_test_draft_update"
-        )
-        connection.exec_driver_sql(
-            """
-            CREATE TRIGGER protect_generation_test_draft_update
-            BEFORE UPDATE ON generation_test_drafts
-            WHEN NEW.id != OLD.id
-              OR NEW.source != OLD.source
-              OR NEW.created_at != OLD.created_at
-              OR NEW.revision != OLD.revision + 1
-              OR NOT json_valid(NEW.form_state_json)
-            BEGIN
-                SELECT RAISE(ABORT, 'test draft update is not allowed');
-            END
-            """
-        )
-        connection.exec_driver_sql(
-            "DROP TRIGGER IF EXISTS protect_configuration_assistant_update"
-        )
-        connection.exec_driver_sql(
-            """
-            CREATE TRIGGER protect_configuration_assistant_update
-            BEFORE UPDATE ON configuration_assistants
-            WHEN OLD.status != 'Pending'
-              OR NEW.status NOT IN ('Applied', 'Discarded')
-              OR NEW.id != OLD.id
-              OR NEW.target_source != OLD.target_source
-              OR NEW.batch_draft_id IS NOT OLD.batch_draft_id
-              OR NEW.batch_draft_revision IS NOT OLD.batch_draft_revision
-              OR NEW.test_draft_id IS NOT OLD.test_draft_id
-              OR NEW.test_draft_revision IS NOT OLD.test_draft_revision
-              OR NEW.user_requirement != OLD.user_requirement
-              OR NEW.model_name != OLD.model_name
-              OR NEW.current_form_json != OLD.current_form_json
-              OR NEW.suggestion_json != OLD.suggestion_json
-              OR NEW.created_at != OLD.created_at
-              OR NEW.revision != OLD.revision + 1
-            BEGIN
-                SELECT RAISE(ABORT, 'assistant records have one terminal transition');
-            END
-            """
-        )
-        connection.exec_driver_sql(
-            "DROP TRIGGER IF EXISTS prevent_configuration_assistant_delete"
-        )
-        connection.exec_driver_sql(
-            """
-            CREATE TRIGGER prevent_configuration_assistant_delete
-            BEFORE DELETE ON configuration_assistants
-            BEGIN
-                SELECT RAISE(ABORT, 'assistant records cannot be deleted');
-            END
-            """
-        )
-        connection.exec_driver_sql(
             "DROP TRIGGER IF EXISTS require_active_content_script_scenes_insert"
         )
         connection.exec_driver_sql(
@@ -391,6 +336,10 @@ class Database:
                       ),
                       0
                   ) + 1
+                  AND (
+                      NEW.decision != 'Pending'
+                      OR samples.review_decision IN ('Accepted', 'Rejected')
+                  )
             )
             BEGIN
                 SELECT RAISE(ABORT, 'review snapshot must match its sample');

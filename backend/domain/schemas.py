@@ -20,9 +20,6 @@ from .enums import (
     ArchiveSyncStatus,
     BatchDraftStatus,
     Category,
-    ConfigurationAssistantField,
-    ConfigurationAssistantStatus,
-    ConfigurationCandidateKind,
     ConflictDirection,
     ContentMode,
     ContentStatus,
@@ -43,7 +40,6 @@ from .enums import (
     ResourceStatus,
     TestExecutionMode,
     TemplateVersionStatus,
-    protocol_for,
     relation_for,
     validate_direction,
     validate_model_precision,
@@ -495,6 +491,73 @@ class SceneRead(SceneFields):
     updated_at: str
 
 
+class ResourceAssistantTemplateTarget(ApiModel):
+    id: int = Field(gt=0)
+    expected_revision: int = Field(ge=1)
+
+
+class ResourceAssistantContentDraft(ContentScriptFields):
+    status: Literal[ContentStatus.DRAFT] = ContentStatus.DRAFT
+
+
+class ResourceAssistantSceneDraft(SceneFields):
+    status: Literal[ResourceStatus.DRAFT] = ResourceStatus.DRAFT
+
+
+class ResourceAssistantPromptTemplateVersionDraft(PromptTemplateVersionFields):
+    pass
+
+
+class ResourceAssistantBundle(ApiModel):
+    content_script: ResourceAssistantContentDraft
+    scenes: list[ResourceAssistantSceneDraft] = Field(min_length=1)
+    prompt_template_version: ResourceAssistantPromptTemplateVersionDraft
+
+    @model_validator(mode="after")
+    def validate_bundle(self) -> Self:
+        if self.content_script.mode is ContentMode.FIXED and len(self.scenes) != 1:
+            raise ValueError("Fixed content script requires exactly one scene")
+        for field_name in ("name_zh", "name_en"):
+            names = [
+                getattr(scene, field_name).strip().casefold()
+                for scene in self.scenes
+            ]
+            if len(names) != len(set(names)):
+                raise ValueError("Proposed scene names must be unique")
+        return self
+
+
+class ResourceAssistantPropose(ApiModel):
+    user_requirement: str = Field(min_length=1, max_length=4000)
+    prompt_template: ResourceAssistantTemplateTarget
+
+    @field_validator("user_requirement")
+    @classmethod
+    def reject_credentials(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("The resource requirement must not be blank")
+        if re.search(r"\bsk-[A-Za-z0-9_-]{16,}\b", stripped):
+            raise ValueError("Credentials are not allowed in assistant requests")
+        return stripped
+
+
+class ResourceAssistantProposalRead(ApiModel):
+    prompt_template: PromptTemplateRead
+    bundle: ResourceAssistantBundle
+
+
+class ResourceAssistantApply(ApiModel):
+    prompt_template: ResourceAssistantTemplateTarget
+    bundle: ResourceAssistantBundle
+
+
+class ResourceAssistantApplyRead(ApiModel):
+    content_script: ContentScriptRead
+    scenes: list[SceneRead]
+    prompt_template_version: PromptTemplateVersionRead
+
+
 class SourceSelection(ApiModel):
     id: int = Field(gt=0)
     expected_revision: int = Field(ge=1)
@@ -769,295 +832,6 @@ class VideoTestCreate(ApiModel):
         return self
 
 
-class AssistantSourceSelection(ApiModel):
-    id: int = Field(gt=0)
-    expected_revision: int = Field(ge=1)
-    label: str | None = Field(default=None, min_length=1, max_length=200)
-
-
-class AssistantContentSelection(ApiModel):
-    content_script: AssistantSourceSelection
-    scenes: list[AssistantSourceSelection] = Field(default_factory=list)
-
-
-class AssistantFormState(ApiModel):
-    target_dataset: AssistantSourceSelection | None = None
-    display_name: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=40,
-        pattern=r"^[A-Za-z0-9\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff _-]*$",
-    )
-    category: Category | None = None
-    conflict_direction: ConflictDirection | None = None
-    model: ModelName | None = None
-    precision: Precision | None = None
-    content_selections: list[AssistantContentSelection] | None = Field(
-        default=None,
-        min_length=1,
-    )
-    prompt_template_version: AssistantSourceSelection | None = None
-    demographics: list[DemographicInput] | None = Field(
-        default=None,
-        min_length=1,
-    )
-    gpu_slots: list[GpuSlotName] | None = Field(
-        default=None,
-        min_length=1,
-        max_length=2,
-    )
-    seeds: list[Annotated[int, Field(ge=0, lt=2**31)]] | None = Field(
-        default=None,
-        min_length=1,
-    )
-    comparisons: list[TestComparisonInput] | None = Field(
-        default=None,
-        min_length=1,
-        max_length=2,
-    )
-    execution_mode: TestExecutionMode | None = None
-
-    @model_validator(mode="after")
-    def validate_optional_configuration(self) -> Self:
-        if self.category in {Category.A_VA, Category.A_VT}:
-            if self.conflict_direction is not None:
-                raise ValueError("Aligned categories do not use a conflict direction")
-        elif self.category is not None and self.conflict_direction is not None:
-            if not validate_direction(self.category, self.conflict_direction):
-                raise ValueError("Conflict direction does not match the category")
-        if self.model is not None and self.model is not ModelName.LTX_25:
-            if self.precision is not None:
-                raise ValueError("Only LTX-2.5 accepts a precision")
-        for values, message in (
-            (self.content_selections, "Duplicate content selection"),
-            (self.demographics, "Duplicate demographic selection"),
-            (self.gpu_slots, "Duplicate GPU selection"),
-            (self.seeds, "Duplicate seed selection"),
-        ):
-            if values is not None:
-                rendered = [str(value) for value in values]
-                if len(rendered) != len(set(rendered)):
-                    raise ValueError(message)
-        return self
-
-
-class ConfigurationCandidate(ApiModel):
-    id: int = Field(gt=0)
-    revision: int = Field(ge=1)
-    label: str = Field(min_length=1, max_length=200)
-
-
-class ConfigurationCandidateGroup(ApiModel):
-    kind: ConfigurationCandidateKind
-    items: list[ConfigurationCandidate] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def reject_duplicate_candidates(self) -> Self:
-        identifiers = [item.id for item in self.items]
-        if len(identifiers) != len(set(identifiers)):
-            raise ValueError("Candidate ids must be unique")
-        return self
-
-
-class ConfigurationRecommendations(ApiModel):
-    protocol: Protocol | None
-    category: Category | None
-    conflict_direction: ConflictDirection | None
-    true_emotion: str | None = Field(default=None, max_length=120)
-    apparent_emotion: str | None = Field(default=None, max_length=120)
-    model: ModelName | None
-    precision: Precision | None
-    gpu_slots: list[GpuSlotName] = Field(max_length=2)
-
-    @model_validator(mode="after")
-    def validate_recommendations(self) -> Self:
-        if self.category is None and self.conflict_direction is not None:
-            raise ValueError("Conflict direction requires a category")
-        if self.category is not None and not validate_direction(
-            self.category,
-            self.conflict_direction,
-        ):
-            raise ValueError("Conflict direction does not match the category")
-        if (
-            self.protocol is not None
-            and self.category is not None
-            and protocol_for(self.category) is not self.protocol
-        ):
-            raise ValueError("Protocol does not match the category")
-        emotions = (self.true_emotion, self.apparent_emotion)
-        if any(value is not None for value in emotions):
-            if self.category is None or any(value is None for value in emotions):
-                raise ValueError(
-                    "Emotion recommendations require a complete category pair"
-                )
-            if relation_for(self.category) is Relation.ALIGNED:
-                if self.true_emotion != self.apparent_emotion:
-                    raise ValueError("Aligned emotion recommendations must match")
-            elif self.true_emotion == self.apparent_emotion:
-                raise ValueError("Conflict emotion recommendations must differ")
-        if self.model is None and self.precision is not None:
-            raise ValueError("Precision requires a model")
-        if self.model is not None and not validate_model_precision(
-            self.model,
-            self.precision,
-        ):
-            raise ValueError("Model and precision do not match")
-        if len(self.gpu_slots) != len(set(self.gpu_slots)):
-            raise ValueError("GPU recommendations must be unique")
-        return self
-
-
-class ConfigurationSuggestion(ApiModel):
-    missing_fields: list[ConfigurationAssistantField]
-    prefill: AssistantFormState
-    candidates: list[ConfigurationCandidateGroup]
-    recommendations: ConfigurationRecommendations
-    new_content_script_draft: ContentScriptCreate | None
-    new_shooting_scene_draft: SceneCreate | None
-    failure_advice: list[
-        Annotated[
-            str,
-            StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
-        ]
-    ] = Field(max_length=20)
-
-    @model_validator(mode="after")
-    def validate_suggestion(self) -> Self:
-        if len(self.missing_fields) != len(set(self.missing_fields)):
-            raise ValueError("Missing fields must be unique")
-        kinds = [group.kind for group in self.candidates]
-        if len(kinds) != len(set(kinds)):
-            raise ValueError("Candidate groups must be unique")
-        if (
-            self.new_content_script_draft is not None
-            and self.new_content_script_draft.status is not ContentStatus.DRAFT
-        ):
-            raise ValueError("New content scripts must remain Draft")
-        if (
-            self.new_shooting_scene_draft is not None
-            and self.new_shooting_scene_draft.status is not ResourceStatus.DRAFT
-        ):
-            raise ValueError("New shooting scenes must remain Draft")
-        return self
-
-
-class ConfigurationAssistantCreate(ApiModel):
-    target_source: JobSource
-    user_requirement: str = Field(min_length=1, max_length=4000)
-    current_form: AssistantFormState
-    batch_draft_id: int | None = Field(default=None, gt=0)
-    batch_draft_expected_revision: int | None = Field(default=None, ge=1)
-
-    @field_validator("user_requirement")
-    @classmethod
-    def reject_credentials(cls, value: str) -> str:
-        if re.search(r"\bsk-[A-Za-z0-9_-]{16,}\b", value):
-            raise ValueError("Credentials are not allowed in assistant requests")
-        return value.strip()
-
-    @model_validator(mode="after")
-    def validate_target(self) -> Self:
-        if self.target_source is JobSource.PRODUCTION:
-            if (self.batch_draft_id is None) != (
-                self.batch_draft_expected_revision is None
-            ):
-                raise ValueError("Batch draft id and revision must be provided together")
-        elif self.target_source in {JobSource.PROMPT_TEST, JobSource.VIDEO_TEST}:
-            if (
-                self.batch_draft_id is not None
-                or self.batch_draft_expected_revision is not None
-            ):
-                raise ValueError("Test assistance cannot target a production batch")
-        else:
-            raise ValueError("Unsupported assistant target")
-        return self
-
-
-class ConfigurationAssistantApply(ApiModel):
-    expected_revision: int = Field(ge=1)
-    expected_target_revision: int | None = Field(default=None, ge=1)
-    confirmed_fields: list[ConfigurationAssistantField]
-    values: AssistantFormState
-    create_content_script: bool = False
-    create_shooting_scene: bool = False
-    link_new_scene_to_content: bool = False
-
-    @model_validator(mode="after")
-    def validate_confirmations(self) -> Self:
-        if len(self.confirmed_fields) != len(set(self.confirmed_fields)):
-            raise ValueError("Confirmed fields must be unique")
-        field_map = {
-            "target_dataset": ConfigurationAssistantField.TARGET_DATASET,
-            "display_name": ConfigurationAssistantField.DISPLAY_NAME,
-            "category": ConfigurationAssistantField.CATEGORY,
-            "conflict_direction": ConfigurationAssistantField.CONFLICT_DIRECTION,
-            "model": ConfigurationAssistantField.MODEL,
-            "precision": ConfigurationAssistantField.PRECISION,
-            "content_selections": ConfigurationAssistantField.CONTENT_SELECTIONS,
-            "prompt_template_version": (
-                ConfigurationAssistantField.PROMPT_TEMPLATE_VERSION
-            ),
-            "demographics": ConfigurationAssistantField.DEMOGRAPHICS,
-            "gpu_slots": ConfigurationAssistantField.GPU_SLOTS,
-            "seeds": ConfigurationAssistantField.SEEDS,
-            "comparisons": ConfigurationAssistantField.COMPARISONS,
-            "execution_mode": ConfigurationAssistantField.EXECUTION_MODE,
-        }
-        provided = {
-            field_map[field_name] for field_name in self.values.model_fields_set
-        }
-        if provided != set(self.confirmed_fields):
-            raise ValueError("Confirmed fields must exactly match the provided values")
-        if self.link_new_scene_to_content and not (
-            self.create_content_script and self.create_shooting_scene
-        ):
-            raise ValueError("Linking new drafts requires both draft confirmations")
-        if not (
-            self.confirmed_fields
-            or self.create_content_script
-            or self.create_shooting_scene
-        ):
-            raise ValueError("At least one suggestion must be confirmed")
-        return self
-
-
-class ConfigurationAssistantDiscard(ExpectedRevision):
-    pass
-
-
-class ConfigurationAssistantResult(ApiModel):
-    target_revision: int | None
-    created_content_script_id: int | None
-    created_shooting_scene_id: int | None
-    discarded: bool
-
-
-class GenerationTestDraftRead(ApiModel):
-    id: int
-    source: JobSource
-    form_state: AssistantFormState
-    revision: int
-    created_at: str
-    updated_at: str
-
-
-class ConfigurationAssistantRead(ApiModel):
-    id: int
-    target_source: JobSource
-    batch_draft_id: int | None
-    test_draft: GenerationTestDraftRead | None
-    user_requirement: str
-    model_name: Literal["deepseek-v4-flash"]
-    current_form: AssistantFormState
-    suggestion: ConfigurationSuggestion
-    applied_values: AssistantFormState | None
-    result: ConfigurationAssistantResult | None
-    status: ConfigurationAssistantStatus
-    revision: int
-    created_at: str
-    updated_at: str
-
-
 class SnapshotRead(ApiModel):
     id: int
     sequence: int
@@ -1210,18 +984,18 @@ class ReviewQueueFilter(ApiModel):
 class ReviewMutation(ApiModel):
     sample_id: int = Field(gt=0)
     reviewer_id: int = Field(gt=0)
-    decision: Literal[ReviewDecision.ACCEPTED, ReviewDecision.REJECTED]
     expected_revision: int = Field(ge=1)
     expected_review_revision: int = Field(ge=0)
     expected_note_draft_revision: int = Field(ge=0)
 
 
 class ReviewCreate(ReviewMutation):
+    decision: ReviewDecision
     queue: ReviewQueueFilter
 
 
 class ReviewBatchItem(ReviewMutation):
-    pass
+    decision: Literal[ReviewDecision.ACCEPTED, ReviewDecision.REJECTED]
 
 
 class ReviewBatchCreate(ApiModel):

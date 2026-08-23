@@ -8,6 +8,8 @@ from sqlmodel import Session, select
 
 from backend.adapters.database import Database
 from backend.domain.enums import (
+    Category,
+    ConflictDirection,
     ContentMode,
     ContentStatus,
     DatasetPurpose,
@@ -246,6 +248,9 @@ class CatalogService:
         self,
         page: int,
         search: str | None = None,
+        status: ContentStatus | None = None,
+        category: Category | None = None,
+        direction: ConflictDirection | None = None,
     ) -> PageRead[ContentScriptRead]:
         with self.database.read_session() as session:
             statement = select(ContentScript)
@@ -256,6 +261,14 @@ class CatalogService:
                         func.lower(ContentScript.name_zh).contains(needle),
                         func.lower(ContentScript.name_en).contains(needle),
                     )
+                )
+            if status is not None:
+                statement = statement.where(ContentScript.status == status)
+            if category is not None:
+                statement = statement.where(ContentScript.category == category)
+            if direction is not None:
+                statement = statement.where(
+                    ContentScript.conflict_direction == direction
                 )
             return paginate(
                 session,
@@ -473,46 +486,76 @@ class CatalogService:
         payload: PromptTemplateVersionCreate,
     ) -> PromptTemplateVersionRead:
         with self.database.immediate_session() as session:
-            template = self._get(
-                session, PromptTemplate, template_id, "promptTemplate"
+            return self.create_prompt_template_version_in_session(
+                session,
+                template_id,
+                payload,
             )
-            self._check_revision(
-                template,
-                payload.expected_template_revision,
-                "promptTemplate",
-            )
-            latest = session.exec(
-                select(PromptTemplateVersion.version)
-                .where(PromptTemplateVersion.template_id == template_id)
-                .order_by(PromptTemplateVersion.version.desc())
-            ).first()
-            row = PromptTemplateVersion(
-                template_id=template_id,
-                version=(latest or 0) + 1,
-                organization_instruction=payload.organization_instruction.strip(),
-                style_instruction=payload.style_instruction.strip(),
-                ltx_negative_prompt=payload.ltx_negative_prompt,
-                h3_negative_prompt=payload.h3_negative_prompt,
-            )
-            session.add(row)
-            session.flush()
-            for kind, values in (
-                (PromptExampleKind.POSITIVE, payload.positive_examples),
-                (PromptExampleKind.NEGATIVE, payload.negative_examples),
-            ):
-                for position, text in enumerate(values):
-                    session.add(
-                        PromptTemplateExample(
-                            prompt_template_version_id=row.id,
-                            kind=kind,
-                            position=position,
-                            text=text,
-                        )
+
+    def get_prompt_template_in_session(
+        self,
+        session: Session,
+        template_id: int,
+        expected_revision: int,
+    ) -> PromptTemplateRead:
+        template = self._get(
+            session,
+            PromptTemplate,
+            template_id,
+            "promptTemplate",
+        )
+        self._check_revision(template, expected_revision, "promptTemplate")
+        return PromptTemplateRead.model_validate(template)
+
+    def create_prompt_template_version_in_session(
+        self,
+        session: Session,
+        template_id: int,
+        payload: PromptTemplateVersionCreate,
+    ) -> PromptTemplateVersionRead:
+        template = self._get(
+            session,
+            PromptTemplate,
+            template_id,
+            "promptTemplate",
+        )
+        self._check_revision(
+            template,
+            payload.expected_template_revision,
+            "promptTemplate",
+        )
+        latest = session.exec(
+            select(PromptTemplateVersion.version)
+            .where(PromptTemplateVersion.template_id == template_id)
+            .order_by(PromptTemplateVersion.version.desc())
+        ).first()
+        row = PromptTemplateVersion(
+            template_id=template_id,
+            version=(latest or 0) + 1,
+            organization_instruction=payload.organization_instruction.strip(),
+            style_instruction=payload.style_instruction.strip(),
+            ltx_negative_prompt=payload.ltx_negative_prompt,
+            h3_negative_prompt=payload.h3_negative_prompt,
+        )
+        session.add(row)
+        session.flush()
+        for kind, values in (
+            (PromptExampleKind.POSITIVE, payload.positive_examples),
+            (PromptExampleKind.NEGATIVE, payload.negative_examples),
+        ):
+            for position, text in enumerate(values):
+                session.add(
+                    PromptTemplateExample(
+                        prompt_template_version_id=row.id,
+                        kind=kind,
+                        position=position,
+                        text=text,
                     )
-            template.revision += 1
-            template.updated_at = utc_now()
-            session.flush()
-            return self._prompt_template_version_read(session, template, row)
+                )
+        template.revision += 1
+        template.updated_at = utc_now()
+        session.flush()
+        return self._prompt_template_version_read(session, template, row)
 
     def verify_prompt_template_version(
         self,
@@ -587,9 +630,9 @@ class CatalogService:
         self,
         session: Session,
         payload: SceneCreate,
-    ) -> Scene:
+    ) -> SceneRead:
         if payload.status is not ResourceStatus.DRAFT:
-            raise invalid_request("Assistant-created shooting scenes must remain Draft")
+            raise invalid_request("Resource assistant scenes must remain Draft")
         self._ensure_scene_names_available(session, payload.name_zh, payload.name_en)
         row = Scene(
             **payload.model_dump(),
@@ -598,15 +641,15 @@ class CatalogService:
         )
         session.add(row)
         session.flush()
-        return row
+        return SceneRead.model_validate(row)
 
     def create_draft_content_in_session(
         self,
         session: Session,
         payload: ContentScriptCreate,
-    ) -> ContentScript:
+    ) -> ContentScriptRead:
         if payload.status is not ContentStatus.DRAFT:
-            raise invalid_request("Assistant-created content scripts must remain Draft")
+            raise invalid_request("Resource assistant content must remain Draft")
         self._ensure_content_names_available(
             session,
             payload.category,
@@ -627,7 +670,7 @@ class CatalogService:
         session.add(row)
         session.flush()
         self._replace_content_scene_links(session, row.id, scenes)
-        return row
+        return self._content_script_read(session, row)
 
     def update_scene(
         self,

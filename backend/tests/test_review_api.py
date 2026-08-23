@@ -382,11 +382,17 @@ def test_sample_queue_filters_are_applied_before_pagination(tmp_path: Path) -> N
     assert wrong_relation.json()["total"] == 0
 
 
-def test_review_history_is_append_only_and_rejects_no_change_or_pending(tmp_path: Path) -> None:
+def test_review_history_is_append_only_and_withdrawal_requires_a_decision(
+    tmp_path: Path,
+) -> None:
     app = sample_app(tmp_path)
     with TestClient(app) as client:
         sample = client.get("/api/samples").json()["items"][0]
         reviewer = create_reviewer(client)
+        initial_pending = client.post(
+            "/api/reviews",
+            json=review_payload(sample, reviewer, decision="Pending"),
+        )
         first = client.post("/api/reviews", json=review_payload(sample, reviewer))
         no_change = client.post(
             "/api/reviews",
@@ -416,21 +422,33 @@ def test_review_history_is_append_only_and_rejects_no_change_or_pending(tmp_path
                 expectedNoteDraftRevision=decision_draft["revision"],
             ),
         )
-        pending = client.post(
+        withdrawn = client.post(
             "/api/reviews",
             json=review_payload(decision_change.json(), reviewer, decision="Pending"),
         )
+        pending_again = client.post(
+            "/api/reviews",
+            json=review_payload(withdrawn.json(), reviewer, decision="Pending"),
+        )
         history = client.get("/api/reviews", params={"sampleId": sample["id"]})
 
+    assert initial_pending.status_code == 422
     assert first.status_code == 201
     assert first.json()["reviewDecision"] == "Accepted"
     assert first.json()["currentReview"]["sampleRevision"] == sample["revision"]
     assert no_change.status_code == 422
     assert note_change.status_code == 201
     assert decision_change.status_code == 201
-    assert pending.status_code == 422
-    assert [row["revision"] for row in history.json()["items"]] == [1, 2, 3]
-    assert [row["decision"] for row in history.json()["items"]] == ["Accepted", "Accepted", "Rejected"]
+    assert withdrawn.status_code == 201
+    assert withdrawn.json()["reviewDecision"] == "Pending"
+    assert pending_again.status_code == 422
+    assert [row["revision"] for row in history.json()["items"]] == [1, 2, 3, 4]
+    assert [row["decision"] for row in history.json()["items"]] == [
+        "Accepted",
+        "Accepted",
+        "Rejected",
+        "Pending",
+    ]
     assert all(
         row["protocol"] == "VA" and row["relation"] == "Aligned"
         for row in history.json()["items"]
@@ -491,12 +509,21 @@ def test_review_batch_is_atomic_when_any_item_is_invalid(tmp_path: Path) -> None
             },
         )
         empty = client.post("/api/reviews/batch", json={"items": []})
+        pending = client.post(
+            "/api/reviews/batch",
+            json={
+                "items": [
+                    batch_review_payload(sample, reviewer, decision="Pending")
+                ]
+            },
+        )
         history = client.get("/api/reviews", params={"sampleId": sample["id"]})
         unchanged = client.get(f"/api/samples/{sample['id']}")
 
     assert response.status_code == 404
     assert duplicate.status_code == 422
     assert empty.status_code == 422
+    assert pending.status_code == 422
     assert history.json()["items"] == []
     assert unchanged.json()["reviewRevision"] == 0
 
@@ -918,6 +945,25 @@ def test_note_draft_autosave_conflicts_and_review_consumes_it_atomically(
             f"/api/samples/{sample['id']}/review-note-draft",
             params={"reviewerId": reviewer["id"]},
         )
+        withdrawal_draft = save_note(
+            client,
+            submitted.json(),
+            reviewer,
+            "withdraw after reconsideration",
+        )
+        withdrawn = client.post(
+            "/api/reviews",
+            json=review_payload(
+                submitted.json(),
+                reviewer,
+                decision="Pending",
+                expectedNoteDraftRevision=withdrawal_draft["revision"],
+            ),
+        )
+        cleared_after_withdrawal = client.get(
+            f"/api/samples/{sample['id']}/review-note-draft",
+            params={"reviewerId": reviewer["id"]},
+        )
         history = client.get("/api/reviews", params={"sampleId": sample["id"]})
 
     assert initial.status_code == 200
@@ -932,7 +978,15 @@ def test_note_draft_autosave_conflicts_and_review_consumes_it_atomically(
     assert submitted.json()["currentReview"]["note"] == "server draft"
     assert cleared.json()["revision"] == 0
     assert cleared.json()["note"] == ""
-    assert history.json()["total"] == 1
+    assert withdrawn.status_code == 201
+    assert withdrawn.json()["reviewDecision"] == "Pending"
+    assert withdrawn.json()["reviewRevision"] == submitted.json()["reviewRevision"] + 1
+    assert withdrawn.json()["revision"] == submitted.json()["revision"] + 1
+    assert withdrawn.json()["currentReview"] is None
+    assert cleared_after_withdrawal.json()["revision"] == 0
+    assert cleared_after_withdrawal.json()["note"] == ""
+    assert history.json()["total"] == 2
+    assert history.json()["items"][-1]["note"] == "withdraw after reconsideration"
 
 
 def test_review_insert_failure_rolls_back_history_sample_and_note_draft(
@@ -1521,6 +1575,14 @@ def test_sqlite_keeps_reviews_and_sample_review_state_in_one_transition(
             ):
                 connection.execute(statement, invalid)
             connection.rollback()
+        initial_pending = list(valid)
+        initial_pending[4] = "Pending"
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="review snapshot must match its sample",
+        ):
+            connection.execute(statement, initial_pending)
+        connection.rollback()
         assert connection.execute(
             "SELECT count(*) FROM reviews WHERE sample_id = ?",
             (sample["id"],),
@@ -1572,8 +1634,31 @@ def test_sqlite_keeps_reviews_and_sample_review_state_in_one_transition(
                 (sample["id"],),
             )
         connection.rollback()
+        withdrawal = list(valid)
+        withdrawal[4] = "Pending"
+        withdrawal[5] = "withdrawn"
+        withdrawal[6] = sample["revision"] + 1
+        withdrawal[7] = 2
+        withdrawal[8] = "2026-08-17T00:01:00Z"
+        connection.execute(statement, withdrawal)
+        connection.commit()
+        withdrawn_state = connection.execute(
+            "SELECT review_decision, review_revision, revision "
+            "FROM samples WHERE id = ?",
+            (sample["id"],),
+        ).fetchone()
+        review_history = connection.execute(
+            "SELECT decision, sample_revision, revision FROM reviews "
+            "WHERE sample_id = ? ORDER BY revision",
+            (sample["id"],),
+        ).fetchall()
     finally:
         connection.close()
 
     assert current == ("Accepted", 1, sample["revision"] + 1)
     assert current_review == ("Accepted", sample["revision"], 1)
+    assert withdrawn_state == ("Pending", 2, sample["revision"] + 2)
+    assert review_history == [
+        ("Accepted", sample["revision"], 1),
+        ("Pending", sample["revision"] + 1, 2),
+    ]
