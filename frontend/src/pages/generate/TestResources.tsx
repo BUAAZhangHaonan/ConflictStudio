@@ -16,6 +16,7 @@ import {
   useVerifyPromptTemplateVersionMutation,
 } from '../../api/queries';
 import { allowedDirections, type Category, type ConflictDirection } from '../../types';
+import type { GenerationKey } from '../../locales/features/generation';
 import {
   categories,
   categoryLabel,
@@ -29,7 +30,6 @@ import {
   buildContentDraftRequest,
   buildSceneDraftRequest,
   buildVersionDraftRequest,
-  canVerifyTestedVersion,
   contentDraftFromResource,
   emptyContentDraft,
   emptySceneDraft,
@@ -43,16 +43,12 @@ import {
 
 type EditorMode = 'create' | 'edit';
 type ConfirmAction = 'content' | 'scene' | 'version' | 'verify' | null;
+type ResourceTab = 'content' | 'scenes' | 'prompts';
 
-interface TestResourcesProps {
-  testedVersionIds: ReadonlySet<number>;
-  onVersionCreated: (id: number, templateId: number) => void;
-  onVersionVerified: (id: number) => void;
-}
-
-export function TestResources({ testedVersionIds, onVersionCreated, onVersionVerified }: TestResourcesProps) {
+export function ResourceEditors() {
   const g = useGenerationCopy();
   const locale = useGenerationLocale();
+  const [tab, setTab] = useState<ResourceTab>('content');
   const [contentPage, setContentPage] = useState(1);
   const [scenePage, setScenePage] = useState(1);
   const [templatePage, setTemplatePage] = useState(1);
@@ -68,7 +64,7 @@ export function TestResources({ testedVersionIds, onVersionCreated, onVersionVer
   const [versionForm, setVersionForm] = useState<VersionDraftForm>(() => emptyVersionDraft());
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
 
-  const contentQuery = useContentScriptsQuery(contentPage);
+  const contentQuery = useContentScriptsQuery(contentPage, { status: 'Draft' });
   const selectedContentQuery = useContentScriptQuery(selectedContentId);
   const scenesQuery = useScenesQuery(scenePage);
   const selectedSceneQuery = useSceneQuery(selectedSceneId);
@@ -82,7 +78,7 @@ export function TestResources({ testedVersionIds, onVersionCreated, onVersionVer
   const createVersion = useCreatePromptTemplateVersionMutation();
   const verifyVersion = useVerifyPromptTemplateVersionMutation();
 
-  const draftContents = (contentQuery.data?.items ?? []).filter(item => item.status === 'Draft');
+  const draftContents = contentQuery.data?.items ?? [];
   const draftScenes = (scenesQuery.data?.items ?? []).filter(item => item.status === 'Draft');
   const templates = templatesQuery.data?.items ?? [];
   const versions = versionsQuery.data?.items ?? [];
@@ -182,7 +178,6 @@ export function TestResources({ testedVersionIds, onVersionCreated, onVersionVer
       const saved = await createVersion.mutateAsync({ templateId: selectedTemplateId, input: versionRequest });
       setSelectedVersionId(saved.id);
       setVersionForm(emptyVersionDraft());
-      onVersionCreated(saved.id, saved.templateId);
       setConfirmAction(null);
     } catch {
       return;
@@ -190,13 +185,12 @@ export function TestResources({ testedVersionIds, onVersionCreated, onVersionVer
   };
 
   const sealVersion = async () => {
-    if (selectedVersion === null || !canVerifyTestedVersion(selectedVersion, testedVersionIds)) return;
+    if (selectedVersion === null || selectedVersion.verificationStatus !== 'Draft') return;
     try {
       const saved = await verifyVersion.mutateAsync({
         id: selectedVersion.id,
         input: { expectedRevision: selectedVersion.revision },
       });
-      onVersionVerified(saved.id);
       setConfirmAction(null);
     } catch {
       return;
@@ -222,9 +216,9 @@ export function TestResources({ testedVersionIds, onVersionCreated, onVersionVer
     : g('test.resource.saveBody');
 
   return (
-    <section className="generation-resources" aria-labelledby="test-resources-title">
+    <section className="generation-resources" aria-labelledby="resources-manual-title">
       <div className="section-header">
-        <div><h2 id="test-resources-title">{g('test.resource.title')}</h2><p>{g('test.resource.hint')}</p></div>
+        <div><h2 id="resources-manual-title">{g('resources.manual.title')}</h2><p>{g('resources.manual.hint')}</p></div>
       </div>
       {queryError ? <OperationFeedback error={queryError} onDismiss={() => void Promise.all([
         contentQuery.refetch(), selectedContentQuery.refetch(), scenesQuery.refetch(), selectedSceneQuery.refetch(),
@@ -235,8 +229,12 @@ export function TestResources({ testedVersionIds, onVersionCreated, onVersionVer
         createVersion.reset(); verifyVersion.reset();
       }} /> : null}
 
+      <div className="generation-resource-tabs" role="tablist" aria-label={g('resources.manual.title')}>
+        {(['content', 'scenes', 'prompts'] as const).map(value => <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)}>{g(('resources.tab.' + value) as GenerationKey)}</button>)}
+      </div>
+
       <div className="generation-resource-grid">
-        <section className="panel generation-resource-editor" aria-labelledby="content-resource-title">
+        {tab === 'content' ? <section className="panel generation-resource-editor" aria-labelledby="content-resource-title">
           <div className="section-header"><h3 id="content-resource-title">{g('test.resource.contentTitle')}</h3></div>
           <div className="generation-editor-modes">
             <Button variant={contentMode === 'create' ? 'primary' : 'secondary'} onClick={() => { setContentMode('create'); setSelectedContentId(null); setContentForm(emptyContentDraft(contentForm.category)); }}>{g('test.resource.newDraft')}</Button>
@@ -283,9 +281,9 @@ export function TestResources({ testedVersionIds, onVersionCreated, onVersionVer
           {contentRequest === null ? <p className="field__error" role="alert">{g('test.resource.contentValidation')}</p> : null}
           <Button variant="primary" busy={contentBusy} disabled={contentRequest === null || (contentMode === 'edit' && selectedContent === null)} onClick={() => setConfirmAction('content')}>{g(contentMode === 'create' ? 'test.resource.createDraft' : 'test.resource.saveDraft')}</Button>
           <Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} />
-        </section>
+        </section> : null}
 
-        <section className="panel generation-resource-editor" aria-labelledby="scene-resource-title">
+        {tab === 'scenes' ? <section className="panel generation-resource-editor" aria-labelledby="scene-resource-title">
           <div className="section-header"><h3 id="scene-resource-title">{g('test.resource.sceneTitle')}</h3></div>
           <div className="generation-editor-modes">
             <Button variant={sceneMode === 'create' ? 'primary' : 'secondary'} onClick={() => { setSceneMode('create'); setSelectedSceneId(null); setSceneForm(emptySceneDraft()); }}>{g('test.resource.newDraft')}</Button>
@@ -305,20 +303,20 @@ export function TestResources({ testedVersionIds, onVersionCreated, onVersionVer
           ] as const).map(([field, key]) => <Field key={field} label={g(key)} htmlFor={'scene-' + field}><textarea id={'scene-' + field} value={sceneForm[field]} onChange={event => setSceneForm(current => ({ ...current, [field]: event.target.value }))} /></Field>)}
           {sceneRequest === null ? <p className="field__error" role="alert">{g('test.resource.sceneValidation')}</p> : null}
           <Button variant="primary" busy={sceneBusy} disabled={sceneRequest === null || (sceneMode === 'edit' && selectedScene === null)} onClick={() => setConfirmAction('scene')}>{g(sceneMode === 'create' ? 'test.resource.createDraft' : 'test.resource.saveDraft')}</Button>
-        </section>
+        </section> : null}
 
-        <section className="panel generation-resource-editor" aria-labelledby="version-resource-title">
+        {tab === 'prompts' ? <section className="panel generation-resource-editor" aria-labelledby="version-resource-title">
           <div className="section-header"><h3 id="version-resource-title">{g('test.resource.versionTitle')}</h3></div>
           <Field label={g('test.template')} htmlFor="resource-template-select"><select id="resource-template-select" value={selectedTemplateId ?? ''} onChange={event => { setSelectedTemplateId(event.target.value ? Number(event.target.value) : null); setSelectedVersionId(null); setVersionPage(1); }}><option value="">{g('common.none')}</option>{templates.map(item => <option key={item.id} value={item.id}>{categoryLabel(g, item.category)}</option>)}</select></Field>
           <Field label={g('test.resource.existingVersion')} htmlFor="resource-version-select"><select id="resource-version-select" value={selectedVersionId ?? ''} onChange={event => setSelectedVersionId(event.target.value ? Number(event.target.value) : null)}><option value="">{g('common.none')}</option>{versions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })}</option>)}</select></Field>
-          {selectedVersion ? <div className="generation-version-summary"><StatusBadge label={g(selectedVersion.verificationStatus === 'Verified' ? 'test.resource.verified' : 'test.resource.draft')} kind={selectedVersion.verificationStatus === 'Verified' ? 'complete' : 'neutral'} /><p>{g(testedVersionIds.has(selectedVersion.id) ? 'test.resource.tested' : 'test.resource.notTested')}</p></div> : null}
+          {selectedVersion ? <div className="generation-version-summary"><StatusBadge label={g(selectedVersion.verificationStatus === 'Verified' ? 'test.resource.verified' : 'test.resource.draft')} kind={selectedVersion.verificationStatus === 'Verified' ? 'complete' : 'neutral'} /></div> : null}
           {selectedVersion ? <div className="generation-prompt-readonly">
             <Field label={g('test.resource.rules')} htmlFor="selected-version-rules"><textarea id="selected-version-rules" value={selectedVersion.organizationRules} readOnly /></Field>
             <Field label={g('test.resource.style')} htmlFor="selected-version-style"><textarea id="selected-version-style" value={selectedVersion.styleGuidance} readOnly /></Field>
             <Field label={g('test.resource.ltxNegative')} htmlFor="selected-version-ltx-negative"><textarea id="selected-version-ltx-negative" value={selectedVersion.ltxNegativePrompt} readOnly /></Field>
             <Field label={g('test.resource.h3Negative')} htmlFor="selected-version-h3-negative"><textarea id="selected-version-h3-negative" value={selectedVersion.h3NegativePrompt} readOnly /></Field>
           </div> : null}
-          <Button variant="secondary" busy={verifyVersion.isPending} disabled={!canVerifyTestedVersion(selectedVersion, testedVersionIds)} onClick={() => setConfirmAction('verify')}>{g('test.resource.verify')}</Button>
+          <Button variant="secondary" busy={verifyVersion.isPending} disabled={selectedVersion?.verificationStatus !== 'Draft'} onClick={() => setConfirmAction('verify')}>{g('test.resource.verify')}</Button>
           <Pagination page={versionsQuery.data?.page ?? versionPage} totalPages={versionsQuery.data?.totalPages ?? 0} total={versionsQuery.data?.total ?? 0} onPageChange={setVersionPage} />
           <div className="section-header"><h4>{g('test.resource.newVersion')}</h4></div>
           <Field label={g('test.resource.rules')} htmlFor="new-version-rules"><textarea id="new-version-rules" value={versionForm.organizationRules} onChange={event => setVersionForm(current => ({ ...current, organizationRules: event.target.value }))} /></Field>
@@ -328,7 +326,7 @@ export function TestResources({ testedVersionIds, onVersionCreated, onVersionVer
           {versionRequest === null ? <p className="field__error" role="alert">{g('test.resource.versionValidation')}</p> : null}
           <Button variant="primary" busy={createVersion.isPending} disabled={selectedTemplateId === null || versionRequest === null} onClick={() => setConfirmAction('version')}>{g('test.resource.createVersion')}</Button>
           <Pagination page={templatesQuery.data?.page ?? templatePage} totalPages={templatesQuery.data?.totalPages ?? 0} total={templatesQuery.data?.total ?? 0} onPageChange={setTemplatePage} />
-        </section>
+        </section> : null}
       </div>
 
       <ConfirmDialog

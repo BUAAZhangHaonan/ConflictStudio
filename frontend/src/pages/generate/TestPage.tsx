@@ -18,11 +18,9 @@ import {
 import { isModelSwitchConfirmationRequired } from '../../api/client';
 import type {
   Age,
-  AssistantFormState,
   Ethnicity,
   Gender,
   GpuSlotName,
-  JobSource,
   Scene,
   TestComparisonInput,
   TestExecutionMode,
@@ -43,8 +41,6 @@ import {
   type ModelPrecision,
 } from '../../types';
 import { formatDateTime } from '../../time';
-import { AssistantPanel } from './AssistantPanel';
-import { TestResources } from './TestResources';
 import { modelPrecisionIsValid } from './testWorkflow';
 import {
   ages,
@@ -108,7 +104,7 @@ function emptyForm(): TestForm {
     seed: '1',
     model: defaultGenerationProfile.model,
     precision: defaultGenerationProfile.precision,
-    comparisons: [{ ...defaultGenerationProfile, gpuSlot: 'GPU0' }],
+    comparisons: [],
     executionMode: 'Parallel',
   };
 }
@@ -143,11 +139,13 @@ export function TestPage() {
   const [runConfirmOpen, setRunConfirmOpen] = useState(false);
   const [switchConfirmOpen, setSwitchConfirmOpen] = useState(false);
   const [inspectedJobId, setInspectedJobId] = useState<number | null>(null);
-  const [testedVersionIds, setTestedVersionIds] = useState<Set<number>>(() => new Set());
   const [hiddenIds, setHiddenIds] = useState(hiddenTestIds);
 
   const contentQuery = useContentScriptsQuery(contentPage, {
     ...(debouncedContentSearch.trim() ? { search: debouncedContentSearch } : {}),
+    status: 'Active',
+    category: form.category,
+    ...(form.conflictDirection ? { direction: form.conflictDirection } : {}),
   });
   const selectedContentQuery = useContentScriptQuery(form.contentScriptId);
   const templatesQuery = usePromptTemplatesQuery(templatePage);
@@ -161,13 +159,7 @@ export function TestPage() {
   const promptTestMutation = useSubmitPromptTestMutation();
   const videoTestMutation = useSubmitVideoTestMutation();
 
-  const content = useMemo(
-    () => (contentQuery.data?.items ?? []).filter(item =>
-      item.status === 'Active'
-      && item.category === form.category
-      && item.conflictDirection === form.conflictDirection),
-    [contentQuery.data, form.category, form.conflictDirection],
-  );
+  const content = useMemo(() => contentQuery.data?.items ?? [], [contentQuery.data]);
   const templates = useMemo(
     () => (templatesQuery.data?.items ?? []).filter(item => item.category === form.category),
     [form.category, templatesQuery.data],
@@ -198,7 +190,9 @@ export function TestPage() {
   const selectedSceneExists = selectedScene !== null;
   const firstSceneId = scenes[0]?.id ?? null;
   const selectedSceneIsActive = sceneQuery.data?.status === 'Active';
-  const gpuBySlot = new Map((gpuQuery.data ?? []).map(slot => [slot.slot, slot]));
+  const availableGpuSlots = (gpuQuery.data ?? []).filter(slot => slot.availability === 'Available');
+  const availableGpuKey = availableGpuSlots.map(slot => slot.slot).join(',');
+  const gpuBySlot = new Map(availableGpuSlots.map(slot => [slot.slot, slot]));
   const seeds = parseSeeds(form.seed);
   const directions = allowedDirections(form.category);
   const recent = (recentQuery.data?.items ?? []).filter(item => !hiddenIds.includes(item.id)).slice(0, 5);
@@ -242,6 +236,19 @@ export function TestPage() {
       ? current
       : { ...current, sceneId: firstSceneId });
   }, [firstSceneId, form.sceneId, scenesQuery.isPending, selectedSceneExists]);
+
+  useEffect(() => {
+    if (form.kind !== 'VideoTest') return;
+    setForm(current => {
+      const valid = current.comparisons.filter(item => gpuBySlot.has(item.gpuSlot));
+      if (valid.length === current.comparisons.length && valid.length > 0) return current;
+      const first = availableGpuSlots[0]?.slot;
+      return {
+        ...current,
+        comparisons: first ? [{ ...defaultGenerationProfile, gpuSlot: first }] : [],
+      };
+    });
+  }, [availableGpuKey, form.kind]);
 
   const changeCategory = (category: Category) => {
     setForm(current => ({
@@ -303,9 +310,6 @@ export function TestPage() {
           confirmModelSwitch,
         });
       setInspectedJobId(job.id);
-      if (form.kind === 'PromptTest') {
-        setTestedVersionIds(current => new Set(current).add(selectedVersion.id));
-      }
       setValidation(false);
     } catch (error) {
       if (!confirmModelSwitch && isModelSwitchConfirmationRequired(error)) setSwitchConfirmOpen(true);
@@ -314,82 +318,23 @@ export function TestPage() {
     }
   };
 
-  const assistantForm: AssistantFormState = {
-    category: form.category,
-    conflictDirection: form.conflictDirection,
-    model: form.kind === 'PromptTest' ? form.model : form.comparisons[0].model,
-    precision: form.kind === 'PromptTest' ? form.precision : form.comparisons[0].precision,
-    contentSelections: selectedContent && selectedScene ? [{
-      contentScript: {
-        id: selectedContent.id,
-        expectedRevision: selectedContent.revision,
-        label: localizedName(locale, selectedContent),
-      },
-      scenes: [{
-        id: selectedScene.id,
-        expectedRevision: selectedScene.revision,
-        label: localizedName(locale, selectedScene),
-      }],
-    }] : null,
-    promptTemplateVersion: selectedVersion ? {
-      id: selectedVersion.id,
-      expectedRevision: selectedVersion.revision,
-      label: g('test.versionOption', { category: categoryLabel(g, selectedVersion.category), version: selectedVersion.version }),
-    } : null,
-    demographics: [{ age: form.age, gender: form.gender, ethnicity: form.ethnicity }],
-    seeds,
-    comparisons: form.kind === 'VideoTest' ? form.comparisons : null,
-    executionMode: form.kind === 'VideoTest' ? form.executionMode : null,
-  };
-
-  const applyAssistant = (values: AssistantFormState) => {
-    setForm(current => {
-      const person = values.demographics?.[0];
-      const selection = values.contentSelections?.[0];
-      const targetCategory = values.category ?? current.category;
-      const targetDirection = values.conflictDirection !== undefined
-        ? values.conflictDirection
-        : current.conflictDirection;
-      const classificationChanged = targetCategory !== current.category || targetDirection !== current.conflictDirection;
-      return {
-        ...current,
-        category: targetCategory,
-        conflictDirection: targetDirection,
-        contentScriptId: selection?.contentScript.id ?? (classificationChanged ? null : current.contentScriptId),
-        sceneId: selection?.scenes[0]?.id ?? (classificationChanged ? null : current.sceneId),
-        promptTemplateVersionId: values.promptTemplateVersion?.id ?? current.promptTemplateVersionId,
-        age: person?.age ?? current.age,
-        gender: person?.gender ?? current.gender,
-        ethnicity: person?.ethnicity ?? current.ethnicity,
-        seed: values.seeds?.[0] === undefined ? current.seed : String(values.seeds[0]),
-        model: values.model ?? current.model,
-        precision: values.model ? precisionForModel(values.model, values.precision) : current.precision,
-        comparisons: values.comparisons?.length ? values.comparisons : current.comparisons,
-        executionMode: values.executionMode ?? current.executionMode,
-      };
-    });
-    setValidation(false);
-  };
-
   const addComparison = () => {
     const profiles = addSecondTestComparison(form.comparisons);
+    const firstSlot = form.comparisons[0]?.gpuSlot ?? availableGpuSlots[0]?.slot;
+    const secondSlot = availableGpuSlots.find(slot => slot.slot !== firstSlot)?.slot ?? firstSlot;
+    if (!firstSlot || !secondSlot) return;
     setForm(current => ({
       ...current,
       comparisons: profiles.map((profile, index) => ({
         ...profile,
-        gpuSlot: index === 0 ? current.comparisons[0].gpuSlot : 'GPU1',
+        gpuSlot: index === 0 ? firstSlot : secondSlot,
       })),
+      executionMode: firstSlot === secondSlot ? 'Serial' : current.executionMode,
     }));
   };
 
   return (
     <GenerationScaffold title="test.title" subtitle="test.subtitle">
-      <AssistantPanel
-        targetSource={form.kind as JobSource}
-        currentForm={assistantForm}
-        batchDraft={null}
-        onApply={applyAssistant}
-      />
       <RelationshipGuide production={false} />
       {copied ? <p className="generation-isolation-note" role="status">{g('test.copied')}</p> : null}
       {queryError ? <OperationFeedback error={queryError} onDismiss={() => void Promise.all([
@@ -412,7 +357,13 @@ export function TestPage() {
               <span><strong>{g('test.prompt')}</strong>{g('test.promptHint')}</span>
             </label>
             <label>
-              <input type="radio" name="test-kind" checked={form.kind === 'VideoTest'} onChange={() => setForm(current => ({ ...current, kind: 'VideoTest' }))} />
+              <input type="radio" name="test-kind" checked={form.kind === 'VideoTest'} onChange={() => setForm(current => ({
+                ...current,
+                kind: 'VideoTest',
+                comparisons: current.comparisons.length > 0 || !availableGpuSlots[0]
+                  ? current.comparisons
+                  : [{ ...defaultGenerationProfile, gpuSlot: availableGpuSlots[0].slot }],
+              }))} />
               <span><strong>{g('test.video')}</strong>{g('test.videoHint')}</span>
             </label>
           </fieldset>
@@ -458,7 +409,7 @@ export function TestPage() {
               {form.comparisons.map((comparison, index) => <div className="generation-comparisons__row" key={index}>
                 <Field label={g('test.model')} htmlFor={'test-model-' + index}><select id={'test-model-' + index} value={comparison.model} onChange={event => { const model = event.target.value as ModelName; setForm(current => ({ ...current, comparisons: current.comparisons.map((item, itemIndex) => itemIndex === index ? { ...item, model, precision: precisionForModel(model, item.precision) } : item) })); }}>{models.map(value => <option key={value} value={value}>{g(('model.' + value) as GenerationKey)}</option>)}</select></Field>
                 {comparison.model === 'LTX-2.5' ? <Field label={g('test.precision')} htmlFor={'test-precision-' + index}><select id={'test-precision-' + index} value={comparison.precision ?? ''} onChange={event => setForm(current => ({ ...current, comparisons: current.comparisons.map((item, itemIndex) => itemIndex === index ? { ...item, precision: event.target.value as ModelPrecision } : item) }))}>{ltx25Precisions.map(value => <option key={value} value={value}>{g(('precision.' + value) as GenerationKey)}</option>)}</select></Field> : null}
-                <Field label={g('test.gpu')} htmlFor={'test-gpu-' + index}><select id={'test-gpu-' + index} value={comparison.gpuSlot} onChange={event => setForm(current => ({ ...current, comparisons: current.comparisons.map((item, itemIndex) => itemIndex === index ? { ...item, gpuSlot: event.target.value as GpuSlotName } : item) }))}>{(gpuQuery.data ?? []).map(value => <option key={value.slot} value={value.slot}>{g(('gpu.' + value.slot) as GenerationKey)} {g(('gpu.' + value.availability) as GenerationKey)}</option>)}</select></Field>
+                <Field label={g('test.gpu')} htmlFor={'test-gpu-' + index}><select id={'test-gpu-' + index} value={comparison.gpuSlot} onChange={event => setForm(current => ({ ...current, comparisons: current.comparisons.map((item, itemIndex) => itemIndex === index ? { ...item, gpuSlot: event.target.value as GpuSlotName } : item) }))}>{availableGpuSlots.map(value => <option key={value.slot} value={value.slot}>{value.slot}</option>)}</select></Field>
                 {form.comparisons.length > 1 ? <Button variant="quiet" onClick={() => setForm(current => ({ ...current, comparisons: current.comparisons.filter((_, itemIndex) => itemIndex !== index) }))}>{g('test.removeComparison')}</Button> : null}
               </div>)}
               {form.comparisons.length < 2 ? <Button variant="secondary" onClick={addComparison}>{g('test.addComparison')}</Button> : null}
@@ -490,19 +441,6 @@ export function TestPage() {
         <p className="generation-isolation-note">{g('test.isolation')}</p>
         {recent.length === 0 ? <p>{g('state.empty')}</p> : <ul className="generation-job-list">{recent.map(job => <li key={job.id}><div className="generation-job-row"><div><strong>{job.displayName}</strong><span>{g(('source.' + job.source) as GenerationKey)}</span></div><StatusBadge label={g(('job.' + job.status) as GenerationKey)} kind={jobStatusKind(job.status)} /><span>{profileLabel(job.model, job.precision)}</span><time dateTime={job.updatedAt}>{formatDateTime(job.updatedAt)}</time><div className="generation-row-actions"><Link className="button button--quiet" to={'/generate/results?tab=test&job=' + job.id}>{g('common.view')}</Link><Button variant="quiet" onClick={() => setHiddenIds(hideTestResult(job.id))}>{g('common.hide')}</Button></div></div></li>)}</ul>}
       </section>
-
-      <details className="panel generation-resources-disclosure">
-        <summary>{g('test.resource.manage')}</summary>
-        <TestResources
-          testedVersionIds={testedVersionIds}
-          onVersionCreated={(id, templateId) => setForm(current => ({
-            ...current,
-            promptTemplateId: templateId,
-            promptTemplateVersionId: id,
-          }))}
-          onVersionVerified={id => setForm(current => ({ ...current, promptTemplateVersionId: id }))}
-        />
-      </details>
 
       <ConfirmDialog open={runConfirmOpen} title={g('test.runTitle')} body={g('test.runBody')} confirmLabel={g('test.run')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void runTest(false)} onClose={() => setRunConfirmOpen(false)} busy={promptTestMutation.isPending || videoTestMutation.isPending} />
       <ConfirmDialog open={switchConfirmOpen} title={g('production.switchTitle')} body={g('production.switchBody')} confirmLabel={g('common.confirm')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void runTest(true)} onClose={() => setSwitchConfirmOpen(false)} busy={videoTestMutation.isPending} />

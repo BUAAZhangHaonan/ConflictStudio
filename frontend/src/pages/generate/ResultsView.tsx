@@ -27,7 +27,6 @@ import {
   categoryLabel,
   collapseProgressEvents,
   GenerationScaffold,
-  GpuPanel,
   jobFailureMessage,
   jobStatusKind,
   OperationFeedback,
@@ -144,6 +143,7 @@ export function ResultsView() {
     [detail, items, kind],
   );
   const controls = controlVisibility(detail?.status ?? 'Completed', selectedFailures.length);
+  const resultsReturnTo = '/generate/results' + (params.toString() ? '?' + params.toString() : '');
 
   useEffect(() => {
     setItemPage(1);
@@ -362,8 +362,6 @@ export function ResultsView() {
         )}
       </section>
 
-      <GpuPanel />
-
       {selectedId !== null ? (
         <section className="panel generation-result-detail" aria-labelledby="result-detail-title">
           <div className="section-header">
@@ -401,6 +399,41 @@ export function ResultsView() {
                   }}
                 />
               ) : null}
+              <section className="generation-result-output" aria-labelledby="result-output-title">
+                <div className="section-header">
+                  <h3 id="result-output-title">{g('results.output')}</h3>
+                  {controls.retry ? (
+                    <Button variant="secondary" disabled={retryMutation.isPending} onClick={() => setConfirmAction('retry')}>
+                      {g('results.retry')}
+                    </Button>
+                  ) : null}
+                </div>
+                {itemsQuery.isPending ? <p role="status">{g('common.loading')}</p> : (
+                  <ResultsOutputList
+                    items={items}
+                    jobStatus={detail.status}
+                    page={itemsQuery.data?.page ?? itemPage}
+                    totalPages={itemsQuery.data?.totalPages ?? 0}
+                    total={itemsQuery.data?.total ?? 0}
+                    locale={locale}
+                    kind={kind}
+                    returnTo={resultsReturnTo}
+                    selectedFailures={selectedFailures}
+                    onToggleFailure={id => setSelectedFailures(values => values.includes(id) ? values.filter(value => value !== id) : [...values, id])}
+                    onPageChange={setItemPage}
+                    g={g}
+                  />
+                )}
+              </section>
+
+              <div className="generation-result-actions">
+                {controls.cancel ? <Button variant="secondary" disabled={cancelMutation.isPending} onClick={() => setConfirmAction('cancel')}>{g('results.cancel')}</Button> : null}
+                {controls.resume ? <Button variant="secondary" disabled={resumeMutation.isPending} onClick={() => setConfirmAction('resume')}>{g('results.resume')}</Button> : null}
+                {kind === 'test' ? <div className="generation-test-draft-action"><Button variant="secondary" disabled={testDraft === null} onClick={openTestDraft}>{g('results.testDraft')}</Button><p>{g('results.testDraftHint')}</p></div> : null}
+              </div>
+
+              <details className="generation-result-technical">
+                <summary>{g('results.technicalDetails')}</summary>
               <div className="generation-result-summary">
                 <dl>
                   <div><dt>{g('results.kind')}</dt><dd>{sourceLabels[detail.source]}</dd></div>
@@ -427,35 +460,6 @@ export function ResultsView() {
                   <p className="generation-failure" role="alert">
                     {jobFailureMessage(detail.failureCode, g)}
                   </p>
-                ) : null}
-              </div>
-
-              <div className="generation-result-actions">
-                {controls.cancel ? (
-                  <Button
-                    variant="secondary"
-                    disabled={cancelMutation.isPending}
-                    onClick={() => setConfirmAction('cancel')}
-                  >
-                    {g('results.cancel')}
-                  </Button>
-                ) : null}
-                {controls.resume ? (
-                  <Button
-                    variant="secondary"
-                    disabled={resumeMutation.isPending}
-                    onClick={() => setConfirmAction('resume')}
-                  >
-                    {g('results.resume')}
-                  </Button>
-                ) : null}
-                {kind === 'test' ? (
-                  <div className="generation-test-draft-action">
-                    <Button variant="secondary" disabled={testDraft === null} onClick={openTestDraft}>
-                      {g('results.testDraft')}
-                    </Button>
-                    <p>{g('results.testDraftHint')}</p>
-                  </div>
                 ) : null}
               </div>
 
@@ -511,39 +515,7 @@ export function ResultsView() {
                   onPageChange={setEventPage}
                 />
               </section>
-
-              <section className="generation-result-output" aria-labelledby="result-output-title">
-                <div className="section-header">
-                  <h3 id="result-output-title">{g('results.output')}</h3>
-                  {controls.retry ? (
-                    <Button
-                      variant="secondary"
-                      disabled={retryMutation.isPending}
-                      onClick={() => setConfirmAction('retry')}
-                    >
-                      {g('results.retry')}
-                    </Button>
-                  ) : null}
-                </div>
-                {itemsQuery.isPending ? (
-                  <p role="status">{g('common.loading')}</p>
-                ) : (
-                  <ResultsOutputList
-                    items={items}
-                    jobStatus={detail.status}
-                    page={itemsQuery.data?.page ?? itemPage}
-                    totalPages={itemsQuery.data?.totalPages ?? 0}
-                    total={itemsQuery.data?.total ?? 0}
-                    locale={locale}
-                    selectedFailures={selectedFailures}
-                    onToggleFailure={id => setSelectedFailures(values =>
-                      values.includes(id) ? values.filter(value => value !== id) : [...values, id]
-                    )}
-                    onPageChange={setItemPage}
-                    g={g}
-                  />
-                )}
-              </section>
+              </details>
             </>
           )}
         </section>

@@ -96,8 +96,7 @@
 .generation-test-history,
 .generation-preview,
 .generation-results-list,
-.generation-result-detail,
-.generation-gpu-panel {
+.generation-result-detail {
   display: grid;
   min-width: 0;
   gap: 14px;
@@ -471,7 +470,6 @@
 }
 
 .generation-check-groups,
-.generation-gpu-grid,
 .generation-result-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -498,37 +496,6 @@
   border-radius: var(--radius-small);
   background: var(--color-surface-muted);
   font-weight: 600;
-}
-
-.generation-gpu-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.generation-gpu {
-  display: grid;
-  align-content: start;
-  gap: 7px;
-  min-width: 0;
-  padding: 11px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-small);
-}
-
-.generation-gpu > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.generation-gpu p {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 12px;
-}
-
-.generation-gpu .button {
-  justify-self: start;
 }
 
 .generation-preview .table-shell,
@@ -732,6 +699,30 @@
   border-radius: var(--radius-small);
 }
 
+.generation-result-technical,
+.generation-output-technical {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.generation-result-technical > summary,
+.generation-output-technical > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.generation-result-technical[open] > summary,
+.generation-output-technical[open] > summary {
+  margin-bottom: 14px;
+}
+
+.generation-output-review {
+  justify-self: start;
+}
+
 .generation-output-card h4,
 .generation-output-card h5,
 .generation-output-card h6,
@@ -839,8 +830,7 @@
   }
 
   .generation-kind,
-  .generation-gpu-select,
-  .generation-gpu-grid {
+  .generation-gpu-select {
     grid-template-columns: 1fr;
   }
 
@@ -968,9 +958,87 @@
 
 .generation-resource-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(300px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 16px;
+}
+
+.generation-resource-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.generation-resource-tabs button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.generation-resource-tabs button[aria-selected="true"] {
+  border-color: var(--color-blue);
+  background: var(--color-blue-soft);
+  color: var(--color-blue);
+  font-weight: 600;
+}
+
+.generation-resource-assistant,
+.generation-resource-assistant__proposal,
+.generation-resource-assistant__group,
+.generation-resource-assistant__scene,
+.generation-demographic-list {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+
+.generation-resource-assistant textarea,
+.generation-resource-assistant input,
+.generation-resource-assistant select {
+  width: 100%;
+  max-width: 100%;
+}
+
+.generation-resource-assistant textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.generation-resource-assistant__group {
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+}
+
+.generation-resource-assistant__group > legend {
+  padding-inline: 6px;
+  font-weight: 600;
+}
+
+.generation-resource-assistant__scene {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+}
+
+.generation-resource-assistant__success {
+  margin: 0;
+  color: var(--color-blue);
+}
+
+.generation-demographic-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
 }
 
 .generation-resource-editor h3,
@@ -1047,6 +1115,14 @@
   .generation-editor-modes {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .generation-demographic-row {
+    grid-template-columns: 1fr;
+  }
+
+  .generation-resource-tabs button {
+    padding-inline: 6px;
   }
 }
 

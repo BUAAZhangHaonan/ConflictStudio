@@ -161,6 +161,26 @@ test('Results keeps positive and negative prompts separate and readable', () => 
   assert.match(cssSource, /\.generation-prompt-blocks pre \{[\s\S]*white-space: pre-wrap;[\s\S]*overflow-wrap: anywhere;/u);
 });
 
+test('Results puts user output first and keeps task mechanics collapsed', () => {
+  const outputIndex = viewSource.indexOf('<section className="generation-result-output"');
+  const detailIndex = viewSource.indexOf('<details className="generation-result-technical"');
+  assert.equal(outputIndex >= 0 && detailIndex > outputIndex, true);
+  const mediaIndex = outputSource.indexOf('<section className="generation-output-media"');
+  const technicalIndex = outputSource.indexOf('<details className="generation-output-technical"');
+  assert.equal(mediaIndex >= 0 && technicalIndex > mediaIndex, true);
+  assert.match(viewSource, /<summary>\{g\('results\.technicalDetails'\)\}<\/summary>/u);
+  assert.match(outputSource, /<summary>\{g\('results\.technicalDetails'\)\}<\/summary>/u);
+  assert.doesNotMatch(viewSource, /GpuPanel/u);
+});
+
+test('completed formal samples enter Review with the exact Results return location', () => {
+  assert.match(outputSource, /kind === 'production' && item\.sampleId !== null/u);
+  assert.match(outputSource, /\/review\/['"]? \+ item\.sampleId/u);
+  assert.match(outputSource, /returnTo=' \+ encodeURIComponent\(returnTo\)/u);
+  assert.match(viewSource, /const resultsReturnTo = '\/generate\/results'/u);
+  assert.match(viewSource, /returnTo=\{resultsReturnTo\}/u);
+});
+
 test('Test handoff copies visible configuration and never promotes assets', () => {
   const detail = {
     source: 'VideoTest',
@@ -172,6 +192,9 @@ test('Test handoff copies visible configuration and never promotes assets', () =
   assert.equal('datasetId' in draft, false);
   assert.equal('assetId' in draft, false);
   assert.equal('media' in draft, false);
+  assert.equal(JSON.stringify(draft.comparisons), JSON.stringify([{ model: 'LTX-2.5', precision: 'INT8', gpuSlot: 'GPU0' }]));
+  const promptDraft = model.buildTestDraft({ source: 'PromptTest' }, [jobItem()]);
+  assert.equal(JSON.stringify(promptDraft.comparisons), '[]');
   assert.match(viewSource, /writeSessionDraft\(testCopyDraftKey, testDraft\)/u);
   const combined = viewSource + outputSource + modelSource;
   assert.doesNotMatch(combined, /promote|promotion|keepAsSample|reuseAsset|datasetId/u);

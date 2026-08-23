@@ -1,4 +1,5 @@
-import { Button, MediaPanel, Pagination, StatusBadge } from '../../components';
+import { MediaPanel, Pagination, StatusBadge } from '../../components';
+import { Link } from 'react-router-dom';
 import type { JobItem, JobStatus } from '../../api/contracts';
 import { formatDateTime } from '../../time';
 import type { Locale } from '../../types';
@@ -10,6 +11,7 @@ import {
   type useGenerationCopy,
 } from './shared';
 import { mediaForItem } from './resultsModel';
+import type { ResultKind } from './resultsModel';
 import type { GenerationKey } from '../../locales/features/generation';
 
 type GenerationCopy = ReturnType<typeof useGenerationCopy>;
@@ -21,6 +23,8 @@ interface ResultsOutputListProps {
   totalPages: number;
   total: number;
   locale: Locale;
+  kind: ResultKind;
+  returnTo: string;
   selectedFailures: readonly number[];
   onToggleFailure: (id: number) => void;
   onPageChange: (page: number) => void;
@@ -55,6 +59,8 @@ export function ResultsOutputList({
   totalPages,
   total,
   locale,
+  kind,
+  returnTo,
   selectedFailures,
   onToggleFailure,
   onPageChange,
@@ -103,66 +109,6 @@ export function ResultsOutputList({
                   <span>{g('results.selectRetry')}</span>
                 </label>
               ) : null}
-
-              <section className="generation-attempt" aria-labelledby={'result-attempt-' + item.id}>
-                <h5 id={'result-attempt-' + item.id}>{g('results.currentAttempt')}</h5>
-                {attempt ? (
-                  <dl>
-                    <div>
-                      <dt>{g('results.attempt')}</dt>
-                      <dd>{attempt.attemptNumber}/{item.attemptCount}</dd>
-                    </div>
-                    <div>
-                      <dt>{g('results.model')}</dt>
-                      <dd>{profileLabel(attempt.model, attempt.precision)}</dd>
-                    </div>
-                    <div>
-                      <dt>{g('results.actualGpu')}</dt>
-                      <dd>{g(('gpu.' + attempt.gpuSlot) as GenerationKey)}</dd>
-                    </div>
-                    <div>
-                      <dt>{g('results.status')}</dt>
-                      <dd>{g(('job.' + attempt.status) as GenerationKey)}</dd>
-                    </div>
-                    <div>
-                      <dt>{g('results.started')}</dt>
-                      <dd><time dateTime={attempt.startedAt}>{formatDateTime(attempt.startedAt)}</time></dd>
-                    </div>
-                    {attempt.finishedAt ? (
-                      <div>
-                        <dt>{g('results.finished')}</dt>
-                        <dd><time dateTime={attempt.finishedAt}>{formatDateTime(attempt.finishedAt)}</time></dd>
-                      </div>
-                    ) : null}
-                  </dl>
-                ) : (
-                  <p>{g(item.status === 'Completed' ? 'results.promptOnlyAttempt' : 'results.attemptPending')}</p>
-                )}
-              </section>
-              <section className="generation-output-facts" aria-labelledby={'result-facts-' + item.id}>
-                <h5 id={'result-facts-' + item.id}>{g('results.attributes')}</h5>
-                <dl>
-                  <div><dt>{g('results.taskType')}</dt><dd>{categoryLabel(g, item.input.category)}</dd></div>
-                  <div><dt>{g('results.content')}</dt><dd>{localizedSnapshotName(item, locale, 'contentScript')}</dd></div>
-                  <div><dt>{g('results.scene')}</dt><dd>{localizedSnapshotName(item, locale, 'shootingScene')}</dd></div>
-                  <div><dt>{g('results.model')}</dt><dd>{profileLabel(item.input.model, item.input.precision)}</dd></div>
-                  <div>
-                    <dt>{g('results.actualGpu')}</dt>
-                    <dd>{item.gpuSlot ? g(('gpu.' + item.gpuSlot) as GenerationKey) : g('results.noGpu')}</dd>
-                  </div>
-                  <div><dt>{g('results.seed')}</dt><dd>{item.input.seed}</dd></div>
-                  <div><dt>{g('results.person')}</dt><dd>{person}</dd></div>
-                  <div>
-                    <dt>{g('results.videoFormat')}</dt>
-                    <dd>{g('results.videoFormatValue', {
-                      width: item.input.width,
-                      height: item.input.height,
-                      fps: item.input.fps,
-                      frames: item.input.frameCount,
-                    })}</dd>
-                  </div>
-                </dl>
-              </section>
 
               <section className="generation-output-media" aria-labelledby={'result-media-' + item.id}>
                 <h5 id={'result-media-' + item.id}>{g('results.media')}</h5>
@@ -215,6 +161,38 @@ export function ResultsOutputList({
                   <p>{g('results.promptPending')}</p>
                 )}
               </section>
+
+              {kind === 'production' && item.sampleId !== null ? <Link className="button button--secondary generation-output-review" to={'/review/' + item.sampleId + '?returnTo=' + encodeURIComponent(returnTo)}>{g('results.reviewSample')}</Link> : null}
+
+              <details className="generation-output-technical">
+                <summary>{g('results.technicalDetails')}</summary>
+                <section className="generation-attempt" aria-labelledby={'result-attempt-' + item.id}>
+                  <h5 id={'result-attempt-' + item.id}>{g('results.currentAttempt')}</h5>
+                  {attempt ? (
+                    <dl>
+                      <div><dt>{g('results.attempt')}</dt><dd>{attempt.attemptNumber}/{item.attemptCount}</dd></div>
+                      <div><dt>{g('results.model')}</dt><dd>{profileLabel(attempt.model, attempt.precision)}</dd></div>
+                      <div><dt>{g('results.actualGpu')}</dt><dd>{attempt.gpuSlot}</dd></div>
+                      <div><dt>{g('results.status')}</dt><dd>{g(('job.' + attempt.status) as GenerationKey)}</dd></div>
+                      <div><dt>{g('results.started')}</dt><dd><time dateTime={attempt.startedAt}>{formatDateTime(attempt.startedAt)}</time></dd></div>
+                      {attempt.finishedAt ? <div><dt>{g('results.finished')}</dt><dd><time dateTime={attempt.finishedAt}>{formatDateTime(attempt.finishedAt)}</time></dd></div> : null}
+                    </dl>
+                  ) : <p>{g(item.status === 'Completed' ? 'results.promptOnlyAttempt' : 'results.attemptPending')}</p>}
+                </section>
+                <section className="generation-output-facts" aria-labelledby={'result-facts-' + item.id}>
+                  <h5 id={'result-facts-' + item.id}>{g('results.attributes')}</h5>
+                  <dl>
+                    <div><dt>{g('results.taskType')}</dt><dd>{categoryLabel(g, item.input.category)}</dd></div>
+                    <div><dt>{g('results.content')}</dt><dd>{localizedSnapshotName(item, locale, 'contentScript')}</dd></div>
+                    <div><dt>{g('results.scene')}</dt><dd>{localizedSnapshotName(item, locale, 'shootingScene')}</dd></div>
+                    <div><dt>{g('results.model')}</dt><dd>{profileLabel(item.input.model, item.input.precision)}</dd></div>
+                    <div><dt>{g('results.actualGpu')}</dt><dd>{item.gpuSlot ?? g('results.noGpu')}</dd></div>
+                    <div><dt>{g('results.seed')}</dt><dd>{item.input.seed}</dd></div>
+                    <div><dt>{g('results.person')}</dt><dd>{person}</dd></div>
+                    <div><dt>{g('results.videoFormat')}</dt><dd>{g('results.videoFormatValue', { width: item.input.width, height: item.input.height, fps: item.input.fps, frames: item.input.frameCount })}</dd></div>
+                  </dl>
+                </section>
+              </details>
             </article>
           );
         })}

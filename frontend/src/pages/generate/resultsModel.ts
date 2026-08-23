@@ -114,12 +114,6 @@ export function buildTestDraft(detail: JobDetail, items: readonly JobItem[]): Te
       )) comparisons.push(comparison);
     }
     if (comparisons.length === 0 || comparisons.length > 2) return null;
-  } else {
-    comparisons.push({
-      model: first.input.model,
-      precision: first.input.precision,
-      gpuSlot: 'GPU0',
-    });
   }
 
   return {

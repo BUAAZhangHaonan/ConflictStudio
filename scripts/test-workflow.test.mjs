@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
@@ -8,14 +8,19 @@ const require = createRequire(import.meta.url);
 const ts = require('../frontend/node_modules/typescript');
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const helperSource = read('../frontend/src/pages/generate/testWorkflow.ts');
+const formalSource = read('../frontend/src/pages/generate/formalGeneration.ts');
 const profileSource = read('../frontend/src/generationProfile.ts');
 const typesSource = read('../frontend/src/types.ts');
-const resourcesSource = read('../frontend/src/pages/generate/TestResources.tsx');
-const pageSource = read('../frontend/src/pages/generate/TestPage.tsx');
-const assistantSource = read('../frontend/src/pages/generate/AssistantPanel.tsx');
+const resourcesPageSource = read('../frontend/src/pages/generate/ResourcesPage.tsx');
+const editorsSource = read('../frontend/src/pages/generate/TestResources.tsx');
+const assistantSource = read('../frontend/src/pages/generate/ResourceAssistantPanel.tsx');
+const testPageSource = read('../frontend/src/pages/generate/TestPage.tsx');
 const productionSource = read('../frontend/src/pages/generate/ProductionPage.tsx');
-const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
+const resultsModelSource = read('../frontend/src/pages/generate/resultsModel.ts');
 const querySource = read('../frontend/src/api/queries.ts');
+const contractSource = read('../frontend/src/api/contracts.ts');
+const appShellSource = read('../frontend/src/components/AppShell.tsx');
+const responsiveSource = read('../frontend/src/styles/responsive.css');
 
 function loadCommonJs(source, dependencies = {}) {
   const output = ts.transpileModule(source, {
@@ -44,184 +49,128 @@ function loadHelper() {
 
 function completeContent(overrides = {}) {
   return {
-    nameZh: '测试内容',
-    nameEn: 'Test content',
+    nameZh: '测试内容', nameEn: 'Test content', category: 'A-VA', conflictDirection: null,
+    mode: 'Generative', trueEmotion: 'calm', apparentEmotion: 'calm',
+    sceneZh: '室内交流', sceneEn: 'Indoor conversation', triggerEventZh: '收到消息',
+    triggerEventEn: 'A message arrives', psychologicalBackgroundZh: '等待结果',
+    psychologicalBackgroundEn: 'Waiting for the result', dialogue: null, displayText: null,
+    trueEmotionDescription: '', baseVideoPrompt: '', contentRequirementsZh: '动作清楚',
+    contentRequirementsEn: 'Keep action clear', sceneSupplementZh: '', sceneSupplementEn: '',
+    sceneIds: [], ...overrides,
+  };
+}
+
+function productionForm(overrides = {}) {
+  return {
+    targetDatasetId: 4,
+    displayName: 'A-VA-20260824',
     category: 'A-VA',
     conflictDirection: null,
-    mode: 'Generative',
-    trueEmotion: 'calm',
-    apparentEmotion: 'calm',
-    sceneZh: '室内交流',
-    sceneEn: 'Indoor conversation',
-    triggerEventZh: '收到消息',
-    triggerEventEn: 'A message arrives',
-    psychologicalBackgroundZh: '等待结果',
-    psychologicalBackgroundEn: 'Waiting for the result',
-    dialogue: null,
-    displayText: null,
-    trueEmotionDescription: '',
-    baseVideoPrompt: '',
-    contentRequirementsZh: '保持动作清楚',
-    contentRequirementsEn: 'Keep the action clear',
-    sceneSupplementZh: '',
-    sceneSupplementEn: '',
-    sceneIds: [],
+    promptTemplateId: 8,
+    promptTemplateVersionId: 9,
+    selectedContent: [{
+      id: 10, revision: 2, nameZh: '内容', nameEn: 'Content', mode: 'Fixed',
+      scenes: [{ id: 12, revision: 1, nameZh: '场景', nameEn: 'Scene' }],
+      selectedSceneIds: [12],
+    }],
+    demographics: [
+      { age: 25, gender: 'Female', ethnicity: 'EastAsian' },
+      { age: 35, gender: 'Male', ethnicity: 'White' },
+    ],
+    seeds: '7', model: 'LTX-2.5', precision: 'INT8', gpuSlots: ['GPU0'],
     ...overrides,
   };
 }
 
-test('draft content and scene requests stay Draft and require valid fields', () => {
-  const { buildContentDraftRequest, buildSceneDraftRequest } = loadHelper();
-  const content = buildContentDraftRequest(completeContent());
-  assert.equal(content.status, 'Draft');
+test('manual content, scene, and prompt resources remain explicit Draft writes', () => {
+  const { buildContentDraftRequest, buildSceneDraftRequest, buildVersionDraftRequest, toggleCompatibility } = loadHelper();
+  assert.equal(buildContentDraftRequest(completeContent()).status, 'Draft');
   assert.equal(buildContentDraftRequest(completeContent({ category: 'C-VA', conflictDirection: 'Audio' })), null);
-  assert.equal(buildContentDraftRequest(completeContent({
-    mode: 'Fixed',
-    sceneIds: [4],
-    baseVideoPrompt: 'Static medium shot',
-    trueEmotionDescription: 'Calm expression',
-    dialogue: 'I understand.',
-    contentRequirementsZh: '',
-    contentRequirementsEn: '',
-  })).status, 'Draft');
-  assert.equal(buildSceneDraftRequest({
-    nameZh: '会议室',
-    nameEn: 'Meeting room',
-    sceneZh: '安静的会议室',
-    sceneEn: 'A quiet meeting room',
-    ambientSoundZh: '',
-    ambientSoundEn: '',
-    participantRelationshipZh: '',
-    participantRelationshipEn: '',
-    lightingZh: '',
-    lightingEn: '',
-    framingZh: '',
-    framingEn: '',
-  }).status, 'Draft');
-});
-
-test('compatibility selection records only explicit pairs', () => {
-  const { toggleCompatibility } = loadHelper();
-  assert.deepEqual([...toggleCompatibility('Generative', [2], 5)], [2, 5]);
-  assert.deepEqual([...toggleCompatibility('Generative', [2, 5], 2)], [5]);
   assert.deepEqual([...toggleCompatibility('Fixed', [2, 5], 7)], [7]);
-  assert.match(resourcesSource, /sceneIds: toggleCompatibility\(current\.mode, current\.sceneIds, scene\.id\)/u);
-  assert.doesNotMatch(resourcesSource, /flatMap|Cartesian|all pairs/iu);
+  assert.equal(buildSceneDraftRequest({
+    nameZh: '会议室', nameEn: 'Meeting room', sceneZh: '安静的会议室', sceneEn: 'A quiet meeting room',
+    ambientSoundZh: '', ambientSoundEn: '', participantRelationshipZh: '', participantRelationshipEn: '',
+    lightingZh: '', lightingEn: '', framingZh: '', framingEn: '',
+  }).status, 'Draft');
+  assert.equal(buildVersionDraftRequest({
+    organizationRules: 'Combine in order.', styleGuidance: 'Static medium shot.',
+    ltxNegativePrompt: 'blur', h3NegativePrompt: 'blur',
+  }, 3).expectedTemplateRevision, 3);
+  assert.match(editorsSource, /useCreatePromptTemplateVersionMutation/u);
+  assert.match(editorsSource, /selectedVersion\?\.verificationStatus !== 'Draft'/u);
+  assert.doesNotMatch(helperSource, /canVerifyTestedVersion|testedVersionIds/u);
 });
 
-test('new prompt versions are immutable drafts and verification needs a same-page prompt test', () => {
-  const { buildVersionDraftRequest, canVerifyTestedVersion } = loadHelper();
-  const request = buildVersionDraftRequest({
-    organizationRules: 'Combine content, scene and person details in order.',
-    styleGuidance: 'Use a static medium shot.',
-    ltxNegativePrompt: 'blur, artifacts',
-    h3NegativePrompt: 'blur, artifacts',
-  }, 3);
-  assert.equal(request.expectedTemplateRevision, 3);
-  assert.deepEqual([...request.positiveExamples], []);
-  assert.deepEqual([...request.negativeExamples], []);
-  const draft = { id: 8, verificationStatus: 'Draft' };
-  assert.equal(canVerifyTestedVersion(draft, new Set([8])), true);
-  assert.equal(canVerifyTestedVersion(draft, new Set()), false);
-  assert.equal(canVerifyTestedVersion({ ...draft, verificationStatus: 'Verified' }, new Set([8])), false);
-  assert.match(resourcesSource, /useCreatePromptTemplateVersionMutation/u);
-  assert.match(resourcesSource, /useVerifyPromptTemplateVersionMutation/u);
-  assert.match(resourcesSource, /ConfirmDialog/u);
-  assert.doesNotMatch(resourcesSource, /updatePromptTemplateVersion|positiveExamples|negativeExamples/u);
-});
-
-test('prompt-only and video tests use current endpoints and expose complete final prompts', () => {
-  assert.match(pageSource, /promptTestMutation\.mutateAsync/u);
-  assert.match(pageSource, /videoTestMutation\.mutateAsync/u);
-  assert.match(pageSource, /promptOutput\.finalPositivePrompt/u);
-  assert.match(pageSource, /promptOutput\.negativePrompt/u);
-  assert.match(pageSource, /useResultItemsQuery\('test'/u);
-  assert.match(querySource, /\/api\/test-runs\/prompt/u);
-  assert.match(querySource, /\/api\/test-runs\/video/u);
-  assert.doesNotMatch(pageSource, /systemInput|userInput|temporaryInputs|positiveExamples|negativeExamples/u);
-});
-
-test('model precision rules accept only supported combinations', () => {
-  const { modelPrecisionIsValid, precisionOptionsForModel } = loadHelper();
-  assert.equal(modelPrecisionIsValid('LTX-2.5', 'INT8'), true);
-  assert.equal(modelPrecisionIsValid('LTX-2.5', 'BF16'), true);
-  assert.equal(modelPrecisionIsValid('LTX-2.5', null), false);
-  assert.equal(modelPrecisionIsValid('LTX-2.3', null), true);
-  assert.equal(modelPrecisionIsValid('LTX-2.3', 'INT8'), false);
-  assert.equal(modelPrecisionIsValid('MiniMax H3', null), true);
-  assert.deepEqual([...precisionOptionsForModel('LTX-2.5')], ['BF16', 'INT8']);
-});
-
-test('assistant applies visible Test suggestions once and cannot create resources or run tests', () => {
-  assert.match(assistantSource, /ConfirmDialog/u);
-  assert.match(assistantSource, /createContentScript: false/u);
-  assert.match(assistantSource, /createShootingScene: false/u);
-  assert.match(assistantSource, /linkNewSceneToContent: false/u);
-  assert.match(assistantSource, /const single = !production/u);
-  assert.match(assistantSource, /\[group\.kind\]: \[item\.id\]/u);
-  assert.match(assistantSource, /selection\.contentScript\.label/u);
-  assert.match(assistantSource, /demographic\.ethnicity/u);
-  assert.doesNotMatch(assistantSource, /submitPromptTest|submitVideoTest|createContent \|\| createScene/u);
-});
-
-test('formal assistant works before saving and applying only dirties the visible form', () => {
-  assert.match(assistantSource, /const canAsk = requirement\.trim\(\)\.length > 0/u);
-  assert.doesNotMatch(assistantSource, /production && batchDraft === null/u);
-  assert.match(assistantSource, /batchDraftId: production \? batchDraft\?\.id : null/u);
-  assert.match(productionSource, /const applyAssistant = async \(values: AssistantFormState\)/u);
-  assert.match(productionSource, /setUserEdited\(true\)/u);
-  assert.doesNotMatch(productionSource, /productionFormFromDraft|setSavedFormSignature\(JSON\.stringify\(nextForm\)\)/u);
-  assert.match(productionSource, /disabled=\{!savedDraft \|\| dirty\}/u);
-  assert.match(productionSource, /disabled=\{!preview \|\| dirty\}/u);
-});
-
-test('content search is debounced, paginated, and keeps explicit selections', () => {
-  assert.match(sharedSource, /window\.setTimeout\(\(\) => setDebounced\(value\), delay\)/u);
-  assert.match(sharedSource, /delay = 300/u);
-  assert.match(querySource, /filter\.search\?\.trim\(\)/u);
-  assert.match(querySource, /params\.set\('search', filter\.search\.trim\(\)\)/u);
-  assert.match(pageSource, /id="test-content-search"/u);
-  assert.match(productionSource, /id="production-content-search"/u);
-  assert.match(productionSource, /selectedContent: \[\.\.\.current\.selectedContent, next\]/u);
-  assert.match(productionSource, /selectedContent: \[\]/u);
-  assert.doesNotMatch(pageSource, /content\[0\]\?\.id/u);
-  assert.match(pageSource, /test\.noContentMatches/u);
-  assert.match(productionSource, /production\.noContentMatches/u);
-});
-
-test('Test scene selection stays stable while scene data is empty', () => {
-  assert.match(pageSource, /const EMPTY_SCENES: readonly Scene\[\] = \[\];/u);
-  assert.match(pageSource, /const scenes = scenesQuery\.data\?\.scenes \?\? EMPTY_SCENES;/u);
-  assert.doesNotMatch(pageSource, /scenesQuery\.data\?\.scenes \?\? \[\]/u);
-  assert.match(pageSource, /current\.sceneId === firstSceneId\s*\?\s*current\s*:\s*\{ \.\.\.current, sceneId: firstSceneId \}/u);
-  assert.match(pageSource, /\}, \[firstSceneId, form\.sceneId, scenesQuery\.isPending, selectedSceneExists\]\);/u);
-});
-
-test('all Test controls are state controlled and formal dataset promotion is absent', () => {
-  assert.doesNotMatch(`${pageSource}\n${resourcesSource}`, /defaultValue=/u);
-  for (const id of ['test-category', 'test-content', 'test-scene', 'test-template', 'test-version', 'test-model']) {
-    assert.match(pageSource, new RegExp(`id="${id}" value=\\{`));
+test('Resources is a separate four-item destination with three focused tabs', () => {
+  for (const route of ['/generate/resources', '/generate/test', '/generate/production', '/generate/results']) {
+    assert.match(appShellSource, new RegExp(route.replaceAll('/', '\\/')));
   }
-  for (const id of ['resource-content-select', 'resource-scene-select', 'resource-template-select', 'resource-version-select']) {
-    assert.match(resourcesSource, new RegExp(`id="${id}" value=\\{`));
+  assert.match(resourcesPageSource, /ResourceAssistantPanel/u);
+  assert.match(resourcesPageSource, /ResourceEditors/u);
+  for (const tab of ['content', 'scenes', 'prompts']) assert.match(editorsSource, new RegExp(`'${tab}'`));
+  assert.match(editorsSource, /role="tablist"/u);
+  assert.match(editorsSource, /aria-selected=\{tab === value\}/u);
+  assert.doesNotMatch(testPageSource, /ResourceEditors|TestResources|AssistantPanel|generation-resources-disclosure/u);
+  assert.equal(existsSync(new URL('../frontend/src/pages/generate/AssistantPanel.tsx', import.meta.url)), false);
+});
+
+test('resource assistant proposes, exposes the full editable bundle, confirms, then applies once', () => {
+  for (const type of ['ResourceAssistantBundle', 'ResourceAssistantProposeRequest', 'ResourceAssistantApplyRequest', 'ResourceAssistantApplyResult']) {
+    assert.match(contractSource, new RegExp(`interface ${type}|type ${type}`));
   }
-  assert.doesNotMatch(`${pageSource}\n${resourcesSource}`, /promote|formal dataset control|datasetId|targetDataset/iu);
+  assert.match(querySource, /\/api\/resource-assistant\/propose/u);
+  assert.match(querySource, /\/api\/resource-assistant\/apply/u);
+  assert.doesNotMatch(querySource + contractSource, /configuration-assistants|ConfigurationAssistant/u);
+  assert.match(assistantSource, /userRequirement: requirement\.trim\(\)/u);
+  assert.match(assistantSource, /expectedRevision: proposal\.promptTemplate\.revision/u);
+  assert.match(assistantSource, /bundle: proposal\.bundle/u);
+  for (const field of ['contentScript', 'scenes', 'promptTemplateVersion', 'positiveExamples', 'negativeExamples', 'ltxNegativePrompt', 'h3NegativePrompt']) assert.match(assistantSource, new RegExp(field));
+  assert.match(assistantSource, /<ConfirmDialog/u);
+  assert.match(assistantSource, /content\.mode === 'Generative'/u);
+  assert.match(assistantSource, /content\.mode === 'Fixed'/u);
 });
 
-test('frequent Test controls come before collapsed resource management and templates show their class', () => {
-  const formIndex = pageSource.indexOf('generation-test-layout');
-  const historyIndex = pageSource.indexOf('generation-test-history');
-  const resourcesIndex = pageSource.indexOf('generation-resources-disclosure');
-  assert.equal(formIndex >= 0 && historyIndex > formIndex && resourcesIndex > historyIndex, true);
-  assert.match(pageSource, /<details className="panel generation-resources-disclosure">/u);
-  assert.doesNotMatch(pageSource, /<details className="panel generation-resources-disclosure" open/u);
-  assert.match(pageSource, /categoryLabel\(g, item\.category\)/u);
-  assert.match(pageSource, /test\.versionOption/u);
+test('content list filtering is sent to the server before pagination', () => {
+  for (const field of ['status', 'category', 'direction']) assert.match(querySource, new RegExp(`params\\.set\\('${field}', filter\\.${field}\\)`));
+  assert.match(testPageSource, /status: 'Active'/u);
+  assert.match(testPageSource, /category: form\.category/u);
+  assert.match(productionSource, /status: 'Active'/u);
+  assert.match(productionSource, /category: form\.category/u);
+  assert.match(productionSource, /direction: form\.conflictDirection/u);
+  assert.match(editorsSource, /\{ status: 'Draft' \}/u);
 });
 
-test('resource template selectors show category and version instead of internal names', () => {
-  assert.match(resourcesSource, /categoryLabel\(g, item\.category\)/u);
-  assert.match(resourcesSource, /g\('test\.versionOption', \{ category: categoryLabel\(g, item\.category\), version: item\.version \}\)/u);
-  assert.doesNotMatch(resourcesSource, />\{item\.name\}<\/option>/u);
-  assert.doesNotMatch(resourcesSource, />\{item\.templateName\} \{item\.version\}<\/option>/u);
+test('formal generation preserves the exact demographic list without a Cartesian expansion', () => {
+  const { buildBatchDraftRequest } = loadCommonJs(formalSource);
+  const form = productionForm();
+  const request = buildBatchDraftRequest(form, [7], new Set(['GPU0']));
+  assert.deepEqual(JSON.parse(JSON.stringify(request.demographics)), form.demographics);
+  assert.equal(request.demographics.length, 2);
+  assert.equal(buildBatchDraftRequest({ ...form, demographics: [form.demographics[0], { ...form.demographics[0] }] }, [7], new Set(['GPU0'])), null);
+  assert.doesNotMatch(formalSource, /flatMap|selectedAges|selectedGenders|selectedEthnicities|productionFormFromDraft/u);
+  assert.match(productionSource, /lastDemographicsKey/u);
+  assert.match(productionSource, /localStorage\.setItem\(lastDemographicsKey, JSON\.stringify\(form\.demographics\)\)/u);
+  assert.match(productionSource, /current\.demographics\.map/u);
+});
+
+test('Preview saves or updates the internal draft before requesting allocations', () => {
+  const saveIndex = productionSource.indexOf('saveMutation.mutateAsync');
+  const previewIndex = productionSource.indexOf('previewMutation.mutateAsync', saveIndex);
+  assert.equal(saveIndex >= 0 && previewIndex > saveIndex, true);
+  assert.match(productionSource, /expectedRevision: value\.revision/u);
+  assert.doesNotMatch(productionSource, /saveConfirmOpen|production\.saveTitle|<GpuPanel/u);
+  assert.match(productionSource, /disabled=\{saveMutation\.isPending \|\| previewMutation\.isPending\}/u);
+});
+
+test('Test and Production use only API-reported Available GPU slots and no literal slot choice', () => {
+  assert.match(testPageSource, /filter\(slot => slot\.availability === 'Available'\)/u);
+  assert.match(productionSource, /filter\(slot => slot\.availability === 'Available'\)/u);
+  assert.doesNotMatch(testPageSource + productionSource + resultsModelSource, /['"]GPU[01]['"]/u);
+  assert.match(testPageSource, /availableGpuSlots\.map\(value => <option/u);
+  assert.match(productionSource, /availableGpuOptions\.map\(slot/u);
+});
+
+test('the bilingual generation navigation remains usable at 390 pixels', () => {
+  assert.match(responsiveSource, /@media \(max-width: 390px\)[\s\S]*?\.generate-nav \{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/u);
+  assert.match(responsiveSource, /\.generate-nav a \{[\s\S]*?text-align: center/u);
 });

@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import { ProductionPage } from './generate/ProductionPage';
+import { ResourcesPage } from './generate/ResourcesPage';
 import { ResultsPage } from './generate/ResultsPage';
 import { TestPage } from './generate/TestPage';
 import './generate/GenerationPage.css';
 
-type GenerateSection = 'test' | 'production' | 'results';
+type GenerateSection = 'resources' | 'test' | 'production' | 'results';
 
 export function GeneratePage({ section }: { section: GenerateSection }) {
   useEffect(() => {
@@ -13,6 +14,7 @@ export function GeneratePage({ section }: { section: GenerateSection }) {
 
   return (
     <>
+      {section === 'resources' ? <ResourcesPage /> : null}
       {section === 'test' ? <TestPage /> : null}
       {section === 'production' ? <ProductionPage /> : null}
       {section === 'results' ? <ResultsPage /> : null}

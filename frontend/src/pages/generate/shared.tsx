@@ -1,18 +1,13 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useBlocker } from 'react-router-dom';
-import { Button, ConfirmDialog, PageHeader, StatusBadge } from '../../components';
+import { Button, ConfirmDialog, PageHeader } from '../../components';
 import { apiErrorMessage } from '../../api/client';
-import { useGpuSlotsQuery, useReleaseGpuMutation } from '../../api/queries';
 import { generationText, type GenerationKey } from '../../locales/features/generation';
 import { usePreferences } from '../../preferences';
-import { gpuStatusReason } from '../../gpuStatus';
-import { formatDateTime } from '../../time';
 import type {
   Age,
   Ethnicity,
   Gender,
-  GpuAvailability,
-  GpuSlot,
   JobEvent,
   JobStatus,
   TestComparisonInput,
@@ -208,85 +203,6 @@ export function RelationshipGuide({ production }: { production: boolean }) {
       </ol>
       <p>{g(production ? 'guide.productionBoundary' : 'guide.testBoundary')}</p>
     </details>
-  );
-}
-
-function availabilityKind(status: GpuAvailability) {
-  if (status === 'Available') return 'complete' as const;
-  if (status === 'Reserved' || status === 'Busy') return 'active' as const;
-  if (status === 'ExternalOccupied') return 'problem' as const;
-  return 'neutral' as const;
-}
-
-export function GpuPanel() {
-  const g = useGenerationCopy();
-  const query = useGpuSlotsQuery();
-  const release = useReleaseGpuMutation();
-  const [target, setTarget] = useState<GpuSlot | null>(null);
-
-  const confirmRelease = () => {
-    if (target === null) return;
-    release.mutate(
-      { slot: target.slot, expectedRevision: target.revision },
-      { onSettled: () => setTarget(null) },
-    );
-  };
-
-  return (
-    <>
-      <section className="generation-gpu-panel" aria-labelledby="generation-gpu-title">
-        <div className="section-header"><h3 id="generation-gpu-title">{g('gpu.title')}</h3></div>
-        {query.isPending ? <p role="status">{g('common.loading')}</p> : null}
-        {query.isError ? <OperationFeedback error={query.error} onDismiss={() => void query.refetch()} /> : null}
-        {release.isError ? <OperationFeedback error={release.error} onDismiss={() => release.reset()} /> : null}
-        <div className="generation-gpu-grid">
-          {(query.data ?? []).map(gpu => (
-            <article key={gpu.slot} className="generation-gpu">
-              <div>
-                <strong>{g(('gpu.' + gpu.slot) as GenerationKey)}</strong>
-                <StatusBadge
-                  label={g(('gpu.' + gpu.availability) as GenerationKey)}
-                  kind={availabilityKind(gpu.availability)}
-                />
-              </div>
-              <p>{g(
-                ('gpu.reason.' + gpuStatusReason(gpu)) as GenerationKey,
-                { model: profileLabel(gpu.loadedModel, gpu.loadedPrecision) },
-              )}</p>
-              <p>{gpu.memory.usedMiB === null || gpu.memory.totalMiB === null
-                ? g('gpu.memoryUnknown')
-                : g('gpu.memory', { used: gpu.memory.usedMiB, total: gpu.memory.totalMiB })}</p>
-              <p>{g('gpu.checked', { time: formatDateTime(gpu.checkedAt) })}</p>
-              {gpu.loadedModel ? (
-                <Button
-                  variant="quiet"
-                  disabled={gpu.availability !== 'Available' || gpu.activeJobId !== null || release.isPending}
-                  onClick={() => setTarget(gpu)}
-                >
-                  {g('gpu.release')}
-                </Button>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      </section>
-      <ConfirmDialog
-        open={target !== null}
-        title={g('gpu.releaseTitle')}
-        body={target === null
-          ? ''
-          : g('gpu.releaseBody', {
-            model: profileLabel(target.loadedModel, target.loadedPrecision),
-            gpu: target.slot,
-          })}
-        confirmLabel={g('common.confirm')}
-        cancelLabel={g('common.cancel')}
-        closeLabel={g('common.close')}
-        onConfirm={confirmRelease}
-        onClose={() => setTarget(null)}
-        busy={release.isPending}
-      />
-    </>
   );
 }
 

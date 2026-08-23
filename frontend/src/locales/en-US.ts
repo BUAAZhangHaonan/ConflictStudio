@@ -20,6 +20,7 @@ const enUS = {
     archive: 'Archive',
     settings: 'Settings',
     statistics: 'My statistics',
+    resources: 'Resources',
     test: 'Test',
     production: 'Generate',
     results: 'Results',

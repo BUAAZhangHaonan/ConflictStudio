@@ -25,6 +25,7 @@ const zhCN = {
     archive: '归档',
     settings: '设置',
     statistics: '我的统计',
+    resources: '资源',
     test: '测试',
     production: '生成',
     results: '结果',

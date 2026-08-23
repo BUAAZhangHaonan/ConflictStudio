@@ -21,6 +21,8 @@ const workspaceSource = read('../frontend/src/pages/WorkspacePage.tsx');
 const workspaceCss = read('../frontend/src/pages/WorkspacePage.css');
 const testPageSource = read('../frontend/src/pages/generate/TestPage.tsx');
 const testResourcesSource = read('../frontend/src/pages/generate/TestResources.tsx');
+const resourcesPageSource = read('../frontend/src/pages/generate/ResourcesPage.tsx');
+const resourceAssistantSource = read('../frontend/src/pages/generate/ResourceAssistantPanel.tsx');
 const testWorkflowSource = read('../frontend/src/pages/generate/testWorkflow.ts');
 const productionPageSource = read('../frontend/src/pages/generate/ProductionPage.tsx');
 const resultsPageSource = [
@@ -29,7 +31,6 @@ const resultsPageSource = [
   read('../frontend/src/pages/generate/ResultsOutputList.tsx'),
   read('../frontend/src/pages/generate/resultsModel.ts'),
 ].join('\n');
-const assistantSource = read('../frontend/src/pages/generate/AssistantPanel.tsx');
 const formalGenerationSource = read('../frontend/src/pages/generate/formalGeneration.ts');
 const generatePageSource = read('../frontend/src/pages/GeneratePage.tsx');
 const generationCss = read('../frontend/src/pages/generate/GenerationPage.css');
@@ -125,10 +126,10 @@ test('display name failures have plain bilingual messages without backend detail
 });
 
 test('frontend contracts include current generation, review, statistics, archive, health and sample fields', () => {
-  for (const name of ['BatchDraft', 'BatchPreview', 'PromptTestCreate', 'VideoTestCreate', 'ConfigurationAssistant', 'JobItem', 'Reviewer', 'ReviewSampleListRead', 'ReviewSampleDetailRead', 'ReviewNoteDraftRead', 'ReviewSubmissionCreate', 'ReviewBatchSubmissionCreate', 'SampleClassificationConversionUpdate', 'ReviewerStatistics', 'ArchivePreview', 'Archive', 'Health']) {
+  for (const name of ['BatchDraft', 'BatchPreview', 'PromptTestCreate', 'VideoTestCreate', 'ResourceAssistantBundle', 'ResourceAssistantProposal', 'JobItem', 'Reviewer', 'ReviewSampleListRead', 'ReviewSampleDetailRead', 'ReviewNoteDraftRead', 'ReviewSubmissionCreate', 'ReviewBatchSubmissionCreate', 'SampleClassificationConversionUpdate', 'ReviewerStatistics', 'ArchivePreview', 'Archive', 'Health']) {
     assert.match(contractSource, new RegExp(`export (?:interface|type) ${name}\\b`));
   }
-  for (const field of ['reviewerId', 'expectedRevision', 'expectedReviewRevision', 'expectedNoteDraftRevision']) assert.match(contractSource, new RegExp(`${field}:`));
+  for (const field of ['reviewerId', 'expectedSampleRevision', 'expectedReviewRevision', 'expectedNoteDraftRevision']) assert.match(contractSource, new RegExp(`${field}:`));
   const detail = contractSource.match(/export interface ReviewSampleDetailRead extends ReviewSampleListRead \{([\s\S]*?)\n\}/u)?.[1] ?? '';
   for (const field of ['sourceMedia', 'dialogue', 'displayText', 'trueEmotionDescription', 'model', 'precision', 'compatibleSceneCount']) assert.match(detail, new RegExp(`${field}:`));
   assert.doesNotMatch(detail, /seed|prompt|attempt|gpu|vlm/iu);
@@ -146,7 +147,8 @@ test('queries and mutations use only current backend generation and review endpo
     '/api/batch-drafts',
     '/api/test-results',
     '/api/generation-results',
-    '/api/configuration-assistants',
+    '/api/resource-assistant/propose',
+    '/api/resource-assistant/apply',
     '/api/jobs/',
     '/api/gpu-slots',
     '/api/reviewers',
@@ -159,6 +161,7 @@ test('queries and mutations use only current backend generation and review endpo
     '/api/archives/sync',
     '/api/health',
   ]) assert.equal(querySource.includes(endpoint), true, endpoint);
+  assert.doesNotMatch(querySource, /configuration-assistants/u);
   assert.doesNotMatch(querySource, /\/api\/samples\/\$\{id\}\/review/u);
   assert.doesNotMatch(querySource, /content-plans|prompt-presets|video-background-presets|\/keep|\/promote/u);
   assert.match(querySource, /invalidateQueries\(\{ queryKey: \['reviewerStatistics'\]/u);
@@ -223,13 +226,15 @@ test('workspace is a card list through 1024px and keeps every action visible', (
   assert.match(localeSource, /purposeLabel: '用途'/u);
 });
 
-test('generation navigation has only Test, Generate and Results routes', () => {
+test('generation navigation has Resources, Test, Generate and Results routes', () => {
   for (const route of ['/generate/test', '/generate/production', '/generate/results']) {
   assert.match(appShellSource, /function currentPrimaryPath\(pathname: string\)/u);
   assert.match(appShellSource, /pathname\.startsWith\('\/review'\)/u);
     assert.match(appSource, new RegExp(route.replaceAll('/', '\\/')));
     assert.match(appShellSource, new RegExp(route.replaceAll('/', '\\/')));
   }
+  assert.match(appShellSource, /\/generate\/resources/u);
+  assert.match(generatePageSource, /section === 'resources' \? <ResourcesPage/u);
   assert.match(generatePageSource, /section === 'test' \? <TestPage/u);
   assert.match(generatePageSource, /section === 'production' \? <ProductionPage/u);
   assert.match(generatePageSource, /section === 'results' \? <ResultsPage/u);
@@ -241,8 +246,8 @@ test('generation navigation has only Test, Generate and Results routes', () => {
   assert.doesNotMatch(packageSource, /job-prompts/u);
 });
 
-test('test page manages isolated resources and displays the exact prompt test output', () => {
-  for (const token of ['PromptTest', 'VideoTest', 'useSubmitPromptTestMutation', 'useSubmitVideoTestMutation', 'useContentScenesQuery', 'verificationStatus', 'useResultItemsQuery', 'promptOutput', 'testCopyDraftKey', 'TestResources']) {
+test('test page displays exact isolated test output while Resources owns resource editing', () => {
+  for (const token of ['PromptTest', 'VideoTest', 'useSubmitPromptTestMutation', 'useSubmitVideoTestMutation', 'useContentScenesQuery', 'verificationStatus', 'useResultItemsQuery', 'promptOutput', 'testCopyDraftKey']) {
     assert.match(testPageSource, new RegExp(token));
   }
   assert.match(testPageSource, /promptTestMutation\.mutateAsync/u);
@@ -251,6 +256,9 @@ test('test page manages isolated resources and displays the exact prompt test ou
   assert.match(testPageSource, /promptOutput\.negativePrompt/u);
   assert.match(testPageSource, /results\?tab=test&job=/u);
   assert.doesNotMatch(testPageSource, /temporaryInputs|usePromptPreviewMutation|keep|promote|Sample|datasetId|systemInput|userInput/u);
+  assert.doesNotMatch(testPageSource, /TestResources|ResourceEditors|AssistantPanel/u);
+  assert.match(resourcesPageSource, /ResourceAssistantPanel/u);
+  assert.match(testResourcesSource, /role="tablist"/u);
   for (const token of ['useCreateContentScriptMutation', 'useUpdateContentScriptMutation', 'useCreateSceneMutation', 'useUpdateSceneMutation', 'useCreatePromptTemplateVersionMutation', 'useVerifyPromptTemplateVersionMutation']) {
     assert.match(testResourcesSource, new RegExp(token));
   }
@@ -258,8 +266,9 @@ test('test page manages isolated resources and displays the exact prompt test ou
   assert.match(generationLocaleSource, /Test results never enter a formal dataset, review, or archive/u);
 });
 test('formal generation uses explicit valid combinations and current preview and submit contracts', () => {
+  const generationSource = productionPageSource + formalGenerationSource;
   for (const token of ['useDatasetsQuery', "status: 'Active'", 'contentSelections', 'selectedSceneIds', 'demographics', 'parseSeeds', 'gpuSlots', 'usePreviewBatchMutation', 'useSubmitBatchMutation']) {
-    assert.match(productionPageSource, new RegExp(token));
+    assert.match(generationSource, new RegExp(token));
   }
   assert.match(productionPageSource, /item\.mode === 'Fixed' \? \[scenes\[0\]\.id\] : \[\]/u);
   assert.match(productionPageSource, /item\.mode === 'Generative'/u);
@@ -272,10 +281,12 @@ test('formal generation uses explicit valid combinations and current preview and
   assert.match(productionPageSource, /production-dataset-search/);
   assert.match(productionPageSource, /production-content-search/);
   assert.match(productionPageSource, /\{unsavedDialog\}/u);
-  assert.match(productionPageSource, /const applyAssistant = async \(values: AssistantFormState\)/u);
-  assert.match(productionPageSource, /setUserEdited\(true\)/u);
+  assert.match(productionPageSource, /demographics: lastDemographics\(\)/u);
+  assert.match(productionPageSource, /saveMutation\.mutateAsync/u);
+  assert.match(productionPageSource, /previewMutation\.mutateAsync\(\{ id: value\.id, expectedRevision: value\.revision \}\)/u);
+  assert.match(productionPageSource, /availability === 'Available'/u);
   assert.match(productionPageSource, /results\?tab=production&job=/u);
-  assert.doesNotMatch(productionPageSource, /generationPrefill|readCorrectedSampleBatchPrefill|correctedSampleBatch/u);
+  assert.doesNotMatch(productionPageSource, /AssistantFormState|applyAssistant|GpuPanel|selectedAges|selectedGenders|selectedEthnicities/u);
   assert.doesNotMatch(productionPageSource, /quantity/u);
 });
 
@@ -295,61 +306,8 @@ test('results separate test and formal tasks and wire explicit task controls', (
   assert.doesNotMatch(resultsPageSource, /failureDetails|requestId|httpStatus|finishReason|\/keep|\/promote/u);
 });
 
-test('assistant candidate mapper keeps every choice explicit and builds only compatible visible values', () => {
-  const {
-    assistantValuesWithCandidates,
-    candidateChoicesReady,
-    chooseCandidate,
-    initialCandidateChoices,
-  } = loadFormalGeneration();
-  const groups = [
-    { kind: 'Dataset', items: [{ id: 1, revision: 2, label: 'Formal one' }, { id: 2, revision: 1, label: 'Formal two' }] },
-    { kind: 'ContentScript', items: [{ id: 11, revision: 4, label: '内容一 / Content one' }, { id: 12, revision: 3, label: '内容二 / Content two' }] },
-    { kind: 'ShootingScene', items: [{ id: 21, revision: 5, label: '场景一 / Scene one' }, { id: 22, revision: 2, label: '场景二 / Scene two' }] },
-    { kind: 'PromptTemplateVersion', items: [{ id: 31, revision: 7, label: 'Template v3' }, { id: 32, revision: 1, label: 'Template v4' }] },
-  ];
-  let choices = initialCandidateChoices(groups);
-  assert.equal(choices.Dataset, null);
-  assert.equal(choices.PromptTemplateVersion, null);
-  assert.equal(choices.ContentScript.length, 0);
-  assert.equal(choices.ShootingScene.length, 0);
-  choices = chooseCandidate(choices, 'Dataset', 2);
-  choices = chooseCandidate(choices, 'PromptTemplateVersion', 31);
-  choices = chooseCandidate(choices, 'ContentScript', 11);
-  choices = chooseCandidate(choices, 'ContentScript', 12);
-  choices = chooseCandidate(choices, 'ShootingScene', 21);
-  choices = chooseCandidate(choices, 'ShootingScene', 22);
-  const values = assistantValuesWithCandidates(
-    { displayName: 'A-VA-formal' },
-    groups,
-    choices,
-    {
-      11: [{ id: 21, revision: 5, nameZh: '场景一', nameEn: 'Scene one' }],
-      12: [{ id: 22, revision: 2, nameZh: '场景二', nameEn: 'Scene two' }],
-    },
-  );
-  assert.equal(values.targetDataset.id, 2);
-  assert.equal(values.promptTemplateVersion.id, 31);
-  assert.equal(JSON.stringify(values.contentSelections.map(value => ({
-    content: value.contentScript.id,
-    scenes: value.scenes.map(scene => scene.id),
-  }))), JSON.stringify([
-    { content: 11, scenes: [21] },
-    { content: 12, scenes: [22] },
-  ]));
-  assert.equal(candidateChoicesReady(groups, choices, values), true);
-  const incomplete = chooseCandidate(choices, 'ShootingScene', 22);
-  const incompleteValues = assistantValuesWithCandidates(
-    {},
-    groups,
-    incomplete,
-    { 11: [{ id: 21, revision: 5 }], 12: [{ id: 22, revision: 2 }] },
-  );
-  assert.equal(candidateChoicesReady(groups, incomplete, incompleteValues), false);
-});
-
 test('formal generation mapper preserves controlled values and rejects invalid batch inputs', () => {
-  const { buildBatchDraftRequest, productionFormFromDraft } = loadFormalGeneration();
+  const { buildBatchDraftRequest } = loadFormalGeneration();
   const form = {
     targetDatasetId: 4,
     displayName: 'A-VA-20260817',
@@ -366,9 +324,10 @@ test('formal generation mapper preserves controlled values and rejects invalid b
       scenes: [{ id: 12, revision: 1, nameZh: '场景', nameEn: 'Scene' }],
       selectedSceneIds: [12],
     }],
-    selectedAges: [25],
-    selectedGenders: ['Female'],
-    selectedEthnicities: ['EastAsian'],
+    demographics: [
+      { age: 25, gender: 'Female', ethnicity: 'EastAsian' },
+      { age: 35, gender: 'Male', ethnicity: 'White' },
+    ],
     seeds: '7',
     model: 'LTX-2.5',
     precision: 'INT8',
@@ -377,54 +336,21 @@ test('formal generation mapper preserves controlled values and rejects invalid b
   const request = buildBatchDraftRequest(form, [7], new Set(['GPU0']));
   assert.equal(request.targetDatasetId, 4);
   assert.equal(JSON.stringify(request.contentSelections), JSON.stringify([{ contentScriptId: 10, sceneIds: [] }]));
+  assert.equal(JSON.stringify(request.demographics), JSON.stringify(form.demographics));
   assert.equal(buildBatchDraftRequest({ ...form, targetDatasetId: null }, [7], new Set(['GPU0'])), null);
   assert.equal(buildBatchDraftRequest({ ...form, gpuSlots: ['GPU1'] }, [7], new Set(['GPU0'])), null);
-  const restored = productionFormFromDraft({
-    targetDatasetId: 4,
-    displayName: 'A-VA-restored',
-    category: 'A-VA',
-    conflictDirection: null,
-    promptTemplateVersion: { id: 9, revision: 3, name: 'Template v2' },
-    contentSelections: [{
-      contentScript: { id: 10, revision: 2, nameZh: '内容', nameEn: 'Content' },
-      mode: 'Fixed',
-      scenes: [{ id: 12, revision: 1, nameZh: '场景', nameEn: 'Scene' }],
-      compatibleScenes: [{ id: 12, revision: 1, nameZh: '场景', nameEn: 'Scene' }],
-    }],
-    demographics: [{ age: 25, gender: 'Female', ethnicity: 'EastAsian' }],
-    seeds: [7, 8],
-    model: 'LTX-2.5',
-    precision: 'INT8',
-    gpuSlots: ['GPU0', 'GPU1'],
-  }, 8);
-  assert.equal(restored.promptTemplateId, 8);
-  assert.equal(restored.seeds, '7, 8');
-  assert.equal(JSON.stringify(restored.gpuSlots), JSON.stringify(['GPU0', 'GPU1']));
+  assert.equal(buildBatchDraftRequest({ ...form, demographics: [form.demographics[0], { ...form.demographics[0] }] }, [7], new Set(['GPU0'])), null);
 });
 
-test('assistant renders all candidates and uses one server confirmation before visible application', () => {
-  for (const token of ['missingFields', 'candidates', 'changedFields', 'selectedValues', 'confirmedFields', 'createContentScript', 'createShootingScene', 'ConfirmDialog']) {
-    assert.match(assistantSource, new RegExp(token));
-  }
-  assert.match(assistantSource, /type=\{single \? 'radio' : 'checkbox'\}/u);
-  assert.match(assistantSource, /checked=\{checked\}/u);
-  assert.match(assistantSource, /chooseCandidate\(value, group\.kind, item\.id\)/u);
-  assert.match(assistantSource, /if \(!clean\) return/u);
-  assert.match(assistantSource, /saved = await apply\.mutateAsync/u);
-  assert.match(assistantSource, /confirmedFields: selected/u);
-  assert.match(assistantSource, /createContentScript: false/u);
-  assert.match(assistantSource, /createShootingScene: false/u);
-  assert.match(assistantSource, /linkNewSceneToContent: false/u);
-  assert.match(assistantSource, /await onApply\(saved\.appliedValues \?\? values, saved\)/u);
-  assert.match(productionPageSource, /setForm\(current =>/u);
-  assert.match(productionPageSource, /setUserEdited\(true\)/u);
-  assert.match(productionPageSource, /targetDatasetId: event\.target\.value \? Number\(event\.target\.value\) : null/u);
-  assert.match(productionPageSource, /promptTemplateVersionId: event\.target\.value \? Number\(event\.target\.value\) : null/u);
-  assert.match(assistantSource, /assistant\.selectionChanged/u);
-  assert.match(assistantSource, /assistant\.proposedContent/u);
-  assert.match(assistantSource, /assistant\.proposedScene/u);
-  assert.doesNotMatch(assistantSource, /submitBatch|createDataset|updateDataset|renameDataset|deleteDataset|mergeDataset|review/u);
-  assert.doesNotMatch(productionPageSource, /promote|testArtifact|createDataset/u);
+test('resource assistant proposes and applies one editable atomic bundle', () => {
+  for (const token of ['contentScript', 'scenes', 'promptTemplateVersion', 'ConfirmDialog']) assert.match(resourceAssistantSource, new RegExp(token));
+  assert.match(resourceAssistantSource, /proposeMutation\.mutateAsync/u);
+  assert.match(resourceAssistantSource, /applyMutation\.mutateAsync/u);
+  assert.match(resourceAssistantSource, /expectedRevision: proposal\.promptTemplate\.revision/u);
+  assert.match(querySource, /\/api\/resource-assistant\/propose/u);
+  assert.match(querySource, /\/api\/resource-assistant\/apply/u);
+  assert.doesNotMatch(`${querySource}\n${contractSource}`, /configuration-assistants|ConfigurationAssistant/u);
+  assert.doesNotMatch(resourceAssistantSource, /submitBatch|createDataset|updateDataset|renameDataset|deleteDataset|mergeDataset/u);
 });
 
 test('relationship guide is accessible and the DrawIO source has two pages', () => {
@@ -434,7 +360,7 @@ test('relationship guide is accessible and the DrawIO source has two pages', () 
   assert.match(drawioSource, /name="Generation settings"/u);
   assert.match(drawioSource, /name="Test and formal boundaries"/u);
   assert.match(generationCss, /@media \(max-width: 1279px\)[\s\S]*\.generation-test-layout[\s\S]*grid-template-columns: 1fr/u);
-  assert.match(responsiveCss, /@media \(max-width: 390px\)[\s\S]*\.generate-nav[\s\S]*grid-template-columns: repeat\(3/u);
+  assert.match(responsiveCss, /@media \(max-width: 390px\)[\s\S]*\.generate-nav[\s\S]*grid-template-columns: repeat\(2/u);
 });
 
 test('production reviewer identity uses validated Reviewer API state and clears missing selections', () => {
@@ -454,7 +380,7 @@ test('production reviewer identity uses validated Reviewer API state and clears 
 
 test('GPU and task failures are localized from stable fields instead of raw backend text', () => {
   assert.match(settingsSource, /gpuStatusReason\(gpu\)/u);
-  assert.match(sharedSource, /gpuStatusReason\(gpu\)/u);
+  assert.doesNotMatch(sharedSource, /GpuPanel|gpuStatusReason\(gpu\)/u);
   assert.doesNotMatch(sharedSource, /gpu\.statusReason \?/u);
   assert.match(resultsPageSource, /jobFailureMessage\(detail\.failureCode/u);
   assert.match(resultsPageSource, /jobFailureMessage\(item\.failureCode/u);

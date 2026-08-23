@@ -2,14 +2,15 @@ import { queryOptions, useMutation, useQuery, useQueryClient, type QueryClient }
 import { apiRequest } from './client';
 import type {
   Archive, ArchivePreview, ArchivePreviewRequest, ArchiveSyncRequest,
-  AssistantFormState, BatchDraft, BatchDraftCreate, BatchDraftUpdate, BatchPreview,
-  ConfigurationAssistant, ConfigurationAssistantApply, ConfigurationAssistantCreate,
+  BatchDraft, BatchDraftCreate, BatchDraftUpdate, BatchPreview,
   ContentScript, ContentScriptCreate, ContentScriptScenes, ContentScriptUpdate,
   Dataset, DatasetCreate, DatasetUpdate,
   GenerationAttempt, GpuSlot, Health, JobDetail, JobEvent, JobItem, JobSource,
   JobStatus, JobSummary, Page, PromptTemplate, PromptTemplateVersion,
   PromptTemplateVersionCreate, PromptTemplateVersionVerify,
   PromptTestCreate, Reviewer, ReviewerCreate,
+  ResourceAssistantApplyRequest, ResourceAssistantApplyResult,
+  ResourceAssistantProposal, ResourceAssistantProposeRequest,
   ReviewerRename, ReviewerStatistics, ReviewerStatisticsFilter,
   ReviewBatchSubmissionCreate, ReviewDecision,
   ReviewNoteDraftRead, ReviewNoteDraftUpdate, ReviewQueue, ReviewResultRead, ReviewSampleDetailRead,
@@ -25,6 +26,9 @@ export interface DatasetQueryFilter {
 
 export interface ContentScriptQueryFilter {
   search?: string;
+  status?: ContentScript['status'];
+  category?: ContentScript['category'];
+  direction?: NonNullable<ContentScript['conflictDirection']>;
 }
 
 export interface ResultQueryFilter {
@@ -147,6 +151,9 @@ export const generationQueries = {
   contentScripts: (page: number, filter: ContentScriptQueryFilter = {}) => {
     const params = new URLSearchParams();
     if (filter.search?.trim()) params.set('search', filter.search.trim());
+    if (filter.status !== undefined) params.set('status', filter.status);
+    if (filter.category !== undefined) params.set('category', filter.category);
+    if (filter.direction !== undefined) params.set('direction', filter.direction);
     return queryOptions({ queryKey: queryKeys.contentScriptsPage(filter, page), queryFn: () => apiRequest<Page<ContentScript>>(pagePath('/api/content-scripts', page, params)) });
   },
   contentScript: (id: number) => queryOptions({ queryKey: queryKeys.contentScript(id), queryFn: () => apiRequest<ContentScript>('/api/content-scripts/' + id) }),
@@ -291,15 +298,12 @@ export function useSubmitVideoTestMutation() {
   const client = useQueryClient();
   return useMutation({ mutationFn: (input: VideoTestCreate) => apiRequest<JobDetail>('/api/test-runs/video', { method: 'POST', ...json(input) }), onSuccess: async value => { setJobDetailData(client, value); await Promise.all([invalidateCatalog(client, roots.testResults), invalidateCatalog(client, queryKeys.gpuSlots)]); } });
 }
-export function useCreateConfigurationAssistantMutation() {
-  return useMutation({ mutationFn: (input: ConfigurationAssistantCreate) => apiRequest<ConfigurationAssistant>('/api/configuration-assistants', { method: 'POST', ...json(input) }) });
+export function useProposeResourceAssistantMutation() {
+  return useMutation({ mutationFn: (input: ResourceAssistantProposeRequest) => apiRequest<ResourceAssistantProposal>('/api/resource-assistant/propose', { method: 'POST', ...json(input) }) });
 }
-export function useApplyConfigurationAssistantMutation() {
+export function useApplyResourceAssistantMutation() {
   const client = useQueryClient();
-  return useMutation({ mutationFn: ({ id, input }: { id: number; input: ConfigurationAssistantApply }) => apiRequest<ConfigurationAssistant>('/api/configuration-assistants/' + id + '/apply', { method: 'POST', ...json(input) }), onSuccess: async () => { await Promise.all([invalidateCatalog(client, roots.contentScripts), invalidateCatalog(client, roots.scenes), invalidateCatalog(client, roots.batchDrafts)]); } });
-}
-export function useDiscardConfigurationAssistantMutation() {
-  return useMutation({ mutationFn: ({ id, expectedRevision }: { id: number; expectedRevision: number }) => apiRequest<ConfigurationAssistant>('/api/configuration-assistants/' + id + '/discard', { method: 'POST', ...json({ expectedRevision }) }) });
+  return useMutation({ mutationFn: (input: ResourceAssistantApplyRequest) => apiRequest<ResourceAssistantApplyResult>('/api/resource-assistant/apply', { method: 'POST', ...json(input) }), onSuccess: async value => { client.setQueryData(queryKeys.contentScript(value.contentScript.id), value.contentScript); for (const scene of value.scenes) client.setQueryData(queryKeys.scene(scene.id), scene); client.setQueryData(queryKeys.promptTemplateVersion(value.promptTemplateVersion.id), value.promptTemplateVersion); await Promise.all([invalidateCatalog(client, roots.contentScripts), invalidateCatalog(client, roots.scenes), invalidateCatalog(client, roots.promptTemplates)]); } });
 }
 
 async function invalidateReviewData(client: QueryClient): Promise<void> {

@@ -287,131 +287,42 @@ export interface VideoTestCreate {
   confirmModelSwitch: boolean;
 }
 
-export type ConfigurationAssistantField =
-  | 'TargetDataset'
-  | 'DisplayName'
-  | 'Category'
-  | 'ConflictDirection'
-  | 'Model'
-  | 'Precision'
-  | 'ContentSelections'
-  | 'PromptTemplateVersion'
-  | 'Demographics'
-  | 'GpuSlots'
-  | 'Seeds'
-  | 'Comparisons'
-  | 'ExecutionMode';
-
-export type ConfigurationCandidateKind =
-  | 'Dataset'
-  | 'ContentScript'
-  | 'ShootingScene'
-  | 'PromptTemplateVersion';
-
-export interface AssistantSourceSelection extends SourceSelection {
-  label?: string | null;
-}
-
-export interface AssistantContentSelection {
-  contentScript: AssistantSourceSelection;
-  scenes: AssistantSourceSelection[];
-}
-
-export interface AssistantFormState {
-  targetDataset?: AssistantSourceSelection | null;
-  displayName?: string | null;
-  category?: Category | null;
-  conflictDirection?: ConflictDirection | null;
-  model?: ModelName | null;
-  precision?: ModelPrecision | null;
-  contentSelections?: AssistantContentSelection[] | null;
-  promptTemplateVersion?: AssistantSourceSelection | null;
-  demographics?: Demographic[] | null;
-  gpuSlots?: GpuSlotName[] | null;
-  seeds?: number[] | null;
-  comparisons?: TestComparisonInput[] | null;
-  executionMode?: TestExecutionMode | null;
-}
-
-export interface ConfigurationCandidate {
+export interface ResourceAssistantPromptTemplateReference {
   id: number;
-  revision: number;
-  label: string;
-}
-
-export interface ConfigurationCandidateGroup {
-  kind: ConfigurationCandidateKind;
-  items: ConfigurationCandidate[];
-}
-
-export interface ConfigurationRecommendations {
-  protocol: Protocol | null;
-  category: Category | null;
-  conflictDirection: ConflictDirection | null;
-  trueEmotion: string | null;
-  apparentEmotion: string | null;
-  model: ModelName | null;
-  precision: ModelPrecision | null;
-  gpuSlots: GpuSlotName[];
-}
-
-export interface ConfigurationSuggestion {
-  missingFields: ConfigurationAssistantField[];
-  prefill: AssistantFormState;
-  candidates: ConfigurationCandidateGroup[];
-  recommendations: ConfigurationRecommendations;
-  newContentScriptDraft: ContentScriptCreate | null;
-  newShootingSceneDraft: SceneCreate | null;
-  failureAdvice: string[];
-}
-
-export interface ConfigurationAssistantCreate {
-  targetSource: JobSource;
-  userRequirement: string;
-  currentForm: AssistantFormState;
-  batchDraftId?: number | null;
-  batchDraftExpectedRevision?: number | null;
-}
-
-export interface ConfigurationAssistantApply {
   expectedRevision: number;
-  expectedTargetRevision?: number | null;
-  confirmedFields: ConfigurationAssistantField[];
-  values: AssistantFormState;
-  createContentScript: boolean;
-  createShootingScene: boolean;
-  linkNewSceneToContent: boolean;
 }
 
-export interface GenerationTestDraft {
-  id: number;
-  source: JobSource;
-  formState: AssistantFormState;
-  revision: number;
-  createdAt: string;
-  updatedAt: string;
+export type ResourceAssistantContentDraft = Omit<ContentScriptCreate, 'sceneIds'>;
+export type ResourceAssistantPromptVersionDraft = Omit<
+  PromptTemplateVersionCreate,
+  'expectedTemplateRevision'
+>;
+
+export interface ResourceAssistantBundle {
+  contentScript: ResourceAssistantContentDraft;
+  scenes: SceneCreate[];
+  promptTemplateVersion: ResourceAssistantPromptVersionDraft;
 }
 
-export interface ConfigurationAssistant {
-  id: number;
-  targetSource: JobSource;
-  batchDraftId: number | null;
-  testDraft: GenerationTestDraft | null;
+export interface ResourceAssistantProposeRequest {
   userRequirement: string;
-  modelName: 'deepseek-v4-flash';
-  currentForm: AssistantFormState;
-  suggestion: ConfigurationSuggestion;
-  appliedValues: AssistantFormState | null;
-  result: {
-    targetRevision: number | null;
-    createdContentScriptId: number | null;
-    createdShootingSceneId: number | null;
-    discarded: boolean;
-  } | null;
-  status: 'Pending' | 'Applied' | 'Discarded';
-  revision: number;
-  createdAt: string;
-  updatedAt: string;
+  promptTemplate: ResourceAssistantPromptTemplateReference;
+}
+
+export interface ResourceAssistantProposal {
+  promptTemplate: PromptTemplate;
+  bundle: ResourceAssistantBundle;
+}
+
+export interface ResourceAssistantApplyRequest {
+  promptTemplate: ResourceAssistantPromptTemplateReference;
+  bundle: ResourceAssistantBundle;
+}
+
+export interface ResourceAssistantApplyResult {
+  contentScript: ContentScript;
+  scenes: Scene[];
+  promptTemplateVersion: PromptTemplateVersion;
 }
 
 export interface JobEventPayload {

@@ -1,7 +1,6 @@
 import type {
   ContentScript,
   ContentScriptCreate,
-  PromptTemplateVersion,
   PromptTemplateVersionCreate,
   Scene,
   SceneCreate,
@@ -155,13 +154,6 @@ export function buildVersionDraftRequest(
     ltxNegativePrompt: form.ltxNegativePrompt.trim(),
     h3NegativePrompt: form.h3NegativePrompt.trim(),
   };
-}
-
-export function canVerifyTestedVersion(
-  version: PromptTemplateVersion | null,
-  testedVersionIds: ReadonlySet<number>,
-): boolean {
-  return version?.verificationStatus === 'Draft' && testedVersionIds.has(version.id);
 }
 
 export function precisionOptionsForModel(model: ModelName): readonly (ModelPrecision | null)[] {
