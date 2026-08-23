@@ -57,13 +57,13 @@ from backend.domain.schemas import (
     JobRetryFailedRequest,
     PromptTemplateCreate,
     PromptTemplateVersionCreate,
-    PromptTemplateVersionVerify,
     SceneCreate,
 )
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.job_executor import JobExecutor
 from backend.services.prompts import PromptService
+from backend.tests.support import mark_prompt_version_verified
 
 
 DIALOGUE = "我没事，只是需要一点时间。"
@@ -280,10 +280,8 @@ def create_resources(database, suffix: str):  # type: ignore[no-untyped-def]
             h3NegativePrompt="subtitles, captions, distortion, exaggerated movement",
         ),
     )
-    preset = catalog.verify_prompt_template_version(
-        preset.id,
-        PromptTemplateVersionVerify(expectedRevision=preset.revision),
-    )
+    mark_prompt_version_verified(database, preset.id)
+    preset = catalog.get_prompt_template_version(preset.id)
     return dataset, content, preset, background
 
 

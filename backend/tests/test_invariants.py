@@ -12,6 +12,7 @@ from backend.adapters.database import SQLITE_BUSY_TIMEOUT_MS, Database
 from backend.adapters.llm import UnconfiguredPromptModel
 from backend.app import create_app
 from backend.tests.test_review_api import sample_app
+from backend.tests.support import mark_prompt_version_verified
 
 
 def client_for(tmp_path: Path) -> TestClient:
@@ -51,9 +52,10 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
             "h3NegativePrompt": "subtitles, captions, camera shake",
         },
     )
-    prompt = client.post(
-        f"/api/prompt-template-versions/{prompt.json()['id']}/verify",
-        json={"expectedRevision": prompt.json()["revision"]},
+    prompt_body = prompt.json()
+    mark_prompt_version_verified(client.app.state.database, prompt_body["id"])
+    prompt = client.get(
+        f"/api/prompt-template-versions/{prompt_body['id']}"
     )
     records = {
         "dataset": client.post(

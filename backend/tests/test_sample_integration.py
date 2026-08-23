@@ -57,6 +57,7 @@ from backend.domain.models import (
     Scene,
     utc_now,
 )
+from backend.tests.support import mark_prompt_version_verified
 
 
 class ApiRenderer:
@@ -263,9 +264,9 @@ def create_api_sources(
             "h3NegativePrompt": "subtitles, captions, distortion",
         },
     ).json()
-    prompt = client.post(
-        f"/api/prompt-template-versions/{prompt['id']}/verify",
-        json={"expectedRevision": prompt["revision"]},
+    mark_prompt_version_verified(client.app.state.database, prompt["id"])
+    prompt = client.get(
+        f"/api/prompt-template-versions/{prompt['id']}"
     ).json()
     return content, prompt, background
 

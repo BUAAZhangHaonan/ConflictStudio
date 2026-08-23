@@ -13,6 +13,7 @@ from backend.adapters.renderer import CancelOutcome, RendererInstallationStatus
 from backend.api.gpu_contracts import GpuSlotRead
 from backend.app import create_app
 from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName, Precision
+from backend.tests.support import mark_prompt_version_verified
 
 
 def client_for(
@@ -53,9 +54,9 @@ def create_verified_prompt(client: TestClient) -> dict[str, object]:
             "h3NegativePrompt": "subtitles, captions, distortion",
         },
     ).json()
-    return client.post(
-        f"/api/prompt-template-versions/{version['id']}/verify",
-        json={"expectedRevision": version["revision"]},
+    mark_prompt_version_verified(client.app.state.database, version["id"])
+    return client.get(
+        f"/api/prompt-template-versions/{version['id']}"
     ).json()
 
 

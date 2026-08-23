@@ -13,6 +13,9 @@ from backend.domain.enums import (
     ContentMode,
     ContentStatus,
     DatasetPurpose,
+    JobItemStage,
+    JobSource,
+    JobStatus,
     PromptExampleKind,
     ResourceStatus,
     TemplateVersionStatus,
@@ -29,6 +32,8 @@ from backend.domain.models import (
     DatasetMergeOperation,
     DatasetMergeSource,
     Job,
+    JobItem,
+    JobItemPromptResult,
     PromptTemplate,
     PromptTemplateExample,
     PromptTemplateVersion,
@@ -579,6 +584,33 @@ class CatalogService:
                     "promptTemplateVersion",
                     version_id,
                     "The prompt template version is already verified",
+                )
+            successful_prompt_test = session.exec(
+                select(JobItem.id)
+                .join(Job, Job.id == JobItem.job_id)
+                .join(
+                    BatchVideoInputSnapshot,
+                    BatchVideoInputSnapshot.id == JobItem.input_snapshot_id,
+                )
+                .join(
+                    JobItemPromptResult,
+                    JobItemPromptResult.job_item_id == JobItem.id,
+                )
+                .where(
+                    Job.source == JobSource.PROMPT_TEST,
+                    Job.status == JobStatus.COMPLETED,
+                    JobItem.status == JobStatus.COMPLETED,
+                    JobItem.stage == JobItemStage.COMPLETED,
+                    BatchVideoInputSnapshot.prompt_template_version_id == row.id,
+                    BatchVideoInputSnapshot.prompt_template_version_revision
+                    == row.revision,
+                )
+            ).first()
+            if successful_prompt_test is None:
+                raise state_conflict(
+                    "promptTemplateVersion",
+                    version_id,
+                    "Complete a successful Prompt Test with this draft version before verification",
                 )
             row.verification_status = TemplateVersionStatus.VERIFIED
             row.revision += 1

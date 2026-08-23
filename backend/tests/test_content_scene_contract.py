@@ -20,12 +20,12 @@ from backend.domain.schemas import (
     SceneCreate,
     PromptTemplateVersionCreate,
     PromptTemplateCreate,
-    PromptTemplateVersionVerify,
 )
 from backend.services.batches import BatchService
 from backend.services.errors import ServiceError
 from backend.services.prompts import PromptService
 from backend.tests.test_generation_services import _ConfiguredRendererGateway, fixed_resources
+from backend.tests.support import mark_prompt_version_verified
 
 
 def _generative_content(catalog, scene_ids: list[int]) -> object:  # type: ignore[no-untyped-def]
@@ -442,10 +442,8 @@ def test_template_versions_are_immutable_and_formal_batches_require_verified(
         service.create_batch_draft(payload)
     assert unverified.value.status_code == 422
 
-    verified = catalog.verify_prompt_template_version(
-        draft_version.id,
-        PromptTemplateVersionVerify(expectedRevision=draft_version.revision),
-    )
+    mark_prompt_version_verified(database, draft_version.id)
+    verified = catalog.get_prompt_template_version(draft_version.id)
     assert verified.verification_status is TemplateVersionStatus.VERIFIED
     created = service.create_batch_draft(payload)
     assert created.prompt_template_version.id == verified.id

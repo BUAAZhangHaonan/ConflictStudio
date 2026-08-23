@@ -49,7 +49,6 @@ from backend.domain.schemas import (
     DemographicInput,
     PromptTemplateCreate,
     PromptTemplateVersionCreate,
-    PromptTemplateVersionVerify,
     SourceSelection,
     TestComparisonInput as ComparisonInput,
     VideoTestCreate as RunCreate,
@@ -60,6 +59,7 @@ from backend.services.catalog import CatalogService
 from backend.services.errors import ServiceError
 from backend.services.prompts import PromptContext, PromptService
 from backend.tests.test_sample_integration import ApiPromptModel
+from backend.tests.support import mark_prompt_version_verified
 
 
 class _ConfiguredRendererGateway:
@@ -226,10 +226,8 @@ def fixed_resources(
             h3NegativePrompt="subtitles, captions, exaggerated acting, camera shake",
         )
     )
-    preset = catalog.verify_prompt_template_version(
-        preset.id,
-        PromptTemplateVersionVerify(expectedRevision=preset.revision),
-    )
+    mark_prompt_version_verified(database, preset.id)
+    preset = catalog.get_prompt_template_version(preset.id)
     return catalog, dataset, content, preset, background
 
 
@@ -840,10 +838,8 @@ def test_generative_prompt_uses_one_strict_deepseek_request(tmp_path: Path) -> N
             h3NegativePrompt="subtitles, exaggerated movement",
         )
     )
-    preset_read = catalog.verify_prompt_template_version(
-        preset_read.id,
-        PromptTemplateVersionVerify(expectedRevision=preset_read.revision),
-    )
+    mark_prompt_version_verified(database, preset_read.id)
+    preset_read = catalog.get_prompt_template_version(preset_read.id)
     calls: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1516,10 +1512,8 @@ def test_h3_vt_snapshot_keeps_negative_constraints_and_silent_primary(
             h3NegativePrompt="subtitles, captions, exaggerated acting, camera shake",
         )
     )
-    preset = catalog.verify_prompt_template_version(
-        preset.id,
-        PromptTemplateVersionVerify(expectedRevision=preset.revision),
-    )
+    mark_prompt_version_verified(database, preset.id)
+    preset = catalog.get_prompt_template_version(preset.id)
     batches = BatchService(
         database,
         PromptService(OpenAICompatiblePromptModel("test")),

@@ -128,3 +128,46 @@ def test_statistics_derive_current_and_needs_update_archive_counts(tmp_path: Pat
     assert current.json()["needsUpdateCount"] == 0
     assert changed.json()["archivedCurrentCount"] == 0
     assert changed.json()["needsUpdateCount"] == 1
+
+
+def test_statistics_use_current_pending_state_after_classification(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        sample = client.get("/api/samples").json()["items"][0]
+        reviewer = create_reviewer(client)
+        with patch(
+            "backend.services.reviews.utc_now",
+            return_value="2026-08-12T02:00:00Z",
+        ):
+            accepted = client.post(
+                "/api/reviews",
+                json=review_payload(sample, reviewer),
+            ).json()
+        moved = client.patch(
+            f"/api/samples/{sample['id']}/classification",
+            json=classification_payload(
+                accepted,
+                reviewer,
+                "C-VA",
+                "The voice stays calm while the face appears tense.",
+                direction="Audio",
+                apparent_emotion="tense",
+            ),
+        )
+        statistics = client.get(
+            f"/api/reviewers/{reviewer['id']}/statistics",
+            params={"startDate": "2026-08-12", "endDate": "2026-08-12"},
+        )
+        history = client.get("/api/reviews", params={"sampleId": sample["id"]})
+
+    assert moved.status_code == 200
+    assert moved.json()["reviewDecision"] == "Pending"
+    assert moved.json()["currentReview"] is None
+    assert statistics.status_code == 200
+    assert statistics.json()["uniqueReviewedCount"] == 1
+    assert statistics.json()["acceptedCount"] == 0
+    assert statistics.json()["rejectedCount"] == 0
+    assert history.json()["total"] == 1
+    assert history.json()["items"][0]["decision"] == "Accepted"

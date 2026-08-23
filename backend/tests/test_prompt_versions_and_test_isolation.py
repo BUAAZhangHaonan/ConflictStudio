@@ -22,6 +22,7 @@ from backend.domain.models import (
     GpuSlot,
     Job,
     JobItem,
+    JobItemPromptResult,
     PromptTemplateExample,
     PromptTemplateVersion,
     Sample,
@@ -32,6 +33,7 @@ from backend.tests.test_sample_integration import (
     create_api_sources,
     make_app,
 )
+from backend.tests.support import mark_prompt_version_verified
 
 
 def prompt_test_payload(
@@ -207,9 +209,15 @@ def test_template_identity_versions_are_revisioned_and_verified_versions_are_imm
             json={"expectedRevision": draft["revision"] + 1},
         )
         assert stale_verify.status_code == 409
-        verified = client.post(
+        untested = client.post(
             f"/api/prompt-template-versions/{draft['id']}/verify",
             json={"expectedRevision": draft["revision"]},
+        )
+        assert untested.status_code == 409
+        assert untested.json()["error"]["code"] == "state_conflict"
+        mark_prompt_version_verified(app.state.database, draft["id"])
+        verified = client.get(
+            f"/api/prompt-template-versions/{draft['id']}"
         )
         assert verified.status_code == 200
         assert verified.json()["verificationStatus"] == "Verified"
@@ -231,6 +239,147 @@ def test_template_identity_versions_are_revisioned_and_verified_versions_are_imm
             assert row is not None
             row.style_instruction = "Changed in place"
             session.flush()
+
+
+@pytest.mark.parametrize(
+    "evidence_kind",
+    ["VideoTest", "Production", "FailedPromptTest", "OldRevision"],
+)
+def test_verify_rejects_nonmatching_prompt_test_evidence(
+    tmp_path: Path,
+    evidence_kind: str,
+) -> None:
+    app = sample_app(tmp_path)
+    with TestClient(app) as client:
+        template = client.get("/api/prompt-templates").json()["items"][0]
+        draft = client.post(
+            f"/api/prompt-templates/{template['id']}/versions",
+            json={
+                "expectedTemplateRevision": template["revision"],
+                "ltxNegativePrompt": "draft ltx negative",
+                "h3NegativePrompt": "draft h3 negative",
+            },
+        ).json()
+
+        with app.state.database.immediate_session() as session:
+            sample = session.exec(select(Sample)).one()
+            production_item = session.get(JobItem, sample.job_item_id)
+            assert production_item is not None
+            production_job = session.get(Job, production_item.job_id)
+            production_snapshot = session.get(
+                BatchVideoInputSnapshot,
+                production_item.input_snapshot_id,
+            )
+            production_result = session.exec(
+                select(JobItemPromptResult).where(
+                    JobItemPromptResult.job_item_id == production_item.id
+                )
+            ).one()
+            assert production_job is not None
+            assert production_snapshot is not None
+
+            source = (
+                JobSource.VIDEO_TEST
+                if evidence_kind == "VideoTest"
+                else JobSource.PRODUCTION
+                if evidence_kind == "Production"
+                else JobSource.PROMPT_TEST
+            )
+            if source is JobSource.PRODUCTION:
+                evidence_job = production_job
+            else:
+                failed = evidence_kind == "FailedPromptTest"
+                evidence_job = Job(
+                    display_name=f"{evidence_kind}-evidence",
+                    source=source,
+                    category=production_job.category,
+                    conflict_direction=production_job.conflict_direction,
+                    status=JobStatus.FAILED if failed else JobStatus.COMPLETED,
+                    total_count=1,
+                    prepared_count=1,
+                    completed_count=0 if failed else 1,
+                    failed_count=1 if failed else 0,
+                    failure_code="forced_failure" if failed else None,
+                    failure_reason="forced failure" if failed else None,
+                    started_at=utc_now(),
+                    finished_at=utc_now(),
+                )
+                session.add(evidence_job)
+                session.flush()
+
+            snapshot_values = production_snapshot.model_dump(
+                exclude={
+                    "id",
+                    "batch_draft_id",
+                    "dataset_id",
+                    "dataset_revision",
+                    "dataset_name",
+                    "sequence",
+                    "prompt_template_version_id",
+                    "prompt_template_version_revision",
+                }
+            )
+            production = source is JobSource.PRODUCTION
+            evidence_snapshot = BatchVideoInputSnapshot(
+                **snapshot_values,
+                batch_draft_id=(
+                    production_snapshot.batch_draft_id if production else None
+                ),
+                dataset_id=production_snapshot.dataset_id if production else None,
+                dataset_revision=(
+                    production_snapshot.dataset_revision if production else None
+                ),
+                dataset_name=(
+                    production_snapshot.dataset_name if production else None
+                ),
+                sequence=production_snapshot.sequence + 1 if production else 1,
+                prompt_template_version_id=draft["id"],
+                prompt_template_version_revision=(
+                    draft["revision"] + 1
+                    if evidence_kind == "OldRevision"
+                    else draft["revision"]
+                ),
+            )
+            session.add(evidence_snapshot)
+            session.flush()
+            evidence_item = JobItem(
+                job_id=evidence_job.id,
+                sequence=production_item.sequence + 1 if production else 1,
+                input_snapshot_id=evidence_snapshot.id,
+                gpu_slot=(
+                    production_item.gpu_slot
+                    if production
+                    else GpuSlotName.GPU0
+                    if source is JobSource.VIDEO_TEST
+                    else None
+                ),
+                stage=JobItemStage.COMPLETED,
+                status=JobStatus.COMPLETED,
+            )
+            session.add(evidence_item)
+            session.flush()
+            session.add(
+                JobItemPromptResult(
+                    **production_result.model_dump(
+                        exclude={"id", "job_item_id"}
+                    ),
+                    job_item_id=evidence_item.id,
+                )
+            )
+            session.flush()
+
+        rejected = client.post(
+            f"/api/prompt-template-versions/{draft['id']}/verify",
+            json={"expectedRevision": draft["revision"]},
+        )
+        current = client.get(
+            f"/api/prompt-template-versions/{draft['id']}"
+        )
+
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "state_conflict"
+    assert current.json()["verificationStatus"] == "Draft"
+    assert current.json()["revision"] == draft["revision"]
 
 
 def test_prompt_tests_accept_draft_and_verified_versions_without_gpu_or_media(
@@ -266,6 +415,12 @@ def test_prompt_tests_accept_draft_and_verified_versions_without_gpu_or_media(
             json=prompt_test_payload(content, verified, scene, ModelName.LTX),
         )
         assert ltx.status_code == h3.status_code == verified_run.status_code == 201
+        verified_draft = client.post(
+            f"/api/prompt-template-versions/{draft['id']}/verify",
+            json={"expectedRevision": draft["revision"]},
+        )
+        assert verified_draft.status_code == 200
+        assert verified_draft.json()["verificationStatus"] == "Verified"
         assert ltx.json()["source"] == h3.json()["source"] == "PromptTest"
         ltx_item = client.get(
             f"/api/test-results/{ltx.json()['id']}/items"

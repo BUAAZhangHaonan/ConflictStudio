@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
@@ -25,25 +24,6 @@ from backend.domain.schemas import (
 from .catalog import CatalogService
 from .errors import ServiceError, invalid_request, revision_conflict
 from .prompts import DuplicatePromptKeyError, _load_unique_json
-
-
-URI_SCHEME_PATTERN = re.compile(
-    r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9+.-]{0,31}):\S"
-)
-WWW_ADDRESS_PATTERN = re.compile(r"(?i)(?<![A-Za-z0-9])www\.")
-INTERPRETER_COMMAND_PATTERN = re.compile(
-    r"(?i)(?:^|[\s;&|])"
-    r"(?:python(?:\d+(?:\.\d+)?)?|py|sh|bash|dash|zsh|ksh|fish|"
-    r"pwsh|powershell|cmd(?:\.exe)?|node|deno|bun|perl|ruby|php|lua)"
-    r"\s+(?:-[A-Za-z]*[ce]\b|/c\b)"
-)
-COMMAND_CONTROL_PATTERN = re.compile(
-    r"&&|\|\||;|\$\(|\x60|(?<!\w)\d*>>?(?!\w)|(?<!\w)<<?(?!\w)|\|"
-)
-REQUEST_PATH_PATTERN = re.compile(
-    r"(?i)(?:\b(?:GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+/|"
-    r"(?:^|\s)/(?:[A-Za-z0-9._~-]+/)+[A-Za-z0-9._~/?=&%-]*)"
-)
 
 
 class ResourceAssistantService:
@@ -100,7 +80,6 @@ class ResourceAssistantService:
             ) from error
 
         bundle = self._parse_bundle(response.content)
-        self._validate_safe_bundle(bundle)
         current_target = self._read_target(
             payload.prompt_template.id,
             payload.prompt_template.expected_revision,
@@ -219,34 +198,3 @@ class ResourceAssistantService:
                 "The resource assistant response does not match the required structure",
                 {"fields": fields},
             ) from error
-
-    @staticmethod
-    def _validate_safe_bundle(bundle: ResourceAssistantBundle) -> None:
-        payload = bundle.model_dump(mode="json", by_alias=True)
-        for value in ResourceAssistantService._text_values(payload):
-            if any(
-                pattern.search(value)
-                for pattern in (
-                    URI_SCHEME_PATTERN,
-                    WWW_ADDRESS_PATTERN,
-                    INTERPRETER_COMMAND_PATTERN,
-                    COMMAND_CONTROL_PATTERN,
-                    REQUEST_PATH_PATTERN,
-                )
-            ):
-                raise ServiceError(
-                    502,
-                    "invalid_prompt_schema",
-                    "The resource assistant returned executable or linked text",
-                )
-
-    @staticmethod
-    def _text_values(value: object):  # type: ignore[no-untyped-def]
-        if isinstance(value, str):
-            yield value
-        elif isinstance(value, dict):
-            for nested in value.values():
-                yield from ResourceAssistantService._text_values(nested)
-        elif isinstance(value, list):
-            for nested in value:
-                yield from ResourceAssistantService._text_values(nested)

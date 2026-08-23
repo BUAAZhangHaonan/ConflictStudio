@@ -81,14 +81,26 @@ class StatisticsService:
                 set(latest),
             )
             latest_rows = list(latest.values())
+            current_decisions = {
+                sample.id: sample.review_decision
+                for sample in session.exec(
+                    select(Sample).where(Sample.id.in_(set(latest)))
+                ).all()
+            }
             return ReviewerStatisticsRead(
                 reviewer_id=reviewer_id,
                 dataset_id=dataset_id,
                 start_date=resolved_start,
                 end_date=resolved_end,
                 unique_reviewed_count=len(latest_rows),
-                accepted_count=sum(row.decision is ReviewDecision.ACCEPTED for row in latest_rows),
-                rejected_count=sum(row.decision is ReviewDecision.REJECTED for row in latest_rows),
+                accepted_count=sum(
+                    current_decisions[row.sample_id] is ReviewDecision.ACCEPTED
+                    for row in latest_rows
+                ),
+                rejected_count=sum(
+                    current_decisions[row.sample_id] is ReviewDecision.REJECTED
+                    for row in latest_rows
+                ),
                 va_count=sum(row.protocol is Protocol.VA for row in latest_rows),
                 vt_count=sum(row.protocol is Protocol.VT for row in latest_rows),
                 revised_sample_count=len(revised_sample_ids),

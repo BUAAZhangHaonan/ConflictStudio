@@ -60,12 +60,12 @@ from backend.domain.schemas import (
     DemographicInput,
     PromptTemplateCreate,
     PromptTemplateVersionCreate,
-    PromptTemplateVersionVerify,
     SceneCreate,
 )
 from backend.services.batches import BatchService
 from backend.services.catalog import CatalogService
 from backend.services.prompts import PromptService
+from backend.tests.support import mark_prompt_version_verified
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "workflows"
@@ -252,10 +252,8 @@ async def create_running_request(
             h3NegativePrompt="subtitles, captions, distortion",
         ),
     )
-    preset = catalog.verify_prompt_template_version(
-        preset.id,
-        PromptTemplateVersionVerify(expectedRevision=preset.revision),
-    )
+    mark_prompt_version_verified(database, preset.id)
+    preset = catalog.get_prompt_template_version(preset.id)
     content = catalog.get_content_script(content.id)
     prompts = PromptService(OpenAICompatiblePromptModel("test-key"))
     batches = BatchService(database, prompts, ReservationRenderer())  # type: ignore[arg-type]

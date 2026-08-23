@@ -524,7 +524,26 @@ class ResourceAssistantBundle(ApiModel):
             ]
             if len(names) != len(set(names)):
                 raise ValueError("Proposed scene names must be unique")
+        for value in self._text_values(self.model_dump(mode="json")):
+            if any(
+                ord(character) < 32 and character not in "\t\n\r"
+                for character in value
+            ) or "\x7f" in value:
+                raise ValueError(
+                    "Resource assistant text cannot contain control characters"
+                )
         return self
+
+    @staticmethod
+    def _text_values(value: object):  # type: ignore[no-untyped-def]
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for nested in value.values():
+                yield from ResourceAssistantBundle._text_values(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from ResourceAssistantBundle._text_values(nested)
 
 
 class ResourceAssistantPropose(ApiModel):

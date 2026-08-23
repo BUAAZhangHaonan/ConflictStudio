@@ -169,6 +169,11 @@ def test_propose_is_typed_read_only_and_removes_the_legacy_contract(
 ) -> None:
     with assistant_client(tmp_path) as (app, client, state):
         template = create_template(client)
+        plain_text = resource_bundle()
+        plain_text["scenes"][0]["sceneEn"] = (
+            "A quiet office; reference https://example.invalid if the user asks."
+        )  # type: ignore[index]
+        state["response"] = plain_text
         response = propose(client, template)
         legacy = client.get("/api/configuration-assistants/1")
         with app.state.database.read_session() as session:
@@ -190,6 +195,7 @@ def test_propose_is_typed_read_only_and_removes_the_legacy_contract(
     assert response.status_code == 200, response.text
     assert response.json()["promptTemplate"] == template
     assert response.json()["bundle"]["contentScript"]["status"] == "Draft"
+    assert "; reference https://" in response.json()["bundle"]["scenes"][0]["sceneEn"]
     assert len(response.json()["bundle"]["scenes"]) == 2
     assert legacy.status_code == 404
     assert "configuration_assistants" not in tables
@@ -199,7 +205,7 @@ def test_propose_is_typed_read_only_and_removes_the_legacy_contract(
     assert template["name"] in requests[0]["messages"][1]["content"]
 
 
-def test_propose_rejects_bad_or_unsafe_model_output_without_writes(
+def test_propose_rejects_bad_or_control_character_model_output_without_writes(
     tmp_path: Path,
 ) -> None:
     with assistant_client(tmp_path) as (app, client, state):
@@ -215,9 +221,9 @@ def test_propose_rejects_bad_or_unsafe_model_output_without_writes(
         active = resource_bundle()
         active["contentScript"]["status"] = "Active"  # type: ignore[index]
         cases.append((active, "invalid_prompt_schema"))
-        linked = resource_bundle()
-        linked["scenes"][0]["sceneEn"] = "Open https://example.invalid before use."  # type: ignore[index]
-        cases.append((linked, "invalid_prompt_schema"))
+        controlled = resource_bundle()
+        controlled["scenes"][0]["sceneEn"] = "A quiet office.\x00"  # type: ignore[index]
+        cases.append((controlled, "invalid_prompt_schema"))
         cases.append((resource_bundle(category="A-VA"), "invalid_prompt_schema"))
         responses = []
         for output, expected_code in cases:
@@ -276,7 +282,7 @@ def test_propose_checks_template_before_model_and_maps_missing_configuration(
     assert unconfigured.json()["error"]["code"] == "external_configuration_missing"
 
 
-def test_apply_persists_user_edits_and_uses_the_existing_verify_flow(
+def test_apply_persists_user_edits_but_cannot_verify_without_prompt_test(
     tmp_path: Path,
 ) -> None:
     with assistant_client(tmp_path) as (app, client, _):
@@ -326,8 +332,8 @@ def test_apply_persists_user_edits_and_uses_the_existing_verify_flow(
     assert result["promptTemplateVersion"]["verifiedAt"] is None
     assert current_template["revision"] == template["revision"] + 1
     assert stale.status_code == 409
-    assert verified.status_code == 200
-    assert verified.json()["verificationStatus"] == "Verified"
+    assert verified.status_code == 409
+    assert verified.json()["error"]["code"] == "state_conflict"
     assert jobs == []
 
 
