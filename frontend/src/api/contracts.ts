@@ -706,8 +706,8 @@ export interface ReviewSubmissionRead extends ReviewSampleDetailRead {
 export interface ReviewMutationRequest {
   sampleId: number;
   reviewerId: number;
-  decision: Exclude<ReviewDecision, 'Pending'>;
-  expectedRevision: number;
+  decision: ReviewDecision;
+  expectedSampleRevision: number;
   expectedReviewRevision: number;
   expectedNoteDraftRevision: number;
 }

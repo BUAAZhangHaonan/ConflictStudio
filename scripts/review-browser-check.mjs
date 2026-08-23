@@ -38,10 +38,25 @@ const server = await createServer({
 
 let browser;
 let context;
+let gateContext;
 let tracingStarted = false;
 try {
   await server.listen();
   browser = await chromium.launch({ channel: 'chrome', headless: true });
+
+  gateContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const gateApi = createBrowserApiFixture();
+  const gatePage = await gateContext.newPage();
+  await gateApi.install(gatePage);
+  await open(gatePage, '/review');
+  await gatePage.getByRole('heading', { name: 'Choose a reviewer', exact: true }).waitFor();
+  await gatePage.getByRole('radio', { name: 'Lin', exact: true }).check();
+  await gatePage.getByRole('button', { name: 'Enter review', exact: true }).click();
+  await gatePage.getByRole('heading', { name: 'Review', exact: true }).waitFor();
+  assert.equal(await gatePage.getByText('Continue without a name', { exact: true }).count(), 0);
+  await gateContext.close();
+  gateContext = null;
+
   context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await installPreferences(context);
   if (artifactRoot) {
@@ -60,13 +75,46 @@ try {
 
   const listRoute = '/review?decision=Pending&page=2';
   await open(page, listRoute);
+  assert.equal(await page.locator('details.review-list__filters').getAttribute('open'), null);
+  await page.evaluate(() => window.scrollTo({ top: 360, behavior: 'instant' }));
+  const savedScroll = await page.evaluate(() => window.scrollY);
   await page.getByRole('button', { name: 'CS-000021', exact: true }).click();
-  await page.waitForURL(`${baseUrl}/review/21`);
+  let detailUrl = new URL(page.url());
+  assert.equal(detailUrl.pathname, '/review/21');
+  assert.equal(detailUrl.searchParams.get('returnTo'), listRoute);
+  await page.getByRole('heading', { name: 'CS-000021', exact: true }).waitFor();
+
+  await page.getByRole('button', { name: 'Previous', exact: true }).click();
+  await page.waitForURL(url => url.pathname === '/review/20');
+  await page.getByRole('heading', { name: 'CS-000020', exact: true }).waitFor();
+  detailUrl = new URL(page.url());
+  assert.equal(detailUrl.searchParams.get('returnTo'), '/review?decision=Pending');
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.waitForURL(url => url.pathname === '/review/21');
+  await page.getByRole('heading', { name: 'CS-000021', exact: true }).waitFor();
+  detailUrl = new URL(page.url());
+  assert.equal(detailUrl.searchParams.get('returnTo'), listRoute);
   await page.getByRole('button', { name: 'Back to review list', exact: true }).click();
   await page.waitForURL(`${baseUrl}${listRoute}`);
-  assert.equal(await page.getByRole('button', { name: 'CS-000021', exact: true }).count(), 1);
+  await page.waitForFunction(expected => Math.abs(window.scrollY - expected) < 4, savedScroll);
 
-  await open(page, '/review/4');
+  await open(page, '/review?decision=Pending');
+  await page.getByRole('checkbox', { name: 'Select CS-000002', exact: true }).check();
+  const requestStart = api.state.requests.length;
+  await page.getByRole('button', { name: 'Apply to selected samples', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Confirm batch decision' }).waitFor();
+  const preparedRequests = api.state.requests.slice(requestStart);
+  assert.equal(preparedRequests.some(request => request.method === 'GET' && request.path === '/api/samples/2/review-note-draft'), true);
+  assert.equal(preparedRequests.some(request => request.method === 'POST' && request.path === '/api/reviews/batch'), false);
+  await page.getByRole('dialog', { name: 'Confirm batch decision' }).getByRole('button', { name: 'Cancel', exact: true }).click();
+
+  await page.evaluate(() => sessionStorage.clear());
+  await open(page, '/review/1');
+  await page.getByText('This sample needs regeneration before it can be accepted. It can still be rejected.', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Accepted', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Rejected', exact: true }).isDisabled(), false);
+
+  await open(page, '/review/4?returnTo=%2Freview%3Fdecision%3DPending');
   const detailText = await page.locator('.review-detail-page').innerText();
   for (const forbidden of ['Seed', 'Positive prompt', 'Negative prompt', 'Attempt', 'GPU', 'VLM', 'Keyboard shortcut']) {
     assert.equal(detailText.includes(forbidden), false, `Review detail must not show ${forbidden}`);
@@ -79,20 +127,26 @@ try {
   await note.fill('Checked media and emotion.');
   await page.getByText('Saved', { exact: true }).waitFor({ timeout: 3000 });
   assert.equal(api.state.requests.some(request => request.method === 'PUT' && request.path === '/api/samples/4/review-note-draft'), true);
-
   await page.getByRole('button', { name: 'Accepted', exact: true }).click();
   await page.getByRole('dialog', { name: 'Confirm review' }).getByRole('button', { name: 'Save and continue', exact: true }).click();
-  await page.waitForURL(/\/review\/\d+$/u);
-  assert.equal(api.state.requests.some(request => request.method === 'POST' && request.path === '/api/reviews'), true);
+  await page.waitForURL(url => /^\/review\/\d+$/u.test(url.pathname));
 
-  await open(page, '/review/1');
-  await page.getByText('This content has no available shooting scene, so generation is not available now.', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('link', { name: 'Open generation', exact: true }).getAttribute('href'), '/generate/production');
+  await open(page, '/review/4?returnTo=%2Freview');
+  await page.getByText('Review history (1)', { exact: true }).click();
+  await page.locator('.review-detail__history-list').getByText('Accepted', { exact: true }).waitFor();
+  assert.equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/reviews'), true);
+
+  await open(page, '/review/31?returnTo=%2Freview%3Fdecision%3DAccepted');
+  await page.getByRole('button', { name: 'Return to pending', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Return to pending review?' }).getByRole('button', { name: 'Return to pending', exact: true }).click();
+  await page.waitForURL(url => url.pathname === '/review/32');
+  const withdrawRequest = [...api.state.requests].reverse().find(request => request.method === 'POST' && request.path === '/api/reviews');
+  assert.equal(withdrawRequest?.body?.decision, 'Pending');
 
   const archiveRoute = '/archive?dataset=1&search=CS-&category=C-VA&page=2';
   await open(page, archiveRoute);
   await page.getByRole('link', { name: 'CS-000031', exact: true }).click();
-  const detailUrl = new URL(page.url());
+  detailUrl = new URL(page.url());
   assert.equal(detailUrl.pathname, '/review/31');
   assert.equal(detailUrl.searchParams.get('returnTo'), archiveRoute);
   await page.getByRole('button', { name: 'Back to review list', exact: true }).click();
@@ -100,11 +154,14 @@ try {
 
   for (const locale of ['zh-CN', 'en-US']) {
     for (const [width, height] of [[1440, 900], [1024, 900], [768, 900], [390, 844]]) {
-      for (const route of ['/review', '/review/4', '/archive?dataset=1&page=2']) {
+      for (const route of ['/review', '/review/4?returnTo=%2Freview', '/archive?dataset=1&page=2']) {
         await expectNoOverflow(page, route, locale, width, height);
       }
     }
   }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page, '/review/4?returnTo=%2Freview', 'en-US');
+  assert.equal(await page.locator('.review-detail__media video').evaluate(element => getComputedStyle(element).objectFit), 'contain');
 
   assert.equal(api.state.mediaRequests > 0, true);
   assert.deepEqual(pageErrors, []);
@@ -112,6 +169,7 @@ try {
   if (artifactRoot) await page.screenshot({ path: join(artifactRoot, 'review-archive.png'), fullPage: true });
   console.log('Review browser checks passed.');
 } finally {
+  if (gateContext) await gateContext.close();
   if (context && tracingStarted && artifactRoot) await context.tracing.stop({ path: join(artifactRoot, 'review-browser-trace.zip') });
   if (browser) await browser.close();
   await server.close();

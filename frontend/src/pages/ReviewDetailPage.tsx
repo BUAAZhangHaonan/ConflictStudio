@@ -1,25 +1,29 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError, apiErrorMessage } from '../api/client';
 import type { ReviewDecision, ReviewQueue, ReviewSampleDetailRead } from '../api/contracts';
 import {
+  reviewSampleQueries,
   useConvertSampleClassificationMutation,
   usePutReviewNoteDraftMutation,
+  useReviewHistoryQuery,
   useReviewNoteDraftQuery,
   useReviewSampleDetailQuery,
+  useReviewSampleListQuery,
   useSubmitReviewMutation,
 } from '../api/queries';
-import { Button, ConfirmDialog, Field, MediaPanel, PageHeader, StatusBadge } from '../components';
+import { useReviewGateReviewer } from '../app/ReviewGate';
+import { Button, ConfirmDialog, Field, MediaPanel, PageHeader, Pagination, StatusBadge } from '../components';
 import { reviewArchiveEnUS } from '../locales/features/reviewArchive';
-import { useReviewerState } from '../preferences';
 import {
   buildReviewListLocation,
   readReviewListLocation,
   readSavedReviewListState,
   reviewDetailLocation,
+  safeReviewListReturnTarget,
   safeReviewReturnTarget,
-  saveReviewListState,
 } from '../reviewArchive';
 import type { Category, ConflictDirection, Locale } from '../types';
 import './ReviewDetailPage.css';
@@ -72,10 +76,11 @@ export function ReviewDetailPage() {
   const { sampleId: sampleIdParam } = useParams<{ sampleId: string }>();
   const sampleId = positiveSampleId(sampleIdParam);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
-  const reviewerState = useReviewerState();
-  const { currentReviewerId: reviewerId } = reviewerState;
+  const reviewer = useReviewGateReviewer();
+  const reviewerId = reviewer.id;
   const locale: Locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
   const detailQuery = useReviewSampleDetailQuery(sampleId);
   const sampleRevision = detailQuery.data?.revision ?? null;
@@ -90,20 +95,39 @@ export function ReviewDetailPage() {
   const [noteState, setNoteState] = useState<NoteState>('loading');
   const [noteError, setNoteError] = useState<unknown>(null);
   const [retryNumber, setRetryNumber] = useState(0);
-  const [reviewDecision, setReviewDecision] = useState<Exclude<ReviewDecision, 'Pending'> | null>(null);
+  const [reviewDecision, setReviewDecision] = useState<ReviewDecision | null>(null);
   const [conversionOpen, setConversionOpen] = useState(false);
   const [conversionDirection, setConversionDirection] = useState<ConflictDirection | null>(null);
   const [conversionApparentEmotion, setConversionApparentEmotion] = useState('');
   const [conversionDescription, setConversionDescription] = useState('');
   const [conversionSaved, setConversionSaved] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [navigationPending, setNavigationPending] = useState(false);
   const initializedDraftRef = useRef<string | null>(null);
   const noteRef = useRef(note);
   noteRef.current = note;
 
   const savedListState = useMemo(() => readSavedReviewListState(), []);
-  const returnTo = safeReviewReturnTarget(searchParams.get('returnTo')) ?? savedListState?.returnTo ?? '/review';
+  const explicitReturnTo = safeReviewListReturnTarget(searchParams.get('returnTo'))
+    ?? safeReviewReturnTarget(searchParams.get('returnTo'));
+  const returnTo = explicitReturnTo ?? savedListState?.returnTo ?? '/review';
+  const listReturnTo = safeReviewListReturnTarget(returnTo);
+  const listLocation = useMemo(() => readReviewListLocation(listReturnTo ?? '/review'), [listReturnTo]);
+  const navigationQueue = useMemo(() => queueFromReturnTarget(listReturnTo ?? '/review'), [listReturnTo]);
+  const navigationListQuery = useReviewSampleListQuery({
+    ...navigationQueue,
+    page: listLocation.page,
+  }, listReturnTo !== null);
+  const historyQuery = useReviewHistoryQuery(sampleId, historyPage, historyOpen);
   const sample = detailQuery.data;
-  const canReview = reviewerId !== null;
+  const queueItems = navigationListQuery.data?.items ?? [];
+  const queueIndex = sampleId === null ? -1 : queueItems.findIndex(item => item.id === sampleId);
+  const canGoPrevious = listReturnTo !== null && queueIndex >= 0 && (queueIndex > 0 || listLocation.page > 1);
+  const canGoNext = listReturnTo !== null && queueIndex >= 0 && (
+    queueIndex < queueItems.length - 1
+    || listLocation.page < (navigationListQuery.data?.totalPages ?? 0)
+  );
 
   useLayoutEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
@@ -117,6 +141,9 @@ export function ReviewDetailPage() {
     setConversionApparentEmotion('');
     setConversionDescription('');
     setConversionSaved(false);
+    setHistoryOpen(false);
+    setHistoryPage(1);
+    setNavigationPending(false);
     initializedDraftRef.current = null;
     setNote('');
     setSavedNote('');
@@ -126,15 +153,7 @@ export function ReviewDetailPage() {
   }, [sampleId]);
 
   useEffect(() => {
-    if (!sample) return;
-    if (!canReview) {
-      const currentNote = sample.currentReview?.note ?? '';
-      setNote(currentNote);
-      setSavedNote(currentNote);
-      setNoteState('saved');
-      return;
-    }
-    if (!noteQuery.data) return;
+    if (!sample || !noteQuery.data) return;
     const key = `${sample.id}:${reviewerId}:${sample.revision}`;
     if (initializedDraftRef.current === key) return;
     initializedDraftRef.current = key;
@@ -143,10 +162,10 @@ export function ReviewDetailPage() {
     setNoteRevision(noteQuery.data.revision);
     setNoteState('saved');
     setNoteError(null);
-  }, [canReview, noteQuery.data, reviewerId, sample]);
+  }, [noteQuery.data, reviewerId, sample]);
 
   useEffect(() => {
-    if (!sample || reviewerId === null || !noteQuery.isSuccess || note === savedNote || noteState === 'failed') return;
+    if (!sample || !noteQuery.isSuccess || note === savedNote || noteState === 'failed') return;
     setNoteState('saving');
     const value = note;
     const expectedRevision = noteRevision;
@@ -181,6 +200,31 @@ export function ReviewDetailPage() {
     setRetryNumber(value => value + 1);
   };
 
+  const navigateAdjacent = async (direction: 'previous' | 'next') => {
+    if (listReturnTo === null || queueIndex < 0) return;
+    setNavigationPending(true);
+    try {
+      let targetPage = listLocation.page;
+      let target = queueItems[queueIndex + (direction === 'previous' ? -1 : 1)] ?? null;
+      if (target === null) {
+        targetPage += direction === 'previous' ? -1 : 1;
+        if (targetPage < 1 || targetPage > (navigationListQuery.data?.totalPages ?? 0)) return;
+        const adjacent = await queryClient.fetchQuery(reviewSampleQueries.list({
+          ...navigationQueue,
+          page: targetPage,
+        }));
+        target = direction === 'previous'
+          ? adjacent.items[adjacent.items.length - 1] ?? null
+          : adjacent.items[0] ?? null;
+      }
+      if (target === null) return;
+      const nextReturnTo = buildReviewListLocation({ ...listLocation, page: targetPage });
+      navigate(reviewDetailLocation(target.id, nextReturnTo));
+    } finally {
+      setNavigationPending(false);
+    }
+  };
+
   const followReviewResult = (nextReference: { id: number; page: number } | null) => {
     if (nextReference === null) {
       navigate(returnTo, { replace: true });
@@ -190,17 +234,21 @@ export function ReviewDetailPage() {
       ...readReviewListLocation(returnTo),
       page: nextReference.page,
     });
-    saveReviewListState({ returnTo: nextListLocation, page: nextReference.page, scrollY: 0 });
-    navigate(reviewDetailLocation(nextReference.id), { replace: true });
+    navigate(reviewDetailLocation(nextReference.id, nextListLocation), { replace: true });
   };
 
   const submitReview = () => {
-    if (!sample || reviewerId === null || reviewDecision === null || noteState !== 'saved') return;
+    if (
+      !sample
+      || reviewDecision === null
+      || noteState !== 'saved'
+      || (reviewDecision === 'Accepted' && sample.generationCompatibility === 'NeedsRegeneration')
+    ) return;
     reviewMutation.mutate({
       sampleId: sample.id,
       reviewerId,
       decision: reviewDecision,
-      expectedRevision: sample.revision,
+      expectedSampleRevision: sample.revision,
       expectedReviewRevision: sample.reviewRevision,
       expectedNoteDraftRevision: noteRevision,
       queue: queueFromReturnTarget(returnTo),
@@ -210,7 +258,7 @@ export function ReviewDetailPage() {
   };
 
   const openConversion = () => {
-    if (!sample || reviewerId === null) return;
+    if (!sample) return;
     setConversionSaved(false);
     setConversionDirection(null);
     setConversionApparentEmotion('');
@@ -219,7 +267,7 @@ export function ReviewDetailPage() {
   };
 
   const submitConversion = () => {
-    if (!sample || reviewerId === null) return;
+    if (!sample) return;
     const targetCategory = targetCategoryFor(sample);
     const needsDirection = targetCategory.startsWith('C-');
     if (
@@ -300,24 +348,27 @@ export function ReviewDetailPage() {
   const directionText = sample.conflictDirection === null
     ? t('review.detail.notNeeded')
     : t(`review.detail.direction.${sample.conflictDirection}`);
-  const noteMessage = !canReview
-    ? t('review.detail.note.readOnly')
-    : noteState === 'failed'
-      ? noteError instanceof ApiError && noteError.code === 'note_draft_revision_conflict'
-        ? t('review.detail.note.conflict')
-        : apiErrorMessage(noteError, locale)
-      : t(`review.detail.note.${noteState}`);
-  const noteReady = !canReview || (noteQuery.isSuccess && noteState === 'saved');
+  const noteMessage = noteState === 'failed'
+    ? noteError instanceof ApiError && noteError.code === 'note_draft_revision_conflict'
+      ? t('review.detail.note.conflict')
+      : apiErrorMessage(noteError, locale)
+    : t(`review.detail.note.${noteState}`);
+  const noteReady = noteQuery.isSuccess && noteState === 'saved';
   const writeBusy = reviewMutation.isPending || conversionMutation.isPending;
+  const acceptanceBlocked = sample.generationCompatibility === 'NeedsRegeneration';
 
   return (
     <section className="page-stack review-detail-page" aria-label={t('review.detail.aria.page')}>
       <PageHeader
         title={sample.displayId}
-        actions={<Button variant="secondary" onClick={() => navigate(returnTo)}>{t('review.detail.backToList')}</Button>}
+        actions={(
+          <div className="review-detail__navigation">
+            <Button variant="quiet" disabled={!canGoPrevious || navigationPending} onClick={() => void navigateAdjacent('previous')}>{t('review.detail.previous')}</Button>
+            <Button variant="quiet" disabled={!canGoNext || navigationPending} onClick={() => void navigateAdjacent('next')}>{t('review.detail.next')}</Button>
+            <Button variant="secondary" onClick={() => navigate(returnTo)}>{t('review.detail.backToList')}</Button>
+          </div>
+        )}
       />
-
-      {!canReview ? <section className="generation-feedback" role="status"><p>{t('review.detail.readOnly')}</p><Link to="/settings">{t('nav.settings')}</Link></section> : null}
 
       <div className="review-detail__layout">
         <section className="panel review-detail__media" aria-label={t('review.detail.aria.media')}>
@@ -363,9 +414,40 @@ export function ReviewDetailPage() {
             </details>
           </section>
 
-          {sample.compatibleSceneCount === 0 ? (
+          <details
+            className="panel review-detail__history"
+            onToggle={event => setHistoryOpen(event.currentTarget.open)}
+          >
+            <summary>{t('review.detail.history.title', { count: sample.reviewRevision })}</summary>
+            {historyOpen ? historyQuery.isPending ? (
+              <p role="status">{t('review.detail.history.loading')}</p>
+            ) : historyQuery.isError ? (
+              <div role="alert">
+                <p>{apiErrorMessage(historyQuery.error, locale)}</p>
+                <Button variant="secondary" onClick={() => void historyQuery.refetch()}>{t('actions.retry')}</Button>
+              </div>
+            ) : historyQuery.data && historyQuery.data.items.length > 0 ? (
+              <>
+                <ol className="review-detail__history-list">
+                  {historyQuery.data.items.map(item => (
+                    <li key={item.id}>
+                      <div>
+                        <StatusBadge label={t(`status.review.${item.decision}`)} kind={item.decision === 'Accepted' ? 'complete' : item.decision === 'Rejected' ? 'problem' : 'neutral'} />
+                        <span>{item.reviewerName}</span>
+                        <time dateTime={item.createdAt}>{beijingTimestamp(item.createdAt, locale)}</time>
+                      </div>
+                      {item.note ? <p>{item.note}</p> : null}
+                    </li>
+                  ))}
+                </ol>
+                <Pagination page={historyQuery.data.page} totalPages={historyQuery.data.totalPages} total={historyQuery.data.total} onPageChange={setHistoryPage} />
+              </>
+            ) : <p>{t('review.detail.history.empty')}</p> : null}
+          </details>
+
+          {acceptanceBlocked ? (
             <section className="generation-feedback generation-feedback--problem" role="status">
-              <p>{t('review.detail.noCompatibleScene')}</p>
+              <p>{t('review.detail.compatibilityBlocked')}</p>
               <Link to="/generate/production">{t('review.detail.openGeneration')}</Link>
             </section>
           ) : null}
@@ -375,12 +457,9 @@ export function ReviewDetailPage() {
             <Field label={t('fields.note')} htmlFor="review-detail-note" hint={noteMessage} error={noteState === 'failed' ? noteMessage : undefined}>
               <textarea
                 id="review-detail-note"
-                className={!canReview ? 'is-read-only' : undefined}
                 value={note}
                 maxLength={2000}
-                readOnly={!canReview}
-                aria-readonly={!canReview}
-                disabled={!canReview || !noteQuery.isSuccess}
+                disabled={!noteQuery.isSuccess}
                 onChange={event => {
                   setNote(event.target.value);
                   setNoteError(null);
@@ -388,14 +467,22 @@ export function ReviewDetailPage() {
                 }}
               />
             </Field>
-            {noteQuery.isError && canReview ? <Button variant="secondary" onClick={() => void noteQuery.refetch()}>{t('actions.retry')}</Button> : null}
-            {noteState === 'failed' && canReview ? <Button variant="secondary" onClick={retryNoteSave}>{t('review.detail.note.retry')}</Button> : null}
+            {noteQuery.isError ? <Button variant="secondary" onClick={() => void noteQuery.refetch()}>{t('actions.retry')}</Button> : null}
+            {noteState === 'failed' ? <Button variant="secondary" onClick={retryNoteSave}>{t('review.detail.note.retry')}</Button> : null}
 
-            {canReview ? <div className="review-detail__actions">
-              <Button disabled={writeBusy} onClick={() => setReviewDecision('Accepted')}>{t('status.review.Accepted')}</Button>
+            <div className="review-detail__actions">
+              <Button disabled={writeBusy || acceptanceBlocked} onClick={() => setReviewDecision('Accepted')}>{t('status.review.Accepted')}</Button>
               <Button variant="secondary" disabled={writeBusy} onClick={() => setReviewDecision('Rejected')}>{t('status.review.Rejected')}</Button>
-              <Button variant="secondary" disabled={writeBusy} onClick={openConversion}>{t('review.detail.conversion.action')}</Button>
-            </div> : <Link to="/settings">{t('nav.settings')}</Link>}
+              {sample.reviewDecision !== 'Pending' ? (
+                <Button variant="quiet" disabled={writeBusy} onClick={() => setReviewDecision('Pending')}>{t('review.detail.withdraw')}</Button>
+              ) : null}
+            </div>
+
+            <details className="review-detail__secondary">
+              <summary>{t('review.detail.secondaryActions')}</summary>
+              <p>{t('review.detail.conversion.help')}</p>
+              <Button variant="quiet" disabled={writeBusy} onClick={openConversion}>{t('review.detail.conversion.action')}</Button>
+            </details>
 
             {conversionSaved ? <p className="review-detail__success" role="status">{t('review.detail.conversion.saved')} {t('status.review.Pending')}</p> : null}
             {reviewMutation.isError ? <p className="field-error" role="alert">{apiErrorMessage(reviewMutation.error, locale)}</p> : null}
@@ -406,13 +493,15 @@ export function ReviewDetailPage() {
 
       <ConfirmDialog
         open={reviewDecision !== null}
-        title={t('review.detail.reviewConfirmTitle')}
-        body={reviewDecision === null ? '' : t('review.detail.reviewConfirmBody', { decision: t(`status.review.${reviewDecision}`) })}
-        confirmLabel={t('review.detail.reviewConfirmAction')}
+        title={reviewDecision === 'Pending' ? t('review.detail.withdrawConfirmTitle') : t('review.detail.reviewConfirmTitle')}
+        body={reviewDecision === null ? '' : reviewDecision === 'Pending'
+          ? t('review.detail.withdrawConfirmBody')
+          : t('review.detail.reviewConfirmBody', { decision: t(`status.review.${reviewDecision}`) })}
+        confirmLabel={reviewDecision === 'Pending' ? t('review.detail.withdrawConfirmAction') : t('review.detail.reviewConfirmAction')}
         cancelLabel={t('actions.cancel')}
         closeLabel={t('actions.close')}
         busy={reviewMutation.isPending}
-        confirmDisabled={!noteReady}
+        confirmDisabled={!noteReady || (reviewDecision === 'Accepted' && acceptanceBlocked)}
         onConfirm={submitReview}
         onClose={() => setReviewDecision(null)}
       />

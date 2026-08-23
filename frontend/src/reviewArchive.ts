@@ -75,7 +75,7 @@ export function buildReviewListLocation(state: ReviewListLocationState): string 
 
 export function reviewDetailLocation(sampleId: number, returnTo?: string): string {
   if (!Number.isInteger(sampleId) || sampleId <= 0) throw new RangeError('sampleId must be a positive integer');
-  const safeReturnTo = safeReviewReturnTarget(returnTo ?? null);
+  const safeReturnTo = safeReviewListReturnTarget(returnTo ?? null) ?? safeReviewReturnTarget(returnTo ?? null);
   if (safeReturnTo === null) return `/review/${sampleId}`;
   return `/review/${sampleId}?${new URLSearchParams({ returnTo: safeReturnTo }).toString()}`;
 }

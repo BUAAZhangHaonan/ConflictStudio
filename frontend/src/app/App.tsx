@@ -2,7 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { StateView } from '../components';
-import { FirstReviewerDialog } from './FirstReviewerDialog';
+import { ReviewGate } from './ReviewGate';
 
 const ArchivePage = lazy(() => import('../pages/ArchivePage').then(module => ({ default: module.ArchivePage })));
 const GeneratePage = lazy(() => import('../pages/GeneratePage').then(module => ({ default: module.GeneratePage })));
@@ -23,15 +23,16 @@ export function App() {
           <Route path="/generate/test" element={<GeneratePage section="test" />} />
           <Route path="/generate/production" element={<GeneratePage section="production" />} />
           <Route path="/generate/results" element={<GeneratePage section="results" />} />
-          <Route path="/review" element={<ReviewListPage />} />
-          <Route path="/review/:sampleId" element={<ReviewDetailPage />} />
+          <Route element={<ReviewGate />}>
+            <Route path="/review" element={<ReviewListPage />} />
+            <Route path="/review/:sampleId" element={<ReviewDetailPage />} />
+          </Route>
           <Route path="/archive" element={<ArchivePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/me/statistics" element={<StatisticsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>
-      <FirstReviewerDialog />
     </AppShell>
   );
 }

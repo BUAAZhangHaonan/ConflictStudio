@@ -26,6 +26,13 @@
   gap: var(--space-4);
 }
 
+.review-detail__navigation {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
 .review-detail__media .media-panel,
 .review-detail__media video {
   width: 100%;
@@ -85,14 +92,6 @@
   resize: vertical;
 }
 
-.review-detail__decision textarea.is-read-only {
-  border-color: var(--color-border);
-  background: var(--color-surface-muted);
-  color: var(--color-text-muted);
-  cursor: not-allowed;
-  opacity: 1;
-}
-
 .review-detail__actions {
   display: flex;
   flex-wrap: wrap;
@@ -104,6 +103,56 @@
   margin: var(--space-3) 0 0;
   color: var(--color-text);
 }
+
+.review-detail__history { padding: 0; }
+
+.review-detail__history > summary,
+.review-detail__secondary > summary {
+  padding: var(--space-4);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.review-detail__history[open] > summary,
+.review-detail__secondary[open] > summary {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.review-detail__history > :not(summary) { margin-inline: var(--space-4); }
+
+.review-detail__history-list {
+  display: grid;
+  gap: var(--space-3);
+  margin-block: var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.review-detail__history-list li {
+  display: grid;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.review-detail__history-list li > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.review-detail__history-list time { color: var(--color-text-muted); }
+.review-detail__history-list p { margin: 0; white-space: pre-wrap; }
+
+.review-detail__secondary {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.review-detail__secondary > summary { padding-inline: 0; }
+.review-detail__secondary[open] > summary { border-bottom: 0; }
+.review-detail__secondary p { color: var(--color-text-muted); }
 
 .review-detail__conversion {
   display: grid;
@@ -125,5 +174,18 @@
   .review-detail__actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .review-detail__navigation {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .review-detail__navigation .button { flex: 1 1 auto; }
+
+  .review-detail__media video {
+    width: 100%;
+    max-height: 70svh;
+    object-fit: contain;
   }
 }

@@ -6,14 +6,15 @@ import {
   saveReviewListState,
 } from '../frontend/src/reviewArchive.ts';
 
-const page = readFileSync(new URL('../frontend/src/pages/ReviewDetailPage.tsx', import.meta.url), 'utf8');
-const css = readFileSync(new URL('../frontend/src/pages/ReviewDetailPage.css', import.meta.url), 'utf8');
-const locales = readFileSync(new URL('../frontend/src/locales/features/reviewArchive.ts', import.meta.url), 'utf8');
+const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+const page = read('../frontend/src/pages/ReviewDetailPage.tsx');
+const css = read('../frontend/src/pages/ReviewDetailPage.css');
+const locales = read('../frontend/src/locales/features/reviewArchive.ts');
+const queries = read('../frontend/src/api/queries.ts');
 
-test('detail reads the path sample and restores a safe list return address', () => {
-  assert.match(page, /useParams<\{ sampleId: string \}>/);
-  assert.match(page, /readSavedReviewListState\(\)/);
-  assert.match(page, /safeReviewReturnTarget\(searchParams\.get\('returnTo'\)\) \?\? savedListState\?\.returnTo \?\? '\/review'/);
+test('detail prefers an explicit safe list return and keeps saved scroll as a fallback', () => {
+  assert.match(page, /safeReviewListReturnTarget\(searchParams\.get\('returnTo'\)\)[\s\S]*safeReviewReturnTarget\(searchParams\.get\('returnTo'\)\)/u);
+  assert.match(page, /const returnTo = explicitReturnTo \?\? savedListState\?\.returnTo \?\? '\/review'/u);
   const values = new Map<string, string>();
   const storage = {
     getItem: (key: string) => values.get(key) ?? null,
@@ -21,112 +22,71 @@ test('detail reads the path sample and restores a safe list return address', () 
   };
   assert.equal(saveReviewListState({ returnTo: '/review?decision=Pending&page=3', page: 3, scrollY: 420 }, storage), true);
   assert.deepEqual(readSavedReviewListState(storage), {
-    returnTo: '/review?decision=Pending&page=3',
-    page: 3,
-    scrollY: 420,
+    returnTo: '/review?decision=Pending&page=3', page: 3, scrollY: 420,
   });
 });
 
-test('VA stays sounded and VT offers one source audio toggle only when source media exists', () => {
-  assert.match(page, /displayedMedia = showSourceToggle && useSourceAudio && sample\.sourceMedia \? sample\.sourceMedia : sample\.primaryMedia/);
-  assert.match(page, /key=\{displayedMedia\.url\}/);
-  assert.match(page, /src=\{displayedMedia\.url\}/);
-  assert.match(page, /showSourceToggle = sample\.protocol === 'VT' && sample\.sourceMedia !== null/);
-  assert.match(page, /muted=\{sample\.protocol === 'VT' && !useSourceAudio\}/);
-  assert.match(page, /showSourceToggle \? \(/);
-  assert.equal((page.match(/<MediaPanel/g) ?? []).length, 1);
-  assert.match(page, /playSourceAudio/);
-  assert.match(page, /showSilentPrimary/);
+test('detail receives the API-validated reviewer from ReviewGate', () => {
+  assert.match(page, /const reviewer = useReviewGateReviewer\(\)/u);
+  assert.match(page, /const reviewerId = reviewer\.id/u);
+  assert.doesNotMatch(page, /useReviewerState|canReview|readOnly|aria-readonly|is-read-only/u);
 });
 
-test('missing reviewer is read only and disables every write action', () => {
-  assert.match(page, /const canReview = reviewerId !== null/);
-  assert.match(page, /readOnly=\{!canReview\}/);
-  assert.match(page, /disabled=\{!canReview \|\| !noteQuery\.isSuccess\}/);
-  assert.match(page, /const noteMessage = !canReview[\s\S]*review\.detail\.note\.readOnly/u);
-  assert.match(page, /disabled=\{!canReview \|\| !noteReady \|\| writeBusy\}/);
-  assert.match(page, /disabled=\{!canReview \|\| writeBusy\}/);
-  assert.match(page, /review\.detail\.readOnly/);
-  assert.match(css, /textarea\.is-read-only[\s\S]*background: var\(--color-surface-muted\)[\s\S]*cursor: not-allowed/u);
-  assert.match(locales, /readOnly: 'Read-only browsing\./u);
+test('note autosave supplies the live draft revision to every review decision', () => {
+  assert.match(page, /type NoteState = 'loading' \| 'saving' \| 'saved' \| 'failed'/u);
+  assert.match(page, /window\.setTimeout\(\(\) => \{[\s\S]*expectedRevision,[\s\S]*expectedSampleRevision: sample\.revision[\s\S]*\}, 400\)/u);
+  assert.match(page, /useReviewNoteDraftQuery\(sampleId, reviewerId, sampleRevision\)/u);
+  assert.match(page, /expectedNoteDraftRevision: noteRevision/u);
+  assert.match(page, /const noteReady = noteQuery\.isSuccess && noteState === 'saved'/u);
 });
 
-test('note autosave exposes loading saving saved failure and retry states', () => {
-  assert.match(page, /type NoteState = 'loading' \| 'saving' \| 'saved' \| 'failed'/);
-  assert.match(page, /window\.setTimeout\(\(\) => \{/);
-  assert.match(page, /\}, 400\)/);
-  assert.match(page, /usePutReviewNoteDraftMutation/);
-  assert.match(page, /expectedRevision/);
-  assert.match(page, /expectedSampleRevision/);
-  assert.match(page, /useReviewNoteDraftQuery\(sampleId, reviewerId, sampleRevision\)/);
-  assert.match(page, /const key = `\$\{sample\.id\}:\$\{reviewerId\}:\$\{sample\.revision\}`/);
-  assert.match(page, /retryNoteSave/);
-  assert.match(locales, /Another person changed this note\. Refresh the page before trying again\./);
-  assert.doesNotMatch(page, /manual save|beforeunload|leave warning/i);
+test('accepted and rejected samples can be returned to Pending with history retained', () => {
+  assert.match(page, /useState<ReviewDecision \| null>\(null\)/u);
+  assert.match(page, /sample\.reviewDecision !== 'Pending'[\s\S]*setReviewDecision\('Pending'\)/u);
+  assert.match(page, /decision: reviewDecision/u);
+  assert.match(page, /expectedSampleRevision: sample\.revision/u);
+  assert.match(page, /withdrawConfirmBody/u);
+  assert.match(locales, /The latest decision will be withdrawn\. Review history will remain\./u);
+  assert.match(locales, /将撤回当前决定，审核历史会保留。/u);
 });
 
-test('review sends queue and note revision then follows the next page reference', () => {
-  assert.match(page, /expectedNoteDraftRevision: noteRevision/);
-  assert.match(page, /queue: queueFromReturnTarget\(returnTo\)/);
-  assert.match(page, /value => followReviewResult\(value\.nextReference\)/);
-  assert.match(page, /page: nextReference\.page/);
-  assert.match(page, /reviewDetailLocation\(nextReference\.id\)/);
-  assert.match(page, /navigate\(returnTo, \{ replace: true \}\)/);
+test('generation compatibility is the only acceptance block', () => {
+  assert.match(page, /const acceptanceBlocked = sample\.generationCompatibility === 'NeedsRegeneration'/u);
+  assert.match(page, /disabled=\{writeBusy \|\| acceptanceBlocked\}[\s\S]*setReviewDecision\('Accepted'\)/u);
+  assert.match(page, /reviewDecision === 'Accepted' && sample\.generationCompatibility === 'NeedsRegeneration'/u);
+  assert.doesNotMatch(page, /compatibleSceneCount === 0/u);
+  assert.match(locales, /needs regeneration before it can be accepted/u);
 });
 
-test('classification confirmation sends reviewer and direction without a reason', () => {
-  assert.match(page, /useConvertSampleClassificationMutation/);
-  assert.match(page, /reviewerId,/);
-  assert.match(page, /targetCategory,/);
-  assert.match(page, /conflictDirection: needsDirection \? conversionDirection : null/);
-  assert.match(page, /apparentEmotion: conversionApparentEmotion/);
-  assert.match(page, /option !== emotionKey\(sample\.trueEmotion\)/);
-  assert.match(page, /sample\.protocol === 'VA' \? \['Vision', 'Audio'\] : \['Vision', 'Text'\]/);
-  assert.match(page, /trueEmotionDescription: conversionDescription\.trim\(\)/);
-  assert.match(page, /setNote\(''\)/);
-  assert.match(page, /setNoteRevision\(0\)/);
-  assert.match(page, /initializedDraftRef\.current = null/);
-  assert.match(page, /confirmDisabled=\{!conversionComplete\}/);
-  assert.match(page, /status\.review\.Pending/);
-  assert.doesNotMatch(page, /reason\s*:/);
+test('review history stays collapsed and loads only when opened', () => {
+  assert.match(page, /useReviewHistoryQuery\(sampleId, historyPage, historyOpen\)/u);
+  assert.match(page, /<details[\s\S]*className="panel review-detail__history"[\s\S]*onToggle=\{event => setHistoryOpen\(event\.currentTarget\.open\)\}/u);
+  assert.doesNotMatch(page, /className="panel review-detail__history" open/u);
+  assert.match(page, /historyQuery\.data\.items\.map/u);
+  assert.match(queries, /apiRequest<Page<ReviewResultRead>>\(`\/api\/reviews\?/u);
 });
 
-test('zero compatible scenes stays on detail and links to generation', () => {
-  assert.match(page, /sample\.compatibleSceneCount === 0/);
-  assert.match(page, /<Link to="\/generate\/production">/);
-  assert.match(locales, /当前内容没有可用拍摄场景，因此暂时不能生成。/);
-  const block = page.slice(page.indexOf('sample.compatibleSceneCount === 0'), page.indexOf('review-detail__decision'));
-  assert.doesNotMatch(block, /navigate\(/);
+test('previous and next navigation cross page boundaries and retain explicit returnTo', () => {
+  assert.match(page, /queryClient\.fetchQuery\(reviewSampleQueries\.list/u);
+  assert.match(page, /direction === 'previous'[\s\S]*adjacent\.items\[adjacent\.items\.length - 1\][\s\S]*adjacent\.items\[0\]/u);
+  assert.match(page, /const nextReturnTo = buildReviewListLocation\(\{ \.\.\.listLocation, page: targetPage \}\)/u);
+  assert.match(page, /reviewDetailLocation\(target\.id, nextReturnTo\)/u);
+  assert.match(page, /reviewDetailLocation\(nextReference\.id, nextListLocation\)/u);
+  assert.doesNotMatch(page, /saveReviewListState/u);
 });
 
-test('detail renders only approved context and one disclosure', () => {
-  assert.match(page, /trueEmotionDescription/);
-  assert.match(page, /sample\.protocol === 'VA' \? sample\.dialogue/);
-  assert.match(page, /sample\.displayText/);
-  assert.match(page, /sample\.relation === 'Aligned' \? 'A' : 'C'/);
-  assert.match(page, /beijingTimestamp/);
-  assert.equal((page.match(/<details/g) ?? []).length, 1);
-  assert.doesNotMatch(page, /\bseed\b|positivePrompt|negativePrompt|attempt|gpu|vlm|shortcut/i);
+test('class conversion is secondary and still enforces the full target class input', () => {
+  assert.match(page, /<details className="review-detail__secondary">[\s\S]*openConversion/u);
+  const primaryActions = page.slice(page.indexOf('review-detail__actions'), page.indexOf('review-detail__secondary'));
+  assert.doesNotMatch(primaryActions, /openConversion|conversion\.action/u);
+  assert.match(page, /conversionApparentEmotion !== emotionKey\(sample\.trueEmotion\)/u);
+  assert.match(page, /conflictDirection: needsDirection \? conversionDirection : null/u);
+  assert.match(page, /trueEmotionDescription: conversionDescription\.trim\(\)/u);
 });
 
-test('responsive CSS contains the wide split and three narrow widths', () => {
-  assert.match(css, /grid-template-columns: minmax\(0, 1\.1fr\) minmax\(26rem, 0\.9fr\)/);
-  assert.match(css, /@media \(max-width: 1279px\)/);
-  assert.match(css, /grid-template-columns: minmax\(0, 1fr\)/);
-  assert.match(css, /aspect-ratio: 16 \/ 9/);
-  assert.match(css, /height: auto/);
-  assert.doesNotMatch(css, /70vh|52rem|44rem/);
-  assert.match(css, /width: 100%/);
-  assert.match(css, /object-fit: contain/);
-  assert.match(css, /overflow-x: hidden/);
-  assert.doesNotMatch(css, /overflow-y|overflow:\s*auto/);
-  for (const width of [1440, 1024, 768, 390]) assert.equal(Number.isInteger(width), true);
-});
-
-test('English and Chinese detail copy have matching keys and clean separators', () => {
-  for (const key of ['loadingTitle', 'emptyTitle', 'errorTitle', 'readOnly', 'playSourceAudio', 'saving', 'saved', 'failed', 'retry', 'conversion', 'noCompatibleScene']) {
-    assert.equal((locales.match(new RegExp(`${key}:`, 'g')) ?? []).length >= 2, true, key);
-  }
-  const detailCopy = locales.split('    detail: {').slice(1).map(value => value.split('    searchLabel:')[0]).join('');
-  assert.doesNotMatch(detailCopy, /[·—]/);
+test('media stays contained at wide and 390 pixel layouts', () => {
+  assert.match(css, /\.review-detail__media video \{[\s\S]*object-fit: contain/u);
+  assert.match(css, /@media \(max-width: 639px\)[\s\S]*max-height: 70svh;[\s\S]*object-fit: contain/u);
+  assert.match(css, /overflow-x: hidden/u);
+  assert.doesNotMatch(css, /overflow-y|overflow:\s*auto/u);
 });

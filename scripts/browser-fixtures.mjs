@@ -259,6 +259,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
     };
     const next = { ...original, reviewDecision: input.decision, reviewRevision: nextReviewRevision, currentReview: review, revision: original.revision + 1, archiveSyncStatus: 'NeedsUpdate', updatedAt: timestamp };
     state.reviews.push(review);
+    state.noteDrafts.delete(`${original.id}:${input.reviewerId}`);
     state.samples[index] = next;
     return reviewSampleView(next, true);
   };
@@ -420,6 +421,10 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           return fulfillJson(route, reviewer);
         }
         if (method === 'GET' && /^\/api\/reviewers\/\d+\/statistics$/u.test(path)) return fulfillJson(route, statistics(url));
+        if (method === 'GET' && path === '/api/reviews') {
+          const sampleId = Number(url.searchParams.get('sampleId'));
+          return fulfillJson(route, pageValue(url, state.reviews.filter(review => review.sampleId === sampleId)));
+        }
         const noteDraftMatch = /^\/api\/samples\/(\d+)\/review-note-draft$/u.exec(path);
         if (noteDraftMatch) {
           const sampleId = Number(noteDraftMatch[1]);
@@ -436,9 +441,18 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
         }
         if (method === 'POST' && path === '/api/reviews') {
           const sample = state.samples.find(item => item.id === body.sampleId);
+          if (!sample) return fulfillJson(route, { error: { code: 'not_found', message: 'Sample not found.', details: null } }, 404);
+          if (body.expectedSampleRevision !== sample.revision || body.expectedReviewRevision !== sample.reviewRevision) return fulfillJson(route, { error: { code: 'review_revision_conflict', message: 'The review changed.', details: null } }, 409);
+          if (body.decision === 'Pending' && sample.reviewDecision === 'Pending') return fulfillJson(route, { error: { code: 'invalid_request', message: 'Pending review cannot be withdrawn.', details: null } }, 422);
           if (body.decision === 'Accepted' && sample?.generationCompatibility === 'NeedsRegeneration') return fulfillJson(route, { error: { code: 'generation_incompatible', message: 'The generation is incompatible.', details: { resource: 'sample', id: sample.id, generationCompatibility: 'NeedsRegeneration' } } }, 422);
           const updated = updateSampleWithReview(body);
-          const next = state.samples.find(sample => sample.id > body.sampleId && sample.reviewDecision === 'Pending');
+          const queue = body.queue ?? {};
+          const next = state.samples.find(candidate => candidate.id > body.sampleId
+            && (queue.decision === undefined || queue.decision === 'All' || candidate.reviewDecision === queue.decision)
+            && (queue.datasetId === null || queue.datasetId === undefined || candidate.datasetId === queue.datasetId)
+            && (queue.protocol === null || queue.protocol === undefined || candidate.category.endsWith(`-${queue.protocol}`))
+            && (queue.relation === null || queue.relation === undefined || (candidate.category.startsWith('A-') ? 'Aligned' : 'Conflict') === queue.relation)
+            && (queue.direction === null || queue.direction === undefined || candidate.conflictDirection === queue.direction));
           return fulfillJson(route, { ...updated, nextReference: next ? { id: next.id, displayId: next.displayId, page: Math.ceil(next.id / 20) } : null }, 201);
         }
         if (method === 'POST' && path === '/api/reviews/batch') {
@@ -452,7 +466,7 @@ export function createBrowserApiFixture({ reviewers = Array.from({ length: 25 },
           const relation = url.searchParams.get('relation');
           const direction = url.searchParams.get('direction');
           const search = (url.searchParams.get('search') ?? '').trim().toLocaleLowerCase('en-US');
-          const values = state.samples.filter(sample => (!decision || sample.reviewDecision === decision)
+          const values = state.samples.filter(sample => (!decision || decision === 'All' || sample.reviewDecision === decision)
             && (!datasetId || sample.datasetId === datasetId)
             && (!protocol || sample.category.endsWith(`-${protocol}`))
             && (!relation || (sample.category.startsWith('A-') ? 'Aligned' : 'Conflict') === relation)

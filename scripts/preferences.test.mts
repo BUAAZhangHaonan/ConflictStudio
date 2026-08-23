@@ -7,7 +7,8 @@ import vm from 'node:vm';
 const require = createRequire(import.meta.url);
 const ts = require('../frontend/node_modules/typescript');
 const source = readFileSync(new URL('../frontend/src/preferences.ts', import.meta.url), 'utf8');
-const dialogSource = readFileSync(new URL('../frontend/src/app/FirstReviewerDialog.tsx', import.meta.url), 'utf8');
+const gateSource = readFileSync(new URL('../frontend/src/app/ReviewGate.tsx', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../frontend/src/app/App.tsx', import.meta.url), 'utf8');
 
 function loadPreferences(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial));
@@ -34,21 +35,23 @@ function loadPreferences(initial: Record<string, string> = {}) {
   return { preferences: module.exports, values };
 }
 
-test('read-only reviewer choice persists and selecting a reviewer clears it', () => {
+test('reviewer selection persists and clears without a read-only bypass', () => {
   const { preferences, values } = loadPreferences();
-  assert.equal(preferences.isReviewerPromptDismissed(), false);
-  preferences.dismissReviewerPrompt();
-  assert.equal(preferences.isReviewerPromptDismissed(), true);
-  assert.equal(values.get(preferences.REVIEWER_PROMPT_DISMISSED_STORAGE_KEY), 'true');
-
   preferences.setCurrentReviewer({ id: 7, name: 'Reviewer' });
-  assert.equal(preferences.isReviewerPromptDismissed(), false);
   assert.equal(values.get('conflictstudio.reviewer.id'), '7');
   assert.equal(values.get('conflictstudio.reviewer.name'), 'Reviewer');
+  preferences.setCurrentReviewer(null);
+  assert.equal(values.has('conflictstudio.reviewer.id'), false);
+  assert.equal(values.has('conflictstudio.reviewer.name'), false);
+  assert.doesNotMatch(source, /reviewer\.readOnly|PROMPT_DISMISSED|dismissReviewerPrompt|isReviewerPromptDismissed/u);
 });
 
-test('reviewer dialog uses the persistent read-only choice', () => {
-  assert.match(dialogSource, /useState\(isReviewerPromptDismissed\)/u);
-  assert.match(dialogSource, /dismissReviewerPrompt\(\);[\s\S]*setDismissed\(true\)/u);
-  assert.match(source, /setCurrentReviewer[\s\S]*removeItem\(REVIEWER_PROMPT_DISMISSED_STORAGE_KEY\)/u);
+test('review routes require one API-validated reviewer and keep the requested route', () => {
+  assert.match(appSource, /<Route element=\{<ReviewGate \/>\}>[\s\S]*path="\/review"[\s\S]*path="\/review\/:sampleId"/u);
+  assert.doesNotMatch(appSource, /FirstReviewerDialog/u);
+  assert.match(gateSource, /const reviewerState = useReviewerState\(reviewerPage\)/u);
+  assert.match(gateSource, /if \(currentReviewer !== null\) return <Outlet context=/u);
+  assert.match(gateSource, /setCurrentReviewer\(reviewer\)/u);
+  assert.match(gateSource, /useCreateReviewerMutation/u);
+  assert.doesNotMatch(gateSource, /readOnly|dismiss|navigate\(/iu);
 });

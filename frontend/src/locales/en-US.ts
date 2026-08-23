@@ -108,8 +108,6 @@ const enUS = {
     nameRequired: 'Enter a name.',
     nameInvalid: 'Enter a name that is not already in the list.',
     noCurrent: 'No name selected',
-    continueReadOnly: 'Continue without a name',
-    readOnlyHint: 'No reviewer is selected. Review actions are unavailable until you choose a name in Settings.',
   },
   workspace: {
     title: 'Workspace',

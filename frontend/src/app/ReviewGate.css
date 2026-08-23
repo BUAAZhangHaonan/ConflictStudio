@@ -1,0 +1,23 @@
+.review-gate {
+  width: min(42rem, 100%);
+  margin-inline: auto;
+}
+
+.review-gate__form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.review-gate__choices {
+  max-height: 28rem;
+  overflow-y: auto;
+}
+
+.review-gate__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 639px) {
+  .review-gate__actions .button { width: 100%; }
+}

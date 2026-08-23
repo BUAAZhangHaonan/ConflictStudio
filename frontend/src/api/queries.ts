@@ -12,7 +12,7 @@ import type {
   PromptTestCreate, Reviewer, ReviewerCreate,
   ReviewerRename, ReviewerStatistics, ReviewerStatisticsFilter,
   ReviewBatchSubmissionCreate, ReviewDecision,
-  ReviewNoteDraftRead, ReviewNoteDraftUpdate, ReviewQueue, ReviewSampleDetailRead,
+  ReviewNoteDraftRead, ReviewNoteDraftUpdate, ReviewQueue, ReviewResultRead, ReviewSampleDetailRead,
   ReviewSampleListRead, ReviewSubmissionCreate, ReviewSubmissionRead,
   SampleClassificationConversionUpdate,
   Scene, SceneCreate, SceneUpdate, VideoTestCreate,
@@ -57,6 +57,7 @@ const roots = {
   samples: ['samples'] as const,
   reviewSamples: ['reviewSamples'] as const,
   reviewNoteDrafts: ['reviewNoteDrafts'] as const,
+  reviewHistory: ['reviewHistory'] as const,
 };
 
 export const queryKeys = {
@@ -89,6 +90,7 @@ export const queryKeys = {
   reviewSamplesPage: (params: ReviewSampleListParams) => [...roots.reviewSamples, 'list', params] as const,
   reviewSampleDetail: (id: number) => [...roots.reviewSamples, 'detail', id] as const,
   reviewNoteDraft: (sampleId: number, reviewerId: number, sampleRevision: number) => [...roots.reviewNoteDrafts, sampleId, reviewerId, sampleRevision] as const,
+  reviewHistoryPage: (sampleId: number, page: number) => [...roots.reviewHistory, sampleId, page] as const,
 };
 
 function pagePath(path: string, page: number, params = new URLSearchParams()): string {
@@ -127,6 +129,10 @@ export const reviewSampleQueries = {
   note: (sampleId: number, reviewerId: number, sampleRevision: number) => queryOptions({
     queryKey: queryKeys.reviewNoteDraft(sampleId, reviewerId, sampleRevision),
     queryFn: () => apiRequest<ReviewNoteDraftRead>(`/api/samples/${sampleId}/review-note-draft?${new URLSearchParams({ reviewerId: String(reviewerId) }).toString()}`),
+  }),
+  history: (sampleId: number, page: number) => queryOptions({
+    queryKey: queryKeys.reviewHistoryPage(sampleId, page),
+    queryFn: () => apiRequest<Page<ReviewResultRead>>(`/api/reviews?${new URLSearchParams({ sampleId: String(sampleId), page: String(page) }).toString()}`),
   }),
 };
 
@@ -223,9 +229,10 @@ export function useReviewerQuery(id: number | null, enabled = true) { return use
 export function useArchivesQuery(page = 1) { return useQuery(generationQueries.archives(page)); }
 export function useSamplesQuery(filter: SampleQueryFilter = {}, page = 1) { return useQuery(generationQueries.samples(filter, page)); }
 export function useReviewerStatisticsQuery(reviewerId: number | null, filter: ReviewerStatisticsFilter) { return useQuery({ ...generationQueries.reviewerStatistics(reviewerId ?? 0, filter), enabled: reviewerId !== null && filter.startDate !== undefined && filter.endDate !== undefined }); }
-export function useReviewSampleListQuery(params: ReviewSampleListParams) { return useQuery(reviewSampleQueries.list(params)); }
+export function useReviewSampleListQuery(params: ReviewSampleListParams, enabled = true) { return useQuery({ ...reviewSampleQueries.list(params), enabled }); }
 export function useReviewSampleDetailQuery(id: number | null) { return useQuery({ ...reviewSampleQueries.detail(id ?? 0), enabled: id !== null }); }
 export function useReviewNoteDraftQuery(sampleId: number | null, reviewerId: number | null, sampleRevision: number | null) { return useQuery({ ...reviewSampleQueries.note(sampleId ?? 0, reviewerId ?? 0, sampleRevision ?? 0), enabled: sampleId !== null && reviewerId !== null && sampleRevision !== null }); }
+export function useReviewHistoryQuery(sampleId: number | null, page: number, enabled = true) { return useQuery({ ...reviewSampleQueries.history(sampleId ?? 0, page), enabled: enabled && sampleId !== null }); }
 
 export function useReleaseGpuMutation() {
   const client = useQueryClient();
@@ -296,7 +303,7 @@ export function useDiscardConfigurationAssistantMutation() {
 }
 
 async function invalidateReviewData(client: QueryClient): Promise<void> {
-  await Promise.all([client.invalidateQueries({ queryKey: roots.samples }), client.invalidateQueries({ queryKey: roots.reviewSamples }), client.invalidateQueries({ queryKey: roots.reviewNoteDrafts }), client.invalidateQueries({ queryKey: ['reviewerStatistics'] }), client.invalidateQueries({ queryKey: roots.archives })]);
+  await Promise.all([client.invalidateQueries({ queryKey: roots.samples }), client.invalidateQueries({ queryKey: roots.reviewSamples }), client.invalidateQueries({ queryKey: roots.reviewNoteDrafts }), client.invalidateQueries({ queryKey: roots.reviewHistory }), client.invalidateQueries({ queryKey: ['reviewerStatistics'] }), client.invalidateQueries({ queryKey: roots.archives })]);
 }
 export function useCreateReviewerMutation() {
   const client = useQueryClient();

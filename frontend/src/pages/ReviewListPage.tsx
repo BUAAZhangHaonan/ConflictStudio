@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiErrorMessage } from '../api/client';
-import type { ReviewDecision, ReviewQueue, ReviewSampleListRead } from '../api/contracts';
-import { useDatasetsQuery, useReviewSampleListQuery, useSubmitReviewBatchMutation } from '../api/queries';
+import type { ReviewBatchItemCreate, ReviewDecision, ReviewQueue, ReviewSampleListRead } from '../api/contracts';
+import { reviewSampleQueries, useDatasetsQuery, useReviewSampleListQuery, useSubmitReviewBatchMutation } from '../api/queries';
+import { useReviewGateReviewer } from '../app/ReviewGate';
 import { Button, ConfirmDialog, Field, PageHeader, Pagination, StatusBadge, TableShell } from '../components';
-import { usePreferences } from '../preferences';
 import {
   buildReviewListLocation,
   currentPageSelection,
@@ -26,8 +27,8 @@ export const REVIEW_LIST_VISIBLE_FIELDS = [
   'trueEmotion',
   'apparentEmotion',
   'conflictDirection',
-  'gender',
   'reviewDecision',
+  'generationCompatibility',
 ] as const;
 
 function relationCode(value: ReviewSampleListRead['relation']): string {
@@ -63,8 +64,9 @@ const defaultReviewListLocation: ReviewListLocationState = {
 export function ReviewListPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
-  const preferences = usePreferences();
+  const reviewer = useReviewGateReviewer();
   const queryString = searchParams.toString();
   const locationState = useMemo(() => readReviewListLocation(queryString), [queryString]);
   const returnTo = queryString ? `/review?${queryString}` : '/review';
@@ -92,8 +94,10 @@ export function ReviewListPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchDecision, setBatchDecision] = useState<Exclude<ReviewDecision, 'Pending'>>('Accepted');
   const [batchConfirmOpen, setBatchConfirmOpen] = useState(false);
+  const [batchItems, setBatchItems] = useState<ReviewBatchItemCreate[] | null>(null);
+  const [batchPreparing, setBatchPreparing] = useState(false);
+  const [batchPrepareError, setBatchPrepareError] = useState<unknown>(null);
   const restoredLocationRef = useRef<string | null>(null);
-  const canReview = preferences.currentReviewerId !== null;
   const locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
   const emotionLabel = (value: string) => {
     const key = `emotion.${emotionKey(value)}`;
@@ -103,10 +107,23 @@ export function ReviewListPage() {
   const datasets = datasetsQuery.data?.items ?? [];
   const pageSelection = currentPageSelection(selectedIds, samples.map(sample => sample.id));
   const selectedSamples = samples.filter(sample => pageSelection.has(sample.id));
+  const acceptedBlockedCount = batchDecision === 'Accepted'
+    ? selectedSamples.filter(sample => sample.generationCompatibility === 'NeedsRegeneration').length
+    : 0;
+  const activeFilterCount = [
+    locationState.search,
+    locationState.datasetId,
+    locationState.decision === 'All' ? null : locationState.decision,
+    locationState.protocol,
+    locationState.relation,
+    locationState.direction,
+  ].filter(value => value !== null).length;
 
   useEffect(() => {
     setSelectedIds(new Set());
     setBatchConfirmOpen(false);
+    setBatchItems(null);
+    setBatchPrepareError(null);
   }, [
     locationState.search,
     locationState.datasetId,
@@ -116,12 +133,6 @@ export function ReviewListPage() {
     locationState.direction,
     locationState.page,
   ]);
-
-  useEffect(() => {
-    if (canReview) return;
-    setSelectedIds(new Set());
-    setBatchConfirmOpen(false);
-  }, [canReview]);
 
   useLayoutEffect(() => {
     if (!listQuery.isSuccess || restoredLocationRef.current === returnTo) return;
@@ -146,11 +157,10 @@ export function ReviewListPage() {
 
   const openDetail = (sample: ReviewSampleListRead) => {
     saveReviewListState({ returnTo, page: locationState.page, scrollY: window.scrollY });
-    navigate(reviewDetailLocation(sample.id));
+    navigate(reviewDetailLocation(sample.id, returnTo));
   };
 
   const toggleSample = (sampleId: number, selected: boolean) => {
-    if (!canReview) return;
     setSelectedIds(current => {
       const next = currentPageSelection(current, samples.map(sample => sample.id));
       if (selected) next.add(sampleId);
@@ -160,24 +170,40 @@ export function ReviewListPage() {
   };
 
   const togglePage = (selected: boolean) => {
-    if (!canReview) return;
     setSelectedIds(selected ? new Set(samples.map(sample => sample.id)) : new Set());
   };
 
-  const submitBatch = () => {
-    if (preferences.currentReviewerId === null || selectedSamples.length === 0) return;
-    batchMutation.mutate({
-      items: selectedSamples.map(sample => ({
+  const prepareBatch = async () => {
+    if (selectedSamples.length === 0 || acceptedBlockedCount > 0) return;
+    setBatchPreparing(true);
+    setBatchPrepareError(null);
+    batchMutation.reset();
+    try {
+      const drafts = await Promise.all(selectedSamples.map(sample => (
+        queryClient.fetchQuery(reviewSampleQueries.note(sample.id, reviewer.id, sample.revision))
+      )));
+      setBatchItems(selectedSamples.map((sample, index) => ({
         sampleId: sample.id,
-        reviewerId: preferences.currentReviewerId as number,
+        reviewerId: reviewer.id,
         decision: batchDecision,
-        expectedRevision: sample.revision,
+        expectedSampleRevision: sample.revision,
         expectedReviewRevision: sample.reviewRevision,
-        expectedNoteDraftRevision: 0,
-      })),
-    }, {
+        expectedNoteDraftRevision: drafts[index].revision,
+      })));
+      setBatchConfirmOpen(true);
+    } catch (error) {
+      setBatchPrepareError(error);
+    } finally {
+      setBatchPreparing(false);
+    }
+  };
+
+  const submitBatch = () => {
+    if (batchItems === null || batchItems.length === 0) return;
+    batchMutation.mutate({ items: batchItems }, {
       onSuccess: () => {
         setBatchConfirmOpen(false);
+        setBatchItems(null);
         setSelectedIds(new Set());
       },
     });
@@ -185,16 +211,12 @@ export function ReviewListPage() {
 
   const columns = [
     { key: 'selection', label: <span className="visually-hidden">{t('review.selectAllVisible')}</span> },
-    { key: REVIEW_LIST_VISIBLE_FIELDS[0], label: t('review.sampleId') },
-    { key: REVIEW_LIST_VISIBLE_FIELDS[1], label: t('review.video') },
+    { key: 'sample', label: t('review.sampleId') },
     { key: REVIEW_LIST_VISIBLE_FIELDS[2], label: t('fields.dataset') },
-    { key: REVIEW_LIST_VISIBLE_FIELDS[3], label: t('review.list.relationFilter') },
-    { key: REVIEW_LIST_VISIBLE_FIELDS[4], label: t('review.protocolFilter') },
-    { key: REVIEW_LIST_VISIBLE_FIELDS[5], label: t('review.trueEmotion') },
-    { key: REVIEW_LIST_VISIBLE_FIELDS[6], label: t('review.apparentEmotion') },
+    { key: 'type', label: t('review.list.type') },
+    { key: 'emotions', label: t('review.list.emotions') },
     { key: REVIEW_LIST_VISIBLE_FIELDS[7], label: t('review.list.directionFilter') },
-    { key: REVIEW_LIST_VISIBLE_FIELDS[8], label: t('review.list.gender') },
-    { key: REVIEW_LIST_VISIBLE_FIELDS[9], label: t('review.decisionFilter') },
+    { key: 'status', label: t('review.decisionFilter') },
   ];
 
   return (
@@ -204,14 +226,16 @@ export function ReviewListPage() {
         actions={<span className="review-list__count">{t('review.queueCount', { visible: samples.length, total: listQuery.data?.total ?? 0 })}</span>}
       />
 
-      {!canReview ? <section className="generation-feedback" role="status"><p>{t('reviewer.readOnlyHint')}</p></section> : null}
-
-      <section className="panel review-list__filters" aria-label={t('review.aria.filters')}>
-        <div className="section-header">
-          <h2>{t('review.filters')}</h2>
-          <Button variant="quiet" onClick={clearFilters}>{t('actions.clearFilters')}</Button>
-        </div>
-        <div className="review-list__filter-grid">
+      <details className="panel review-list__filters">
+        <summary>
+          <span>{t('review.filters')}</span>
+          <span>{activeFilterCount > 0 ? t('review.activeFilters', { count: activeFilterCount }) : t('review.noActiveFilters')}</span>
+        </summary>
+        <div className="review-list__filter-body" aria-label={t('review.aria.filters')}>
+          <div className="review-list__filter-actions">
+            <Button variant="quiet" onClick={clearFilters}>{t('actions.clearFilters')}</Button>
+          </div>
+          <div className="review-list__filter-grid">
           <Field label={t('review.searchLabel')} htmlFor="review-list-search">
             <input
               id="review-list-search"
@@ -263,8 +287,9 @@ export function ReviewListPage() {
               <option value="Text">{t('direction.Text')}</option>
             </select>
           </Field>
+          </div>
         </div>
-      </section>
+      </details>
 
       {listQuery.error ? (
         <section className="state-view" role="alert">
@@ -290,7 +315,6 @@ export function ReviewListPage() {
               <input
                 type="checkbox"
                 checked={samples.length > 0 && pageSelection.size === samples.length}
-                disabled={!canReview}
                 onChange={event => togglePage(event.target.checked)}
               />
               <span>{t('review.selectAllVisible')}</span>
@@ -305,13 +329,12 @@ export function ReviewListPage() {
                   <input
                     type="checkbox"
                     checked={pageSelection.has(sample.id)}
-                    disabled={!canReview}
                     aria-label={t('review.list.selectSample', { id: sample.displayId })}
                     onChange={event => toggleSample(sample.id, event.target.checked)}
                   />
                 </td>
-                <th scope="row"><button type="button" className="table-link" onClick={() => openDetail(sample)}>{sample.displayId}</button></th>
-                <td className="review-list__media-cell">
+                <th scope="row" className="review-list__sample-cell">
+                  <button type="button" className="table-link" onClick={() => openDetail(sample)}>{sample.displayId}</button>
                   <video
                     src={sample.primaryMedia.url}
                     muted
@@ -319,15 +342,15 @@ export function ReviewListPage() {
                     preload="metadata"
                     aria-label={t('review.primaryMediaAlt', { id: sample.displayId })}
                   />
-                </td>
+                </th>
                 <td>{sample.datasetName}</td>
-                <td>{relationCode(sample.relation)}</td>
-                <td>{protocolCode(sample.protocol)}</td>
-                <td className="review-list__emotion">{emotionLabel(sample.trueEmotion)}</td>
-                <td className="review-list__emotion">{emotionLabel(sample.apparentEmotion)}</td>
+                <td>{t('review.list.typeValue', { relation: relationCode(sample.relation), protocol: protocolCode(sample.protocol) })}</td>
+                <td className="review-list__emotion">{emotionLabel(sample.trueEmotion)} <span aria-hidden="true">→</span> {emotionLabel(sample.apparentEmotion)}</td>
                 <td>{sample.conflictDirection ? t(`direction.${sample.conflictDirection}`) : t('review.list.directionNotNeeded')}</td>
-                <td>{t(`review.gender.${sample.gender}`)}</td>
-                <td><StatusBadge label={t(`status.review.${sample.reviewDecision}`)} kind={reviewStatusKind(sample.reviewDecision)} /></td>
+                <td className="review-list__status-cell">
+                  <StatusBadge label={t(`status.review.${sample.reviewDecision}`)} kind={reviewStatusKind(sample.reviewDecision)} />
+                  {sample.generationCompatibility === 'NeedsRegeneration' ? <small>{t('review.compatibility.short')}</small> : null}
+                </td>
               </tr>
             ))}
           </TableShell>
@@ -340,7 +363,6 @@ export function ReviewListPage() {
                     <input
                       type="checkbox"
                       checked={pageSelection.has(sample.id)}
-                      disabled={!canReview}
                       aria-label={t('review.list.selectSample', { id: sample.displayId })}
                       onChange={event => toggleSample(sample.id, event.target.checked)}
                     />
@@ -357,16 +379,13 @@ export function ReviewListPage() {
                 />
                 <dl>
                   <div><dt>{t('fields.dataset')}</dt><dd>{sample.datasetName}</dd></div>
-                  <div><dt>{t('review.list.relationFilter')}</dt><dd>{relationCode(sample.relation)}</dd></div>
-                  <div><dt>{t('review.protocolFilter')}</dt><dd>{protocolCode(sample.protocol)}</dd></div>
-                  <div><dt>{t('review.trueEmotion')}</dt><dd>{emotionLabel(sample.trueEmotion)}</dd></div>
-                  <div><dt>{t('review.apparentEmotion')}</dt><dd>{emotionLabel(sample.apparentEmotion)}</dd></div>
+                  <div><dt>{t('review.list.type')}</dt><dd>{t('review.list.typeValue', { relation: relationCode(sample.relation), protocol: protocolCode(sample.protocol) })}</dd></div>
+                  <div><dt>{t('review.list.emotions')}</dt><dd>{emotionLabel(sample.trueEmotion)} <span aria-hidden="true">→</span> {emotionLabel(sample.apparentEmotion)}</dd></div>
                   <div>
                     <dt>{t('review.list.directionFilter')}</dt>
                     <dd>{sample.conflictDirection ? t(`direction.${sample.conflictDirection}`) : t('review.list.directionNotNeeded')}</dd>
                   </div>
-                  <div><dt>{t('review.list.gender')}</dt><dd>{t(`review.gender.${sample.gender}`)}</dd></div>
-                  <div><dt>{t('review.decisionFilter')}</dt><dd>{t(`status.review.${sample.reviewDecision}`)}</dd></div>
+                  {sample.generationCompatibility === 'NeedsRegeneration' ? <div><dt>{t('review.compatibility.label')}</dt><dd>{t('review.compatibility.short')}</dd></div> : null}
                 </dl>
                 <Button variant="secondary" onClick={() => openDetail(sample)}>{t('review.list.openSample')}</Button>
               </li>
@@ -385,8 +404,11 @@ export function ReviewListPage() {
               <select
                 id="review-list-batch-decision"
                 value={batchDecision}
-                disabled={!canReview}
-                onChange={event => setBatchDecision(event.target.value as Exclude<ReviewDecision, 'Pending'>)}
+                onChange={event => {
+                  setBatchDecision(event.target.value as Exclude<ReviewDecision, 'Pending'>);
+                  setBatchItems(null);
+                  setBatchPrepareError(null);
+                }}
               >
                 <option value="Accepted">{t('status.review.Accepted')}</option>
                 <option value="Rejected">{t('status.review.Rejected')}</option>
@@ -394,15 +416,18 @@ export function ReviewListPage() {
             </Field>
             <Button
               variant="primary"
-              disabled={!canReview || selectedSamples.length === 0}
-              onClick={() => setBatchConfirmOpen(true)}
+              busy={batchPreparing}
+              disabled={selectedSamples.length === 0 || acceptedBlockedCount > 0}
+              onClick={() => void prepareBatch()}
             >
               {t('review.applyBatch')}
             </Button>
           </section>
+          {acceptedBlockedCount > 0 ? <p className="field-error" role="status">{t('review.batchCompatibilityBlocked', { count: acceptedBlockedCount })}</p> : null}
         </section>
       )}
 
+      {batchPrepareError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(batchPrepareError, locale)}</p></section> : null}
       {batchMutation.error ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(batchMutation.error, locale)}</p></section> : null}
 
       <ConfirmDialog
@@ -413,8 +438,11 @@ export function ReviewListPage() {
         cancelLabel={t('actions.cancel')}
         closeLabel={t('actions.close')}
         busy={batchMutation.isPending}
-        confirmDisabled={!canReview || selectedSamples.length === 0}
-        onClose={() => setBatchConfirmOpen(false)}
+        confirmDisabled={batchItems === null || batchItems.length === 0}
+        onClose={() => {
+          setBatchConfirmOpen(false);
+          setBatchItems(null);
+        }}
         onConfirm={submitBatch}
       />
     </section>

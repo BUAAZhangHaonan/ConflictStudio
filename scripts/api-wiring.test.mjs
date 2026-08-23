@@ -41,7 +41,7 @@ const mainSource = read('../frontend/src/main.tsx');
 const appSource = read('../frontend/src/app/App.tsx');
 const preferencesSource = read('../frontend/src/preferences.ts');
 const appShellSource = read('../frontend/src/components/AppShell.tsx');
-const firstReviewerSource = read('../frontend/src/app/FirstReviewerDialog.tsx');
+const reviewGateSource = read('../frontend/src/app/ReviewGate.tsx');
 const packageSource = read('../package.json');
 const drawioSource = read('../docs/generation-flow.drawio');
 const generationLocaleSource = read('../frontend/src/locales/features/generation.ts');
@@ -166,8 +166,9 @@ test('queries and mutations use only current backend generation and review endpo
 });
 
 test('review uses separate list and detail routes with current mutations and safe return state', () => {
-  for (const token of ['useReviewSampleListQuery', 'useSubmitReviewBatchMutation', 'saveReviewListState', 'reviewDetailLocation', 'window.scrollY']) assert.match(reviewListSource, new RegExp(token));
-  for (const token of ['useReviewSampleDetailQuery', 'useReviewNoteDraftQuery', 'usePutReviewNoteDraftMutation', 'useSubmitReviewMutation', 'useConvertSampleClassificationMutation', 'expectedNoteDraftRevision', 'nextReference', 'safeReviewReturnTarget']) assert.match(reviewDetailSource, new RegExp(token));
+  for (const token of ['useReviewGateReviewer', 'useReviewSampleListQuery', 'useSubmitReviewBatchMutation', 'reviewSampleQueries.note', 'saveReviewListState', 'reviewDetailLocation', 'window.scrollY']) assert.match(reviewListSource, new RegExp(token.replace('.', '\\.')));
+  for (const token of ['useReviewGateReviewer', 'useReviewSampleDetailQuery', 'useReviewHistoryQuery', 'useReviewNoteDraftQuery', 'usePutReviewNoteDraftMutation', 'useSubmitReviewMutation', 'useConvertSampleClassificationMutation', 'expectedSampleRevision', 'expectedNoteDraftRevision', 'nextReference', 'safeReviewListReturnTarget']) assert.match(reviewDetailSource, new RegExp(token));
+  assert.match(appSource, /<Route element=\{<ReviewGate \/>\}>/u);
   assert.match(appSource, /path="\/review" element=\{<ReviewListPage \/>\}/u);
   assert.match(appSource, /path="\/review\/:sampleId" element=\{<ReviewDetailPage \/>\}/u);
   assert.doesNotMatch(`${reviewListSource}\n${reviewDetailSource}`, /seed|positivePrompt|negativePrompt|generationRecord|gpuSlot|shortcut/iu);
@@ -437,21 +438,18 @@ test('relationship guide is accessible and the DrawIO source has two pages', () 
 });
 
 test('production reviewer identity uses validated Reviewer API state and clears missing selections', () => {
-  const sources = `${settingsSource}\n${preferencesSource}\n${appShellSource}\n${firstReviewerSource}`;
+  const sources = `${settingsSource}\n${preferencesSource}\n${appShellSource}\n${reviewGateSource}`;
   assert.doesNotMatch(sources, /林然|陈宁|Lin Ran|Chen Ning/u);
   assert.doesNotMatch(sources, /DEFAULT_REVIEWER|presetReviewer|mockReviewer/u);
   assert.match(appShellSource, /preferences\.currentReviewerName/u);
-  assert.match(firstReviewerSource, /useReviewerState\(reviewerPage\)/u);
-  assert.match(firstReviewerSource, /preferences\.currentReviewerId === null && currentReviewer === null/u);
+  assert.match(reviewGateSource, /useReviewerState\(reviewerPage\)/u);
+  assert.match(reviewGateSource, /if \(currentReviewer !== null\) return <Outlet context=/u);
   assert.match(preferencesSource, /const currentReviewer: Reviewer \| null = reviewersQuery\.isSuccess[\s\S]*listedReviewer \?\? currentReviewerQuery\.data \?\? null/u);
   assert.match(preferencesSource, /currentReviewerId: currentReviewer\?\.id \?\? null/u);
   assert.match(preferencesSource, /const missingReviewer = currentReviewerQuery\.error instanceof ApiError && currentReviewerQuery\.error\.status === 404/u);
   assert.match(preferencesSource, /if \(missingReviewer\) setCurrentReviewer\(null\)/u);
-  assert.match(firstReviewerSource, /reviewers\.length === 0/u);
-  assert.match(firstReviewerSource, /const \[dismissed, setDismissed\] = useState\(isReviewerPromptDismissed\)/u);
-  assert.match(firstReviewerSource, /dismissReviewerPrompt\(\)/u);
-  assert.match(firstReviewerSource, /reviewer\.continueReadOnly/u);
-  assert.doesNotMatch(firstReviewerSource, /dismissible=\{false\}|onClose=\{\(\) => undefined\}/u);
+  assert.match(reviewGateSource, /reviewers\.length === 0/u);
+  assert.doesNotMatch(`${reviewGateSource}\n${preferencesSource}`, /readOnly|dismissReviewerPrompt|isReviewerPromptDismissed|PROMPT_DISMISSED/iu);
 });
 
 test('GPU and task failures are localized from stable fields instead of raw backend text', () => {

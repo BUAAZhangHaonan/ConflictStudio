@@ -14,6 +14,7 @@ const enUSSource = readFileSync(new URL('../frontend/src/locales/en-US.ts', impo
 const zhCNSource = readFileSync(new URL('../frontend/src/locales/zh-CN.ts', import.meta.url), 'utf8');
 const generationLocaleSource = readFileSync(new URL('../frontend/src/locales/features/generation.ts', import.meta.url), 'utf8');
 const workspaceLocaleSource = readFileSync(new URL('../frontend/src/locales/features/workspaceSettingsStatistics.ts', import.meta.url), 'utf8');
+const reviewLocaleSource = readFileSync(new URL('../frontend/src/locales/features/reviewArchive.ts', import.meta.url), 'utf8');
 
 function fixture(files) {
   const root = mkdtempSync(join(tmpdir(), 'conflictstudio-copy-check-'));
@@ -106,13 +107,12 @@ test('generation English copy has singular and plural counts', () => {
   assert.match(generationLocaleSource, /videoCount_one': '\{\{count\}\} video'/u);
 });
 
-test('dataset states and reviewer read-only guidance have complete English and Chinese copy', () => {
+test('dataset states and review gate guidance have complete English and Chinese copy', () => {
   assert.match(enUSSource, /dataset: \{ Active: 'Active', Disabled: 'Disabled', Inactive: 'Inactive' \}/u);
   assert.match(zhCNSource, /dataset: \{ Active: '已启用', Disabled: '已禁用', Inactive: '已停用' \}/u);
-  for (const key of ['continueReadOnly', 'readOnlyHint']) {
-    assert.match(enUSSource, new RegExp(`${key}:`));
-    assert.match(zhCNSource, new RegExp(`${key}:`));
-  }
+  assert.match(reviewLocaleSource, /title: 'Choose a reviewer'[\s\S]*title: '选择审核人'/u);
+  assert.match(reviewLocaleSource, /body: 'Review decisions and notes are saved under this name\.'/u);
+  assert.doesNotMatch(`${enUSSource}\n${zhCNSource}`, /continueReadOnly|readOnlyHint/u);
   assert.match(workspaceLocaleSource, /Disabled: 'Disabled',[\s\S]*?Inactive: 'Inactive'/u);
   assert.match(workspaceLocaleSource, /Disabled: '已禁用',[\s\S]*?Inactive: '已停用'/u);
 });
