@@ -25,7 +25,9 @@ function loadPreferences(initial: Record<string, string> = {}) {
     exports: module.exports,
     window: { localStorage },
     require: (specifier: string) => {
-      if (specifier === 'react') return { useSyncExternalStore: () => undefined };
+      if (specifier === 'react') return { useEffect: () => undefined, useSyncExternalStore: () => undefined };
+      if (specifier === './api/client') return { ApiError: class ApiError extends Error {} };
+      if (specifier === './api/queries') return { useReviewerQuery: () => undefined, useReviewersQuery: () => undefined };
       throw new Error('Unexpected import: ' + specifier);
     },
   });

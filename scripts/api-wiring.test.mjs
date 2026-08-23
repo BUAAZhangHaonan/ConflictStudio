@@ -182,14 +182,17 @@ test('statistics reads one real reviewer statistics response and renders only ei
   assert.doesNotMatch(statisticsSource, /getStatistics|13|mock|PageStateBoundary/u);
 });
 
-test('settings uses real health, dataset, GPU and reviewer queries with explicit refetch', () => {
-  for (const hook of ['useHealthQuery', 'useDatasetsQuery', 'useGpuSlotsQuery', 'useReviewersQuery', 'useCreateReviewerMutation', 'useRenameReviewerMutation']) assert.match(settingsSource, new RegExp(hook));
+test('settings uses real health, dataset, GPU and validated reviewer state with explicit refetch', () => {
+  for (const hook of ['useHealthQuery', 'useDatasetsQuery', 'useGpuSlotsQuery', 'useReviewerState', 'useCreateReviewerMutation', 'useRenameReviewerMutation']) assert.match(settingsSource, new RegExp(hook));
+  assert.match(settingsSource, /const reviewerState = useReviewerState\(reviewerPage\)/u);
+  assert.match(settingsSource, /const \{ preferences, reviewersQuery, currentReviewer \} = reviewerState/u);
   assert.match(settingsSource, /healthQuery\.refetch\(\)/u);
   assert.match(settingsSource, /gpuQuery\.refetch\(\)/u);
-  assert.match(settingsSource, /const reviewerPending = reviewersQuery\.isPending \|\| \(preferences\.currentReviewerId !== null && currentReviewerQuery\.isPending\)/u);
+  assert.match(settingsSource, /const retryReviewers = reviewerState\.retry/u);
+  assert.match(settingsSource, /const reviewerPending = reviewerState\.isPending/u);
+  assert.match(settingsSource, /const reviewerError = reviewerState\.error/u);
   assert.match(settingsSource, /const servicesPending = healthQuery\.isPending \|\| datasetsQuery\.isPending \|\| gpuQuery\.isPending/u);
-  assert.match(settingsSource, /preferences\.currentReviewerId === null \? \[\] : \[currentReviewerQuery\.refetch\(\)\]/u);
-  assert.doesNotMatch(settingsSource, /if \(reviewersQuery\.isPending|const queryError =/u);
+  assert.doesNotMatch(settingsSource, /useReviewersQuery|useReviewerQuery/u);
   assert.doesNotMatch(settingsSource, /setTimeout|700|statusReason|useMockRepository|Repository/u);
   assert.doesNotMatch(mainSource, /RepositoryProvider/u);
 });
@@ -433,12 +436,17 @@ test('relationship guide is accessible and the DrawIO source has two pages', () 
   assert.match(responsiveCss, /@media \(max-width: 390px\)[\s\S]*\.generate-nav[\s\S]*grid-template-columns: repeat\(3/u);
 });
 
-test('production reviewer identity comes only from the Reviewer API and user selection', () => {
+test('production reviewer identity uses validated Reviewer API state and clears missing selections', () => {
   const sources = `${settingsSource}\n${preferencesSource}\n${appShellSource}\n${firstReviewerSource}`;
   assert.doesNotMatch(sources, /林然|陈宁|Lin Ran|Chen Ning/u);
   assert.doesNotMatch(sources, /DEFAULT_REVIEWER|presetReviewer|mockReviewer/u);
   assert.match(appShellSource, /preferences\.currentReviewerName/u);
-  assert.match(firstReviewerSource, /useReviewersQuery\(reviewerPage\)/u);
+  assert.match(firstReviewerSource, /useReviewerState\(reviewerPage\)/u);
+  assert.match(firstReviewerSource, /preferences\.currentReviewerId === null && currentReviewer === null/u);
+  assert.match(preferencesSource, /const currentReviewer: Reviewer \| null = reviewersQuery\.isSuccess[\s\S]*listedReviewer \?\? currentReviewerQuery\.data \?\? null/u);
+  assert.match(preferencesSource, /currentReviewerId: currentReviewer\?\.id \?\? null/u);
+  assert.match(preferencesSource, /const missingReviewer = currentReviewerQuery\.error instanceof ApiError && currentReviewerQuery\.error\.status === 404/u);
+  assert.match(preferencesSource, /if \(missingReviewer\) setCurrentReviewer\(null\)/u);
   assert.match(firstReviewerSource, /reviewers\.length === 0/u);
   assert.match(firstReviewerSource, /const \[dismissed, setDismissed\] = useState\(isReviewerPromptDismissed\)/u);
   assert.match(firstReviewerSource, /dismissReviewerPrompt\(\)/u);
