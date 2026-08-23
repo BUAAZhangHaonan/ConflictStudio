@@ -51,8 +51,6 @@ import {
   ethnicities,
   genders,
   GenerationScaffold,
-  hideTestResult,
-  hiddenTestIds,
   jobStatusKind,
   localizedName,
   OperationFeedback,
@@ -142,7 +140,7 @@ export function TestPage() {
   const [verifyConfirmOpen, setVerifyConfirmOpen] = useState(false);
   const [inspectedJobId, setInspectedJobId] = useState<number | null>(null);
   const [promptTestJobId, setPromptTestJobId] = useState<number | null>(null);
-  const [hiddenIds, setHiddenIds] = useState(hiddenTestIds);
+  const [hiddenIds, setHiddenIds] = useState<number[]>([]);
 
   const contentQuery = useContentScriptsQuery(contentPage, {
     ...(debouncedContentSearch.trim() ? { search: debouncedContentSearch } : {}),
@@ -431,6 +429,7 @@ export function TestPage() {
           ) : (
             <fieldset className="generation-comparisons">
               <legend>{g('test.model')}</legend>
+              {!gpuQuery.isPending && availableGpuSlots.length === 0 ? <p className="generation-gpu-empty" role="status">{g('test.noAvailableGpu')}</p> : null}
               {form.comparisons.length > 1 ? <Field label={g('test.execution')} htmlFor="test-execution"><select id="test-execution" value={form.executionMode} onChange={event => setForm(current => ({ ...current, executionMode: event.target.value as TestExecutionMode }))}><option value="Parallel">{g('test.parallel')}</option><option value="Serial">{g('test.serial')}</option></select></Field> : null}
               {form.comparisons.map((comparison, index) => <div className="generation-comparisons__row" key={index}>
                 <Field label={g('test.model')} htmlFor={'test-model-' + index}><select id={'test-model-' + index} value={comparison.model} onChange={event => { const model = event.target.value as ModelName; setForm(current => ({ ...current, comparisons: current.comparisons.map((item, itemIndex) => itemIndex === index ? { ...item, model, precision: precisionForModel(model, item.precision) } : item) })); }}>{models.map(value => <option key={value} value={value}>{g(('model.' + value) as GenerationKey)}</option>)}</select></Field>
@@ -438,7 +437,7 @@ export function TestPage() {
                 <Field label={g('test.gpu')} htmlFor={'test-gpu-' + index}><select id={'test-gpu-' + index} value={comparison.gpuSlot} onChange={event => setForm(current => ({ ...current, comparisons: current.comparisons.map((item, itemIndex) => itemIndex === index ? { ...item, gpuSlot: event.target.value as GpuSlotName } : item) }))}>{availableGpuSlots.map(value => <option key={value.slot} value={value.slot}>{value.slot}</option>)}</select></Field>
                 {form.comparisons.length > 1 ? <Button variant="quiet" onClick={() => setForm(current => ({ ...current, comparisons: current.comparisons.filter((_, itemIndex) => itemIndex !== index) }))}>{g('test.removeComparison')}</Button> : null}
               </div>)}
-              {form.comparisons.length < 2 ? <Button variant="secondary" onClick={addComparison}>{g('test.addComparison')}</Button> : null}
+              {availableGpuSlots.length > 0 && form.comparisons.length < 2 ? <Button variant="secondary" onClick={addComparison}>{g('test.addComparison')}</Button> : null}
             </fieldset>
           )}
 
@@ -466,7 +465,7 @@ export function TestPage() {
       <section className="panel generation-test-history" aria-labelledby="test-latest-title">
         <div className="section-header"><div><h2 id="test-latest-title">{g('test.latest')}</h2><p>{g('test.latestHint')}</p></div><Link className="button button--secondary" to="/generate/results?tab=test">{g('test.viewAll')}</Link></div>
         <p className="generation-isolation-note">{g('test.isolation')}</p>
-        {recent.length === 0 ? <p>{g('state.empty')}</p> : <ul className="generation-job-list">{recent.map(job => <li key={job.id}><div className="generation-job-row"><div><strong>{job.displayName}</strong><span>{g(('source.' + job.source) as GenerationKey)}</span></div><StatusBadge label={g(('job.' + job.status) as GenerationKey)} kind={jobStatusKind(job.status)} /><span>{profileLabel(job.model, job.precision)}</span><time dateTime={job.updatedAt}>{formatDateTime(job.updatedAt)}</time><div className="generation-row-actions"><Link className="button button--quiet" to={'/generate/results?tab=test&job=' + job.id}>{g('common.view')}</Link><Button variant="quiet" onClick={() => setHiddenIds(hideTestResult(job.id))}>{g('common.hide')}</Button></div></div></li>)}</ul>}
+        {recent.length === 0 ? <p>{g('state.empty')}</p> : <ul className="generation-job-list">{recent.map(job => <li key={job.id}><div className="generation-job-row"><div><strong>{job.displayName}</strong><span>{g(('source.' + job.source) as GenerationKey)}</span></div><StatusBadge label={g(('job.' + job.status) as GenerationKey)} kind={jobStatusKind(job.status)} /><span>{profileLabel(job.model, job.precision)}</span><time dateTime={job.updatedAt}>{formatDateTime(job.updatedAt)}</time><div className="generation-row-actions"><Link className="button button--quiet" to={'/generate/results?tab=test&job=' + job.id}>{g('common.view')}</Link><Button variant="quiet" onClick={() => setHiddenIds(current => current.includes(job.id) ? current : [...current, job.id])}>{g('common.hide')}</Button></div></div></li>)}</ul>}
       </section>
 
       <ConfirmDialog open={runConfirmOpen} title={g('test.runTitle')} body={g('test.runBody')} confirmLabel={g('test.run')} cancelLabel={g('common.cancel')} closeLabel={g('common.close')} onConfirm={() => void runTest(false)} onClose={() => setRunConfirmOpen(false)} busy={promptTestMutation.isPending || videoTestMutation.isPending} />

@@ -284,8 +284,9 @@ test('formal generation uses explicit valid combinations and current preview and
   assert.equal(productionPageSource.includes('preview?.allocations.slice((previewPage - 1) * 20, previewPage * 20)'), true);
   assert.match(productionPageSource, /expectedGpuRevisions: preview\.gpuRevisions/u);
   assert.match(productionPageSource, /const unsavedDialog = useUnsavedChanges\(dirty\)/u);
-  assert.match(productionPageSource, /userEdited && JSON\.stringify\(form\) !== savedFormSignature/u);
-  assert.match(productionPageSource, /setUserEdited\(false\)/u);
+  assert.match(productionPageSource, /const dirty = formSignature !== savedFormSignature/u);
+  assert.match(productionPageSource, /const preview = !dirty && previewMutation\.data\?\.batchDraftId === savedDraft\?\.id/u);
+  assert.match(productionPageSource, /const markDirty = \(update:[\s\S]*?setForm\(update\);[\s\S]*?clearPreview\(\);/u);
   assert.match(productionPageSource, /production-dataset-search/);
   assert.match(productionPageSource, /production-content-search/);
   assert.match(productionPageSource, /\{unsavedDialog\}/u);

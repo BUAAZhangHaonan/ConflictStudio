@@ -16,6 +16,8 @@ const editorsSource = read('../frontend/src/pages/generate/TestResources.tsx');
 const assistantSource = read('../frontend/src/pages/generate/ResourceAssistantPanel.tsx');
 const testPageSource = read('../frontend/src/pages/generate/TestPage.tsx');
 const productionSource = read('../frontend/src/pages/generate/ProductionPage.tsx');
+const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
+const generationLocaleSource = read('../frontend/src/locales/features/generation.ts');
 const resultsModelSource = read('../frontend/src/pages/generate/resultsModel.ts');
 const querySource = read('../frontend/src/api/queries.ts');
 const contractSource = read('../frontend/src/api/contracts.ts');
@@ -183,7 +185,24 @@ test('Preview saves or updates the internal draft before requesting allocations'
   assert.equal(saveIndex >= 0 && previewIndex > saveIndex, true);
   assert.match(productionSource, /expectedRevision: value\.revision/u);
   assert.doesNotMatch(productionSource, /saveConfirmOpen|production\.saveTitle|<GpuPanel/u);
-  assert.match(productionSource, /disabled=\{saveMutation\.isPending \|\| previewMutation\.isPending\}/u);
+  assert.match(productionSource, /disabled=\{gpuQuery\.isPending \|\| availableGpuOptions\.length === 0 \|\| saveMutation\.isPending \|\| previewMutation\.isPending\}/u);
+  assert.match(productionSource, /const signature = formSignature;[\s\S]*?setSavedFormSignature\(signature\);[\s\S]*?previewMutation\.mutateAsync/u);
+});
+
+test('every Production business edit clears the current preview and requires another saved preview', () => {
+  assert.match(productionSource, /const clearPreview = \(\) => \{[\s\S]*?previewMutation\.reset\(\);[\s\S]*?setSubmitConfirmOpen\(false\);/u);
+  assert.match(productionSource, /const markDirty = \(update:[\s\S]*?setForm\(update\);[\s\S]*?clearPreview\(\);/u);
+  assert.equal(productionSource.match(/\bsetForm\(/gu)?.length, 1, 'Production form updates must pass through markDirty.');
+  assert.doesNotMatch(productionSource, /onChangeCapture|userEdited/u);
+  assert.match(productionSource, /const dirty = formSignature !== savedFormSignature;/u);
+  assert.match(productionSource, /const preview = !dirty && previewMutation\.data\?\.batchDraftId === savedDraft\?\.id/u);
+  assert.match(productionSource, /if \(!savedDraft \|\| !preview \|\| dirty\)/u);
+  for (const control of [
+    'production-name', 'production-dataset', 'production-direction', 'production-template', 'production-version',
+    'production-age-', 'production-gender-', 'production-ethnicity-', 'production-seeds', 'production-model',
+  ]) {
+    assert.match(productionSource, new RegExp(`${control.replaceAll('-', '\\-')}[^\\n]+markDirty`));
+  }
 });
 
 test('Test and Production use only API-reported Available GPU slots and no literal slot choice', () => {
@@ -192,6 +211,18 @@ test('Test and Production use only API-reported Available GPU slots and no liter
   assert.doesNotMatch(testPageSource + productionSource + resultsModelSource, /['"]GPU[01]['"]/u);
   assert.match(testPageSource, /availableGpuSlots\.map\(value => <option/u);
   assert.match(productionSource, /availableGpuOptions\.map\(slot/u);
+  assert.match(testPageSource, /form\.kind === 'PromptTest'[\s\S]*?modelPrecisionIsValid/u);
+  assert.match(testPageSource, /availableGpuSlots\.length > 0 && form\.comparisons\.length < 2/u);
+  assert.match(testPageSource, /g\('test\.noAvailableGpu'\)/u);
+  assert.match(productionSource, /g\('production\.noAvailableGpu'\)/u);
+  assert.match(generationLocaleSource, /No GPU is available for a video test[\s\S]*?当前没有可用于视频测试的显卡/u);
+  assert.match(generationLocaleSource, /No GPU is available\. Wait for an available GPU[\s\S]*?当前没有可用显卡/u);
+});
+
+test('hiding a recent test is limited to the mounted Test session', () => {
+  assert.match(testPageSource, /useState<number\[\]>\(\[\]\)/u);
+  assert.match(testPageSource, /setHiddenIds\(current => current\.includes\(job\.id\) \? current : \[\.\.\.current, job\.id\]\)/u);
+  assert.doesNotMatch(testPageSource + sharedSource, /hiddenTestIds|hideTestResult|conflictstudio\.generation\.hiddenTests/u);
 });
 
 test('the bilingual generation navigation remains usable at 390 pixels', () => {

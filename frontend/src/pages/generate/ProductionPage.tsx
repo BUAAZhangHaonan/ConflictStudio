@@ -102,7 +102,6 @@ export function ProductionPage() {
   const [templatePage, setTemplatePage] = useState(1);
   const [versionPage, setVersionPage] = useState(1);
   const [savedDraft, setSavedDraft] = useState<BatchDraft | null>(null);
-  const [userEdited, setUserEdited] = useState(false);
   const [savedFormSignature, setSavedFormSignature] = useState(() => JSON.stringify(form));
   const [previewPage, setPreviewPage] = useState(1);
   const [validation, setValidation] = useState(false);
@@ -159,12 +158,13 @@ export function ProductionPage() {
   const availableGpuOptions = (gpuQuery.data ?? []).filter(slot => slot.availability === 'Available');
   const availableGpuSlots = new Set(availableGpuOptions.map(slot => slot.slot));
   const request = buildBatchDraftRequest(form, parseSeeds(form.seeds), availableGpuSlots);
-  const dirty = userEdited && JSON.stringify(form) !== savedFormSignature;
+  const formSignature = JSON.stringify(form);
+  const dirty = formSignature !== savedFormSignature;
   const people = form.demographics;
   const seedValues = parseSeeds(form.seeds) ?? [];
   const sceneCount = form.selectedContent.reduce((total, item) => total + item.selectedSceneIds.length, 0);
   const localTotal = sceneCount * people.length * seedValues.length;
-  const preview = previewMutation.data?.batchDraftId === savedDraft?.id ? previewMutation.data : null;
+  const preview = !dirty && previewMutation.data?.batchDraftId === savedDraft?.id ? previewMutation.data : null;
   const countSummary = (combinations: number, seeds: number, videos: number) => g('production.count', {
     combinations: g(combinations === 1 ? 'production.combinationCount_one' : 'production.combinationCount_other', { count: combinations }),
     seeds: g(seeds === 1 ? 'production.seedCount_one' : 'production.seedCount_other', { count: seeds }),
@@ -181,38 +181,52 @@ export function ProductionPage() {
 
   const unsavedDialog = useUnsavedChanges(dirty);
 
+  const clearPreview = () => {
+    previewMutation.reset();
+    setPreviewPage(1);
+    setValidation(false);
+    setSubmitConfirmOpen(false);
+    setSwitchConfirmOpen(false);
+  };
+
+  const markDirty = (update: (current: ProductionForm) => ProductionForm) => {
+    setForm(update);
+    clearPreview();
+  };
+
   useEffect(() => {
     window.localStorage.setItem(lastDemographicsKey, JSON.stringify(form.demographics));
   }, [form.demographics]);
 
   useEffect(() => {
-    setForm(current => {
-      const gpuSlots = current.gpuSlots.filter(slot => availableGpuSlots.has(slot));
-      return gpuSlots.length === current.gpuSlots.length ? current : { ...current, gpuSlots };
-    });
+    const gpuSlots = form.gpuSlots.filter(slot => availableGpuSlots.has(slot));
+    if (gpuSlots.length !== form.gpuSlots.length) markDirty(current => ({ ...current, gpuSlots }));
   }, [availableGpuOptions.map(slot => slot.slot).join('|')]);
 
   useEffect(() => {
     if (selectedVersion !== null) {
       if (form.promptTemplateId !== selectedVersion.templateId) {
-        setForm(current => ({ ...current, promptTemplateId: selectedVersion.templateId }));
+        markDirty(current => ({ ...current, promptTemplateId: selectedVersion.templateId }));
       }
       return;
     }
     if (form.promptTemplateVersionId !== null && selectedVersionQuery.isPending) return;
     if (!templates.some(item => item.id === form.promptTemplateId)) {
-      setForm(current => ({ ...current, promptTemplateId: templates[0]?.id ?? null, promptTemplateVersionId: null }));
+      markDirty(current => ({ ...current, promptTemplateId: templates[0]?.id ?? null, promptTemplateVersionId: null }));
     }
   }, [form.promptTemplateId, form.promptTemplateVersionId, selectedVersion, selectedVersionQuery.isPending, templates]);
 
   useEffect(() => {
     if (selectedVersion !== null) return;
     if (form.promptTemplateVersionId !== null && selectedVersionQuery.isPending) return;
-    setForm(current => ({ ...current, promptTemplateVersionId: versions[0]?.id ?? null }));
+    const promptTemplateVersionId = versions[0]?.id ?? null;
+    if (form.promptTemplateVersionId !== promptTemplateVersionId) {
+      markDirty(current => ({ ...current, promptTemplateVersionId }));
+    }
   }, [form.promptTemplateVersionId, selectedVersion, selectedVersionQuery.isPending, versions]);
 
   const changeCategory = (category: Category) => {
-    setForm(current => ({
+    markDirty(current => ({
       ...current,
       category,
       conflictDirection: allowedDirections(category)[0] ?? null,
@@ -225,7 +239,6 @@ export function ProductionPage() {
     setTemplatePage(1);
     setVersionPage(1);
     setSavedDraft(null);
-    previewMutation.reset();
   };
 
   const contentChoice = (id: number): SelectedContent | null => {
@@ -244,20 +257,17 @@ export function ProductionPage() {
   };
 
   const toggleContent = (id: number) => {
-    setForm(current => {
+    markDirty(current => {
       const selected = current.selectedContent.some(item => item.id === id);
       if (selected) return { ...current, selectedContent: current.selectedContent.filter(item => item.id !== id) };
       const next = contentChoice(id);
       return next ? { ...current, selectedContent: [...current.selectedContent, next] } : current;
     });
-    previewMutation.reset();
-    setUserEdited(true);
   };
 
   const selectPage = () => {
-    setUserEdited(true);
     const choices = content.map(item => contentChoice(item.id)).filter((item): item is SelectedContent => item !== null);
-    setForm(current => ({
+    markDirty(current => ({
       ...current,
       selectedContent: [
         ...current.selectedContent.filter(item => !content.some(pageItem => pageItem.id === item.id)),
@@ -266,25 +276,21 @@ export function ProductionPage() {
           : item),
       ],
     }));
-    previewMutation.reset();
   };
 
   const clearPage = () => {
-    setUserEdited(true);
-    setForm(current => ({
+    markDirty(current => ({
       ...current,
       selectedContent: current.selectedContent.filter(item => !content.some(pageItem => pageItem.id === item.id)),
     }));
-    previewMutation.reset();
   };
 
   const toggleScene = (contentId: number, sceneId: number) => {
-    setForm(current => ({
+    markDirty(current => ({
       ...current,
       selectedContent: current.selectedContent.map(item =>
         item.id === contentId ? { ...item, selectedSceneIds: toggleValue(item.selectedSceneIds, sceneId) } : item),
     }));
-    previewMutation.reset();
   };
 
   const buildPreview = async () => {
@@ -292,14 +298,14 @@ export function ProductionPage() {
       setValidation(true);
       return;
     }
+    const signature = formSignature;
     try {
       const value = await saveMutation.mutateAsync({
         id: savedDraft?.id ?? null,
         input: savedDraft ? { ...request, expectedRevision: savedDraft.revision } : request,
       });
       setSavedDraft(value);
-      setSavedFormSignature(JSON.stringify(form));
-      setUserEdited(false);
+      setSavedFormSignature(signature);
       await previewMutation.mutateAsync({ id: value.id, expectedRevision: value.revision });
       setPreviewPage(1);
       setValidation(false);
@@ -351,24 +357,17 @@ export function ProductionPage() {
         submitMutation.reset();
       }} /> : null}
 
-      <section
-        className="panel generation-form generation-production-form"
-        aria-labelledby="production-form-title"
-        onChangeCapture={event => {
-          const id = (event.target as HTMLElement).id;
-          if (id !== 'production-dataset-search' && id !== 'production-content-search') setUserEdited(true);
-        }}
-      >
+      <section className="panel generation-form generation-production-form" aria-labelledby="production-form-title">
         <div className="section-header"><h2 id="production-form-title">{g('production.form')}</h2></div>
 
         <fieldset className="generation-production-section">
           <legend>{g('production.sectionBatch')}</legend>
           <div className="generation-form__grid">
-            <Field label={g('production.name')} htmlFor="production-name"><input id="production-name" maxLength={40} value={form.displayName} onChange={event => setForm(current => ({ ...current, displayName: event.target.value }))} /></Field>
+            <Field label={g('production.name')} htmlFor="production-name"><input id="production-name" maxLength={40} value={form.displayName} onChange={event => markDirty(current => ({ ...current, displayName: event.target.value }))} /></Field>
             <Field label={g('production.datasetSearch')} htmlFor="production-dataset-search"><input id="production-dataset-search" type="search" value={datasetSearch} onChange={event => { setDatasetSearch(event.target.value); setDatasetPage(1); }} /></Field>
-            <Field label={g('production.dataset')} htmlFor="production-dataset"><select id="production-dataset" value={form.targetDatasetId ?? ''} onChange={event => setForm(current => ({ ...current, targetDatasetId: event.target.value ? Number(event.target.value) : null }))}><option value="">{g('common.none')}</option>{datasetOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+            <Field label={g('production.dataset')} htmlFor="production-dataset"><select id="production-dataset" value={form.targetDatasetId ?? ''} onChange={event => markDirty(current => ({ ...current, targetDatasetId: event.target.value ? Number(event.target.value) : null }))}><option value="">{g('common.none')}</option>{datasetOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
             <Field label={g('production.taskType')} htmlFor="production-category"><select id="production-category" value={form.category} onChange={event => changeCategory(event.target.value as Category)}>{categories.map(value => <option key={value} value={value}>{categoryLabel(g, value)}</option>)}</select></Field>
-            <Field label={g('production.direction')} htmlFor="production-direction"><select id="production-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => setForm(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, selectedContent: [] }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
+            <Field label={g('production.direction')} htmlFor="production-direction"><select id="production-direction" value={form.conflictDirection ?? ''} disabled={directions.length === 0} onChange={event => markDirty(current => ({ ...current, conflictDirection: (event.target.value || null) as ConflictDirection | null, selectedContent: [] }))}>{directions.length === 0 ? <option value="">{g('common.none')}</option> : null}{directions.map(value => <option key={value} value={value}>{directionLabel(g, value)}</option>)}</select></Field>
           </div>
           <Pagination page={datasetsQuery.data?.page ?? datasetPage} totalPages={datasetsQuery.data?.totalPages ?? 0} total={datasetsQuery.data?.total ?? 0} onPageChange={setDatasetPage} />
         </fieldset>
@@ -383,7 +382,7 @@ export function ProductionPage() {
           <div className="generation-selection-actions">
             <Button variant="secondary" disabled={!canSelectPage} onClick={selectPage}>{g('production.selectPage')}</Button>
             <Button variant="quiet" onClick={clearPage}>{g('production.clearPage')}</Button>
-            <Button variant="quiet" onClick={() => { setUserEdited(true); setForm(current => ({ ...current, selectedContent: [] })); }}>{g('production.clearAll')}</Button>
+            <Button variant="quiet" onClick={() => markDirty(current => ({ ...current, selectedContent: [] }))}>{g('production.clearAll')}</Button>
           </div>
           <div className="generation-content-list">
             {content.length === 0 ? <p>{g('production.noContentMatches')}</p> : content.map(item => {
@@ -397,8 +396,8 @@ export function ProductionPage() {
           </div>
           <Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} />
           <div className="generation-form__grid">
-            <Field label={g('production.template')} htmlFor="production-template"><select id="production-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{templateOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{categoryLabel(g, item.category)}</option>)}</select></Field>
-            <Field label={g('production.version')} htmlFor="production-version"><select id="production-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{versionOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })}</option>)}</select></Field>
+            <Field label={g('production.template')} htmlFor="production-template"><select id="production-template" value={form.promptTemplateId ?? ''} onChange={event => { markDirty(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{templateOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{categoryLabel(g, item.category)}</option>)}</select></Field>
+            <Field label={g('production.version')} htmlFor="production-version"><select id="production-version" value={form.promptTemplateVersionId ?? ''} onChange={event => markDirty(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{versionOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })}</option>)}</select></Field>
           </div>
           <div className="generation-source-pages">
             <div><span>{g('production.templatePage')}</span><Pagination page={templatesQuery.data?.page ?? templatePage} totalPages={templatesQuery.data?.totalPages ?? 0} total={templatesQuery.data?.total ?? 0} onPageChange={setTemplatePage} /></div>
@@ -411,37 +410,37 @@ export function ProductionPage() {
           <div className="generation-demographic-list">
             {form.demographics.map((person, index) => <div className="generation-demographic-row" key={index}>
               <Field label={g('production.ages')} htmlFor={'production-age-' + index}>
-                <select id={'production-age-' + index} value={person.age} onChange={event => setForm(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, age: Number(event.target.value) as Demographic['age'] } : item) }))}>{ages.map(value => <option key={value} value={value}>{g(('demographic.age.' + value) as GenerationKey)}</option>)}</select>
+                <select id={'production-age-' + index} value={person.age} onChange={event => markDirty(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, age: Number(event.target.value) as Demographic['age'] } : item) }))}>{ages.map(value => <option key={value} value={value}>{g(('demographic.age.' + value) as GenerationKey)}</option>)}</select>
               </Field>
               <Field label={g('production.genders')} htmlFor={'production-gender-' + index}>
-                <select id={'production-gender-' + index} value={person.gender} onChange={event => setForm(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, gender: event.target.value as Demographic['gender'] } : item) }))}>{genders.map(value => <option key={value} value={value}>{g(('demographic.gender.' + value) as GenerationKey)}</option>)}</select>
+                <select id={'production-gender-' + index} value={person.gender} onChange={event => markDirty(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, gender: event.target.value as Demographic['gender'] } : item) }))}>{genders.map(value => <option key={value} value={value}>{g(('demographic.gender.' + value) as GenerationKey)}</option>)}</select>
               </Field>
               <Field label={g('production.ethnicities')} htmlFor={'production-ethnicity-' + index}>
-                <select id={'production-ethnicity-' + index} value={person.ethnicity} onChange={event => setForm(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, ethnicity: event.target.value as Demographic['ethnicity'] } : item) }))}>{ethnicities.map(value => <option key={value} value={value}>{g(('demographic.ethnicity.' + value) as GenerationKey)}</option>)}</select>
+                <select id={'production-ethnicity-' + index} value={person.ethnicity} onChange={event => markDirty(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, ethnicity: event.target.value as Demographic['ethnicity'] } : item) }))}>{ethnicities.map(value => <option key={value} value={value}>{g(('demographic.ethnicity.' + value) as GenerationKey)}</option>)}</select>
               </Field>
-              <Button variant="quiet" disabled={form.demographics.length === 1} onClick={() => setForm(current => ({ ...current, demographics: current.demographics.filter((_, itemIndex) => itemIndex !== index) }))}>{g('production.removePerson')}</Button>
+              <Button variant="quiet" disabled={form.demographics.length === 1} onClick={() => markDirty(current => ({ ...current, demographics: current.demographics.filter((_, itemIndex) => itemIndex !== index) }))}>{g('production.removePerson')}</Button>
             </div>)}
-            <Button variant="secondary" onClick={() => setForm(current => ({ ...current, demographics: [...current.demographics, { ...(current.demographics[current.demographics.length - 1] ?? fallbackDemographics[0]) }] }))}>{g('production.addPerson')}</Button>
+            <Button variant="secondary" onClick={() => markDirty(current => ({ ...current, demographics: [...current.demographics, { ...(current.demographics[current.demographics.length - 1] ?? fallbackDemographics[0]) }] }))}>{g('production.addPerson')}</Button>
           </div>
-          <Field label={g('production.seeds')} htmlFor="production-seeds" hint={g('production.seedsHint')}><input id="production-seeds" value={form.seeds} onChange={event => setForm(current => ({ ...current, seeds: event.target.value }))} /></Field>
+          <Field label={g('production.seeds')} htmlFor="production-seeds" hint={g('production.seedsHint')}><input id="production-seeds" value={form.seeds} onChange={event => markDirty(current => ({ ...current, seeds: event.target.value }))} /></Field>
         </fieldset>
 
         <fieldset className="generation-production-section">
           <legend>{g('production.sectionModel')}</legend>
           <div className="generation-form__grid">
-            <Field label={g('production.model')} htmlFor="production-model"><select id="production-model" value={form.model} onChange={event => { const model = event.target.value as ModelName; setForm(current => ({ ...current, model, precision: precisionForModel(model, current.precision) })); }}>{models.map(value => <option key={value} value={value}>{g(('model.' + value) as GenerationKey)}</option>)}</select></Field>
-            {form.model === 'LTX-2.5' ? <Field label={g('production.precision')} htmlFor="production-precision"><select id="production-precision" value={form.precision ?? ''} onChange={event => setForm(current => ({ ...current, precision: event.target.value as ModelPrecision }))}>{ltx25Precisions.map(value => <option key={value} value={value}>{g(('precision.' + value) as GenerationKey)}</option>)}</select></Field> : null}
+            <Field label={g('production.model')} htmlFor="production-model"><select id="production-model" value={form.model} onChange={event => { const model = event.target.value as ModelName; markDirty(current => ({ ...current, model, precision: precisionForModel(model, current.precision) })); }}>{models.map(value => <option key={value} value={value}>{g(('model.' + value) as GenerationKey)}</option>)}</select></Field>
+            {form.model === 'LTX-2.5' ? <Field label={g('production.precision')} htmlFor="production-precision"><select id="production-precision" value={form.precision ?? ''} onChange={event => markDirty(current => ({ ...current, precision: event.target.value as ModelPrecision }))}>{ltx25Precisions.map(value => <option key={value} value={value}>{g(('precision.' + value) as GenerationKey)}</option>)}</select></Field> : null}
           </div>
           <fieldset className="generation-gpu-select"><legend>{g('production.gpus')}</legend>{availableGpuOptions.map(slot => {
             const checked = form.gpuSlots.includes(slot.slot);
-            return <label key={slot.slot}><input type="checkbox" checked={checked} onChange={() => setForm(current => ({ ...current, gpuSlots: toggleValue(current.gpuSlots, slot.slot) }))} />{slot.slot}</label>;
-          })}{availableGpuOptions.length === 0 ? <p>{g('state.empty')}</p> : null}</fieldset>
+            return <label key={slot.slot}><input type="checkbox" checked={checked} onChange={() => markDirty(current => ({ ...current, gpuSlots: toggleValue(current.gpuSlots, slot.slot) }))} />{slot.slot}</label>;
+          })}{!gpuQuery.isPending && availableGpuOptions.length === 0 ? <p className="generation-gpu-empty" role="status">{g('production.noAvailableGpu')}</p> : null}</fieldset>
         </fieldset>
 
         <p className="generation-count" role="status">{countSummary(sceneCount * people.length, seedValues.length, localTotal)}</p>
         {validation ? <p className="field__error" role="alert">{g('production.validation')}</p> : null}
         <div className="generation-form__actions">
-          <Button variant="secondary" disabled={saveMutation.isPending || previewMutation.isPending} onClick={() => void buildPreview()}>{g('production.preview')}</Button>
+          <Button variant="secondary" disabled={gpuQuery.isPending || availableGpuOptions.length === 0 || saveMutation.isPending || previewMutation.isPending} onClick={() => void buildPreview()}>{g('production.preview')}</Button>
           <Button variant="primary" disabled={!preview || dirty} onClick={() => setSubmitConfirmOpen(true)}>{g('production.submit')}</Button>
         </div>
       </section>

@@ -3,7 +3,13 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServer } from '../frontend/node_modules/vite/dist/node/index.js';
-import { createBrowserApiFixture, installPreferences, jobItemsFixture, preferenceKeys } from './browser-fixtures.mjs';
+import {
+  createBrowserApiFixture,
+  installPreferences,
+  jobItemsFixture,
+  preferenceKeys,
+  sampleFixture,
+} from './browser-fixtures.mjs';
 
 const playwrightModule = process.env.CONFLICTSTUDIO_PLAYWRIGHT_MODULE;
 if (!playwrightModule) throw new Error('CONFLICTSTUDIO_PLAYWRIGHT_MODULE is required.');
@@ -12,7 +18,209 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = resolve(projectRoot, 'frontend');
 const baseUrl = 'http://127.0.0.1:4173';
 const artifactRoot = process.env.CONFLICTSTUDIO_BROWSER_ARTIFACT_DIR;
+const timestamp = '2026-08-24T08:00:00.000Z';
+const demographicsKey = 'conflictstudio.generation.lastDemographics';
 if (artifactRoot) mkdirSync(artifactRoot, { recursive: true });
+
+const promptTemplate = {
+  id: 1,
+  name: 'Natural conversation',
+  category: 'A-VA',
+  revision: 1,
+  createdAt: timestamp,
+  updatedAt: timestamp,
+};
+
+const promptVersion = {
+  id: 1,
+  templateId: 1,
+  templateName: promptTemplate.name,
+  category: 'A-VA',
+  version: 1,
+  organizationRules: 'Keep the response concise.',
+  styleGuidance: 'Use natural restrained acting.',
+  positiveExamples: ['A natural reply.'],
+  negativeExamples: ['Exaggerated acting.'],
+  ltxNegativePrompt: 'No subtitles.',
+  h3NegativePrompt: 'No subtitles.',
+  verificationStatus: 'Verified',
+  revision: 1,
+  createdAt: timestamp,
+  verifiedAt: timestamp,
+};
+
+const assistantBundle = {
+  contentScript: {
+    nameZh: '建议内容', nameEn: 'Proposed content', category: 'A-VA', conflictDirection: null,
+    mode: 'Fixed', status: 'Draft', trueEmotion: 'sadness', apparentEmotion: 'sadness',
+    sceneZh: '安静办公室', sceneEn: 'Quiet office', triggerEventZh: '收到消息', triggerEventEn: 'A message arrives',
+    psychologicalBackgroundZh: '人物保持克制', psychologicalBackgroundEn: 'The person stays restrained',
+    dialogue: 'I understand.', displayText: null, trueEmotionDescription: 'The voice and face carry sadness.',
+    baseVideoPrompt: 'A fixed camera records a short reply.', contentRequirementsZh: '', contentRequirementsEn: '',
+    sceneSupplementZh: '', sceneSupplementEn: '',
+  },
+  scenes: [{
+    nameZh: '建议场景', nameEn: 'Proposed scene', sceneZh: '安静办公室', sceneEn: 'Quiet office',
+    ambientSoundZh: '轻微空调声', ambientSoundEn: 'Low air conditioner hum', participantRelationshipZh: '同事', participantRelationshipEn: 'Colleagues',
+    lightingZh: '柔和室内光', lightingEn: 'Soft indoor light', framingZh: '中景', framingEn: 'Medium shot', status: 'Draft',
+  }],
+  promptTemplateVersion: {
+    organizationRules: 'Keep the response concise.', styleGuidance: 'Use natural restrained acting.',
+    positiveExamples: ['A natural reply.'], negativeExamples: ['Exaggerated acting.'],
+    ltxNegativePrompt: 'No subtitles.', h3NegativePrompt: 'No subtitles.',
+  },
+};
+
+function pageValue(values, page = 1) {
+  const pageSize = 20;
+  const start = (page - 1) * pageSize;
+  return {
+    items: values.slice(start, start + pageSize),
+    page,
+    pageSize,
+    total: values.length,
+    totalPages: Math.ceil(values.length / pageSize),
+  };
+}
+
+function job(id, source, displayName) {
+  return {
+    id, displayName, source, datasetId: source === 'Production' ? 1 : null,
+    datasetNameSnapshot: source === 'Production' ? 'Formal samples' : null,
+    batchDraftId: source === 'Production' ? 1 : null, category: 'A-VA', conflictDirection: null,
+    model: 'LTX-2.5', precision: 'INT8', profiles: [{ model: 'LTX-2.5', precision: 'INT8' }],
+    status: 'Completed', totalCount: 1, preparedCount: 1, completedCount: 1, failedCount: 0,
+    confirmModelSwitch: false, cancelRequestedAt: null, failureCode: null, failureReason: null,
+    startedAt: timestamp, finishedAt: timestamp, revision: 1, createdAt: timestamp, updatedAt: timestamp,
+  };
+}
+
+function generationFixture() {
+  return {
+    gpuSlots: [
+      { slot: 'GPU0', availability: 'Available', loadedModel: 'LTX-2.5', loadedPrecision: 'INT8', serviceStatus: 'running', gpuName: 'Fixture GPU', memory: { usedMiB: 1024, totalMiB: 8192 }, activeJobId: null, revision: 2, checkedAt: timestamp, statusReason: null },
+    ],
+    requests: [],
+    draft: null,
+    appliedBody: null,
+    productionJob: job(99, 'Production', 'A-VA-browser-check'),
+    promptJob: job(98, 'PromptTest', 'Prompt test browser check'),
+  };
+}
+
+async function installGenerationRoutes(page, api, fixture) {
+  await page.route(url => url.pathname.startsWith('/api/'), async route => {
+    const request = route.request();
+    const method = request.method();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const body = method === 'GET' || method === 'DELETE' ? null : request.postDataJSON();
+    const fulfill = (value, status = 200) => {
+      fixture.requests.push({ method, path, body, query: Object.fromEntries(url.searchParams) });
+      return route.fulfill({ status, json: value, headers: { 'Cache-Control': 'no-store' } });
+    };
+
+    if (method === 'GET' && path === '/api/gpu-slots') return fulfill(fixture.gpuSlots);
+    if (method === 'GET' && path === '/api/content-scripts') {
+      const status = url.searchParams.get('status');
+      const category = url.searchParams.get('category');
+      const direction = url.searchParams.get('direction');
+      const search = (url.searchParams.get('search') ?? '').trim().toLocaleLowerCase('en-US');
+      const values = api.state.contentScripts.filter(item => (!status || item.status === status)
+        && (!category || item.category === category)
+        && (!direction || item.conflictDirection === direction)
+        && (!search || `${item.nameZh} ${item.nameEn}`.toLocaleLowerCase('en-US').includes(search)));
+      return fulfill(pageValue(values, Number(url.searchParams.get('page') ?? 1)));
+    }
+    if (method === 'GET' && path === '/api/scenes') {
+      const status = url.searchParams.get('status');
+      const values = api.state.scenes.filter(item => !status || item.status === status);
+      return fulfill(pageValue(values, Number(url.searchParams.get('page') ?? 1)));
+    }
+    const sceneMatch = /^\/api\/scenes\/(\d+)$/u.exec(path);
+    if (method === 'GET' && sceneMatch) return fulfill(api.state.scenes.find(item => item.id === Number(sceneMatch[1])));
+    if (method === 'GET' && path === '/api/prompt-templates') return fulfill(pageValue([promptTemplate], Number(url.searchParams.get('page') ?? 1)));
+    if (method === 'GET' && path === '/api/prompt-templates/1/versions') return fulfill(pageValue([promptVersion], Number(url.searchParams.get('page') ?? 1)));
+    if (method === 'GET' && path === '/api/prompt-template-versions/1') return fulfill(promptVersion);
+
+    if (method === 'POST' && path === '/api/resource-assistant/propose') {
+      return fulfill({ promptTemplate, bundle: structuredClone(assistantBundle) });
+    }
+    if (method === 'POST' && path === '/api/resource-assistant/apply') {
+      fixture.appliedBody = body;
+      const contentScript = { id: 901, ...body.bundle.contentScript, sceneIds: [901], revision: 1, createdAt: timestamp, updatedAt: timestamp };
+      const scenes = body.bundle.scenes.map((value, index) => ({ id: 901 + index, ...value, revision: 1, createdAt: timestamp, updatedAt: timestamp }));
+      const version = { id: 902, templateId: 1, templateName: promptTemplate.name, category: 'A-VA', version: 2, ...body.bundle.promptTemplateVersion, verificationStatus: 'Draft', revision: 1, createdAt: timestamp, verifiedAt: null };
+      api.state.contentScripts.push(contentScript);
+      api.state.scenes.push(...scenes);
+      api.state.contentRelations.set(contentScript.id, scenes.map(item => item.id));
+      return fulfill({ contentScript, scenes, promptTemplateVersion: version }, 201);
+    }
+
+    if ((method === 'POST' && path === '/api/batch-drafts') || (method === 'PUT' && path === '/api/batch-drafts/1')) {
+      const contentSelections = body.contentSelections.map(selection => {
+        const content = api.state.contentScripts.find(item => item.id === selection.contentScriptId);
+        const compatibleIds = api.state.contentRelations.get(selection.contentScriptId) ?? [];
+        const selectedIds = content.mode === 'Fixed' ? compatibleIds : selection.sceneIds;
+        return {
+          contentScript: { id: content.id, nameZh: content.nameZh, nameEn: content.nameEn, revision: content.revision },
+          mode: content.mode,
+          scenes: api.state.scenes.filter(item => selectedIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
+          compatibleScenes: api.state.scenes.filter(item => compatibleIds.includes(item.id)).map(item => ({ id: item.id, nameZh: item.nameZh, nameEn: item.nameEn, revision: item.revision })),
+        };
+      });
+      const combinationCount = contentSelections.reduce((total, selection) => total + selection.scenes.length, 0) * body.demographics.length;
+      fixture.draft = {
+        id: 1, ...body, datasetRevision: 1, combinationCount, totalCount: combinationCount * body.seeds.length,
+        status: 'Draft', contentSelections, promptTemplateVersion: { id: 1, name: promptTemplate.name, revision: 1 },
+        revision: (fixture.draft?.revision ?? 0) + 1, createdAt: timestamp, updatedAt: timestamp,
+      };
+      delete fixture.draft.expectedRevision;
+      return fulfill(fixture.draft, method === 'POST' ? 201 : 200);
+    }
+    if (method === 'POST' && path === '/api/batch-drafts/1/preview') {
+      let sequence = 0;
+      const allocations = fixture.draft.contentSelections.flatMap(selection => selection.scenes.flatMap(scene => fixture.draft.demographics.flatMap(demographic => fixture.draft.seeds.map(seed => ({
+        sequence: sequence += 1,
+        contentScript: selection.contentScript,
+        promptTemplateVersion: fixture.draft.promptTemplateVersion,
+        scene,
+        demographic,
+        gpuSlot: fixture.draft.gpuSlots[(sequence - 1) % fixture.draft.gpuSlots.length],
+        model: fixture.draft.model,
+        precision: fixture.draft.precision,
+        seed,
+        requiresPromptGeneration: true,
+        systemInput: 'Fixture system input',
+        userInput: 'Fixture user input',
+        finalPositivePrompt: null,
+        negativePrompt: 'Fixture negative prompt',
+      })))));
+      return fulfill({
+        batchDraftId: 1,
+        expectedRevision: fixture.draft.revision,
+        combinationCount: fixture.draft.combinationCount,
+        seedCount: fixture.draft.seeds.length,
+        totalCount: fixture.draft.totalCount,
+        gpuRevisions: Object.fromEntries(fixture.draft.gpuSlots.map(slot => [slot, fixture.gpuSlots.find(item => item.slot === slot)?.revision ?? 1])),
+        allocations,
+      });
+    }
+    if (method === 'POST' && path === '/api/batch-drafts/1/submit') return fulfill(fixture.productionJob, 201);
+    if (method === 'POST' && path === '/api/test-runs/prompt') return fulfill(fixture.promptJob, 201);
+
+    const productionItem = { ...jobItemsFixture[0], sampleId: 501 };
+    const promptItem = { ...jobItemsFixture[0], sampleId: null, latestAttempt: null, gpuSlot: null };
+    if (method === 'GET' && path === '/api/generation-results') return fulfill(pageValue([fixture.productionJob]));
+    if (method === 'GET' && path === '/api/generation-results/99') return fulfill(fixture.productionJob);
+    if (method === 'GET' && path === '/api/generation-results/99/items') return fulfill(pageValue([productionItem]));
+    if (method === 'GET' && path === '/api/test-results') return fulfill(pageValue([fixture.promptJob]));
+    if (method === 'GET' && path === '/api/test-results/98') return fulfill(fixture.promptJob);
+    if (method === 'GET' && path === '/api/test-results/98/items') return fulfill(pageValue([promptItem]));
+
+    return route.fallback();
+  });
+}
 
 async function setLocale(page, locale) {
   await page.evaluate(({ key, value }) => localStorage.setItem(key, value), { key: preferenceKeys.locale, value: locale });
@@ -34,37 +242,9 @@ async function expectNoOverflow(page, route, locale, width, height) {
   assert.deepEqual(overflow, { document: 0, body: 0 }, `${locale} ${route} must fit at ${width}px.`);
 }
 
-async function expectDialogFocus(page, name) {
-  const dialog = page.getByRole('dialog', { name });
-  await dialog.waitFor();
-  assert.equal(await dialog.evaluate(element => element.contains(document.activeElement)), true, `${name} must receive focus.`);
-  return dialog;
-}
-
-function sectionWithHeading(page, name) {
-  return page.getByRole('heading', { name, exact: true }).locator('xpath=ancestor::section[1]');
-}
-
-async function expectPaginationState(pagination, { page, totalPages, total }) {
-  await pagination.waitFor();
-  assert.match(await pagination.innerText(), new RegExp(`Page ${page} of ${totalPages}.*${total} records`, 'su'));
-  assert.equal(await pagination.getByRole('button', { name: 'Previous', exact: true }).isDisabled(), page === 1);
-  assert.equal(await pagination.getByRole('button', { name: 'Next', exact: true }).isDisabled(), page === totalPages);
-}
-
-async function expectPaginationBelow(content, pagination, message) {
-  const [contentBounds, paginationBounds] = await Promise.all([
-    content.boundingBox(),
-    pagination.boundingBox(),
-  ]);
-  assert.ok(contentBounds && paginationBounds, `${message} must be visible.`);
-  assert.equal(paginationBounds.y >= contentBounds.y + contentBounds.height - 1, true, `${message} must be below the growing content.`);
-}
-
-async function expectCount(locator, count, message) {
-  if (count > 0) await locator.nth(count - 1).waitFor();
-  await locator.nth(count).waitFor({ state: 'detached' });
-  assert.equal(await locator.count(), count, message);
+async function waitForProductionDefaults(page) {
+  await page.waitForFunction(() => document.querySelector('#production-template')?.value === '1');
+  await page.waitForFunction(() => document.querySelector('#production-version')?.value === '1');
 }
 
 const server = await createServer({ root: frontendRoot, logLevel: 'silent', server: { host: '127.0.0.1', port: 4173, strictPort: true } });
@@ -74,7 +254,7 @@ let tracingStarted = false;
 try {
   await server.listen();
   browser = await chromium.launch({ channel: 'chrome', headless: true });
-  context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+  context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await installPreferences(context);
   await context.addInitScript(() => {
     class FixtureWebSocket {
@@ -90,18 +270,7 @@ try {
         window.setTimeout(() => {
           this.readyState = FixtureWebSocket.OPEN;
           this.onopen?.(new Event('open'));
-          for (let index = 0; index < 25; index += 1) {
-            const event = {
-              id: 46 + index,
-              jobId: 1,
-              itemId: 1,
-              eventType: 'ItemRenderProgress',
-              payload: { preparedCount: 128, completedCount: index, failedCount: 0, totalCount: 128, slotCount: 2, sequence: 1, gpuSlot: 'GPU0', failureCode: null, failureReason: null, failureDetails: null, progressValue: index, progressMaximum: 25 },
-              createdAt: '2026-08-15T08:00:00.000Z',
-            };
-            this.onmessage?.(new MessageEvent('message', { data: JSON.stringify(event) }));
-          }
-        }, 30);
+        }, 0);
       }
       close() {
         this.readyState = FixtureWebSocket.CLOSED;
@@ -115,178 +284,119 @@ try {
     await context.tracing.start({ screenshots: true, snapshots: true });
     tracingStarted = true;
   }
-  const page = await context.newPage();
-  const api = createBrowserApiFixture();
-  await api.install(page);
+
   const pageErrors = [];
   const consoleErrors = [];
-  page.on('pageerror', error => pageErrors.push(error.message));
-  page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  const watchPage = page => {
+    page.on('pageerror', error => pageErrors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  };
+  const api = createBrowserApiFixture();
+  api.state.samples.push(sampleFixture(501));
+  const fixture = generationFixture();
+  const page = await context.newPage();
+  watchPage(page);
+  await api.install(page);
+  await installGenerationRoutes(page, api, fixture);
 
-  await open(page, '/workspace');
-  assert.equal(await page.evaluate(key => localStorage.getItem(key), preferenceKeys.reviewerId), '1');
-  assert.equal(await page.getByRole('columnheader', { name: 'Purpose', exact: true }).count(), 1);
-  assert.equal(await page.locator('.workspace-datasets tbody tr').count(), 20, 'Workspace must render one server page of 20 datasets.');
-  assert.match(await page.locator('.workspace-datasets .pagination').innerText(), /Page 1 of 2.*22 records/su);
-  for (const [label, total] of [['Pending review', '30'], ['Running jobs', '12'], ['Failed jobs', '12'], ['Pending archive', '25']]) {
-    const metric = page.locator('.workspace-metric-link').filter({ hasText: label });
-    assert.equal(await metric.locator('.metric__value').innerText(), total, `${label} must use the server total, not the first page count.`);
-  }
-  await expectPaginationState(page.locator('.workspace-jobs > .pagination'), { page: 1, totalPages: 2, total: 24 });
-  assert.equal(await page.locator('.workspace-job-card').count(), 20, 'Workspace tasks must keep a 20-row server page.');
-  await page.locator('#workspace-dataset-search').fill('Dataset 22');
-  await expectCount(page.locator('.workspace-datasets tbody tr'), 1, 'Dataset search must be applied before pagination.');
-  assert.equal(await page.locator('.workspace-datasets tbody tr').first().innerText().then(text => text.includes('Dataset 22')), true);
-  await page.locator('#workspace-dataset-search').fill('');
-  await expectCount(page.locator('.workspace-datasets tbody tr'), 20, 'Clearing dataset search must restore the server page.');
-  const nameRows = await page.locator('.workspace-dataset-name').evaluateAll(elements => elements.map(element => {
-    const name = element.querySelector('.workspace-dataset-name__title')?.getBoundingClientRect();
-    const note = element.querySelector('.workspace-dataset-name__note')?.getBoundingClientRect();
-    return { nameBottom: name?.bottom ?? 0, noteTop: note?.top ?? 0 };
-  }));
-  assert.equal(nameRows.every(row => row.noteTop >= row.nameBottom), true, 'Dataset notes must be below names.');
-
-  const inactiveRow = page.locator('.workspace-datasets tbody tr').filter({ hasText: 'Dataset 3' });
-  await inactiveRow.getByRole('button', { name: 'Enable', exact: true }).click();
-  let dialog = await expectDialogFocus(page, 'Enable dataset?');
-  await dialog.getByRole('button', { name: 'Enable dataset' }).click();
-  await inactiveRow.getByRole('button', { name: 'Disable', exact: true }).click();
-  dialog = await expectDialogFocus(page, 'Disable dataset?');
-  await dialog.getByRole('button', { name: 'Disable dataset' }).click();
-  await inactiveRow.getByRole('button', { name: 'Delete', exact: true }).click();
-  dialog = await expectDialogFocus(page, 'Delete dataset?');
-  assert.match(await dialog.innerText(), /Dataset 3.*Only an empty dataset can be deleted/su);
-  await dialog.getByRole('button', { name: 'Delete dataset' }).click();
-  await inactiveRow.waitFor({ state: 'detached' });
-
-  const nonEmptyRow = page.locator('.workspace-datasets tbody tr').filter({ hasText: 'Formal samples' });
-  await nonEmptyRow.getByRole('button', { name: 'Disable', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Disable dataset?' }).getByRole('button', { name: 'Disable dataset' }).click();
-  await nonEmptyRow.getByRole('button', { name: 'Delete', exact: true }).click();
-  dialog = await expectDialogFocus(page, 'Delete dataset?');
-  await dialog.getByRole('button', { name: 'Delete dataset' }).click();
-  await dialog.getByText('This dataset contains samples or related records. Remove those records before deleting it.').waitFor();
-  assert.equal(await dialog.isVisible(), true, 'A failed nonempty deletion must keep the dialog open.');
-  await dialog.getByRole('button', { name: 'Cancel' }).click();
-  await nonEmptyRow.getByRole('button', { name: 'Enable', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Enable dataset?' }).getByRole('button', { name: 'Enable dataset' }).click();
+  await open(page, '/generate/resources');
+  assert.deepEqual(await page.locator('.generate-nav a').evaluateAll(links => links.map(link => link.getAttribute('href'))), [
+    '/generate/test', '/generate/production', '/generate/results', '/generate/resources',
+  ]);
+  assert.deepEqual(await page.getByRole('tab').allTextContents(), ['Content', 'Scenes', 'Prompt versions']);
+  await page.locator('#resource-assistant-template').selectOption('1');
+  await page.locator('#resource-assistant-requirement').fill('Create one restrained A-VA resource set.');
+  await page.getByRole('button', { name: 'Prepare draft proposal', exact: true }).click();
+  await page.getByRole('heading', { name: 'Review and edit proposal', exact: true }).waitFor();
+  await page.locator('#assistant-content-name-en').fill('Edited proposal content');
+  await page.getByRole('button', { name: 'Create all drafts', exact: true }).click();
+  const applyDialog = page.getByRole('dialog', { name: 'Create this resource set' });
+  await applyDialog.getByRole('button', { name: 'Create all drafts', exact: true }).click();
+  await page.getByText('The content, scenes, and prompt version were created as drafts.', { exact: true }).waitFor();
+  assert.equal(fixture.appliedBody.bundle.contentScript.nameEn, 'Edited proposal content');
 
   await open(page, '/generate/production');
-  await page.getByRole('heading', { name: 'Generate', exact: true }).waitFor();
-  assert.deepEqual(await page.locator('.generation-production-section > legend').allTextContents(), [
-    '1 Batch and dataset',
-    '2 Content and scenes',
-    '3 People and seeds',
-    '4 Model and GPU',
-  ]);
-  assert.equal(await page.locator('.generate-nav a').count(), 3);
-
-  await open(page, '/generate/test');
-  assert.equal(await page.locator('input[name="test-kind"]').count(), 2);
-  assert.equal(await page.locator('select[id^="test-gpu-"]').count(), 0, 'Prompt tests must not show GPU settings.');
-  await page.getByRole('radio', { name: /Video test/ }).check();
-  assert.equal(await page.locator('select[id^="test-gpu-"]').count(), 1, 'Video tests must show one GPU setting.');
-
-  await open(page, '/generate/results?tab=test');
-  await page.getByText('Tests do not create formal samples and never enter review or archive.').waitFor();
-
-  await open(page, '/review');
-  const reviewList = page.locator('.review-queue__list');
-  const reviewPagination = page.locator('.review-queue .pagination');
-  const reviewDatasetPagination = page.locator('.review-dataset-picker .pagination');
-  await expectPaginationState(reviewDatasetPagination, { page: 1, totalPages: 2, total: 22 });
-  await reviewDatasetPagination.getByRole('button', { name: 'Next', exact: true }).click();
-  await page.waitForFunction(() => document.querySelectorAll('#review-dataset-filter option').length === 3);
-  assert.equal(await page.locator('#review-dataset-filter option').count(), 3, 'The second dataset page must expose its two datasets plus the all option.');
-  await reviewDatasetPagination.getByRole('button', { name: 'Previous', exact: true }).click();
-  await expectCount(reviewList.locator(':scope > li'), 20, 'Review queue must render 20 rows.');
-  await expectPaginationState(reviewPagination, { page: 1, totalPages: 2, total: 30 });
-  await expectPaginationBelow(reviewList, reviewPagination, 'Review queue pagination');
-  await page.locator('.review-queue__item').first().click();
-  assert.equal(new URL(page.url()).searchParams.get('sampleId'), '1');
-  await page.locator('.review-media video').waitFor();
-  await reviewPagination.getByRole('button', { name: 'Next', exact: true }).click();
-  await expectCount(reviewList.locator(':scope > li'), 10, 'The last review page must render the remaining entries.');
-  await expectPaginationState(reviewPagination, { page: 2, totalPages: 2, total: 30 });
-  assert.equal(new URL(page.url()).searchParams.get('sampleId'), '1', 'Changing the review queue page must keep the selected sample.');
-  await reviewPagination.getByRole('button', { name: 'Previous', exact: true }).click();
-  await expectCount(reviewList.locator(':scope > li'), 20, 'Previous must return to the first review page.');
-
-  await open(page, '/archive?dataset=1&page=2');
-  const archiveRows = page.locator('.archive-list-panel tbody tr');
-  const archivePagination = page.locator('.archive-list-panel .pagination');
-  await expectCount(archiveRows, 10, 'Archive must render only the current 20-sample server page.');
-  await expectPaginationState(archivePagination, { page: 2, totalPages: 3, total: 55 });
-  await expectPaginationBelow(page.locator('.archive-table-shell'), archivePagination, 'Archive pagination');
-  await archivePagination.getByRole('button', { name: 'Next', exact: true }).click();
-  await expectCount(page.locator('.archive-list-panel tbody tr'), 15, 'The final archive server page must render its remaining archived rows.');
-  await expectPaginationState(archivePagination, { page: 3, totalPages: 3, total: 55 });
-  await archivePagination.getByRole('button', { name: 'Previous', exact: true }).click();
-  await expectCount(archiveRows, 10, 'Previous must return to the prior archive page.');
-  await archiveRows.first().getByRole('link').click();
-  assert.equal(new URL(page.url()).searchParams.get('sampleId'), '31');
-  assert.equal(new URL(page.url()).searchParams.get('returnTo'), '/archive?dataset=1&page=2');
-  await page.getByRole('button', { name: 'Back to previous page' }).click();
-  await page.waitForURL(`${baseUrl}/archive?dataset=1&page=2`);
-
-  await open(page, '/settings');
-  await page.evaluate(keys => {
-    localStorage.setItem(keys.reviewerId, '25');
-    localStorage.setItem(keys.reviewerName, 'Stale name');
-  }, preferenceKeys);
+  await page.evaluate(key => localStorage.removeItem(key), demographicsKey);
   await page.reload({ waitUntil: 'networkidle' });
-  assert.match(await page.locator('.settings-current-reviewer').innerText(), /Reviewer 25/su, 'Settings must load the current reviewer independently of page one.');
-  assert.equal(api.state.requests.some(request => request.method === 'GET' && request.path === '/api/reviewers/25'), true);
-  const reviewerList = page.locator('.settings-reviewer-list');
-  const reviewerPagination = page.locator('.settings-reviewers .pagination');
-  await expectCount(page.locator('.settings-reviewer-choice'), 20, 'Reviewer names must render 20 rows.');
-  await expectPaginationState(reviewerPagination, { page: 1, totalPages: 2, total: 25 });
-  await expectPaginationBelow(reviewerList, reviewerPagination, 'Reviewer pagination');
-  const reviewerAlignment = await page.locator('.settings-reviewer-choice').first().evaluate(label => {
-    const radio = label.querySelector('input')?.getBoundingClientRect();
-    const name = label.querySelector('span')?.getBoundingClientRect();
-    return { radioCenter: radio ? radio.top + radio.height / 2 : 0, textCenter: name ? name.top + name.height / 2 : 0 };
-  });
-  assert.equal(Math.abs(reviewerAlignment.radioCenter - reviewerAlignment.textCenter) <= 4, true, 'Reviewer radio must align with the name line.');
-  await reviewerPagination.getByRole('button', { name: 'Next', exact: true }).focus();
-  await page.keyboard.press('Enter');
-  await expectCount(page.locator('.settings-reviewer-choice'), 5, 'The final reviewer page must render the remaining names.');
-  await expectPaginationState(reviewerPagination, { page: 2, totalPages: 2, total: 25 });
-  assert.equal(await page.locator('.settings-reviewer-choice input:checked').inputValue(), 'on', 'The current reviewer must remain selected when its page opens.');
+  await waitForProductionDefaults(page);
+  await page.locator('#production-dataset').selectOption('1');
+  await page.locator('.generation-content-choice').filter({ hasText: 'Restrained reply' }).locator('input[type="checkbox"]').check();
+  await page.locator('#production-age-0').selectOption('35');
+  await page.locator('#production-gender-0').selectOption('Male');
+  await page.locator('#production-ethnicity-0').selectOption('White');
+  await page.getByRole('button', { name: 'Add person', exact: true }).click();
+  await page.locator('#production-age-1').selectOption('45');
+  await page.locator('.generation-gpu-select input[type="checkbox"]').check();
+  await page.getByRole('button', { name: 'Preview all rows', exact: true }).click();
+  await page.locator('.generation-preview tbody tr').nth(1).waitFor();
+  assert.equal(await page.locator('.generation-preview tbody tr').count(), 2);
+  assert.equal(await page.getByRole('button', { name: 'Submit generation', exact: true }).isDisabled(), false);
 
-  await open(page, '/me/statistics');
-  const statisticsDatasetPagination = page.locator('.statistics-dataset-picker .pagination');
-  await expectPaginationState(statisticsDatasetPagination, { page: 1, totalPages: 2, total: 22 });
-  await statisticsDatasetPagination.getByRole('button', { name: 'Next', exact: true }).click();
-  await page.waitForFunction(() => document.querySelectorAll('#statistics-dataset option').length === 3);
-  assert.equal(await page.locator('#statistics-dataset option').count(), 3, 'Statistics must expose the second server page of datasets.');
-  await page.locator('#statistics-dataset-search').fill('Validation samples');
-  await page.waitForFunction(() => document.querySelectorAll('#statistics-dataset option').length === 2);
-  assert.equal(await page.locator('#statistics-dataset option').count(), 2, 'Statistics dataset search must keep the all option and one server result.');
+  await page.locator('#production-ethnicity-1').selectOption('Latino');
+  await page.locator('.generation-preview tbody tr').first().waitFor({ state: 'detached' });
+  assert.equal(await page.getByRole('button', { name: 'Submit generation', exact: true }).isDisabled(), true, 'A business edit must invalidate the visible preview.');
+  await page.getByRole('button', { name: 'Preview all rows', exact: true }).click();
+  await page.locator('.generation-preview tbody tr').nth(1).waitFor();
 
-  const routes = ['/workspace', '/generate/test', '/generate/production', '/generate/results?tab=test', '/review/1', '/archive?dataset=1&page=2', '/settings', '/me/statistics'];
-  for (const locale of ['zh-CN', 'en-US']) {
-    for (const [width, height] of [[1440, 900], [1024, 768], [768, 900], [390, 844]]) {
-      for (const route of routes) await expectNoOverflow(page, route, locale, width, height);
+  const draftWrites = fixture.requests.filter(request => request.path === '/api/batch-drafts/1' || request.path === '/api/batch-drafts');
+  assert.deepEqual(draftWrites.map(request => request.method), ['POST', 'PUT']);
+  assert.equal(fixture.requests.filter(request => request.path === '/api/batch-drafts/1/preview').length, 2);
+  await page.getByRole('button', { name: 'Submit generation', exact: true }).click();
+  const submitDialog = page.getByRole('dialog', { name: 'Submit this formal generation task' });
+  await submitDialog.getByRole('button', { name: 'Submit generation', exact: true }).click();
+  await page.waitForURL(`${baseUrl}/generate/results?tab=production&job=99`);
+  const reviewLink = page.getByRole('link', { name: 'Open in review', exact: true });
+  await reviewLink.waitFor();
+  const reviewUrl = new URL(await reviewLink.getAttribute('href'), baseUrl);
+  assert.equal(reviewUrl.pathname, '/review/501');
+  assert.equal(reviewUrl.searchParams.get('returnTo'), '/generate/results?tab=production&job=99');
+  await reviewLink.click();
+  await page.waitForURL(url => url.pathname === '/review/501' && url.searchParams.get('returnTo') === '/generate/results?tab=production&job=99');
+
+  const memoryPage = await context.newPage();
+  watchPage(memoryPage);
+  await api.install(memoryPage);
+  await installGenerationRoutes(memoryPage, api, fixture);
+  await open(memoryPage, '/generate/production');
+  await memoryPage.locator('#production-age-1').waitFor();
+  assert.deepEqual(await memoryPage.locator('select[id^="production-age-"]').evaluateAll(elements => elements.map(element => element.value)), ['35', '45']);
+  assert.deepEqual(await memoryPage.locator('select[id^="production-gender-"]').evaluateAll(elements => elements.map(element => element.value)), ['Male', 'Male']);
+  assert.deepEqual(await memoryPage.locator('select[id^="production-ethnicity-"]').evaluateAll(elements => elements.map(element => element.value)), ['White', 'Latino']);
+
+  fixture.gpuSlots = [];
+  await memoryPage.reload({ waitUntil: 'networkidle' });
+  await memoryPage.getByText('No GPU is available. Wait for an available GPU before previewing or submitting formal generation.', { exact: true }).waitFor();
+  assert.equal(await memoryPage.getByRole('button', { name: 'Preview all rows', exact: true }).isDisabled(), true);
+
+  await open(memoryPage, '/generate/test');
+  await memoryPage.locator('#test-content').selectOption('1');
+  await memoryPage.waitForFunction(() => document.querySelector('#test-scene')?.value === '1');
+  await memoryPage.waitForFunction(() => document.querySelector('#test-version')?.value === '1');
+  assert.equal(await memoryPage.locator('select[id^="test-gpu-"]').count(), 0, 'Prompt tests must remain GPU-independent.');
+  const runButton = memoryPage.getByRole('button', { name: 'Run test', exact: true });
+  assert.equal(await runButton.isDisabled(), false, 'A complete Prompt test must remain runnable with zero Available GPUs.');
+  await runButton.click();
+  await memoryPage.getByRole('dialog', { name: 'Run this test' }).getByRole('button', { name: 'Run test', exact: true }).click();
+  await memoryPage.getByText('Final positive prompt line one.', { exact: false }).waitFor();
+  await memoryPage.getByRole('radio', { name: /Video test/ }).check();
+  await memoryPage.getByText('No GPU is available for a video test. Wait for an available GPU, or switch to Prompt test, which does not use a GPU.', { exact: true }).waitFor();
+  assert.equal(await memoryPage.getByRole('button', { name: 'Add comparison', exact: true }).count(), 0);
+  assert.equal(await memoryPage.getByRole('button', { name: 'Run test', exact: true }).isDisabled(), true);
+  assert.equal(await memoryPage.evaluate(() => localStorage.getItem('conflictstudio.generation.hiddenTests')), null);
+
+  const routes = ['/generate/resources', '/generate/test', '/generate/production', '/generate/results?tab=production&job=99'];
+  for (const locale of ['en-US', 'zh-CN']) {
+    for (const [width, height] of [[1440, 900], [390, 844]]) {
+      for (const route of routes) await expectNoOverflow(memoryPage, route, locale, width, height);
     }
   }
-  await page.setViewportSize({ width: 390, height: 844 });
-  await open(page, '/settings', 'en-US');
-  const mobileAlignment = await page.locator('.settings-reviewer-choice').first().evaluate(label => {
-    const radio = label.querySelector('input')?.getBoundingClientRect();
-    const name = label.querySelector('span')?.getBoundingClientRect();
-    return { radioCenter: radio ? radio.top + radio.height / 2 : 0, textCenter: name ? name.top + name.height / 2 : 0 };
-  });
-  assert.equal(Math.abs(mobileAlignment.radioCenter - mobileAlignment.textCenter) <= 4, true, 'Reviewer radio must align at 390px.');
-  if (artifactRoot) await page.screenshot({ path: join(artifactRoot, 'browser-check-final-390.png'), fullPage: true });
+  if (artifactRoot) await memoryPage.screenshot({ path: join(artifactRoot, 'generation-browser-check-390.png'), fullPage: true });
 
   assert.deepEqual(pageErrors, [], `Page errors: ${pageErrors.join(' | ')}`);
-  const expectedConflictMessage = 'Failed to load resource: the server responded with a status of 409 (Conflict)';
-  assert.equal(consoleErrors.filter(message => message === expectedConflictMessage).length, 1, 'The intentional nonempty dataset deletion must be the only 409 resource error.');
-  assert.deepEqual(consoleErrors.filter(message => message !== expectedConflictMessage), [], `Unexpected console errors: ${consoleErrors.join(' | ')}`);
-  console.log('Browser checks passed: workflow, lifecycle, pagination, live logs, reviewer alignment, bilingual layout.');
+  assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(' | ')}`);
+  console.log('Browser checks passed: generation navigation, resources, preview invalidation, GPU states, saved demographics, submission, and review entry.');
 } finally {
-  if (context && tracingStarted && artifactRoot) await context.tracing.stop({ path: join(artifactRoot, 'browser-check-trace.zip') });
+  if (context && tracingStarted && artifactRoot) await context.tracing.stop({ path: join(artifactRoot, 'generation-browser-check-trace.zip') });
   if (browser) await browser.close();
   await server.close();
 }

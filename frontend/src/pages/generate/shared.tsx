@@ -27,7 +27,6 @@ export const genders: Gender[] = ['Male', 'Female'];
 export const ethnicities: Ethnicity[] = ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'];
 
 const draftPrefix = 'conflictstudio.generation.';
-const hiddenTestsKey = 'conflictstudio.generation.hiddenTests';
 
 export const testCopyDraftKey = 'test-copy';
 
@@ -136,24 +135,6 @@ export function takeSessionDraft<T>(key: string): T | null {
   const value = readSessionDraft<T>(key);
   window.sessionStorage.removeItem(draftPrefix + key);
   return value;
-}
-
-export function hiddenTestIds(): number[] {
-  const value = window.localStorage.getItem(hiddenTestsKey);
-  if (value === null) return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter(item => Number.isInteger(item)) as number[] : [];
-  } catch {
-    window.localStorage.removeItem(hiddenTestsKey);
-    return [];
-  }
-}
-
-export function hideTestResult(id: number): number[] {
-  const values = [...new Set([...hiddenTestIds(), id])];
-  window.localStorage.setItem(hiddenTestsKey, JSON.stringify(values));
-  return values;
 }
 
 export function GenerationScaffold({
