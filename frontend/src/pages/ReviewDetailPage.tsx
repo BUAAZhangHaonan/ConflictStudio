@@ -12,7 +12,7 @@ import {
 } from '../api/queries';
 import { Button, ConfirmDialog, Field, MediaPanel, PageHeader, StatusBadge } from '../components';
 import { reviewArchiveEnUS } from '../locales/features/reviewArchive';
-import { usePreferences } from '../preferences';
+import { useReviewerState } from '../preferences';
 import {
   buildReviewListLocation,
   readReviewListLocation,
@@ -74,8 +74,8 @@ export function ReviewDetailPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
-  const preferences = usePreferences();
-  const reviewerId = preferences.currentReviewerId;
+  const reviewerState = useReviewerState();
+  const { currentReviewerId: reviewerId } = reviewerState;
   const locale: Locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
   const detailQuery = useReviewSampleDetailQuery(sampleId);
   const sampleRevision = detailQuery.data?.revision ?? null;
@@ -317,7 +317,7 @@ export function ReviewDetailPage() {
         actions={<Button variant="secondary" onClick={() => navigate(returnTo)}>{t('review.detail.backToList')}</Button>}
       />
 
-      {!canReview ? <section className="generation-feedback" role="status"><p>{t('review.detail.readOnly')}</p></section> : null}
+      {!canReview ? <section className="generation-feedback" role="status"><p>{t('review.detail.readOnly')}</p><Link to="/settings">{t('nav.settings')}</Link></section> : null}
 
       <div className="review-detail__layout">
         <section className="panel review-detail__media" aria-label={t('review.detail.aria.media')}>
@@ -388,13 +388,14 @@ export function ReviewDetailPage() {
                 }}
               />
             </Field>
+            {noteQuery.isError && canReview ? <Button variant="secondary" onClick={() => void noteQuery.refetch()}>{t('actions.retry')}</Button> : null}
             {noteState === 'failed' && canReview ? <Button variant="secondary" onClick={retryNoteSave}>{t('review.detail.note.retry')}</Button> : null}
 
-            <div className="review-detail__actions">
-              <Button disabled={!canReview || !noteReady || writeBusy} onClick={() => setReviewDecision('Accepted')}>{t('status.review.Accepted')}</Button>
-              <Button variant="secondary" disabled={!canReview || !noteReady || writeBusy} onClick={() => setReviewDecision('Rejected')}>{t('status.review.Rejected')}</Button>
-              <Button variant="secondary" disabled={!canReview || writeBusy} onClick={openConversion}>{t('review.detail.conversion.action')}</Button>
-            </div>
+            {canReview ? <div className="review-detail__actions">
+              <Button disabled={writeBusy} onClick={() => setReviewDecision('Accepted')}>{t('status.review.Accepted')}</Button>
+              <Button variant="secondary" disabled={writeBusy} onClick={() => setReviewDecision('Rejected')}>{t('status.review.Rejected')}</Button>
+              <Button variant="secondary" disabled={writeBusy} onClick={openConversion}>{t('review.detail.conversion.action')}</Button>
+            </div> : <Link to="/settings">{t('nav.settings')}</Link>}
 
             {conversionSaved ? <p className="review-detail__success" role="status">{t('review.detail.conversion.saved')} {t('status.review.Pending')}</p> : null}
             {reviewMutation.isError ? <p className="field-error" role="alert">{apiErrorMessage(reviewMutation.error, locale)}</p> : null}

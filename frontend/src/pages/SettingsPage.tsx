@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiErrorMessage } from '../api/client';
 import type { GpuSlot, Reviewer } from '../api/contracts';
@@ -8,12 +8,10 @@ import {
   useGpuSlotsQuery,
   useHealthQuery,
   useRenameReviewerMutation,
-  useReviewerQuery,
-  useReviewersQuery,
 } from '../api/queries';
 import { Button, Dialog, Field, PageHeader, Pagination, StateView, StatusBadge } from '../components';
 import { gpuStatusReason } from '../gpuStatus';
-import { setCurrentReviewer, setPreferredLocale, usePreferences } from '../preferences';
+import { setCurrentReviewer, setPreferredLocale, useReviewerState } from '../preferences';
 import { formatDateTime } from '../time';
 import './SettingsPage.css';
 
@@ -26,10 +24,9 @@ function gpuKind(availability: GpuSlot['availability']): 'active' | 'problem' | 
 
 export function SettingsPage() {
   const { t, i18n } = useTranslation();
-  const preferences = usePreferences();
   const [reviewerPage, setReviewerPage] = useState(1);
-  const reviewersQuery = useReviewersQuery(reviewerPage);
-  const currentReviewerQuery = useReviewerQuery(preferences.currentReviewerId);
+  const reviewerState = useReviewerState(reviewerPage);
+  const { preferences, reviewersQuery, currentReviewer } = reviewerState;
   const healthQuery = useHealthQuery();
   const datasetsQuery = useDatasetsQuery();
   const gpuQuery = useGpuSlotsQuery();
@@ -40,15 +37,8 @@ export function SettingsPage() {
   const [renameValue, setRenameValue] = useState('');
   const [recheckState, setRecheckState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const reviewers = reviewersQuery.data?.items ?? [];
-  const currentReviewer = preferences.currentReviewerId === null ? null : currentReviewerQuery.data ?? null;
   const locale = preferences.locale;
   const copyKey = 'workspaceSettingsStatistics.settings';
-
-  useEffect(() => {
-    if (currentReviewer && currentReviewer.name !== preferences.currentReviewerName) {
-      setCurrentReviewer(currentReviewer);
-    }
-  }, [currentReviewer, preferences.currentReviewerName]);
 
   const createReviewer = (event: FormEvent) => {
     event.preventDefault();
@@ -86,17 +76,14 @@ export function SettingsPage() {
     setRecheckState(results.some(result => result.error) ? 'error' : 'success');
   };
 
-  const retryReviewers = () => Promise.all([
-    reviewersQuery.refetch(),
-    ...(preferences.currentReviewerId === null ? [] : [currentReviewerQuery.refetch()]),
-  ]);
+  const retryReviewers = reviewerState.retry;
 
   const health = healthQuery.data;
   const datasets = datasetsQuery.data?.items ?? [];
   const gpuSlots = gpuQuery.data ?? [];
   const mutationError = createMutation.error ?? renameMutation.error;
-  const reviewerPending = reviewersQuery.isPending || (preferences.currentReviewerId !== null && currentReviewerQuery.isPending);
-  const reviewerError = reviewersQuery.error ?? (preferences.currentReviewerId === null ? null : currentReviewerQuery.error);
+  const reviewerPending = reviewerState.isPending;
+  const reviewerError = reviewerState.error;
   const servicesPending = healthQuery.isPending || datasetsQuery.isPending || gpuQuery.isPending;
   const servicesError = healthQuery.error ?? datasetsQuery.error ?? gpuQuery.error;
   return (
@@ -105,11 +92,11 @@ export function SettingsPage() {
       <section className="panel settings-section settings-reviewers">
         <div className="section-header"><h2>{t(`${copyKey}.reviewers.title`)}</h2></div>
         {reviewerPending ? <StateView state="loading" /> : reviewerError ? (
-          <section className="state-view" role="alert"><h2>{t('state.error.title')}</h2><p>{apiErrorMessage(reviewerError, locale)}</p><Button variant="secondary" onClick={() => void retryReviewers()}>{t('actions.retry')}</Button></section>
+          <section className="state-view" role="alert"><h2>{t(`${copyKey}.reviewers.title`)}</h2><p>{apiErrorMessage(reviewerError, locale)}</p><Button variant="secondary" onClick={() => void retryReviewers()}>{t('actions.retry')}</Button></section>
         ) : <>
           {mutationError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(mutationError, locale)}</p></section> : null}
           {currentReviewer ? <div className="settings-current-reviewer"><span>{t(`${copyKey}.reviewers.currentLegend`)}</span><strong>{currentReviewer.name}</strong><Button type="button" variant="quiet" onClick={() => { setRenameTarget(currentReviewer); setRenameValue(currentReviewer.name); renameMutation.reset(); }}>{t(`${copyKey}.reviewers.renameCurrent`)}</Button></div> : <p>{t(`${copyKey}.reviewers.noCurrent`)}</p>}
-          {reviewers.length === 0 ? <StateView state="empty" /> : (
+          {reviewers.length === 0 ? <section className="state-view"><h2>{t(`${copyKey}.reviewers.emptyTitle`)}</h2><p>{t(`${copyKey}.reviewers.emptyBody`)}</p></section> : (
             <fieldset className="settings-reviewer-list"><legend>{t(`${copyKey}.reviewers.availableLegend`)}</legend>{reviewers.map(reviewer => <label className="settings-reviewer-choice" key={reviewer.id}><input type="radio" name="current-reviewer" checked={reviewer.id === preferences.currentReviewerId} onChange={() => setCurrentReviewer(reviewer)} /><span>{reviewer.name}</span></label>)}</fieldset>
           )}
           <Pagination page={reviewersQuery.data?.page ?? 1} totalPages={reviewersQuery.data?.totalPages ?? 0} total={reviewersQuery.data?.total ?? 0} onPageChange={setReviewerPage} />

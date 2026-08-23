@@ -219,7 +219,7 @@ export function useJobEventsQuery(id: number | null, page = 1) { return useQuery
 export function useGpuSlotsQuery() { return useQuery(generationQueries.gpuSlots()); }
 export function useHealthQuery() { return useQuery(generationQueries.health()); }
 export function useReviewersQuery(page = 1) { return useQuery(generationQueries.reviewers(page)); }
-export function useReviewerQuery(id: number | null) { return useQuery({ ...generationQueries.reviewer(id ?? 0), enabled: id !== null }); }
+export function useReviewerQuery(id: number | null, enabled = true) { return useQuery({ ...generationQueries.reviewer(id ?? 0), enabled: enabled && id !== null }); }
 export function useArchivesQuery(page = 1) { return useQuery(generationQueries.archives(page)); }
 export function useSamplesQuery(filter: SampleQueryFilter = {}, page = 1) { return useQuery(generationQueries.samples(filter, page)); }
 export function useReviewerStatisticsQuery(reviewerId: number | null, filter: ReviewerStatisticsFilter) { return useQuery({ ...generationQueries.reviewerStatistics(reviewerId ?? 0, filter), enabled: reviewerId !== null && filter.startDate !== undefined && filter.endDate !== undefined }); }

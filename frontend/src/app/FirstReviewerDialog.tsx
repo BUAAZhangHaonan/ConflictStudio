@@ -1,31 +1,26 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiErrorMessage } from '../api/client';
-import { useCreateReviewerMutation, useReviewersQuery } from '../api/queries';
+import { useCreateReviewerMutation } from '../api/queries';
 import { Button, Dialog, Field, Pagination } from '../components';
 import {
   dismissReviewerPrompt,
   isReviewerPromptDismissed,
   setCurrentReviewer,
-  usePreferences,
+  useReviewerState,
 } from '../preferences';
 
 export function FirstReviewerDialog() {
   const { t } = useTranslation();
-  const preferences = usePreferences();
   const [reviewerPage, setReviewerPage] = useState(1);
-  const reviewersQuery = useReviewersQuery(reviewerPage);
+  const { preferences, reviewersQuery, currentReviewer } = useReviewerState(reviewerPage);
   const createMutation = useCreateReviewerMutation();
   const reviewers = reviewersQuery.data?.items ?? [];
   const [name, setName] = useState('');
   const [mode, setMode] = useState<'existing' | 'new'>('new');
   const [selectedReviewerId, setSelectedReviewerId] = useState<number | null>(null);
   const [dismissed, setDismissed] = useState(isReviewerPromptDismissed);
-  const currentReviewer = useMemo(() => preferences.currentReviewerId === null ? null : {
-    id: preferences.currentReviewerId,
-    name: preferences.currentReviewerName ?? '',
-  }, [preferences.currentReviewerId, preferences.currentReviewerName]);
-  const open = reviewersQuery.isSuccess && currentReviewer === null && !dismissed;
+  const open = reviewersQuery.isSuccess && preferences.currentReviewerId === null && currentReviewer === null && !dismissed;
 
   useEffect(() => {
     if (reviewers.length === 0) {

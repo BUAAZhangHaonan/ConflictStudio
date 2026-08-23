@@ -1,10 +1,10 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { apiErrorMessage } from '../api/client';
+import { ApiError, apiErrorMessage } from '../api/client';
 import { useDatasetQuery, useDatasetsQuery, useReviewerStatisticsQuery } from '../api/queries';
 import { Button, Field, Metric, PageHeader, Pagination, StateView, TableShell } from '../components';
-import { usePreferences } from '../preferences';
+import { setCurrentReviewer, useReviewerState } from '../preferences';
 import { formatDate } from '../time';
 import './StatisticsPage.css';
 
@@ -15,7 +15,8 @@ function dateDaysAgo(referenceDate: Date, days: number): string {
 export function StatisticsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const preferences = usePreferences();
+  const reviewerState = useReviewerState();
+  const { preferences, currentReviewerId } = reviewerState;
   const [datasetPage, setDatasetPage] = useState(1);
   const [datasetSearch, setDatasetSearch] = useState('');
   const [defaultRange] = useState(() => ({
@@ -38,11 +39,16 @@ export function StatisticsPage() {
     startDate: validRange ? startDate : undefined,
     endDate: validRange ? endDate : undefined,
   }), [datasetId, endDate, startDate, validRange]);
-  const statisticsQuery = useReviewerStatisticsQuery(preferences.currentReviewerId, filter);
+  const statisticsQuery = useReviewerStatisticsQuery(currentReviewerId, filter);
   const statistics = statisticsQuery.data ?? null;
   const maximumDailyCount = Math.max(1, ...(statistics?.activity.map(item => item.reviewedCount) ?? []));
   const locale = preferences.locale;
   const filtersChanged = datasetId !== undefined || startDate !== defaultRange.startDate || endDate !== defaultRange.endDate;
+  const statisticsMissing = statisticsQuery.error instanceof ApiError && statisticsQuery.error.status === 404;
+
+  useEffect(() => {
+    if (statisticsMissing) setCurrentReviewer(null);
+  }, [statisticsMissing]);
 
   const resetFilters = () => {
     setDatasetId(undefined);
@@ -52,7 +58,13 @@ export function StatisticsPage() {
     setEndDate(defaultRange.endDate);
   };
 
-  if (preferences.currentReviewerId === null) {
+  if (reviewerState.isPending) {
+    return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><StateView state="loading" /></div>;
+  }
+  if (reviewerState.error) {
+    return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><section className="state-view" role="alert"><h2>{t('statistics.title')}</h2><p>{apiErrorMessage(reviewerState.error, locale)}</p><Button variant="secondary" onClick={() => void reviewerState.retry()}>{t('actions.retry')}</Button></section></div>;
+  }
+  if (currentReviewerId === null || statisticsMissing) {
     return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><StateView state="empty" action={{ label: t('nav.settings'), onClick: () => navigate('/settings') }} /></div>;
   }
   if (datasetsQuery.isPending || (datasetId !== undefined && selectedDatasetQuery.isPending) || (statisticsQuery.isPending && validRange)) {
@@ -60,7 +72,7 @@ export function StatisticsPage() {
   }
   const error = datasetsQuery.error ?? selectedDatasetQuery.error ?? statisticsQuery.error;
   if (error) {
-    return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><section className="state-view" role="alert"><h2>{t('state.error.title')}</h2><p>{apiErrorMessage(error, locale)}</p></section></div>;
+    return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><section className="state-view" role="alert"><h2>{t('statistics.title')}</h2><p>{apiErrorMessage(error, locale)}</p><Button variant="secondary" onClick={() => void Promise.all([datasetsQuery.refetch(), selectedDatasetQuery.refetch(), statisticsQuery.refetch()])}>{t('actions.retry')}</Button></section></div>;
   }
 
   return (

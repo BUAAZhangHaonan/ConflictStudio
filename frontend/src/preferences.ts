@@ -1,4 +1,7 @@
-import { useSyncExternalStore } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
+import { ApiError } from './api/client';
+import type { Reviewer } from './api/contracts';
+import { useReviewerQuery, useReviewersQuery } from './api/queries';
 import type { Locale } from './types';
 
 export const LOCALE_STORAGE_KEY = 'conflictstudio.locale';
@@ -70,4 +73,48 @@ export function setCurrentReviewer(reviewer: { id: number; name: string } | null
   window.localStorage.setItem(REVIEWER_ID_STORAGE_KEY, String(reviewer.id));
   window.localStorage.setItem(REVIEWER_NAME_STORAGE_KEY, reviewer.name);
   publish({ ...snapshot, currentReviewerId: reviewer.id, currentReviewerName: reviewer.name });
+}
+
+export function useReviewerState(page = 1) {
+  const preferences = usePreferences();
+  const reviewersQuery = useReviewersQuery(page);
+  const listedReviewer = reviewersQuery.data?.items.find(reviewer => reviewer.id === preferences.currentReviewerId) ?? null;
+  const currentReviewerQuery = useReviewerQuery(
+    preferences.currentReviewerId,
+    reviewersQuery.isSuccess && preferences.currentReviewerId !== null && listedReviewer === null,
+  );
+  const missingReviewer = currentReviewerQuery.error instanceof ApiError && currentReviewerQuery.error.status === 404;
+  const currentReviewer: Reviewer | null = reviewersQuery.isSuccess
+    ? listedReviewer ?? currentReviewerQuery.data ?? null
+    : null;
+
+  useEffect(() => {
+    if (!reviewersQuery.isSuccess || preferences.currentReviewerId === null) return;
+    if (currentReviewer !== null) {
+      if (currentReviewer.name !== preferences.currentReviewerName) setCurrentReviewer(currentReviewer);
+      return;
+    }
+    if (missingReviewer) setCurrentReviewer(null);
+  }, [currentReviewer, missingReviewer, preferences.currentReviewerId, preferences.currentReviewerName, reviewersQuery.isSuccess]);
+
+  const isPending = reviewersQuery.isPending || (
+    preferences.currentReviewerId !== null
+    && listedReviewer === null
+    && currentReviewerQuery.isPending
+  );
+  const error = reviewersQuery.error ?? (missingReviewer ? null : currentReviewerQuery.error);
+  const retry = () => Promise.all([
+    reviewersQuery.refetch(),
+    ...(preferences.currentReviewerId === null || listedReviewer !== null ? [] : [currentReviewerQuery.refetch()]),
+  ]);
+
+  return {
+    preferences,
+    reviewersQuery,
+    currentReviewer,
+    currentReviewerId: currentReviewer?.id ?? null,
+    isPending,
+    error,
+    retry,
+  };
 }
