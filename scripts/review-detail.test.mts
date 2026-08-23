@@ -26,6 +26,13 @@ test('detail prefers an explicit safe list return and keeps saved scroll as a fa
   });
 });
 
+test('detail labels a safe Results return separately from a review-list return', () => {
+  assert.match(page, /const backLabel = t\(returnTo\.startsWith\('\/generate\/results'\)[\s\S]*'review\.detail\.backToResults'[\s\S]*'review\.detail\.backToList'\)/u);
+  assert.equal((page.match(/\{backLabel\}/gu) ?? []).length, 3);
+  assert.match(locales, /backToResults: 'Back to generation results'/u);
+  assert.match(locales, /backToResults: '返回生成结果'/u);
+});
+
 test('detail receives the API-validated reviewer from ReviewGate', () => {
   assert.match(page, /const reviewer = useReviewGateReviewer\(\)/u);
   assert.match(page, /const reviewerId = reviewer\.id/u);

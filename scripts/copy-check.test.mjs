@@ -107,6 +107,14 @@ test('generation English copy has singular and plural counts', () => {
   assert.match(generationLocaleSource, /videoCount_one': '\{\{count\}\} video'/u);
 });
 
+test('production copy states that Preview saves the current configuration', () => {
+  assert.match(generationLocaleSource, /'production\.subtitle': 'Choose every valid combination\. Preview saves the current configuration and shows every assignment before submission\.'/u);
+  assert.match(generationLocaleSource, /'production\.subtitle': '选择全部有效组合。预览会保存当前配置，并在提交前显示每一条分配。'/u);
+  assert.match(generationLocaleSource, /'production\.unsaved': 'Preview saves the current configuration before submission\./u);
+  assert.match(generationLocaleSource, /'production\.unsaved': '预览会在提交前保存当前配置。/u);
+  assert.doesNotMatch(generationLocaleSource, /save the batch|保存批次|production\.save(?:Title|Body)?'/u);
+});
+
 test('dataset states and review gate guidance have complete English and Chinese copy', () => {
   assert.match(enUSSource, /dataset: \{ Active: 'Active', Disabled: 'Disabled', Inactive: 'Inactive' \}/u);
   assert.match(zhCNSource, /dataset: \{ Active: '已启用', Disabled: '已禁用', Inactive: '已停用' \}/u);

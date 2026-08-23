@@ -91,14 +91,17 @@
 .review-list__select-cell { width: 42px; text-align: center; }
 
 .review-list__sample-cell {
-  display: grid;
-  gap: 5px;
-  justify-items: start;
+  min-width: 0;
 }
+
+.review-list__sample-cell .table-link { display: block; }
 
 .review-list__sample-cell video {
   display: block;
   width: 112px;
+  max-width: 100%;
+  height: 63px;
+  margin-top: 5px;
   aspect-ratio: 16 / 9;
   border-radius: var(--radius-small);
   background: var(--color-surface-muted);

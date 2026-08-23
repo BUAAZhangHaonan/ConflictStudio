@@ -386,8 +386,19 @@ try {
 
   const routes = ['/generate/resources', '/generate/test', '/generate/production', '/generate/results?tab=production&job=99'];
   for (const locale of ['en-US', 'zh-CN']) {
-    for (const [width, height] of [[1440, 900], [390, 844]]) {
-      for (const route of routes) await expectNoOverflow(memoryPage, route, locale, width, height);
+    const productionSubtitle = locale === 'zh-CN'
+      ? '选择全部有效组合。预览会保存当前配置，并在提交前显示每一条分配。'
+      : 'Choose every valid combination. Preview saves the current configuration and shows every assignment before submission.';
+    for (const [width, height] of [[1440, 900], [1024, 900], [768, 900], [390, 844]]) {
+      for (const route of routes) {
+        await expectNoOverflow(memoryPage, route, locale, width, height);
+        if (route !== '/generate/production') continue;
+        assert.equal(await memoryPage.locator('.generation-page__subtitle').textContent(), productionSubtitle);
+        const productionText = await memoryPage.locator('.generation-page').innerText();
+        assert.equal(productionText.includes('save the batch'), false);
+        assert.equal(productionText.includes('保存批次'), false);
+        if (artifactRoot) await memoryPage.screenshot({ path: join(artifactRoot, `production-copy-${locale}-${width}.png`), fullPage: true });
+      }
     }
   }
   if (artifactRoot) await memoryPage.screenshot({ path: join(artifactRoot, 'generation-browser-check-390.png'), fullPage: true });

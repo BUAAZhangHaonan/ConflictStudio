@@ -30,6 +30,58 @@ async function expectNoOverflow(page, route, locale, width, height) {
   })), { document: 0, body: 0 }, `${locale} ${route} must not overflow at ${width}px`);
 }
 
+async function expectReviewListMediaContained(page, width) {
+  if (width > 600) {
+    const rows = page.locator('.review-list__results .table-shell tbody tr');
+    await rows.first().waitFor();
+    const geometry = await rows.evaluateAll(elements => elements.map(row => {
+      const rowBox = row.getBoundingClientRect();
+      const video = row.querySelector('.review-list__sample-cell video');
+      const videoBox = video.getBoundingClientRect();
+      return {
+        rowTop: rowBox.top,
+        rowBottom: rowBox.bottom,
+        videoTop: videoBox.top,
+        videoBottom: videoBox.bottom,
+        videoWidth: videoBox.width,
+        videoHeight: videoBox.height,
+        objectFit: getComputedStyle(video).objectFit,
+      };
+    }));
+    for (const item of geometry) {
+      assert.equal(Math.abs(item.videoWidth - 112) < 0.5, true, `Desktop thumbnail width must stay 112px at ${width}px.`);
+      assert.equal(Math.abs(item.videoHeight - 63) < 0.5, true, `Desktop thumbnail height must stay 63px at ${width}px.`);
+      assert.equal(item.videoTop >= item.rowTop - 1, true, `Thumbnail top must stay inside its row at ${width}px.`);
+      assert.equal(item.videoBottom <= item.rowBottom + 1, true, `Thumbnail bottom must stay inside its row at ${width}px.`);
+      assert.equal(item.objectFit, 'contain');
+    }
+    const lastRow = await rows.last().boundingBox();
+    const pagination = await page.locator('.review-list__results > .pagination').boundingBox();
+    assert.equal(lastRow !== null && pagination !== null && pagination.y >= lastRow.y + lastRow.height - 1, true, `Pagination must follow the final row at ${width}px.`);
+    return;
+  }
+
+  assert.equal(await page.locator('.review-list__results .table-shell').isVisible(), false);
+  const cards = page.locator('.review-list__cards > li');
+  await cards.first().waitFor();
+  const geometry = await cards.evaluateAll(elements => elements.map(card => {
+    const cardBox = card.getBoundingClientRect();
+    const video = card.querySelector('video');
+    const videoBox = video.getBoundingClientRect();
+    return {
+      cardLeft: cardBox.left,
+      cardRight: cardBox.right,
+      videoLeft: videoBox.left,
+      videoRight: videoBox.right,
+      objectFit: getComputedStyle(video).objectFit,
+    };
+  }));
+  for (const item of geometry) {
+    assert.equal(item.videoLeft >= item.cardLeft - 1 && item.videoRight <= item.cardRight + 1, true, 'Mobile thumbnail must stay inside its card.');
+    assert.equal(item.objectFit, 'contain');
+  }
+}
+
 const server = await createServer({
   root: frontendRoot,
   logLevel: 'silent',
@@ -110,8 +162,10 @@ try {
   assert.equal(await datasetSelect.inputValue(), '22');
   await open(page, listRoute);
   await page.evaluate(() => window.scrollTo({ top: 360, behavior: 'instant' }));
+  const firstDetailButton = page.getByRole('button', { name: 'CS-000021', exact: true });
+  await firstDetailButton.scrollIntoViewIfNeeded();
   const savedScroll = await page.evaluate(() => window.scrollY);
-  await page.getByRole('button', { name: 'CS-000021', exact: true }).click();
+  await firstDetailButton.click();
   let detailUrl = new URL(page.url());
   assert.equal(detailUrl.pathname, '/review/21');
   assert.equal(detailUrl.searchParams.get('returnTo'), listRoute);
@@ -178,7 +232,7 @@ try {
   await page.getByLabel('Note').fill('Saved before the Results review decision.');
   const decisionClick = page.getByRole('button', { name: 'Accepted', exact: true }).click();
   await page.getByText('Saving', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Back to review list', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Back to generation results', exact: true }).isDisabled(), true);
   await decisionClick;
   await page.getByRole('dialog', { name: 'Confirm review' }).waitFor();
   await page.getByRole('dialog', { name: 'Confirm review' }).getByRole('button', { name: 'Save and continue', exact: true }).click();
@@ -189,7 +243,7 @@ try {
   const resultsPutIndex = resultsReviewRequests.findIndex(request => request.method === 'PUT' && request.path === '/api/samples/5/review-note-draft');
   const resultsPostIndex = resultsReviewRequests.findIndex(request => request.method === 'POST' && request.path === '/api/reviews');
   assert.equal(resultsPutIndex >= 0 && resultsPostIndex > resultsPutIndex, true);
-  await page.getByRole('button', { name: 'Back to review list', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to generation results', exact: true }).click();
   await page.waitForURL(`${baseUrl}${resultsReturnTo}`);
 
   await open(page, '/review/5?returnTo=%2Freview');
@@ -214,10 +268,22 @@ try {
   await page.waitForURL(`${baseUrl}${archiveRoute}`);
 
   for (const locale of ['zh-CN', 'en-US']) {
+    const listBackLabel = locale === 'zh-CN' ? '返回审核列表' : 'Back to review list';
+    const resultsBackLabel = locale === 'zh-CN' ? '返回生成结果' : 'Back to generation results';
     for (const [width, height] of [[1440, 900], [1024, 900], [768, 900], [390, 844]]) {
-      for (const route of ['/review', '/review/4?returnTo=%2Freview', '/archive?dataset=1&page=2']) {
-        await expectNoOverflow(page, route, locale, width, height);
-      }
+      await expectNoOverflow(page, '/review', locale, width, height);
+      await expectReviewListMediaContained(page, width);
+      if (artifactRoot) await page.screenshot({ path: join(artifactRoot, `review-list-${locale}-${width}.png`), fullPage: true });
+
+      await expectNoOverflow(page, '/review/4?returnTo=%2Freview', locale, width, height);
+      await page.getByRole('button', { name: listBackLabel, exact: true }).waitFor();
+
+      const resultsDetailRoute = `/review/5?returnTo=${encodeURIComponent(resultsReturnTo)}`;
+      await expectNoOverflow(page, resultsDetailRoute, locale, width, height);
+      await page.getByRole('button', { name: resultsBackLabel, exact: true }).waitFor();
+      if (artifactRoot) await page.screenshot({ path: join(artifactRoot, `review-results-return-${locale}-${width}.png`), fullPage: true });
+
+      await expectNoOverflow(page, '/archive?dataset=1&page=2', locale, width, height);
     }
   }
   await page.setViewportSize({ width: 390, height: 844 });

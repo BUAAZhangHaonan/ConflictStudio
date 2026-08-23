@@ -116,6 +116,9 @@ export function ReviewDetailPage() {
   const explicitReturnTo = safeReviewListReturnTarget(searchParams.get('returnTo'))
     ?? safeReviewReturnTarget(searchParams.get('returnTo'));
   const returnTo = explicitReturnTo ?? savedListState?.returnTo ?? '/review';
+  const backLabel = t(returnTo.startsWith('/generate/results')
+    ? 'review.detail.backToResults'
+    : 'review.detail.backToList');
   const listReturnTo = safeReviewListReturnTarget(returnTo);
   const listLocation = useMemo(() => readReviewListLocation(listReturnTo ?? '/review'), [listReturnTo]);
   const navigationQueue = useMemo(() => queueFromReturnTarget(listReturnTo ?? '/review'), [listReturnTo]);
@@ -356,7 +359,7 @@ export function ReviewDetailPage() {
         <PageHeader title={t('review.detail.emptyTitle')} />
         <section className="generation-feedback" role="status">
           <p>{t('review.detail.emptyBody')}</p>
-          <Button variant="secondary" onClick={() => navigate(returnTo)}>{t('review.detail.backToList')}</Button>
+          <Button variant="secondary" onClick={() => navigate(returnTo)}>{backLabel}</Button>
         </section>
       </section>
     );
@@ -378,7 +381,7 @@ export function ReviewDetailPage() {
         <section className="generation-feedback generation-feedback--problem" role="alert">
           <p>{t('review.detail.errorBody')}</p>
           <Button variant="secondary" onClick={() => detailQuery.refetch()}>{t('actions.retry')}</Button>
-          <Button variant="quiet" onClick={() => navigate(returnTo)}>{t('review.detail.backToList')}</Button>
+          <Button variant="quiet" onClick={() => navigate(returnTo)}>{backLabel}</Button>
         </section>
       </section>
     );
@@ -418,7 +421,7 @@ export function ReviewDetailPage() {
           <div className="review-detail__navigation">
             <Button variant="quiet" disabled={!canGoPrevious || navigationPending || noteSaving} onClick={() => void navigateAdjacent('previous')}>{t('review.detail.previous')}</Button>
             <Button variant="quiet" disabled={!canGoNext || navigationPending || noteSaving} onClick={() => void navigateAdjacent('next')}>{t('review.detail.next')}</Button>
-            <Button variant="secondary" disabled={navigationPending || noteSaving} onClick={() => void navigateBack()}>{t('review.detail.backToList')}</Button>
+            <Button variant="secondary" disabled={navigationPending || noteSaving} onClick={() => void navigateBack()}>{backLabel}</Button>
           </div>
         )}
       />

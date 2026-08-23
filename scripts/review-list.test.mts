@@ -92,7 +92,7 @@ test('list selection never leaks across pages', () => {
   assert.match(page, /setSelectedIds\(new Set\(\)\);[\s\S]*locationState\.page/u);
 });
 
-test('desktop filters collapse and the sample table uses compact combined columns', () => {
+test('desktop filters collapse and media stays inside naturally sized table rows', () => {
   assert.match(page, /<details className="panel review-list__filters">/u);
   assert.doesNotMatch(page, /<details className="panel review-list__filters" open/u);
   assert.match(page, /activeFilterCount/u);
@@ -100,7 +100,10 @@ test('desktop filters collapse and the sample table uses compact combined column
   assert.match(page, /emotionLabel\(sample\.trueEmotion\)[\s\S]*emotionLabel\(sample\.apparentEmotion\)/u);
   assert.equal((page.match(/\{ key:/gu) ?? []).length, 7);
   assert.match(css, /table-layout: fixed/u);
-  assert.match(css, /\.review-list__sample-cell video[\s\S]*object-fit: contain/u);
+  const sampleCellRule = /\.review-list__sample-cell \{([^}]*)\}/u.exec(css)?.[1] ?? '';
+  assert.doesNotMatch(sampleCellRule, /display:\s*grid/u);
+  assert.match(css, /\.review-list__sample-cell \.table-link \{ display: block; \}/u);
+  assert.match(css, /\.review-list__sample-cell video \{[\s\S]*width: 112px;[\s\S]*height: 63px;[\s\S]*object-fit: contain/u);
 });
 
 test('390 pixel cards keep media contained without horizontal overflow', () => {
