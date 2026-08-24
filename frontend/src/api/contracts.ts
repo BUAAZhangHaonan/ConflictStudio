@@ -526,6 +526,7 @@ export interface ReviewQueue {
   relation: Relation | null;
   direction: ConflictDirection | null;
   search: string | null;
+  inArchive?: boolean | null;
 }
 
 export type ReviewQueueFilter = ReviewQueue;

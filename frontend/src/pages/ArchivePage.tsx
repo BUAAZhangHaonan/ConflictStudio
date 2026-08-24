@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { apiErrorMessage } from '../api/client';
 import type { ArchiveChange } from '../api/contracts';
 import {
+  useAllDatasetsQuery,
   useArchivesQuery,
-  useDatasetsQuery,
   usePreviewArchiveMutation,
   useReviewSampleListQuery,
   useSyncArchiveMutation,
 } from '../api/queries';
 import { Button, ConfirmDialog, Metric, PageHeader, Pagination, StatusBadge } from '../components';
+import { useDebouncedValue } from './generate/shared';
 import {
   buildArchiveLocation,
   reviewDetailLocation,
@@ -25,7 +26,7 @@ export function ArchivePage() {
   const { t, i18n } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
-  const datasetsQuery = useDatasetsQuery();
+  const datasetsQuery = useAllDatasetsQuery();
   const initial = new URLSearchParams(location.search);
   const requestedPage = Number(initial.get('page'));
   const [page, setPage] = useState(Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1);
@@ -39,16 +40,18 @@ export function ArchivePage() {
   const [category, setCategory] = useState<Category | 'All'>(categories.includes(initialCategory as Category) ? initialCategory as Category : 'All');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [previewPage, setPreviewPage] = useState(1);
-  const datasets = datasetsQuery.data?.items ?? [];
+  const datasets = datasetsQuery.data ?? [];
   const archives = archivesQuery.data?.items ?? [];
   const dataset = datasets.find(item => item.id === datasetId) ?? datasets[0] ?? null;
+  const debouncedSearch = useDebouncedValue(search);
   const samplesQuery = useReviewSampleListQuery({
-    search: null,
+    search: debouncedSearch.trim() ? debouncedSearch.trim() : null,
     datasetId: dataset?.id ?? null,
     decision: 'All',
-    protocol: null,
-    relation: null,
+    protocol: category === 'All' ? null : category.endsWith('VA') ? 'VA' : 'VT',
+    relation: category === 'All' ? null : category.startsWith('A') ? 'Aligned' : 'Conflict',
     direction: null,
+    inArchive: true,
     page,
   });
   const samples = samplesQuery.data?.items ?? [];
@@ -61,16 +64,13 @@ export function ArchivePage() {
     if (nextId !== datasetId) setDatasetId(nextId);
   }, [dataset?.id, datasetId, datasetsQuery.isSuccess]);
 
-  const rows = useMemo(() => dataset ? samples.filter(sample => sample.datasetId === dataset.id && sample.inArchive) : [], [dataset, samples]);
-  const filteredRows = useMemo(() => {
-    const needle = search.trim().toLocaleLowerCase(locale);
-    return rows.filter(sample => (category === 'All' || sample.category === category) && (!needle || `${sample.displayId} ${sample.category}`.toLocaleLowerCase(locale).includes(needle))).sort((left, right) => left.id - right.id);
-  }, [category, locale, rows, search]);
+  const filteredRows = samples;
   const archiveDataReady = datasetsQuery.isSuccess && samplesQuery.isSuccess && archivesQuery.isSuccess;
   const currentPage = samplesQuery.data?.page ?? page;
   const visibleRows = filteredRows;
   const archiveTotal = archive?.currentCount ?? 0;
-  const archiveTotalPages = Math.ceil(archiveTotal / 20);
+  const archiveTotalPages = samplesQuery.data?.totalPages ?? 0;
+  const listTotal = samplesQuery.data?.total ?? 0;
   const returnTo = buildArchiveLocation({ datasetId: dataset?.id ?? null, search, category, page: currentPage });
   const preview = previewMutation.data ?? null;
   const previewRows: Array<{ sample: ArchiveChange; change: 'added' | 'updated' | 'removed' }> = preview ? [
@@ -125,7 +125,7 @@ export function ArchivePage() {
         {preview ? <section className="panel archive-preview" aria-label={t('archive.aria.preview')}><div className="section-header"><h2>{t('archive.previewTitle')}</h2></div><div className="metric-grid archive-metrics"><Metric label={t('archive.toAdd')} value={preview.added.length} /><Metric label={t('archive.toUpdate')} value={preview.updated.length} /><Metric label={t('archive.toRemove')} value={preview.removed.length} /><Metric label={t('archive.unchanged')} value={preview.unchangedCount} /></div>{previewRows.length ? <><ul className="archive-preview__list">{visiblePreviewRows.map(({ sample, change }) => <li key={`${change}-${sample.sampleId}`}><video className="archive-thumbnail" src={sample.primaryAssetUrl} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /><span><Link to={reviewDetailLocation(sample.sampleId, returnTo)}>{sample.displayId}</Link><small>{sample.datasetName} {t(`category.${sample.category}`)}</small></span><StatusBadge label={t(`archive.${change}`)} kind={change === 'removed' ? 'problem' : 'neutral'} /></li>)}</ul><Pagination page={previewPage} totalPages={previewTotalPages} total={previewRows.length} onPageChange={setPreviewPage} /></> : <p>{t('archive.noChangesBody')}</p>}<Button variant="primary" disabled={previewRows.length === 0} onClick={() => setConfirmOpen(true)}>{t('actions.syncArchive')}</Button></section> : null}
         {archiveTotal === 0 ? <section className="panel archive-state"><h2>{t('archive.emptyTitle')}</h2><p>{t('archive.emptyBody')}</p><Button variant="primary" onClick={() => navigate(`/review?${new URLSearchParams({ returnTo }).toString()}`)}>{t('actions.openReview')}</Button></section> : <>
           <section className="panel archive-filters"><label className="archive-filter archive-filter--search"><span>{t('fields.search')}</span><input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} /></label><label className="archive-filter"><span>{t('archive.category')}</span><select value={category} onChange={event => { setCategory(event.target.value as Category | 'All'); setPage(1); }}><option value="All">{t('review.allCategories')}</option>{categories.map(value => <option key={value} value={value}>{t(`category.${value}`)}</option>)}</select></label>{hasFilters ? <Button variant="quiet" onClick={() => { setSearch(''); setCategory('All'); setPage(1); }}>{t('actions.clearFilters')}</Button> : null}</section>
-          <section className="panel archive-list-panel"><div className="section-header"><h2>{t('archive.currentArchive')}</h2></div>{filteredRows.length === 0 ? <section className="archive-state"><h2>{t('archive.filteredTitle')}</h2><p>{t('archive.filteredBody')}</p></section> : <div className="table-shell archive-table-shell"><table><caption>{t('table.archiveCaption')}</caption><thead><tr><th>{t('archive.thumbnail')}</th><th>{t('archive.sampleId')}</th><th>{t('archive.category')}</th><th>{t('fields.status')}</th><th>{t('fields.updatedAt')}</th></tr></thead><tbody>{visibleRows.map(sample => <tr key={sample.id}><td><video className="archive-thumbnail" src={sample.primaryMedia.url} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /></td><th scope="row"><Link to={reviewDetailLocation(sample.id, returnTo)}>{sample.displayId}</Link></th><td>{t(`category.${sample.category}`)}</td><td><StatusBadge label={t(`status.archive.${sample.archiveSyncStatus}`)} kind={sample.archiveSyncStatus === 'Current' ? 'complete' : 'problem'} /></td><td>{formatDateTime(sample.updatedAt)}</td></tr>)}</tbody></table></div>}<Pagination page={Math.min(currentPage, archiveTotalPages)} totalPages={archiveTotalPages} total={archiveTotal} onPageChange={setPage} /></section>
+          <section className="panel archive-list-panel"><div className="section-header"><h2>{t('archive.currentArchive')}</h2></div>{filteredRows.length === 0 ? <section className="archive-state"><h2>{t('archive.filteredTitle')}</h2><p>{t('archive.filteredBody')}</p></section> : <div className="table-shell archive-table-shell"><table><caption>{t('table.archiveCaption')}</caption><thead><tr><th>{t('archive.thumbnail')}</th><th>{t('archive.sampleId')}</th><th>{t('archive.category')}</th><th>{t('fields.status')}</th><th>{t('fields.updatedAt')}</th></tr></thead><tbody>{visibleRows.map(sample => <tr key={sample.id}><td><video className="archive-thumbnail" src={sample.primaryMedia.url} muted preload="metadata" aria-label={t('archive.thumbnailAlt', { id: sample.displayId })} /></td><th scope="row"><Link to={reviewDetailLocation(sample.id, returnTo)}>{sample.displayId}</Link></th><td>{t(`category.${sample.category}`)}</td><td><StatusBadge label={t(`status.archive.${sample.archiveSyncStatus}`)} kind={sample.archiveSyncStatus === 'Current' ? 'complete' : 'problem'} /></td><td>{formatDateTime(sample.updatedAt)}</td></tr>)}</tbody></table></div>}<Pagination page={currentPage} totalPages={archiveTotalPages} total={listTotal} onPageChange={setPage} /></section>
         </>}
       </>}
       <ConfirmDialog open={confirmOpen} title={t('archive.confirmTitle')} body={<><p>{t('archive.confirmBody', { add: preview?.added.length ?? 0, update: preview?.updated.length ?? 0, remove: preview?.removed.length ?? 0 })}</p><p>{t('archive.confirmWarning')}</p></>} confirmLabel={t('actions.syncArchive')} cancelLabel={t('actions.cancel')} closeLabel={t('actions.close')} busy={syncMutation.isPending} onClose={() => setConfirmOpen(false)} onConfirm={sync} />

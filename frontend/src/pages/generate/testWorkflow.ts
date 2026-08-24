@@ -67,9 +67,8 @@ export function buildContentDraftRequest(form: ContentDraftForm): ContentScriptC
   const directionValid = aligned
     ? form.conflictDirection === null
     : form.conflictDirection !== null && allowedDirections(form.category).includes(form.conflictDirection);
-  const emotionValid = aligned
-    ? form.trueEmotion.trim() === form.apparentEmotion.trim()
-    : form.trueEmotion.trim() !== form.apparentEmotion.trim();
+  const sameEmotion = form.trueEmotion.trim().toLowerCase() === form.apparentEmotion.trim().toLowerCase();
+  const emotionValid = aligned ? sameEmotion : !sameEmotion;
   const fixedValid = form.mode !== 'Fixed' || (
     form.sceneIds.length === 1
     && Boolean(form.baseVideoPrompt.trim())

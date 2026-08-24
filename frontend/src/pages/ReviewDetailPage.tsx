@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ApiError, apiErrorMessage } from '../api/client';
+import { ApiError, apiErrorMessage, shouldReloadAfterApiError } from '../api/client';
 import type { ReviewDecision, ReviewQueue, ReviewSampleDetailRead } from '../api/contracts';
 import {
   reviewSampleQueries,
@@ -208,6 +208,7 @@ export function ReviewDetailPage() {
         setNoteState(noteRef.current === value ? 'saved' : 'dirty');
         return true;
       }).catch(error => {
+        if (shouldReloadAfterApiError(error)) initializedDraftRef.current = null;
         setNoteError(error);
         setNoteState('failed');
         return false;

@@ -116,8 +116,8 @@ export function ProductionPage() {
     category: form.category,
     ...(form.conflictDirection ? { direction: form.conflictDirection } : {}),
   });
-  const templatesQuery = usePromptTemplatesQuery(templatePage);
-  const versionsQuery = usePromptTemplateVersionsQuery(form.promptTemplateId, versionPage);
+  const templatesQuery = usePromptTemplatesQuery(templatePage, form.category);
+  const versionsQuery = usePromptTemplateVersionsQuery(form.promptTemplateId, versionPage, 'Verified');
   const selectedVersionQuery = usePromptTemplateVersionQuery(form.promptTemplateVersionId);
   const gpuQuery = useGpuSlotsQuery();
   const saveMutation = useSaveBatchDraftMutation();
@@ -129,10 +129,7 @@ export function ProductionPage() {
     queries: content.map(item => generationQueries.contentScenes(item.id)),
   });
   const scenesByContent = new Map(content.map((item, index) => [item.id, sceneQueries[index]?.data?.scenes ?? []]));
-  const templates = useMemo(
-    () => (templatesQuery.data?.items ?? []).filter(item => item.category === form.category),
-    [form.category, templatesQuery.data],
-  );
+  const templates = useMemo(() => templatesQuery.data?.items ?? [], [templatesQuery.data]);
   const versions = useMemo(
     () => (versionsQuery.data?.items ?? []).filter(item =>
       item.category === form.category && item.verificationStatus === 'Verified'),
@@ -335,7 +332,9 @@ export function ProductionPage() {
     }
   };
 
-  const selectedDatasetName = selectedDatasetQuery.data?.name ?? '';
+  const selectedDatasetName = selectedDatasetQuery.data?.name
+    ?? datasetOptions.find(item => item.id === form.targetDatasetId)?.name
+    ?? '';
   const canSelectPage = content.length > 0 && sceneQueries.every(item => !item.isPending);
   const directions = allowedDirections(form.category);
 
@@ -396,8 +395,8 @@ export function ProductionPage() {
           </div>
           <Pagination page={contentQuery.data?.page ?? contentPage} totalPages={contentQuery.data?.totalPages ?? 0} total={contentQuery.data?.total ?? 0} onPageChange={setContentPage} />
           <div className="generation-form__grid">
-            <Field label={g('production.template')} htmlFor="production-template"><select id="production-template" value={form.promptTemplateId ?? ''} onChange={event => { markDirty(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{templateOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{categoryLabel(g, item.category)}</option>)}</select></Field>
-            <Field label={g('production.version')} htmlFor="production-version"><select id="production-version" value={form.promptTemplateVersionId ?? ''} onChange={event => markDirty(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{versionOptions.length === 0 ? g('state.filtered') : g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })}</option>)}</select></Field>
+            <Field label={g('production.template')} htmlFor="production-template"><select id="production-template" value={form.promptTemplateId ?? ''} onChange={event => { markDirty(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}>{templateOptions.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{templateOptions.map(item => <option key={item.id} value={item.id}>{item.name} {categoryLabel(g, item.category)}</option>)}</select></Field>
+            <Field label={g('production.version')} htmlFor="production-version"><select id="production-version" value={form.promptTemplateVersionId ?? ''} onChange={event => markDirty(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}>{versionOptions.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{versionOptions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })}</option>)}</select></Field>
           </div>
           <div className="generation-source-pages">
             <div><span>{g('production.templatePage')}</span><Pagination page={templatesQuery.data?.page ?? templatePage} totalPages={templatesQuery.data?.totalPages ?? 0} total={templatesQuery.data?.total ?? 0} onPageChange={setTemplatePage} /></div>

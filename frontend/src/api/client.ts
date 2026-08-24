@@ -102,7 +102,26 @@ const messages: Record<Locale, Record<ApiErrorKind, string>> = {
   },
 };
 
-export function apiErrorMessage(error: unknown, locale: Locale): string { return messages[locale][error instanceof ApiError ? error.kind : 'unavailable']; }
+function promptFieldDetails(error: ApiError): string {
+  if (typeof error.details !== 'object' || error.details === null) return '';
+  const fields = (error.details as { fields?: unknown }).fields;
+  if (!Array.isArray(fields)) return '';
+  const reasons = fields
+    .map(field => {
+      if (typeof field !== 'object' || field === null) return null;
+      const { path, reason } = field as { path?: unknown; reason?: unknown };
+      if (typeof reason !== 'string' || !reason) return null;
+      return typeof path === 'string' && path ? `${path}: ${reason}` : reason;
+    })
+    .filter((value): value is string => value !== null);
+  return reasons.length > 0 ? ` (${reasons.join('; ')})` : '';
+}
+
+export function apiErrorMessage(error: unknown, locale: Locale): string {
+  if (!(error instanceof ApiError)) return messages[locale].unavailable;
+  const base = messages[locale][error.kind];
+  return error.kind === 'promptSchema' ? base + promptFieldDetails(error) : base;
+}
 export function isModelSwitchConfirmationRequired(error: unknown): boolean { return error instanceof ApiError && error.code === 'model_switch_confirmation_required'; }
 export function shouldReloadAfterApiError(error: unknown): boolean { return error instanceof ApiError && error.recovery === 'reload'; }
 export function jobEventsWebSocketUrl(jobId: number, afterEventId: number): string { const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'; return `${scheme}//${window.location.host}/api/ws/jobs/${jobId}?${new URLSearchParams({ afterEventId: String(afterEventId) }).toString()}`; }

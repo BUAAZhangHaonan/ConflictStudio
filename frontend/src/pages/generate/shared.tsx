@@ -211,7 +211,7 @@ export function useUnsavedChanges(dirty: boolean) {
   return (
     <ConfirmDialog
       open={open}
-      title={g('production.unsaved')}
+      title={g('production.unsavedTitle')}
       body={g('production.unsaved')}
       confirmLabel={g('common.confirm')}
       cancelLabel={g('common.cancel')}
@@ -237,7 +237,7 @@ export function collapseProgressEvents(events: readonly JobEvent[]): JobEvent[] 
       && previous?.eventType === 'ItemRenderProgress'
       && previous.itemId === event.itemId
     ) {
-      collapsed[collapsed.length - 1] = event;
+      collapsed[collapsed.length - 1] = event.id > previous.id ? event : previous;
     } else {
       collapsed.push(event);
     }

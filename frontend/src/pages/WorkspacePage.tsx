@@ -54,7 +54,7 @@ export function WorkspacePage() {
   const runningJobsQuery = useProductionResultsQuery(1, { statuses: ['Running'] });
   const failedJobsQuery = useProductionResultsQuery(1, { statuses: ['Failed'] });
   const pendingReviewQuery = useSamplesQuery({ decision: 'Pending' });
-  const pendingArchiveQuery = useSamplesQuery({ decision: 'Accepted' });
+  const pendingArchiveQuery = useSamplesQuery({ decision: 'Accepted', inArchive: false });
   const createMutation = useCreateDatasetMutation();
   const updateMutation = useUpdateDatasetMutation();
   const deleteMutation = useDeleteDatasetMutation();

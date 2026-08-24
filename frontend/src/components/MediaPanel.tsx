@@ -17,8 +17,7 @@ export function MediaPanel({ title, mediaLabel, src, poster, detail, muted = fal
     <figure className="media-panel">
       <figcaption>{title}</figcaption>
       {src ? (
-        <video ref={videoRef} controls preload="metadata" poster={poster} muted={muted} aria-label={mediaLabel}>
-          <source src={src} />
+        <video key={src} ref={videoRef} src={src} controls preload="metadata" poster={poster} muted={muted} aria-label={mediaLabel}>
           {t('media.videoNotSupported')}
         </video>
       ) : (

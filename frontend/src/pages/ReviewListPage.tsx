@@ -7,6 +7,7 @@ import type { ReviewBatchItemCreate, ReviewDecision, ReviewQueue, ReviewSampleLi
 import { reviewSampleQueries, useAllDatasetsQuery, useReviewSampleListQuery, useSubmitReviewBatchMutation } from '../api/queries';
 import { useReviewGateReviewer } from '../app/ReviewGate';
 import { Button, ConfirmDialog, Field, PageHeader, Pagination, StatusBadge, TableShell } from '../components';
+import { useDebouncedValue } from './generate/shared';
 import {
   buildReviewListLocation,
   currentPageSelection,
@@ -99,10 +100,13 @@ export function ReviewListPage() {
   const [batchPreparing, setBatchPreparing] = useState(false);
   const [batchPrepareError, setBatchPrepareError] = useState<unknown>(null);
   const restoredLocationRef = useRef<string | null>(null);
+  const [searchInput, setSearchInput] = useState(locationState.search ?? '');
+  const debouncedSearch = useDebouncedValue(searchInput);
   const locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
   const emotionLabel = (value: string) => {
+    if (!value.trim()) return t('review.list.emotionNotProvided');
     const key = `emotion.${emotionKey(value)}`;
-    return value.trim() && i18n.exists(key) ? t(key) : t('review.list.emotionNotProvided');
+    return i18n.exists(key) ? t(key) : value;
   };
   const samples = listQuery.data?.items ?? [];
   const datasets = datasetsQuery.data ?? [];
@@ -153,6 +157,17 @@ export function ReviewListPage() {
   const updateFilter = (patch: Partial<Omit<ReviewListLocationState, 'page'>>) => {
     updateLocation({ ...locationState, ...patch, page: 1 });
   };
+
+  useEffect(() => {
+    setSearchInput(locationState.search ?? '');
+  }, [locationState.search]);
+
+  useEffect(() => {
+    const next = debouncedSearch || null;
+    if (next === locationState.search) return;
+    updateLocation({ ...locationState, search: next, page: 1 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch]);
 
   const clearFilters = () => updateLocation(defaultReviewListLocation);
 
@@ -243,10 +258,10 @@ export function ReviewListPage() {
             <input
               id="review-list-search"
               type="search"
-              value={locationState.search ?? ''}
+              value={searchInput}
               maxLength={160}
               placeholder={t('review.searchPlaceholder')}
-              onChange={event => updateFilter({ search: event.target.value || null })}
+              onChange={event => setSearchInput(event.target.value)}
             />
           </Field>
           <Field label={t('fields.dataset')} htmlFor="review-list-dataset">

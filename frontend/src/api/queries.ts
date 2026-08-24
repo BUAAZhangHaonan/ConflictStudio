@@ -1,5 +1,5 @@
 import { queryOptions, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { apiRequest } from './client';
+import { apiRequest, shouldReloadAfterApiError } from './client';
 import type {
   Archive, ArchivePreview, ArchivePreviewRequest, ArchiveSyncRequest,
   BatchDraft, BatchDraftCreate, BatchDraftUpdate, BatchPreview,
@@ -41,6 +41,7 @@ export interface SampleQueryFilter {
   datasetId?: number;
   protocol?: 'VA' | 'VT';
   search?: string;
+  inArchive?: boolean;
 }
 
 export interface ReviewSampleListParams extends ReviewQueue {
@@ -71,8 +72,8 @@ export const queryKeys = {
   contentScriptsPage: (filter: ContentScriptQueryFilter, page: number) => [...roots.contentScripts, filter, page] as const,
   contentScript: (id: number) => [...roots.contentScripts, 'detail', id] as const,
   contentScenes: (id: number) => [...roots.contentScripts, id, 'scenes'] as const,
-  promptTemplatesPage: (page: number) => [...roots.promptTemplates, page] as const,
-  promptTemplateVersionsPage: (templateId: number, page: number) => [...roots.promptTemplates, templateId, 'versions', page] as const,
+  promptTemplatesPage: (category: string, page: number) => [...roots.promptTemplates, category, page] as const,
+  promptTemplateVersionsPage: (templateId: number, verification: string, page: number) => [...roots.promptTemplates, templateId, 'versions', verification, page] as const,
   promptTemplateVersion: (id: number) => [...roots.promptTemplates, 'version', id] as const,
   scenesPage: (page: number) => [...roots.scenes, page] as const,
   scene: (id: number) => [...roots.scenes, 'detail', id] as const,
@@ -125,6 +126,7 @@ export function reviewSampleListPath(input: ReviewSampleListParams): string {
   if (input.protocol !== null) params.set('protocol', input.protocol);
   if (input.relation !== null) params.set('relation', input.relation);
   if (input.direction !== null) params.set('direction', input.direction);
+  if (input.inArchive != null) params.set('inArchive', String(input.inArchive));
   params.set('page', String(input.page));
   return `/api/samples?${params.toString()}`;
 }
@@ -167,8 +169,16 @@ export const generationQueries = {
   },
   contentScript: (id: number) => queryOptions({ queryKey: queryKeys.contentScript(id), queryFn: () => apiRequest<ContentScript>('/api/content-scripts/' + id) }),
   contentScenes: (id: number) => queryOptions({ queryKey: queryKeys.contentScenes(id), queryFn: () => apiRequest<ContentScriptScenes>('/api/content-scripts/' + id + '/scenes') }),
-  promptTemplates: (page: number) => queryOptions({ queryKey: queryKeys.promptTemplatesPage(page), queryFn: () => apiRequest<Page<PromptTemplate>>(pagePath('/api/prompt-templates', page)) }),
-  promptTemplateVersions: (templateId: number, page: number) => queryOptions({ queryKey: queryKeys.promptTemplateVersionsPage(templateId, page), queryFn: () => apiRequest<Page<PromptTemplateVersion>>(pagePath('/api/prompt-templates/' + templateId + '/versions', page)) }),
+  promptTemplates: (page: number, category?: PromptTemplate['category']) => {
+    const params = new URLSearchParams();
+    if (category !== undefined) params.set('category', category);
+    return queryOptions({ queryKey: queryKeys.promptTemplatesPage(category ?? 'all', page), queryFn: () => apiRequest<Page<PromptTemplate>>(pagePath('/api/prompt-templates', page, params)) });
+  },
+  promptTemplateVersions: (templateId: number, page: number, verificationStatus?: PromptTemplateVersion['verificationStatus']) => {
+    const params = new URLSearchParams();
+    if (verificationStatus !== undefined) params.set('verificationStatus', verificationStatus);
+    return queryOptions({ queryKey: queryKeys.promptTemplateVersionsPage(templateId, verificationStatus ?? 'all', page), queryFn: () => apiRequest<Page<PromptTemplateVersion>>(pagePath('/api/prompt-templates/' + templateId + '/versions', page, params)) });
+  },
   promptTemplateVersion: (id: number) => queryOptions({ queryKey: queryKeys.promptTemplateVersion(id), queryFn: () => apiRequest<PromptTemplateVersion>('/api/prompt-template-versions/' + id) }),
   scenes: (page: number) => queryOptions({ queryKey: queryKeys.scenesPage(page), queryFn: () => apiRequest<Page<Scene>>(pagePath('/api/scenes', page)) }),
   scene: (id: number) => queryOptions({ queryKey: queryKeys.scene(id), queryFn: () => apiRequest<Scene>('/api/scenes/' + id) }),
@@ -178,7 +188,7 @@ export const generationQueries = {
   productionResult: (id: number) => queryOptions({ queryKey: queryKeys.job(id), queryFn: () => apiRequest<JobDetail>('/api/generation-results/' + id) }),
   resultItems: (kind: 'test' | 'production', id: number, page: number) => queryOptions({ queryKey: queryKeys.jobItems(id, page), queryFn: () => apiRequest<Page<JobItem>>(pagePath((kind === 'test' ? '/api/test-results/' : '/api/generation-results/') + id + '/items', page)) }),
   jobAttempts: (itemId: number, page: number) => queryOptions({ queryKey: queryKeys.jobAttempts(itemId, page), queryFn: () => apiRequest<Page<GenerationAttempt>>(pagePath('/api/job-items/' + itemId + '/attempts', page)) }),
-  jobEvents: (id: number, page: number) => queryOptions({ queryKey: queryKeys.jobEvents(id, page), queryFn: () => apiRequest<Page<JobEvent>>(pagePath('/api/jobs/' + id + '/events', page)) }),
+  jobEvents: (id: number, page: number) => queryOptions({ queryKey: queryKeys.jobEvents(id, page), queryFn: () => apiRequest<Page<JobEvent>>(pagePath('/api/jobs/' + id + '/events', page, new URLSearchParams({ order: 'desc' }))) }),
   gpuSlots: () => queryOptions({ queryKey: queryKeys.gpuSlots, queryFn: () => apiRequest<GpuSlot[]>('/api/gpu-slots'), refetchOnWindowFocus: true }),
   health: () => queryOptions({ queryKey: queryKeys.health, queryFn: () => apiRequest<Health>('/api/health') }),
   reviewers: (page: number) => queryOptions({ queryKey: queryKeys.reviewersPage(page), queryFn: () => apiRequest<Page<Reviewer>>(pagePath('/api/reviewers', page)) }),
@@ -197,6 +207,7 @@ export const generationQueries = {
     if (filter.datasetId !== undefined) params.set('datasetId', String(filter.datasetId));
     if (filter.protocol !== undefined) params.set('protocol', filter.protocol);
     if (filter.search?.trim()) params.set('search', filter.search.trim());
+    if (filter.inArchive !== undefined) params.set('inArchive', String(filter.inArchive));
     return queryOptions({ queryKey: queryKeys.samplesPage(filter, page), queryFn: () => apiRequest<Page<ReviewSampleListRead>>(pagePath('/api/samples', page, params)) });
   },
 };
@@ -223,8 +234,8 @@ export function useDatasetQuery(id: number | null) { return useQuery({ ...genera
 export function useContentScriptsQuery(page = 1, filter: ContentScriptQueryFilter = {}) { return useQuery(generationQueries.contentScripts(page, filter)); }
 export function useContentScriptQuery(id: number | null) { return useQuery({ ...generationQueries.contentScript(id ?? 0), enabled: id !== null }); }
 export function useContentScenesQuery(id: number | null) { return useQuery({ ...generationQueries.contentScenes(id ?? 0), enabled: id !== null }); }
-export function usePromptTemplatesQuery(page = 1) { return useQuery(generationQueries.promptTemplates(page)); }
-export function usePromptTemplateVersionsQuery(templateId: number | null, page = 1) { return useQuery({ ...generationQueries.promptTemplateVersions(templateId ?? 0, page), enabled: templateId !== null }); }
+export function usePromptTemplatesQuery(page = 1, category?: PromptTemplate['category']) { return useQuery(generationQueries.promptTemplates(page, category)); }
+export function usePromptTemplateVersionsQuery(templateId: number | null, page = 1, verificationStatus?: PromptTemplateVersion['verificationStatus']) { return useQuery({ ...generationQueries.promptTemplateVersions(templateId ?? 0, page, verificationStatus), enabled: templateId !== null }); }
 export function usePromptTemplateVersionQuery(id: number | null) { return useQuery({ ...generationQueries.promptTemplateVersion(id ?? 0), enabled: id !== null }); }
 export function useScenesQuery(page = 1) { return useQuery(generationQueries.scenes(page)); }
 export function useSceneQuery(id: number | null) { return useQuery({ ...generationQueries.scene(id ?? 0), enabled: id !== null }); }
@@ -314,6 +325,9 @@ export function useApplyResourceAssistantMutation() {
 async function invalidateReviewData(client: QueryClient): Promise<void> {
   await Promise.all([client.invalidateQueries({ queryKey: roots.samples }), client.invalidateQueries({ queryKey: roots.reviewSamples }), client.invalidateQueries({ queryKey: roots.reviewNoteDrafts }), client.invalidateQueries({ queryKey: roots.reviewHistory }), client.invalidateQueries({ queryKey: ['reviewerStatistics'] }), client.invalidateQueries({ queryKey: roots.archives })]);
 }
+async function recoverReviewDataAfterConflict(client: QueryClient, error: unknown): Promise<void> {
+  if (shouldReloadAfterApiError(error)) await invalidateReviewData(client);
+}
 export function useCreateReviewerMutation() {
   const client = useQueryClient();
   return useMutation({ mutationFn: (input: ReviewerCreate) => apiRequest<Reviewer>('/api/reviewers', { method: 'POST', ...json(input) }), onSuccess: () => invalidateCatalog(client, roots.reviewers) });
@@ -327,6 +341,7 @@ export function usePutReviewNoteDraftMutation() {
   return useMutation({
     mutationFn: ({ sampleId, input }: { sampleId: number; input: ReviewNoteDraftUpdate }) => apiRequest<ReviewNoteDraftRead>(`/api/samples/${sampleId}/review-note-draft`, { method: 'PUT', ...json(input) }),
     onSuccess: value => { client.setQueryData(queryKeys.reviewNoteDraft(value.sampleId, value.reviewerId, value.sampleRevision), value); },
+    onError: error => recoverReviewDataAfterConflict(client, error),
   });
 }
 export function useSubmitReviewMutation() {
@@ -334,6 +349,7 @@ export function useSubmitReviewMutation() {
   return useMutation({
     mutationFn: (input: ReviewSubmissionCreate) => apiRequest<ReviewSubmissionRead>('/api/reviews', { method: 'POST', ...json(input) }),
     onSuccess: async value => { client.setQueryData(queryKeys.reviewSampleDetail(value.id), value); await invalidateReviewData(client); },
+    onError: error => recoverReviewDataAfterConflict(client, error),
   });
 }
 export function useSubmitReviewBatchMutation() {
@@ -341,6 +357,7 @@ export function useSubmitReviewBatchMutation() {
   return useMutation({
     mutationFn: (input: ReviewBatchSubmissionCreate) => apiRequest<ReviewSampleDetailRead[]>('/api/reviews/batch', { method: 'POST', ...json(input) }),
     onSuccess: async values => { values.forEach(value => client.setQueryData(queryKeys.reviewSampleDetail(value.id), value)); await invalidateReviewData(client); },
+    onError: error => recoverReviewDataAfterConflict(client, error),
   });
 }
 export function useConvertSampleClassificationMutation() {
@@ -352,6 +369,7 @@ export function useConvertSampleClassificationMutation() {
       client.setQueryData(queryKeys.reviewSampleDetail(value.id), value);
       await invalidateReviewData(client);
     },
+    onError: error => recoverReviewDataAfterConflict(client, error),
   });
 }
 export function usePreviewArchiveMutation() { return useMutation({ mutationFn: (input: ArchivePreviewRequest) => apiRequest<ArchivePreview>('/api/archives/preview', { method: 'POST', ...json(input) }) }); }

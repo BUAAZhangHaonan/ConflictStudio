@@ -149,7 +149,7 @@ export function TestPage() {
     ...(form.conflictDirection ? { direction: form.conflictDirection } : {}),
   });
   const selectedContentQuery = useContentScriptQuery(form.contentScriptId);
-  const templatesQuery = usePromptTemplatesQuery(templatePage);
+  const templatesQuery = usePromptTemplatesQuery(templatePage, form.category);
   const versionsQuery = usePromptTemplateVersionsQuery(form.promptTemplateId, versionPage);
   const selectedVersionDetailQuery = usePromptTemplateVersionQuery(form.promptTemplateVersionId);
   const scenesQuery = useContentScenesQuery(form.contentScriptId);
@@ -162,10 +162,7 @@ export function TestPage() {
   const verifyVersionMutation = useVerifyPromptTemplateVersionMutation();
 
   const content = useMemo(() => contentQuery.data?.items ?? [], [contentQuery.data]);
-  const templates = useMemo(
-    () => (templatesQuery.data?.items ?? []).filter(item => item.category === form.category),
-    [form.category, templatesQuery.data],
-  );
+  const templates = useMemo(() => templatesQuery.data?.items ?? [], [templatesQuery.data]);
   const versions = useMemo(
     () => (versionsQuery.data?.items ?? []).filter(item => item.category === form.category),
     [form.category, versionsQuery.data],
@@ -401,8 +398,8 @@ export function TestPage() {
               {contentOptions.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)} {categoryLabel(g, item.category)}</option>)}
             </select></Field>
             <Field label={g('test.scene')} htmlFor="test-scene"><select id="test-scene" value={form.sceneId ?? ''} disabled={scenes.length === 0} onChange={event => setForm(current => ({ ...current, sceneId: event.target.value ? Number(event.target.value) : null }))}>{scenes.length === 0 ? <option value="">{g('state.filtered')}</option> : null}{scenes.map(item => <option key={item.id} value={item.id}>{localizedName(locale, item)}</option>)}</select></Field>
-            <Field label={g('test.template')} htmlFor="test-template"><select id="test-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}><option value="">{g('common.none')}</option>{templateOptions.map(item => <option key={item.id} value={item.id}>{categoryLabel(g, item.category)}</option>)}</select></Field>
-            <Field label={g('test.version')} htmlFor="test-version"><select id="test-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}><option value="">{g('common.none')}</option>{versionOptions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })} {g(item.verificationStatus === 'Verified' ? 'test.resource.verified' : 'test.resource.draft')}</option>)}</select></Field>
+            <Field label={g('test.template')} htmlFor="test-template"><select id="test-template" value={form.promptTemplateId ?? ''} onChange={event => { setForm(current => ({ ...current, promptTemplateId: event.target.value ? Number(event.target.value) : null, promptTemplateVersionId: null })); setVersionPage(1); }}>{templateOptions.length === 0 ? <option value="">{g('common.none')}</option> : null}{templateOptions.map(item => <option key={item.id} value={item.id}>{item.name} {categoryLabel(g, item.category)}</option>)}</select></Field>
+            <Field label={g('test.version')} htmlFor="test-version"><select id="test-version" value={form.promptTemplateVersionId ?? ''} onChange={event => setForm(current => ({ ...current, promptTemplateVersionId: event.target.value ? Number(event.target.value) : null }))}>{versionOptions.length === 0 ? <option value="">{g('common.none')}</option> : null}{versionOptions.map(item => <option key={item.id} value={item.id}>{g('test.versionOption', { category: categoryLabel(g, item.category), version: item.version })} {g(item.verificationStatus === 'Verified' ? 'test.resource.verified' : 'test.resource.draft')}</option>)}</select></Field>
           </div>
           {debouncedContentSearch.trim() && content.length === 0 ? <p role="status">{g('test.noContentMatches')}</p> : null}
 
