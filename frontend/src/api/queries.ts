@@ -85,7 +85,6 @@ export const queryKeys = {
   gpuSlots: ['gpuSlots'] as const,
   health: ['health'] as const,
   reviewersPage: (page: number) => [...roots.reviewers, 'page', page] as const,
-  reviewerByName: (name: string) => [...roots.reviewers, 'name', name] as const,
   reviewer: (id: number) => [...roots.reviewers, 'detail', id] as const,
   reviewerStatistics: (reviewerId: number, filter: ReviewerStatisticsFilter) => ['reviewerStatistics', reviewerId, filter] as const,
   archivesPage: (page: number) => [...roots.archives, page] as const,
@@ -183,10 +182,6 @@ export const generationQueries = {
   gpuSlots: () => queryOptions({ queryKey: queryKeys.gpuSlots, queryFn: () => apiRequest<GpuSlot[]>('/api/gpu-slots'), refetchOnWindowFocus: true }),
   health: () => queryOptions({ queryKey: queryKeys.health, queryFn: () => apiRequest<Health>('/api/health') }),
   reviewers: (page: number) => queryOptions({ queryKey: queryKeys.reviewersPage(page), queryFn: () => apiRequest<Page<Reviewer>>(pagePath('/api/reviewers', page)) }),
-  reviewerByName: (name: string) => queryOptions({
-    queryKey: queryKeys.reviewerByName(name),
-    queryFn: async () => (await allPageItems<Reviewer>('/api/reviewers')).find(reviewer => reviewer.name === name) ?? null,
-  }),
   reviewer: (id: number) => queryOptions({ queryKey: queryKeys.reviewer(id), queryFn: () => apiRequest<Reviewer>('/api/reviewers/' + id) }),
   reviewerStatistics: (reviewerId: number, filter: ReviewerStatisticsFilter) => {
     const params = new URLSearchParams();
@@ -243,7 +238,6 @@ export function useJobEventsQuery(id: number | null, page = 1) { return useQuery
 export function useGpuSlotsQuery() { return useQuery(generationQueries.gpuSlots()); }
 export function useHealthQuery() { return useQuery(generationQueries.health()); }
 export function useReviewersQuery(page = 1) { return useQuery(generationQueries.reviewers(page)); }
-export function useReviewerByNameQuery(name: string) { return useQuery(generationQueries.reviewerByName(name)); }
 export function useReviewerQuery(id: number | null, enabled = true) { return useQuery({ ...generationQueries.reviewer(id ?? 0), enabled: enabled && id !== null }); }
 export function useArchivesQuery(page = 1) { return useQuery(generationQueries.archives(page)); }
 export function useSamplesQuery(filter: SampleQueryFilter = {}, page = 1) { return useQuery(generationQueries.samples(filter, page)); }

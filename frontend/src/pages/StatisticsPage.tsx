@@ -65,7 +65,17 @@ export function StatisticsPage() {
     return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><section className="state-view" role="alert"><h2>{t('statistics.title')}</h2><p>{apiErrorMessage(reviewerState.error, locale)}</p><Button variant="secondary" onClick={() => void reviewerState.retry()}>{t('actions.retry')}</Button></section></div>;
   }
   if (currentReviewerId === null || statisticsMissing) {
-    return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><StateView state="empty" action={{ label: t('nav.settings'), onClick: () => navigate('/settings') }} /></div>;
+    return (
+      <div className="page-stack statistics-page">
+        <PageHeader title={t('statistics.title')} />
+        <StateView
+          state="empty"
+          title={t('workspaceSettingsStatistics.statistics.unavailableTitle')}
+          body={t('workspaceSettingsStatistics.statistics.unavailableBody')}
+          action={{ label: t('nav.settings'), onClick: () => navigate('/settings') }}
+        />
+      </div>
+    );
   }
   if (datasetsQuery.isPending || (datasetId !== undefined && selectedDatasetQuery.isPending) || (statisticsQuery.isPending && validRange)) {
     return <div className="page-stack statistics-page"><PageHeader title={t('statistics.title')} /><StateView state="loading" /></div>;

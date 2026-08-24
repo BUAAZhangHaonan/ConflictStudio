@@ -76,6 +76,7 @@ export const reviewArchiveEnUS = {
       type: 'Type',
       typeValue: '{{relation}} / {{protocol}}',
       emotions: 'Emotion',
+      batchGuestHint: 'Sign in as a reviewer in Settings to use batch decisions.',
     },
     detail: {
       aria: {
@@ -147,6 +148,7 @@ export const reviewArchiveEnUS = {
       },
       compatibilityBlocked: 'This sample needs regeneration before it can be accepted. It can still be rejected.',
       openGeneration: 'Open generation',
+      guestHint: 'Sign in as a reviewer in Settings to change decisions or notes.',
     },
     searchLabel: 'Search samples',
     searchPlaceholder: 'Search by sample ID or dataset',
@@ -359,6 +361,7 @@ export const reviewArchiveZhCN = {
       type: '类型',
       typeValue: '{{relation}} / {{protocol}}',
       emotions: '情绪',
+      batchGuestHint: '请先在设置中选择审核人，才能使用批量决定。',
     },
     detail: {
       aria: {
@@ -430,6 +433,7 @@ export const reviewArchiveZhCN = {
       },
       compatibilityBlocked: '该样本需要重新生成后才能通过，仍可淘汰。',
       openGeneration: '前往生成页面',
+      guestHint: '请先在设置中选择审核人，才能修改决定或备注。',
     },
     searchLabel: '搜索样本',
     searchPlaceholder: '按样本编号或数据集搜索',

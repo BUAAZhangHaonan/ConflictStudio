@@ -94,7 +94,18 @@ test('batch decisions stay accept or reject and block incompatible acceptance', 
   const batchSelect = page.slice(page.indexOf('id="review-list-batch-decision"'), page.indexOf('</select>', page.indexOf('id="review-list-batch-decision"')));
   assert.doesNotMatch(batchSelect, /<option value="Pending">/u);
   assert.match(page, /sample\.generationCompatibility === 'NeedsRegeneration'/u);
-  assert.match(page, /disabled=\{selectedSamples\.length === 0 \|\| acceptedBlockedCount > 0\}/u);
+  assert.match(page, /disabled=\{reviewerId === null \|\| selectedSamples\.length === 0 \|\| acceptedBlockedCount > 0\}/u);
+});
+
+test('guests can browse the list but cannot select samples or run batch decisions', () => {
+  const locales = read('../frontend/src/locales/features/reviewArchive.ts');
+  assert.match(page, /const toggleSample = \(sampleId: number, selected: boolean\) => \{\s*\n\s*if \(reviewerId === null\) return;/u);
+  assert.match(page, /const togglePage = \(selected: boolean\) => \{\s*\n\s*if \(reviewerId === null\) return;/u);
+  assert.equal((page.match(/disabled=\{reviewerId === null\}/gu) ?? []).length, 4);
+  assert.match(page, /review\.list\.batchGuestHint/u);
+  assert.match(locales, /batchGuestHint: 'Sign in as a reviewer in Settings to use batch decisions\.'/u);
+  assert.match(locales, /batchGuestHint: '请先在设置中选择审核人，才能使用批量决定。'/u);
+  assert.match(page, /navigate\(reviewDetailLocation\(sample\.id, returnTo\)\)/u);
 });
 
 test('list selection never leaks across pages', () => {

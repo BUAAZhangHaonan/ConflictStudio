@@ -161,7 +161,7 @@ export function ReviewDetailPage() {
     setNoteRevision(0);
     setNoteState('loading');
     setNoteError(null);
-  }, [sampleId]);
+  }, [sampleId, reviewerId]);
 
   useEffect(() => {
     if (!sample || !noteQuery.data) return;
@@ -222,10 +222,10 @@ export function ReviewDetailPage() {
   }, [noteMutation, noteQuery.isSuccess, reviewerId, sample]);
 
   useEffect(() => {
-    if (note === savedNote || noteState === 'failed' || noteState === 'saving') return;
+    if (reviewerId === null || note === savedNote || noteState === 'failed' || noteState === 'saving') return;
     const timer = window.setTimeout(() => { void flushNote(); }, 400);
     return () => window.clearTimeout(timer);
-  }, [flushNote, note, noteState, savedNote]);
+  }, [flushNote, note, noteState, reviewerId, savedNote]);
 
   const retryNoteSave = () => { void flushNote(); };
 
@@ -517,6 +517,7 @@ export function ReviewDetailPage() {
                 value={note}
                 maxLength={2000}
                 disabled={!noteQuery.isSuccess}
+                readOnly={reviewerId === null}
                 onChange={event => {
                   noteRef.current = event.target.value;
                   setNote(event.target.value);
@@ -529,17 +530,18 @@ export function ReviewDetailPage() {
             {noteState === 'failed' ? <Button variant="secondary" onClick={retryNoteSave}>{t('review.detail.note.retry')}</Button> : null}
 
             <div className="review-detail__actions">
-              <Button disabled={writeBusy || acceptanceBlocked} onClick={() => void chooseReviewDecision('Accepted')}>{t('status.review.Accepted')}</Button>
-              <Button variant="secondary" disabled={writeBusy} onClick={() => void chooseReviewDecision('Rejected')}>{t('status.review.Rejected')}</Button>
+              <Button disabled={reviewerId === null || writeBusy || acceptanceBlocked} onClick={() => void chooseReviewDecision('Accepted')}>{t('status.review.Accepted')}</Button>
+              <Button variant="secondary" disabled={reviewerId === null || writeBusy} onClick={() => void chooseReviewDecision('Rejected')}>{t('status.review.Rejected')}</Button>
               {sample.reviewDecision !== 'Pending' ? (
-                <Button variant="quiet" disabled={writeBusy} onClick={() => void chooseReviewDecision('Pending')}>{t('review.detail.withdraw')}</Button>
+                <Button variant="quiet" disabled={reviewerId === null || writeBusy} onClick={() => void chooseReviewDecision('Pending')}>{t('review.detail.withdraw')}</Button>
               ) : null}
             </div>
+            {reviewerId === null ? <p className="field-error" role="status">{t('review.detail.guestHint')}</p> : null}
 
             <details className="review-detail__secondary">
               <summary>{t('review.detail.secondaryActions')}</summary>
               <p>{t('review.detail.conversion.help')}</p>
-              <Button variant="quiet" disabled={writeBusy} onClick={openConversion}>{t('review.detail.conversion.action')}</Button>
+              <Button variant="quiet" disabled={reviewerId === null || writeBusy} onClick={openConversion}>{t('review.detail.conversion.action')}</Button>
             </details>
 
             {conversionSaved ? <p className="review-detail__success" role="status">{t('review.detail.conversion.saved')} {t('status.review.Pending')}</p> : null}

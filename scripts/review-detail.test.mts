@@ -36,7 +36,23 @@ test('detail labels a safe Results return separately from a review-list return',
 test('detail receives the resolved nullable reviewer from ReviewGate', () => {
   assert.match(page, /const reviewer = useReviewGateReviewer\(\)/u);
   assert.match(page, /const reviewerId = reviewer\?\.id \?\? null/u);
-  assert.doesNotMatch(page, /useReviewerState|canReview|readOnly|aria-readonly|is-read-only/u);
+  assert.doesNotMatch(page, /useReviewerState|canReview|aria-readonly|is-read-only/u);
+});
+
+test('guests browse the detail page read-only without any mutation path', () => {
+  assert.match(page, /readOnly=\{reviewerId === null\}/u);
+  assert.match(page, /if \(reviewerId === null \|\| note === savedNote \|\| noteState === 'failed' \|\| noteState === 'saving'\) return/u);
+  assert.match(page, /reviewerId === null \|\| writeBusy \|\| acceptanceBlocked[\s\S]*chooseReviewDecision\('Accepted'\)/u);
+  assert.match(page, /reviewerId === null \|\| writeBusy\}[\s\S]*chooseReviewDecision\('Rejected'\)/u);
+  assert.match(page, /reviewerId === null \|\| writeBusy\}[\s\S]*openConversion/u);
+  assert.match(page, /review\.detail\.guestHint/u);
+  assert.match(locales, /guestHint: 'Sign in as a reviewer in Settings to change decisions or notes\.'/u);
+  assert.match(locales, /guestHint: '请先在设置中选择审核人，才能修改决定或备注。'/u);
+});
+
+test('note draft re-initializes when the reviewer identity changes mid-session', () => {
+  assert.match(page, /initializedDraftRef\.current = null;[\s\S]*\}, \[sampleId, reviewerId\]\)/u);
+  assert.match(page, /const key = `\$\{sample\.id\}:\$\{reviewerId\}:\$\{sample\.revision\}`/u);
 });
 
 test('note autosave and every exit flush the live draft revision before continuing', () => {
@@ -68,7 +84,7 @@ test('accepted and rejected samples can be returned to Pending with history reta
 
 test('generation compatibility is the only acceptance block', () => {
   assert.match(page, /const acceptanceBlocked = sample\.generationCompatibility === 'NeedsRegeneration'/u);
-  assert.match(page, /disabled=\{writeBusy \|\| acceptanceBlocked\}[\s\S]*chooseReviewDecision\('Accepted'\)/u);
+  assert.match(page, /disabled=\{reviewerId === null \|\| writeBusy \|\| acceptanceBlocked\}[\s\S]*chooseReviewDecision\('Accepted'\)/u);
   assert.match(page, /reviewDecision === 'Accepted' && sample\.generationCompatibility === 'NeedsRegeneration'/u);
   assert.doesNotMatch(page, /compatibleSceneCount === 0/u);
   assert.match(locales, /needs regeneration before it can be accepted/u);

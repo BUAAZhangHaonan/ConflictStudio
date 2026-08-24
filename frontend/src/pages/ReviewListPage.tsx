@@ -162,6 +162,7 @@ export function ReviewListPage() {
   };
 
   const toggleSample = (sampleId: number, selected: boolean) => {
+    if (reviewerId === null) return;
     setSelectedIds(current => {
       const next = currentPageSelection(current, samples.map(sample => sample.id));
       if (selected) next.add(sampleId);
@@ -171,6 +172,7 @@ export function ReviewListPage() {
   };
 
   const togglePage = (selected: boolean) => {
+    if (reviewerId === null) return;
     setSelectedIds(selected ? new Set(samples.map(sample => sample.id)) : new Set());
   };
 
@@ -316,6 +318,7 @@ export function ReviewListPage() {
               <input
                 type="checkbox"
                 checked={samples.length > 0 && pageSelection.size === samples.length}
+                disabled={reviewerId === null}
                 onChange={event => togglePage(event.target.checked)}
               />
               <span>{t('review.selectAllVisible')}</span>
@@ -330,6 +333,7 @@ export function ReviewListPage() {
                   <input
                     type="checkbox"
                     checked={pageSelection.has(sample.id)}
+                    disabled={reviewerId === null}
                     aria-label={t('review.list.selectSample', { id: sample.displayId })}
                     onChange={event => toggleSample(sample.id, event.target.checked)}
                   />
@@ -364,6 +368,7 @@ export function ReviewListPage() {
                     <input
                       type="checkbox"
                       checked={pageSelection.has(sample.id)}
+                      disabled={reviewerId === null}
                       aria-label={t('review.list.selectSample', { id: sample.displayId })}
                       onChange={event => toggleSample(sample.id, event.target.checked)}
                     />
@@ -405,6 +410,7 @@ export function ReviewListPage() {
               <select
                 id="review-list-batch-decision"
                 value={batchDecision}
+                disabled={reviewerId === null}
                 onChange={event => {
                   setBatchDecision(event.target.value as Exclude<ReviewDecision, 'Pending'>);
                   setBatchItems(null);
@@ -418,11 +424,12 @@ export function ReviewListPage() {
             <Button
               variant="primary"
               busy={batchPreparing}
-              disabled={selectedSamples.length === 0 || acceptedBlockedCount > 0}
+              disabled={reviewerId === null || selectedSamples.length === 0 || acceptedBlockedCount > 0}
               onClick={() => void prepareBatch()}
             >
               {t('review.applyBatch')}
             </Button>
+            {reviewerId === null ? <p className="field-error" role="status">{t('review.list.batchGuestHint')}</p> : null}
           </section>
           {acceptedBlockedCount > 0 ? <p className="field-error" role="status">{t('review.batchCompatibilityBlocked', { count: acceptedBlockedCount })}</p> : null}
         </section>
