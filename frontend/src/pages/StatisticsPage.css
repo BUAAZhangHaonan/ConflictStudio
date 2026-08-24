@@ -59,4 +59,6 @@
     min-width: 0;
     grid-template-columns: repeat(var(--statistics-column-count), minmax(0, 1fr));
   }
+
+  .statistics-page .statistics-chart__column > span:last-child { display: none; }
 }
