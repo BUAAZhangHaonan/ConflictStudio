@@ -15,6 +15,31 @@
   background: var(--color-surface-muted);
 }
 
+.review-gate__switcher summary {
+  cursor: pointer;
+  color: var(--color-blue);
+}
+
+.review-gate__switcher-panel {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) 0 0;
+}
+
+.review-gate__reviewer-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-gate__create-error {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
 .review-gate__form {
   display: grid;
   gap: var(--space-4);

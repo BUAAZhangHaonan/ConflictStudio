@@ -27,7 +27,7 @@ class MemoryStorage {
 
 test('review routes resolve the stored reviewer identity and allow guest browsing', () => {
   assert.match(app, /<Route element=\{<ReviewGate \/>\}>[\s\S]*path="\/review"[\s\S]*path="\/review\/:sampleId"/u);
-  assert.match(gate, /const \{ currentReviewer, isPending, error, retry \} = useReviewerState\(\)/u);
+  assert.match(gate, /const \{ currentReviewer, isPending, error, retry, reviewersQuery \} = useReviewerState\(\)/u);
   assert.match(gate, /reviewer: Reviewer \| null/u);
   assert.match(gate, /<Outlet context=\{\{ reviewer: currentReviewer \}/u);
   assert.match(gate, /review\.gate\.guestBody/u);
@@ -36,7 +36,21 @@ test('review routes resolve the stored reviewer identity and allow guest browsin
   assert.match(page, /const reviewerId = reviewer\?\.id \?\? null/u);
   assert.doesNotMatch(`${app}\n${gate}\n${page}`, /FirstReviewerDialog|continueReadOnly|readOnlyHint|canReview/u);
   assert.doesNotMatch(gate, /FIXED_REVIEWER_NAME|useReviewerByNameQuery|zhanghaonan/u);
-  assert.doesNotMatch(gate, /reviewers\.map|type="radio"|maxLength/u);
+});
+
+test('review gate hosts an inline reviewer switcher panel', () => {
+  assert.match(gate, /<details className="review-gate__switcher">/u);
+  assert.match(gate, /reviewers\.map\(reviewer =>/u);
+  assert.match(gate, /onClick=\{\(\) => setCurrentReviewer\(reviewer\)\}/u);
+  assert.match(gate, /useCreateReviewerMutation\(\)/u);
+  assert.match(gate, /onSuccess: reviewer => \{[\s\S]*setCurrentReviewer\(reviewer\)/u);
+  assert.match(gate, /maxLength=\{80\}/u);
+  assert.match(gate, /setCurrentReviewer\(null\)/u);
+  assert.match(gate, /reviewer_name_conflict/u);
+  assert.match(gate, /review\.gate\.nameConflict/u);
+  assert.match(gate, /review\.gate\.signedInAs/u);
+  assert.match(gate, /review\.gate\.signOut/u);
+  assert.match(gate, /totalPages[\s\S]*> 1[\s\S]*moreInSettings/u);
 });
 
 test('dataset filter loads every server page into one selectable collection', () => {

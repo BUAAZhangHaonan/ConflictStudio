@@ -49,13 +49,14 @@ test('reviewer selection persists and clears without a read-only bypass', () => 
 test('review routes resolve the reviewer from stored preferences and allow guests', () => {
   assert.match(appSource, /<Route element=\{<ReviewGate \/>\}>[\s\S]*path="\/review"[\s\S]*path="\/review\/:sampleId"/u);
   assert.doesNotMatch(appSource, /FirstReviewerDialog/u);
-  assert.match(gateSource, /const \{ currentReviewer, isPending, error, retry \} = useReviewerState\(\)/u);
+  assert.match(gateSource, /const \{ currentReviewer, isPending, error, retry, reviewersQuery \} = useReviewerState\(\)/u);
   assert.match(gateSource, /reviewer: Reviewer \| null/u);
   assert.match(gateSource, /review\.gate\.guestBody/u);
   assert.match(gateSource, /<Link to="\/settings">/u);
   assert.match(gateSource, /<Outlet context=\{\{ reviewer: currentReviewer \}/u);
+  assert.match(gateSource, /<details className="review-gate__switcher">/u);
   assert.doesNotMatch(gateSource, /FIXED_REVIEWER_NAME|useReviewerByNameQuery|zhanghaonan/u);
-  assert.doesNotMatch(gateSource, /reviewers\.map|type="radio"|<input|<Pagination|maxLength|readOnly|dismiss/u);
+  assert.doesNotMatch(gateSource, /<Pagination|readOnly|dismiss/u);
 });
 
 test('frontend sources contain no hardcoded reviewer name', () => {

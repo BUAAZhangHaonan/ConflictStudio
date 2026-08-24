@@ -416,17 +416,21 @@ test('review gate resolves reviewer identity from stored preferences while setti
   assert.doesNotMatch(sources, /林然|陈宁|Lin Ran|Chen Ning/u);
   assert.doesNotMatch(sources, /DEFAULT_REVIEWER|presetReviewer|mockReviewer/u);
   assert.match(appShellSource, /preferences\.currentReviewerName/u);
-  assert.match(reviewGateSource, /const \{ currentReviewer, isPending, error, retry \} = useReviewerState\(\)/u);
+  assert.match(reviewGateSource, /const \{ currentReviewer, isPending, error, retry, reviewersQuery \} = useReviewerState\(\)/u);
   assert.match(reviewGateSource, /reviewer: Reviewer \| null/u);
   assert.match(reviewGateSource, /review\.gate\.guestBody/u);
   assert.match(reviewGateSource, /<Link to="\/settings">/u);
   assert.match(reviewGateSource, /<Outlet context=\{\{ reviewer: currentReviewer \}/u);
+  assert.match(reviewGateSource, /useCreateReviewerMutation\(\)/u);
+  assert.match(reviewGateSource, /onSuccess: reviewer => \{[\s\S]*setCurrentReviewer\(reviewer\)/u);
+  assert.match(reviewGateSource, /setCurrentReviewer\(null\)/u);
+  assert.match(reviewGateSource, /reviewers\.map\(reviewer =>/u);
+  assert.match(reviewGateSource, /maxLength=\{80\}/u);
   assert.match(preferencesSource, /const currentReviewer: Reviewer \| null = reviewersQuery\.isSuccess[\s\S]*listedReviewer \?\? currentReviewerQuery\.data \?\? null/u);
   assert.match(preferencesSource, /currentReviewerId: currentReviewer\?\.id \?\? null/u);
   assert.match(preferencesSource, /const missingReviewer = currentReviewerQuery\.error instanceof ApiError && currentReviewerQuery\.error\.status === 404/u);
   assert.match(preferencesSource, /if \(missingReviewer\) setCurrentReviewer\(null\)/u);
   assert.doesNotMatch(reviewGateSource, /FIXED_REVIEWER_NAME|useReviewerByNameQuery|zhanghaonan/u);
-  assert.doesNotMatch(reviewGateSource, /reviewers\.map|type="radio"|<input|maxLength/u);
   assert.doesNotMatch(`${reviewGateSource}\n${preferencesSource}`, /dismissReviewerPrompt|isReviewerPromptDismissed|PROMPT_DISMISSED/iu);
 });
 
