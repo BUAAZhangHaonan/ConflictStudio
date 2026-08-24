@@ -230,6 +230,13 @@ class SampleService:
             statement = statement.where(Sample.category.in_([Category.C_VA, Category.C_VT]))
         if filters.direction is not None:
             statement = statement.where(Sample.conflict_direction == filters.direction)
+        if filters.in_archive is not None:
+            archived_ids = select(ArchiveItem.sample_id)
+            statement = statement.where(
+                Sample.id.in_(archived_ids)
+                if filters.in_archive
+                else Sample.id.not_in(archived_ids)
+            )
         if filters.search is not None:
             needle = filters.search.strip().casefold()
             dataset_ids = select(Dataset.id).where(func.lower(Dataset.name).contains(needle))

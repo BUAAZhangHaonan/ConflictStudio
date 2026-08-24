@@ -389,11 +389,18 @@ class CatalogService:
             content = self._get(session, ContentScript, content_id, "contentScript")
             return self._content_scene_read(session, content)
 
-    def list_prompt_templates(self, page: int) -> PageRead[PromptTemplateRead]:
+    def list_prompt_templates(
+        self,
+        page: int,
+        category: Category | None = None,
+    ) -> PageRead[PromptTemplateRead]:
         with self.database.read_session() as session:
+            statement = select(PromptTemplate)
+            if category is not None:
+                statement = statement.where(PromptTemplate.category == category)
             return paginate(
                 session,
-                select(PromptTemplate).order_by(
+                statement.order_by(
                     PromptTemplate.category,
                     PromptTemplate.name,
                     PromptTemplate.id,
@@ -450,15 +457,22 @@ class CatalogService:
         self,
         template_id: int,
         page: int,
+        verification_status: TemplateVersionStatus | None = None,
     ) -> PageRead[PromptTemplateVersionRead]:
         with self.database.read_session() as session:
             template = self._get(
                 session, PromptTemplate, template_id, "promptTemplate"
             )
+            statement = select(PromptTemplateVersion).where(
+                PromptTemplateVersion.template_id == template_id
+            )
+            if verification_status is not None:
+                statement = statement.where(
+                    PromptTemplateVersion.verification_status == verification_status
+                )
             return paginate(
                 session,
-                select(PromptTemplateVersion)
-                .where(PromptTemplateVersion.template_id == template_id)
+                statement
                 .order_by(
                     PromptTemplateVersion.version.desc(),
                     PromptTemplateVersion.id,

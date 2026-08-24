@@ -790,12 +790,15 @@ class BatchService:
                 self._generation_attempt_read,
             )
 
-    def list_job_events(self, job_id: int, page: int) -> PageRead[JobEventRead]:
+    def list_job_events(
+        self, job_id: int, page: int, order: str = "asc"
+    ) -> PageRead[JobEventRead]:
         with self.database.read_session() as session:
             self._required(session, Job, job_id, "job")
+            ordering = JobEvent.id.desc() if order == "desc" else JobEvent.id
             return paginate(
                 session,
-                select(JobEvent).where(JobEvent.job_id == job_id).order_by(JobEvent.id),
+                select(JobEvent).where(JobEvent.job_id == job_id).order_by(ordering),
                 page,
                 self._job_event_read,
             )

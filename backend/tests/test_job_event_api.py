@@ -244,6 +244,22 @@ def test_job_items_and_events_are_stably_paginated_and_validated(tmp_path: Path)
         )
         assert [event["id"] for event in final_page.json()["items"]] == added_ids[17:]
         assert final_page.json()["total"] == 23
+        descending_page = client.get(
+            f"/api/jobs/{job.id}/events",
+            params={"page": 1, "order": "desc"},
+        )
+        assert [event["id"] for event in descending_page.json()["items"]] == list(
+            reversed(added_ids)
+        )
+        descending_tail = client.get(
+            f"/api/jobs/{job.id}/events",
+            params={"page": 2, "order": "desc"},
+        )
+        assert [event["id"] for event in descending_tail.json()["items"]] == [
+            second_id,
+            first_id,
+            queued_id,
+        ]
         assert client.get(f"/api/generation-results/{job.id}").json().keys().isdisjoint({"items", "events"})
 
         invalid_requests = [

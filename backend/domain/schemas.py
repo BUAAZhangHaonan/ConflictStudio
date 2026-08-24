@@ -998,6 +998,7 @@ class ReviewQueueFilter(ApiModel):
         max_length=160,
         pattern=r".*\S.*",
     )
+    in_archive: bool | None = None
 
 
 class ReviewMutation(ApiModel):

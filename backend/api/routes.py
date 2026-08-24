@@ -30,6 +30,7 @@ from backend.domain.enums import (
     Relation,
     ResourceStatus,
     ReviewDecision,
+    TemplateVersionStatus,
 )
 from backend.domain.schemas import (
     ArchivePreviewRead,
@@ -291,8 +292,9 @@ def delete_content_script(
 def list_prompt_templates(
     request: Request,
     page: int = Query(default=1, ge=1),
+    category: Category | None = Query(default=None),
 ) -> PageRead[PromptTemplateRead]:
-    return catalog(request).list_prompt_templates(page)
+    return catalog(request).list_prompt_templates(page, category)
 
 
 @router.post(
@@ -332,8 +334,13 @@ def list_prompt_template_versions(
     template_id: int,
     request: Request,
     page: int = Query(default=1, ge=1),
+    verification_status: TemplateVersionStatus | None = Query(
+        default=None, alias="verificationStatus"
+    ),
 ) -> PageRead[PromptTemplateVersionRead]:
-    return catalog(request).list_prompt_template_versions(template_id, page)
+    return catalog(request).list_prompt_template_versions(
+        template_id, page, verification_status
+    )
 
 
 @router.post(
@@ -600,6 +607,7 @@ def list_samples(
         max_length=160,
         pattern=r".*\S.*",
     ),
+    in_archive: bool | None = Query(default=None, alias="inArchive"),
     page: int = Query(default=1, ge=1),
 ) -> PageRead[ReviewSampleListRead]:
     return samples(request).list_samples(
@@ -611,6 +619,7 @@ def list_samples(
             relation=relation,
             direction=direction,
             search=search,
+            in_archive=in_archive,
         ),
     )
 
@@ -920,8 +929,9 @@ def list_job_events(
     job_id: int,
     request: Request,
     page: int = Query(default=1, ge=1),
+    order: Literal["asc", "desc"] = Query(default="asc"),
 ) -> PageRead[JobEventRead]:
-    return batches(request).list_job_events(job_id, page)
+    return batches(request).list_job_events(job_id, page, order)
 
 
 @router.websocket("/ws/jobs/{job_id}")

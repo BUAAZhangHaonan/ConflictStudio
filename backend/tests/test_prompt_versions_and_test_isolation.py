@@ -769,3 +769,58 @@ def test_prompt_test_missing_key_returns_readable_error(tmp_path: Path) -> None:
         }
     }
     assert "CONFLICTSTUDIO_LLM_API_KEY" not in response.text
+
+
+def test_template_and_version_lists_support_server_side_filters(
+    tmp_path: Path,
+) -> None:
+    app = make_app(tmp_path)
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/prompt-templates",
+            json={"name": "Aligned portrait", "category": "A-VA"},
+        ).json()
+        second = client.post(
+            "/api/prompt-templates",
+            json={"name": "Conflicted portrait", "category": "C-VT"},
+        ).json()
+
+        filtered = client.get("/api/prompt-templates", params={"category": "C-VT"})
+        assert filtered.status_code == 200
+        assert filtered.json()["total"] == 1
+        assert filtered.json()["items"][0]["id"] == second["id"]
+
+        unfiltered = client.get("/api/prompt-templates")
+        assert unfiltered.json()["total"] == 2
+
+        draft = client.post(
+            f"/api/prompt-templates/{first['id']}/versions",
+            json={
+                "expectedTemplateRevision": first["revision"],
+                "ltxNegativePrompt": "ltx negative",
+                "h3NegativePrompt": "h3 negative",
+            },
+        ).json()
+        second_draft = client.post(
+            f"/api/prompt-templates/{first['id']}/versions",
+            json={
+                "expectedTemplateRevision": first["revision"] + 1,
+                "ltxNegativePrompt": "other ltx negative",
+                "h3NegativePrompt": "other h3 negative",
+            },
+        ).json()
+        mark_prompt_version_verified(app.state.database, draft["id"])
+
+        verified_only = client.get(
+            f"/api/prompt-templates/{first['id']}/versions",
+            params={"verificationStatus": "Verified"},
+        )
+        assert verified_only.status_code == 200
+        assert verified_only.json()["total"] == 1
+        assert verified_only.json()["items"][0]["id"] == draft["id"]
+
+        all_versions = client.get(
+            f"/api/prompt-templates/{first['id']}/versions"
+        )
+        assert all_versions.json()["total"] == 2
+        assert second_draft["verificationStatus"] == "Draft"
