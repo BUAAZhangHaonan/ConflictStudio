@@ -1222,3 +1222,130 @@ def test_progress_events_are_rate_limited_per_item(
         assert len(session_calls) == 2
 
     run(scenario())
+
+
+def test_gateway_submit_failure_with_active_sibling_keeps_job_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.services.job_executor import JobExecutor
+
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "submit-failure-active-sibling", category=Category.A_VA
+        )
+        with database.immediate_session() as session:
+            original = session.get(JobItem, request.job_item_id)
+            assert original is not None
+            snapshot = session.get(
+                BatchVideoInputSnapshot, original.input_snapshot_id
+            )
+            assert snapshot is not None
+            sibling_snapshot = BatchVideoInputSnapshot(
+                **{
+                    column.name: getattr(snapshot, column.name)
+                    for column in snapshot.__table__.columns
+                    if column.name != "id"
+                }
+            )
+            sibling_snapshot.sequence = 2
+            session.add(sibling_snapshot)
+            session.flush()
+            assert sibling_snapshot.id is not None
+            job = session.get(Job, request.job_id)
+            assert job is not None
+            job.total_count = 2
+            job.revision += 1
+            session.add(
+                JobItem(
+                    job_id=request.job_id,
+                    sequence=2,
+                    input_snapshot_id=sibling_snapshot.id,
+                    gpu_slot=GpuSlotName.GPU1,
+                    stage=JobItemStage.RENDERING,
+                    status=JobStatus.RUNNING,
+                )
+            )
+        gateway, gpu0, _, _ = make_gateway(database)
+
+        def fail_record_running(_: RenderRequest, __: str) -> tuple[int, int]:
+            raise RuntimeError("database write failed")
+
+        monkeypatch.setattr(gateway, "_record_running", fail_record_running)
+
+        with pytest.raises(RendererGatewayError) as error:
+            await gateway.submit(request)
+
+        assert error.value.code == "renderer_state_persist_failed"
+        with database.read_session() as session:
+            job = session.get(Job, request.job_id)
+            item = session.get(JobItem, request.job_item_id)
+            events = session.exec(
+                select(JobEvent).where(JobEvent.event_type == "ItemFailed")
+            ).all()
+        assert job is not None and job.status is JobStatus.RUNNING
+        assert job.finished_at is None
+        assert item is not None and item.status is JobStatus.FAILED
+        assert item.failure_code == "renderer_state_persist_failed"
+        assert len(events) == 1
+
+        with database.immediate_session() as session:
+            sibling = session.exec(
+                select(JobItem).where(JobItem.job_id == request.job_id)
+            ).all()
+            for row in sibling:
+                if row.id != request.job_item_id:
+                    row.status = JobStatus.COMPLETED
+                    row.stage = JobItemStage.COMPLETED
+                    row.revision += 1
+        executor = JobExecutor(
+            database,
+            PromptService(OpenAICompatiblePromptModel("test-key")),
+            ReservationRenderer(),  # type: ignore[arg-type]
+        )
+        executor._finalize_job(request.job_id)
+
+        with database.read_session() as session:
+            job = session.get(Job, request.job_id)
+        assert job is not None and job.status is JobStatus.FAILED
+        assert job.failed_count == 1
+        assert job.completed_count == 1
+        assert job.finished_at is not None
+        assert job.failure_code == "item_failed"
+        with database.read_session() as session:
+            final_events = session.exec(
+                select(JobEvent).where(JobEvent.job_id == request.job_id)
+            ).all()
+        assert final_events[-1].event_type == "JobFailed"
+
+    run(scenario())
+
+
+def test_gateway_submit_failure_without_siblings_fails_job_fast(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "submit-failure-no-sibling", category=Category.A_VA
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+
+        def fail_record_running(_: RenderRequest, __: str) -> tuple[int, int]:
+            raise RuntimeError("database write failed")
+
+        monkeypatch.setattr(gateway, "_record_running", fail_record_running)
+
+        with pytest.raises(RendererGatewayError) as error:
+            await gateway.submit(request)
+
+        assert error.value.code == "renderer_state_persist_failed"
+        with database.read_session() as session:
+            job = session.get(Job, request.job_id)
+            item = session.get(JobItem, request.job_item_id)
+        assert job is not None and job.status is JobStatus.FAILED
+        assert job.finished_at is not None
+        assert job.failed_count == 1
+        assert item is not None and item.status is JobStatus.FAILED
+
+    run(scenario())

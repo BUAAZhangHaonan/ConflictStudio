@@ -1122,6 +1122,13 @@ class JobExecutor:
             if job.dataset_id is None:
                 raise RuntimeError("A production job must have a destination dataset")
             create_sample_for_completed_item(session, job, item, job.dataset_id)
+        if job.status in TERMINAL_STATUSES or job.finished_at is not None:
+            # The job already finished (e.g. a sibling channel failed the
+            # submit fast). The rendered media is still valuable, so the
+            # item itself is persisted, but the terminal job row must not
+            # be mutated anymore.
+            self._append_event(session, job, "ItemCompleted", item=item)
+            return
         job.completed_count += 1
         job.updated_at = timestamp
         job.revision += 1

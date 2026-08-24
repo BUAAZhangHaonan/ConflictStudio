@@ -990,13 +990,24 @@ class ProductionRendererGateway:
             items = session.exec(
                 select(JobItem).where(JobItem.job_id == request.job_id)
             ).all()
-            job.status = JobStatus.FAILED
-            job.failed_count = sum(row.status is JobStatus.FAILED for row in items)
-            job.failure_code = code
-            job.failure_reason = reason
-            job.finished_at = timestamp
-            job.updated_at = timestamp
-            job.revision += 1
+            siblings_active = any(
+                row.id != item.id and row.status is JobStatus.RUNNING
+                for row in items
+            ) or any(
+                context.request.job_id == request.job_id
+                and context.request.job_item_id != request.job_item_id
+                for context in self._contexts.values()
+            )
+            if not siblings_active:
+                job.status = JobStatus.FAILED
+                job.failed_count = sum(
+                    row.status is JobStatus.FAILED for row in items
+                )
+                job.failure_code = code
+                job.failure_reason = reason
+                job.finished_at = timestamp
+                job.updated_at = timestamp
+                job.revision += 1
 
             payload = self._event_payload(job, item)
             payload["failureCode"] = code

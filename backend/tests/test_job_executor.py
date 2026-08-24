@@ -40,6 +40,7 @@ from backend.domain.models import (
     BatchVideoInputSnapshot,
     GpuSlot,
     Job,
+    JobEvent,
     JobItemPromptResult,
     utc_now,
     JobItem,
@@ -1493,5 +1494,82 @@ def test_run_loop_survives_claim_failure(tmp_path: Path) -> None:
         assert failures["count"] == 0
         assert completed.status is JobStatus.COMPLETED
         assert completed.completed_count == 1
+
+    asyncio.run(scenario())
+
+
+def test_late_item_completion_does_not_mutate_a_terminal_job(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        model = RecordingPromptModel()
+        renderer = FakeRenderer()
+        prompts = PromptService(model)
+        batches = BatchService(database, prompts, renderer)
+        draft = create_draft(
+            batches,
+            create_resources(database, "late completion"),
+            [GpuSlotName.GPU0],
+        )
+        make_available(database, [GpuSlotName.GPU0])
+        job = await enqueue(batches, draft)
+        item_id, _ = seed_running_render(database, job.id, "late-prompt")
+        with database.immediate_session() as session:
+            item = session.get(JobItem, item_id)
+            assert item is not None
+            asset = Asset(
+                origin_job_item_id=item.id,
+                storage_root=str(database.data_root),
+                relative_path="media/late-completion.mp4",
+                media_type="video/mp4",
+                byte_size=1024,
+                width=1344,
+                height=768,
+                fps=24,
+                frame_count=121,
+                duration_seconds=5.04,
+                has_audio=True,
+            )
+            session.add(asset)
+            session.flush()
+            assert asset.id is not None
+            item.source_asset_id = asset.id
+            item.primary_asset_id = asset.id
+            terminal_job = session.get(Job, job.id)
+            assert terminal_job is not None
+            timestamp = utc_now()
+            terminal_job.status = JobStatus.FAILED
+            terminal_job.failure_code = "renderer_state_persist_failed"
+            terminal_job.failure_reason = "A sibling channel failed its submission"
+            terminal_job.failed_count = 0
+            terminal_job.completed_count = 0
+            terminal_job.finished_at = timestamp
+            terminal_job.updated_at = timestamp
+            frozen_revision = terminal_job.revision
+
+        executor = JobExecutor(database, prompts, renderer)
+        executor._complete_item(job.id, item_id)
+
+        with database.read_session() as session:
+            item = session.get(JobItem, item_id)
+            terminal_job = session.get(Job, job.id)
+            samples = session.exec(select(Sample)).all()
+            events = session.exec(
+                select(JobEvent).where(JobEvent.event_type == "ItemCompleted")
+            ).all()
+        assert item is not None and item.status is JobStatus.COMPLETED
+        assert item.stage is JobItemStage.COMPLETED
+        assert terminal_job is not None
+        assert terminal_job.status is JobStatus.FAILED
+        assert terminal_job.finished_at == timestamp
+        assert terminal_job.updated_at == timestamp
+        assert terminal_job.revision == frozen_revision
+        assert terminal_job.completed_count == 0
+        assert terminal_job.failed_count == 0
+        assert len(samples) == 1
+        assert samples[0].job_item_id == item_id
+        assert len(events) == 1
 
     asyncio.run(scenario())
