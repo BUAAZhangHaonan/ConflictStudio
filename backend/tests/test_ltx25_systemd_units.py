@@ -112,6 +112,54 @@ def test_ltx25_unit_conflicts_with_every_same_slot_renderer(
     }
 
 
+RENDERER_UNITS = tuple(
+    f"conflictstudio-{prefix}-gpu{gpu}.service"
+    for gpu in (0, 1)
+    for prefix in ("ltx", "h3", "ltx25-bf16", "ltx25-int8")
+)
+
+
+def renderer_unit_names(gpu: int) -> set[str]:
+    return {
+        f"conflictstudio-{prefix}-gpu{gpu}.service"
+        for prefix in ("ltx", "h3", "ltx25-bf16", "ltx25-int8")
+    }
+
+
+@pytest.mark.parametrize("unit_name", RENDERER_UNITS)
+def test_renderer_unit_conflicts_are_symmetric_and_complete(unit_name: str) -> None:
+    gpu = 0 if "gpu0" in unit_name else 1
+    lines = (
+        (SYSTEMD_ROOT / unit_name).read_text(encoding="utf-8").splitlines()
+    )
+    conflicts = set(setting(lines, "Conflicts").split())
+
+    assert unit_name not in conflicts
+    assert conflicts == renderer_unit_names(gpu) - {unit_name}
+
+    for other in conflicts:
+        other_lines = (
+            (SYSTEMD_ROOT / other).read_text(encoding="utf-8").splitlines()
+        )
+        assert unit_name in set(setting(other_lines, "Conflicts").split()), (
+            f"{other} does not declare a conflict against {unit_name}"
+        )
+
+
+@pytest.mark.parametrize(
+    "unit_name",
+    (name for name in RENDERER_UNITS if "ltx25-" not in name),
+)
+def test_ltx_and_h3_renderer_units_have_no_install_section(
+    unit_name: str,
+) -> None:
+    lines = (
+        (SYSTEMD_ROOT / unit_name).read_text(encoding="utf-8").splitlines()
+    )
+    assert "[Install]" not in lines
+    assert not any(line.startswith("WantedBy=") for line in lines)
+
+
 def test_ltx25_unit_exec_starts_match_the_backend_ownership_allowlist() -> None:
     definitions = {
         definition.name: definition

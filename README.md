@@ -83,7 +83,7 @@ systemctl --user start conflictstudio-ltx25-bf16-gpu0.service
 systemctl --user stop conflictstudio-ltx25-bf16-gpu0.service
 ```
 
-The two LTX-2.5 profiles conflict with each other and with the existing ConflictStudio renderer units on the same GPU slot. Starting a profile therefore leaves only one ConflictStudio renderer on that slot. The unit files set these runtime variables directly:
+All renderer units on the same GPU slot (LTX-2.3, H3, and both LTX-2.5 profiles) declare each other in `Conflicts=`, so starting any one of them leaves only one ConflictStudio renderer on that slot. No renderer unit carries an `[Install]` section; they are on-demand services started explicitly. The unit files set these runtime variables directly:
 
 - `CUDA_VISIBLE_DEVICES=0` or `1`
 - `PYTHONPATH=/home/team/zhanghaonan/LTX-2.5-ComfyUI/.venv/lib/python3.13/site-packages`

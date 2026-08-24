@@ -1,6 +1,7 @@
 [Unit]
 Description=ConflictStudio MiniMax H3 model service on GPU1
 After=network.target
+Conflicts=conflictstudio-ltx-gpu1.service conflictstudio-ltx25-bf16-gpu1.service conflictstudio-ltx25-int8-gpu1.service
 
 [Service]
 Type=simple
@@ -15,5 +16,3 @@ StandardOutput=append:/home/team/zhanghaonan/ConflictStudio-data/logs/conflictst
 StandardError=append:/home/team/zhanghaonan/ConflictStudio-data/logs/conflictstudio-h3-gpu1.log
 Restart=no
 
-[Install]
-WantedBy=default.target

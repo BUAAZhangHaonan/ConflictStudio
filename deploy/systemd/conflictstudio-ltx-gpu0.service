@@ -1,6 +1,7 @@
 [Unit]
 Description=ConflictStudio LTX 2.3 model service on GPU0
 After=network.target
+Conflicts=conflictstudio-h3-gpu0.service conflictstudio-ltx25-bf16-gpu0.service conflictstudio-ltx25-int8-gpu0.service
 
 [Service]
 Type=simple
@@ -15,5 +16,3 @@ StandardOutput=append:/home/team/zhanghaonan/ConflictStudio-data/logs/conflictst
 StandardError=append:/home/team/zhanghaonan/ConflictStudio-data/logs/conflictstudio-ltx-gpu0.log
 Restart=no
 
-[Install]
-WantedBy=default.target
