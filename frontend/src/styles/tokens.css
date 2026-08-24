@@ -11,6 +11,14 @@
   --color-blue-hover: #1d4ed8;
   --color-blue-soft: #eaf1ff;
   --color-focus: #93c5fd;
+  --color-danger: #dc2626;
+  --color-problem: #b42318;
+  --color-surface-subtle: #f6f7f9;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
   --radius-small: 4px;
   --radius: 6px;
   --sidebar-width: 216px;
