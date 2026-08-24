@@ -55,12 +55,11 @@ export const reviewArchiveEnUS = {
     queueCount: '{{visible}} of {{total}} samples',
     selectionCount: '{{count}} selected',
     gate: {
-      aria: 'Set up the fixed reviewer before entering review',
-      title: 'Reviewer required',
-      body: 'Reviews in this workspace use the fixed reviewer {{name}}.',
-      create: 'Create {{name}} and enter review',
+      aria: 'Review area',
+      guestBody: 'Browsing as guest (read-only).',
+      guestSettings: 'Choose a reviewer in settings',
       loadingTitle: 'Checking reviewer',
-      loadingBody: 'Checking the fixed reviewer {{name}}.',
+      loadingBody: 'Checking the saved reviewer identity.',
       errorTitle: 'Could not check the reviewer',
     },
     list: {
@@ -339,12 +338,11 @@ export const reviewArchiveZhCN = {
     queueCount: '显示 {{visible}} 条，共 {{total}} 条样本',
     selectionCount: '已选择 {{count}} 条',
     gate: {
-      aria: '进入审核前设置固定审核人',
-      title: '需要审核人',
-      body: '此工作区固定使用审核人 {{name}}。',
-      create: '创建 {{name}} 并进入审核',
+      aria: '审核区',
+      guestBody: '当前以访客身份浏览（只读）。',
+      guestSettings: '在设置中选择审核人',
       loadingTitle: '正在检查审核人',
-      loadingBody: '正在检查固定审核人 {{name}}。',
+      loadingBody: '正在检查已保存的审核人身份。',
       errorTitle: '无法检查审核人',
     },
     list: {

@@ -25,13 +25,17 @@ class MemoryStorage {
   setItem(_key: string, value: string): void { this.value = value; }
 }
 
-test('review routes are gated by the fixed zhanghaonan reviewer without a bypass', () => {
+test('review routes resolve the stored reviewer identity and allow guest browsing', () => {
   assert.match(app, /<Route element=\{<ReviewGate \/>\}>[\s\S]*path="\/review"[\s\S]*path="\/review\/:sampleId"/u);
-  assert.match(gate, /FIXED_REVIEWER_NAME = 'zhanghaonan'/u);
-  assert.match(gate, /useReviewerByNameQuery\(FIXED_REVIEWER_NAME\)/u);
-  assert.match(gate, /<Outlet context=\{\{ reviewer: fixedReviewer \}/u);
+  assert.match(gate, /const \{ currentReviewer, isPending, error, retry \} = useReviewerState\(\)/u);
+  assert.match(gate, /reviewer: Reviewer \| null/u);
+  assert.match(gate, /<Outlet context=\{\{ reviewer: currentReviewer \}/u);
+  assert.match(gate, /review\.gate\.guestBody/u);
+  assert.match(gate, /<Link to="\/settings">/u);
   assert.match(page, /const reviewer = useReviewGateReviewer\(\)/u);
+  assert.match(page, /const reviewerId = reviewer\?\.id \?\? null/u);
   assert.doesNotMatch(`${app}\n${gate}\n${page}`, /FirstReviewerDialog|continueReadOnly|readOnlyHint|canReview/u);
+  assert.doesNotMatch(gate, /FIXED_REVIEWER_NAME|useReviewerByNameQuery|zhanghaonan/u);
   assert.doesNotMatch(gate, /reviewers\.map|type="radio"|maxLength/u);
 });
 
@@ -67,7 +71,8 @@ test('list scroll restoration is tied to the exact filter and page URL', () => {
 });
 
 test('batch review fetches every selected note draft before opening confirmation', () => {
-  assert.match(page, /Promise\.all\(selectedSamples\.map\(sample => \([\s\S]*queryClient\.fetchQuery\(reviewSampleQueries\.note\(sample\.id, reviewer\.id, sample\.revision\)\)/u);
+  assert.match(page, /Promise\.all\(selectedSamples\.map\(sample => \([\s\S]*queryClient\.fetchQuery\(reviewSampleQueries\.note\(sample\.id, reviewerId, sample\.revision\)\)/u);
+  assert.match(page, /if \(reviewerId === null \|\| selectedSamples\.length === 0 \|\| acceptedBlockedCount > 0\) return/u);
   const batchPayload = page.slice(page.indexOf('setBatchItems('), page.indexOf('setBatchConfirmOpen(true)'));
   assert.match(batchPayload, /expectedRevision: sample\.revision/u);
   assert.doesNotMatch(batchPayload, /expectedSampleRevision/u);

@@ -33,9 +33,9 @@ test('detail labels a safe Results return separately from a review-list return',
   assert.match(locales, /backToResults: '返回生成结果'/u);
 });
 
-test('detail receives the API-validated reviewer from ReviewGate', () => {
+test('detail receives the resolved nullable reviewer from ReviewGate', () => {
   assert.match(page, /const reviewer = useReviewGateReviewer\(\)/u);
-  assert.match(page, /const reviewerId = reviewer\.id/u);
+  assert.match(page, /const reviewerId = reviewer\?\.id \?\? null/u);
   assert.doesNotMatch(page, /useReviewerState|canReview|readOnly|aria-readonly|is-read-only/u);
 });
 

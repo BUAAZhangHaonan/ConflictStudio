@@ -118,8 +118,8 @@ test('production copy states that Preview saves the current configuration', () =
 test('dataset states and review gate guidance have complete English and Chinese copy', () => {
   assert.match(enUSSource, /dataset: \{ Active: 'Active', Disabled: 'Disabled', Inactive: 'Inactive' \}/u);
   assert.match(zhCNSource, /dataset: \{ Active: '已启用', Disabled: '已禁用', Inactive: '已停用' \}/u);
-  assert.match(reviewLocaleSource, /title: 'Reviewer required'[\s\S]*title: '需要审核人'/u);
-  assert.match(reviewLocaleSource, /body: 'Reviews in this workspace use the fixed reviewer \{\{name\}\}\.'/u);
+  assert.match(reviewLocaleSource, /guestBody: 'Browsing as guest \(read-only\)\.'[\s\S]*guestBody: '当前以访客身份浏览（只读）。'/u);
+  assert.match(reviewLocaleSource, /guestSettings: 'Choose a reviewer in settings'[\s\S]*guestSettings: '在设置中选择审核人'/u);
   assert.doesNotMatch(`${enUSSource}\n${zhCNSource}`, /continueReadOnly|readOnlyHint/u);
   assert.match(workspaceLocaleSource, /Disabled: 'Disabled',[\s\S]*?Inactive: 'Inactive'/u);
   assert.match(workspaceLocaleSource, /Disabled: '已禁用',[\s\S]*?Inactive: '已停用'/u);

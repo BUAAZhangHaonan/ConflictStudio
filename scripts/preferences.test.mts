@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
@@ -46,13 +46,30 @@ test('reviewer selection persists and clears without a read-only bypass', () => 
   assert.doesNotMatch(source, /reviewer\.readOnly|PROMPT_DISMISSED|dismissReviewerPrompt|isReviewerPromptDismissed/u);
 });
 
-test('review routes resolve or create only the fixed zhanghaonan reviewer', () => {
+test('review routes resolve the reviewer from stored preferences and allow guests', () => {
   assert.match(appSource, /<Route element=\{<ReviewGate \/>\}>[\s\S]*path="\/review"[\s\S]*path="\/review\/:sampleId"/u);
   assert.doesNotMatch(appSource, /FirstReviewerDialog/u);
-  assert.match(gateSource, /FIXED_REVIEWER_NAME = 'zhanghaonan'/u);
-  assert.match(gateSource, /useReviewerByNameQuery\(FIXED_REVIEWER_NAME\)/u);
-  assert.match(gateSource, /preferences\.currentReviewerId !== fixedReviewer\?\.id[\s\S]*setCurrentReviewer\(null\)/u);
-  assert.match(gateSource, /createMutation\.mutate\(\{ name: FIXED_REVIEWER_NAME \}/u);
-  assert.match(gateSource, /if \(reviewerReady\) return <Outlet context=/u);
-  assert.doesNotMatch(gateSource, /reviewers\.map|type="radio"|<input|<Pagination|maxLength|useReviewerState|readOnly|dismiss|navigate\(/iu);
+  assert.match(gateSource, /const \{ currentReviewer, isPending, error, retry \} = useReviewerState\(\)/u);
+  assert.match(gateSource, /reviewer: Reviewer \| null/u);
+  assert.match(gateSource, /review\.gate\.guestBody/u);
+  assert.match(gateSource, /<Link to="\/settings">/u);
+  assert.match(gateSource, /<Outlet context=\{\{ reviewer: currentReviewer \}/u);
+  assert.doesNotMatch(gateSource, /FIXED_REVIEWER_NAME|useReviewerByNameQuery|zhanghaonan/u);
+  assert.doesNotMatch(gateSource, /reviewers\.map|type="radio"|<input|<Pagination|maxLength|readOnly|dismiss/u);
+});
+
+test('frontend sources contain no hardcoded reviewer name', () => {
+  const srcRoot = new URL('../frontend/src/', import.meta.url);
+  const offenderPaths: string[] = [];
+  const walk = (dir: URL) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const entryUrl = new URL(`${entry.name}${entry.isDirectory() ? '/' : ''}`, dir);
+      if (entry.isDirectory()) walk(entryUrl);
+      else if (/\.(tsx?|css)$/u.test(entry.name)) {
+        if (readFileSync(entryUrl, 'utf8').includes('zhanghaonan')) offenderPaths.push(entry.name);
+      }
+    }
+  };
+  walk(srcRoot);
+  assert.deepEqual(offenderPaths, []);
 });

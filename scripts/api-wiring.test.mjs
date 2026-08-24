@@ -411,22 +411,23 @@ test('relationship guide is accessible and the DrawIO source has two pages', () 
   assert.match(responsiveCss, /@media \(max-width: 390px\)[\s\S]*\.generate-nav[\s\S]*grid-template-columns: repeat\(2/u);
 });
 
-test('review gate fixes reviewer identity while settings keep validated Reviewer API state', () => {
+test('review gate resolves reviewer identity from stored preferences while settings keep validated Reviewer API state', () => {
   const sources = `${settingsSource}\n${preferencesSource}\n${appShellSource}\n${reviewGateSource}`;
   assert.doesNotMatch(sources, /林然|陈宁|Lin Ran|Chen Ning/u);
   assert.doesNotMatch(sources, /DEFAULT_REVIEWER|presetReviewer|mockReviewer/u);
   assert.match(appShellSource, /preferences\.currentReviewerName/u);
-  assert.match(reviewGateSource, /FIXED_REVIEWER_NAME = 'zhanghaonan'/u);
-  assert.match(reviewGateSource, /useReviewerByNameQuery\(FIXED_REVIEWER_NAME\)/u);
-  assert.match(reviewGateSource, /preferences\.currentReviewerId !== fixedReviewer\?\.id[\s\S]*setCurrentReviewer\(null\)/u);
-  assert.match(reviewGateSource, /if \(reviewerReady\) return <Outlet context=/u);
+  assert.match(reviewGateSource, /const \{ currentReviewer, isPending, error, retry \} = useReviewerState\(\)/u);
+  assert.match(reviewGateSource, /reviewer: Reviewer \| null/u);
+  assert.match(reviewGateSource, /review\.gate\.guestBody/u);
+  assert.match(reviewGateSource, /<Link to="\/settings">/u);
+  assert.match(reviewGateSource, /<Outlet context=\{\{ reviewer: currentReviewer \}/u);
   assert.match(preferencesSource, /const currentReviewer: Reviewer \| null = reviewersQuery\.isSuccess[\s\S]*listedReviewer \?\? currentReviewerQuery\.data \?\? null/u);
   assert.match(preferencesSource, /currentReviewerId: currentReviewer\?\.id \?\? null/u);
   assert.match(preferencesSource, /const missingReviewer = currentReviewerQuery\.error instanceof ApiError && currentReviewerQuery\.error\.status === 404/u);
   assert.match(preferencesSource, /if \(missingReviewer\) setCurrentReviewer\(null\)/u);
-  assert.match(reviewGateSource, /createMutation\.mutate\(\{ name: FIXED_REVIEWER_NAME \}/u);
+  assert.doesNotMatch(reviewGateSource, /FIXED_REVIEWER_NAME|useReviewerByNameQuery|zhanghaonan/u);
   assert.doesNotMatch(reviewGateSource, /reviewers\.map|type="radio"|<input|maxLength/u);
-  assert.doesNotMatch(`${reviewGateSource}\n${preferencesSource}`, /readOnly|dismissReviewerPrompt|isReviewerPromptDismissed|PROMPT_DISMISSED/iu);
+  assert.doesNotMatch(`${reviewGateSource}\n${preferencesSource}`, /dismissReviewerPrompt|isReviewerPromptDismissed|PROMPT_DISMISSED/iu);
 });
 
 test('GPU and task failures are localized from stable fields instead of raw backend text', () => {

@@ -80,7 +80,7 @@ export function ReviewDetailPage() {
   const [searchParams] = useSearchParams();
   const { t, i18n } = useTranslation();
   const reviewer = useReviewGateReviewer();
-  const reviewerId = reviewer.id;
+  const reviewerId = reviewer?.id ?? null;
   const locale: Locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
   const detailQuery = useReviewSampleDetailQuery(sampleId);
   const sampleRevision = detailQuery.data?.revision ?? null;
@@ -188,7 +188,7 @@ export function ReviewDetailPage() {
         setNoteState('saved');
         return true;
       }
-      if (!sample || !noteQuery.isSuccess) return false;
+      if (reviewerId === null || !sample || !noteQuery.isSuccess) return false;
 
       const value = noteRef.current;
       const request = noteMutation.mutateAsync({
@@ -291,7 +291,8 @@ export function ReviewDetailPage() {
 
   const submitReview = () => {
     if (
-      !sample
+      reviewerId === null
+      || !sample
       || reviewDecision === null
       || noteState !== 'saved'
       || (reviewDecision === 'Accepted' && sample.generationCompatibility === 'NeedsRegeneration')
@@ -319,7 +320,7 @@ export function ReviewDetailPage() {
   };
 
   const submitConversion = () => {
-    if (!sample) return;
+    if (reviewerId === null || !sample) return;
     const targetCategory = targetCategoryFor(sample);
     const needsDirection = targetCategory.startsWith('C-');
     if (

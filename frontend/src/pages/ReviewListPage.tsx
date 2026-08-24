@@ -67,6 +67,7 @@ export function ReviewListPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const reviewer = useReviewGateReviewer();
+  const reviewerId = reviewer?.id ?? null;
   const queryString = searchParams.toString();
   const locationState = useMemo(() => readReviewListLocation(queryString), [queryString]);
   const returnTo = queryString ? `/review?${queryString}` : '/review';
@@ -174,17 +175,17 @@ export function ReviewListPage() {
   };
 
   const prepareBatch = async () => {
-    if (selectedSamples.length === 0 || acceptedBlockedCount > 0) return;
+    if (reviewerId === null || selectedSamples.length === 0 || acceptedBlockedCount > 0) return;
     setBatchPreparing(true);
     setBatchPrepareError(null);
     batchMutation.reset();
     try {
       const drafts = await Promise.all(selectedSamples.map(sample => (
-        queryClient.fetchQuery(reviewSampleQueries.note(sample.id, reviewer.id, sample.revision))
+        queryClient.fetchQuery(reviewSampleQueries.note(sample.id, reviewerId, sample.revision))
       )));
       setBatchItems(selectedSamples.map((sample, index) => ({
         sampleId: sample.id,
-        reviewerId: reviewer.id,
+        reviewerId,
         decision: batchDecision,
         expectedRevision: sample.revision,
         expectedReviewRevision: sample.reviewRevision,
