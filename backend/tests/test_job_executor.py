@@ -1448,3 +1448,50 @@ def test_resume_and_retry_api_validate_revisions_and_payloads(
     assert extra.status_code == 422
     assert resumed.status_code == 202
     assert resumed.json()["id"] == job.id
+
+
+def test_run_loop_survives_claim_failure(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        from backend.adapters.database import Database
+
+        database = Database(tmp_path)
+        database.initialize()
+        model = RecordingPromptModel()
+        renderer = FakeRenderer()
+        prompts = PromptService(model)
+        batches = BatchService(database, prompts, renderer)
+        resources = create_resources(database, "claim failure")
+        draft = create_draft(
+            batches,
+            resources,
+            [GpuSlotName.GPU0],
+            quantity=1,
+        )
+        make_available(database, [GpuSlotName.GPU0])
+        executor = JobExecutor(database, prompts, renderer, scan_interval_seconds=0.05)
+
+        real_claim = executor._claim_queued_jobs
+        failures = {"count": 1}
+
+        def flaky_claim():  # type: ignore[no-untyped-def]
+            if failures["count"] > 0:
+                failures["count"] -= 1
+                raise RuntimeError("claim exploded")
+            return real_claim()
+
+        executor._claim_queued_jobs = flaky_claim  # type: ignore[method-assign]
+
+        await executor.start()
+        job = await enqueue(batches, draft)
+        try:
+            completed = await wait_for_status(batches, job.id, {JobStatus.COMPLETED})
+            loop_task = executor._loop_task
+            assert loop_task is not None and not loop_task.done()
+        finally:
+            await executor.stop()
+
+        assert failures["count"] == 0
+        assert completed.status is JobStatus.COMPLETED
+        assert completed.completed_count == 1
+
+    asyncio.run(scenario())

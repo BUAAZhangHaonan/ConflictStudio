@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -59,6 +60,8 @@ from .samples import create_sample_for_completed_item
 
 
 TERMINAL_STATUSES = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -708,18 +711,21 @@ class JobExecutor:
     async def _run_loop(self) -> None:
         while not self._stopping:
             if self.renderer.configured:
-                for job_id in self._claim_queued_jobs():
-                    if job_id in self._active_tasks:
-                        continue
-                    task = asyncio.create_task(
-                        self._run_job(job_id), name=f"conflictstudio-job-{job_id}"
-                    )
-                    self._active_tasks[job_id] = task
-                    task.add_done_callback(
-                        lambda completed, value=job_id: self._task_finished(
-                            value, completed
+                try:
+                    for job_id in self._claim_queued_jobs():
+                        if job_id in self._active_tasks:
+                            continue
+                        task = asyncio.create_task(
+                            self._run_job(job_id), name=f"conflictstudio-job-{job_id}"
                         )
-                    )
+                        self._active_tasks[job_id] = task
+                        task.add_done_callback(
+                            lambda completed, value=job_id: self._task_finished(
+                                value, completed
+                            )
+                        )
+                except Exception:
+                    logger.exception("Job executor claim cycle failed")
             self._wake.clear()
             try:
                 await asyncio.wait_for(
