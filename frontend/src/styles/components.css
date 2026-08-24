@@ -65,12 +65,12 @@
   background: transparent;
 }
 
-.text-button { padding: 6px 8px; color: var(--color-blue); }
+.text-button { min-height: 36px; padding: 6px 8px; color: var(--color-blue); }
 
 .icon-button {
   display: inline-grid;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   place-items: center;
   border-radius: var(--radius-small);
   font-size: 18px;
@@ -86,7 +86,7 @@
 
 .reviewer-menu > summary {
   display: flex;
-  min-height: 34px;
+  min-height: 36px;
   align-items: center;
   gap: 8px;
   padding: 6px 9px;
@@ -195,7 +195,7 @@
 
 .button {
   display: inline-flex;
-  min-height: 34px;
+  min-height: 36px;
   align-items: center;
   justify-content: center;
   gap: 7px;
