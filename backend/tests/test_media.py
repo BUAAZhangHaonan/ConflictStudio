@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from subprocess import CompletedProcess
+from subprocess import CompletedProcess, TimeoutExpired
 
 import pytest
 
@@ -17,8 +17,23 @@ from backend.domain.models import GenerationAttempt
 from backend.tests.test_sample_integration import add_completed_result, make_app
 
 
-def compact_probe(*, frames: str | None = "121", width: int = 1344, height: int = 768, fps: str = "24/1", duration: str = "5.0416667", audio: bool = True, read_frames: str | None = None, wrapper: bool = False) -> str:
-    stream = {"codec_type": "video", "width": width, "height": height, "r_frame_rate": fps}
+def compact_probe(
+    *,
+    frames: str | None = "121",
+    width: int = 1344,
+    height: int = 768,
+    fps: str = "24/1",
+    duration: str = "5.0416667",
+    audio: bool = True,
+    read_frames: str | None = None,
+    wrapper: bool = False,
+) -> str:
+    stream = {
+        "codec_type": "video",
+        "width": width,
+        "height": height,
+        "r_frame_rate": fps,
+    }
     if frames is not None:
         stream["nb_frames"] = frames
     if read_frames is not None:
@@ -35,7 +50,12 @@ def compact_probe(*, frames: str | None = "121", width: int = 1344, height: int 
 
 def test_media_paths_reject_absolute_dotdot_and_symlink_escape(tmp_path: Path) -> None:
     store = MediaStore(tmp_path)
-    for path in ("/outside.mp4", "../outside.mp4", "a/../outside.mp4", r"a\\outside.mp4"):
+    for path in (
+        "/outside.mp4",
+        "../outside.mp4",
+        "a/../outside.mp4",
+        r"a\\outside.mp4",
+    ):
         with pytest.raises(MediaError):
             store.resolve(path)
     outside = tmp_path.parent / "outside"
@@ -49,7 +69,9 @@ def test_media_paths_reject_absolute_dotdot_and_symlink_escape(tmp_path: Path) -
         store.resolve("link/outside.mp4")
 
 
-def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_probe_rejects_zero_byte_and_every_required_media_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = MediaStore(tmp_path)
     media = tmp_path / "media.mp4"
     media.touch()
@@ -58,7 +80,10 @@ def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path
     media.write_bytes(b"x")
 
     def install(payload: str) -> None:
-        monkeypatch.setattr("backend.adapters.media.subprocess.run", lambda *args, **kwargs: CompletedProcess(args[0], 0, payload, ""))
+        monkeypatch.setattr(
+            "backend.adapters.media.subprocess.run",
+            lambda *args, **kwargs: CompletedProcess(args[0], 0, payload, ""),
+        )
 
     failures = (
         compact_probe(width=1),
@@ -80,9 +105,17 @@ def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path
     install(compact_probe(frames="121"))
     assert store.probe(media, require_audio=True, model=ModelName.LTX).has_audio
     install(compact_probe(frames="121", read_frames="121", wrapper=True))
-    assert store.probe(media, require_audio=True, model=ModelName.LTX).frame_count == 121
-    install(compact_probe(frames="121", read_frames=None).replace('"nb_frames": "121"', '"nb_read_frames": "121"'))
-    assert store.probe(media, require_audio=True, model=ModelName.LTX).frame_count == 121
+    assert (
+        store.probe(media, require_audio=True, model=ModelName.LTX).frame_count == 121
+    )
+    install(
+        compact_probe(frames="121", read_frames=None).replace(
+            '"nb_frames": "121"', '"nb_read_frames": "121"'
+        )
+    )
+    assert (
+        store.probe(media, require_audio=True, model=ModelName.LTX).frame_count == 121
+    )
     install(compact_probe(frames="121", duration="4.9"))
     with pytest.raises(MediaError, match="duration"):
         store.probe(media, require_audio=True, model=ModelName.LTX)
@@ -96,12 +129,13 @@ def test_probe_rejects_zero_byte_and_every_required_media_failure(tmp_path: Path
     [
         (FileNotFoundError("missing"), "ffprobe is unavailable"),
         (PermissionError("denied"), "ffprobe could not be started"),
+        (TimeoutExpired(["ffprobe"], 60), "ffprobe timed out"),
     ],
 )
 def test_probe_reports_unavailable_ffprobe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    raised: OSError,
+    raised: Exception,
     message: str,
 ) -> None:
     media = tmp_path / "source.mp4"
@@ -116,8 +150,12 @@ def test_probe_reports_unavailable_ffprobe(
         store.probe(media, require_audio=True, model=ModelName.LTX)
 
 
-@pytest.mark.parametrize("failure", ("ffmpeg", "silent_probe", "replace", "final_probe"))
-def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+@pytest.mark.parametrize(
+    "failure", ("ffmpeg", "silent_probe", "replace", "final_probe")
+)
+def test_vt_failure_removes_derivatives_before_persistence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
     store = MediaStore(tmp_path)
     source, primary, temporary = store.attempt_paths(1, 1, 1)
     source.parent.mkdir(parents=True)
@@ -138,7 +176,10 @@ def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monke
 
     monkeypatch.setattr("backend.adapters.media.subprocess.run", fake_run)
     if failure == "replace":
-        monkeypatch.setattr("backend.adapters.media.os.replace", lambda *_: (_ for _ in ()).throw(OSError("replace failed")))
+        monkeypatch.setattr(
+            "backend.adapters.media.os.replace",
+            lambda *_: (_ for _ in ()).throw(OSError("replace failed")),
+        )
     with pytest.raises((MediaError, OSError)):
         store.prepare_attempt(
             source_relative_path=store.relative_path(source),
@@ -158,12 +199,13 @@ def test_vt_failure_removes_derivatives_before_persistence(tmp_path: Path, monke
     [
         (FileNotFoundError("missing"), "ffmpeg is unavailable"),
         (PermissionError("denied"), "ffmpeg could not be started"),
+        (TimeoutExpired(["ffmpeg"], 300), "ffmpeg timed out"),
     ],
 )
 def test_vt_derivation_reports_unavailable_ffmpeg_and_preserves_source(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    raised: OSError,
+    raised: Exception,
     message: str,
 ) -> None:
     store = MediaStore(tmp_path)
@@ -216,7 +258,9 @@ def test_vt_derivation_never_overwrites_source_or_existing_outputs(
     assert primary.read_bytes() == b"existing-primary"
 
 
-def test_va_and_vt_assets_preserve_rerender_attempt_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_va_and_vt_assets_preserve_rerender_attempt_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = MediaStore(tmp_path)
 
     class SessionStub:
@@ -288,18 +332,50 @@ def test_asset_schema_has_checks_foreign_keys_and_immutability(tmp_path: Path) -
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
                 "INSERT INTO assets (origin_job_item_id, storage_root, relative_path, media_type, byte_size, width, height, fps, frame_count, duration_seconds, has_audio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (origin_id, str(tmp_path), "../escape.mp4", "video/mp4", 1, 1344, 768, 24, 121, 1.0, 1, "2026-08-12T00:00:00Z"),
+                (
+                    origin_id,
+                    str(tmp_path),
+                    "../escape.mp4",
+                    "video/mp4",
+                    1,
+                    1344,
+                    768,
+                    24,
+                    121,
+                    1.0,
+                    1,
+                    "2026-08-12T00:00:00Z",
+                ),
             )
         connection.execute(
             "INSERT INTO assets (origin_job_item_id, storage_root, relative_path, media_type, byte_size, width, height, fps, frame_count, duration_seconds, has_audio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (origin_id, str(tmp_path), "media/source-new.mp4", "video/mp4", 1, 1344, 768, 24, 121, 1.0, 1, "2026-08-12T00:00:00Z"),
+            (
+                origin_id,
+                str(tmp_path),
+                "media/source-new.mp4",
+                "video/mp4",
+                1,
+                1344,
+                768,
+                24,
+                121,
+                1.0,
+                1,
+                "2026-08-12T00:00:00Z",
+            ),
         )
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
                 "UPDATE assets SET byte_size = 2 WHERE relative_path = 'media/source-new.mp4'"
             )
-        foreign_keys = connection.execute("PRAGMA foreign_key_list(generation_attempts)").fetchall()
-        assert {("job_items", "job_item_id"), ("assets", "source_asset_id"), ("assets", "primary_asset_id")} <= {(row[2], row[3]) for row in foreign_keys}
+        foreign_keys = connection.execute(
+            "PRAGMA foreign_key_list(generation_attempts)"
+        ).fetchall()
+        assert {
+            ("job_items", "job_item_id"),
+            ("assets", "source_asset_id"),
+            ("assets", "primary_asset_id"),
+        } <= {(row[2], row[3]) for row in foreign_keys}
     finally:
         connection.close()
 

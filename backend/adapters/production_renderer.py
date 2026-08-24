@@ -277,7 +277,7 @@ class ProductionRendererGateway:
             )
         try:
             source_relative_path = await self._wait_for_output(context)
-            result = self._persist_output(context, source_relative_path)
+            result = await self._persist_output(context, source_relative_path)
             self._contexts.pop((slot, prompt_id), None)
             return result
         except asyncio.CancelledError:
@@ -311,7 +311,7 @@ class ProductionRendererGateway:
             history = await self.clients[request.gpu_slot].get_history(prompt_id)
             source_relative_path = self._history_output(context, history)
             if source_relative_path is not None:
-                self._persist_output(context, source_relative_path)
+                await self._persist_output(context, source_relative_path)
                 return ResumeOutcome.COMPLETED
             queue = await self.clients[request.gpu_slot].get_queue()
             if not self._validate_queue_prompt(queue, prompt_id):
@@ -344,7 +344,7 @@ class ProductionRendererGateway:
                             "renderer_output_invalid",
                             "ComfyUI completed without the expected video output",
                         )
-                    self._persist_output(context, source_relative_path)
+                    await self._persist_output(context, source_relative_path)
                 except Exception as completion_error:
                     safe = self._safe_error(completion_error)
                     self._fail_context(context, safe.message)
@@ -623,13 +623,14 @@ class ProductionRendererGateway:
                 websocket_task.cancel()
                 await asyncio.gather(websocket_task, return_exceptions=True)
 
-    def _persist_output(
+    async def _persist_output(
         self, context: _RenderContext, source_relative_path: str
     ) -> RenderResult:
         prepared: PreparedMedia | None = None
         try:
             self._record_media_processing(context)
-            prepared = self.media_store.prepare_attempt(
+            prepared = await asyncio.to_thread(
+                self.media_store.prepare_attempt,
                 source_relative_path=source_relative_path,
                 job_id=context.request.job_id,
                 item_sequence=context.request.item_sequence,
@@ -643,7 +644,7 @@ class ProductionRendererGateway:
             return RenderResult((source_asset_path, primary_asset_path))
         except Exception:
             if prepared is not None:
-                self.media_store.discard_prepared(prepared)
+                await asyncio.to_thread(self.media_store.discard_prepared, prepared)
             raise
 
     def _handle_websocket_message(
@@ -1005,7 +1006,6 @@ class ProductionRendererGateway:
                 (context.request.gpu_slot, context.prompt_id),
                 None,
             )
-
 
     @staticmethod
     def _event(job: Job, item: JobItem, event_type: str) -> JobEvent:

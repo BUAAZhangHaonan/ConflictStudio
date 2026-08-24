@@ -46,7 +46,13 @@ class PreparedMedia:
 class MediaStore:
     """Owns generation media below one explicitly configured data root."""
 
-    def __init__(self, data_root: Path, *, ffprobe_binary: str = "ffprobe", ffmpeg_binary: str = "ffmpeg") -> None:
+    def __init__(
+        self,
+        data_root: Path,
+        *,
+        ffprobe_binary: str = "ffprobe",
+        ffmpeg_binary: str = "ffmpeg",
+    ) -> None:
         if not data_root.is_dir():
             raise MediaError("A configured existing data root is required")
         self.data_root = data_root.resolve()
@@ -74,13 +80,25 @@ class MediaStore:
             raise MediaError("Media path escapes the configured data root") from error
         return resolved
 
-    def attempt_paths(self, job_id: int, item_sequence: int, attempt_number: int) -> tuple[Path, Path, Path]:
+    def attempt_paths(
+        self, job_id: int, item_sequence: int, attempt_number: int
+    ) -> tuple[Path, Path, Path]:
         if job_id <= 0 or item_sequence <= 0 or attempt_number <= 0:
-            raise MediaError("Job id, item sequence, and attempt number must be positive")
-        directory = self.resolve(f"media/jobs/{job_id}/items/{item_sequence}/attempts/{attempt_number}")
-        return directory / "source.mp4", directory / "primary.mp4", directory / ".primary.tmp.mp4"
+            raise MediaError(
+                "Job id, item sequence, and attempt number must be positive"
+            )
+        directory = self.resolve(
+            f"media/jobs/{job_id}/items/{item_sequence}/attempts/{attempt_number}"
+        )
+        return (
+            directory / "source.mp4",
+            directory / "primary.mp4",
+            directory / ".primary.tmp.mp4",
+        )
 
-    def probe(self, path: Path, *, require_audio: bool, model: ModelName) -> ProbeEvidence:
+    def probe(
+        self, path: Path, *, require_audio: bool, model: ModelName
+    ) -> ProbeEvidence:
         relative_path = self.relative_path(path)
         checked_path = self.resolve(relative_path)
         if not checked_path.is_file() or checked_path.stat().st_size <= 0:
@@ -100,9 +118,12 @@ class MediaStore:
                 check=False,
                 capture_output=True,
                 text=True,
+                timeout=60,
             )
         except FileNotFoundError as error:
             raise MediaError("ffprobe is unavailable") from error
+        except subprocess.TimeoutExpired as error:
+            raise MediaError("ffprobe timed out after 60 seconds") from error
         except OSError as error:
             raise MediaError("ffprobe could not be started") from error
         if result.returncode != 0:
@@ -117,8 +138,16 @@ class MediaStore:
         format_info = payload["format"]
         if not isinstance(streams, list) or not isinstance(format_info, dict):
             raise MediaError("ffprobe JSON has an unexpected shape")
-        video_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"]
-        audio_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"]
+        video_streams = [
+            stream
+            for stream in streams
+            if isinstance(stream, dict) and stream.get("codec_type") == "video"
+        ]
+        audio_streams = [
+            stream
+            for stream in streams
+            if isinstance(stream, dict) and stream.get("codec_type") == "audio"
+        ]
         if len(video_streams) != 1:
             raise MediaError("Media must contain exactly one video stream")
         video = video_streams[0]
@@ -140,8 +169,14 @@ class MediaStore:
             raise MediaError("Video fps is invalid") from error
         if fps != VIDEO_FPS:
             raise MediaError("Video must be 24fps")
-        frame_values = [video.get(name) for name in ("nb_frames", "nb_read_frames") if name in video]
-        usable_frame_values = [self._positive_int(value, "frame count") for value in frame_values if value not in (None, "N/A")]
+        frame_values = [
+            video.get(name) for name in ("nb_frames", "nb_read_frames") if name in video
+        ]
+        usable_frame_values = [
+            self._positive_int(value, "frame count")
+            for value in frame_values
+            if value not in (None, "N/A")
+        ]
         if not usable_frame_values:
             raise MediaError("Video frame count is missing or unusable")
         if len(set(usable_frame_values)) != 1:
@@ -197,7 +232,9 @@ class MediaStore:
             temporary_path.resolve(),
         }
         if len(resolved_paths) != 3:
-            raise MediaError("Source, primary, and temporary media paths must be distinct")
+            raise MediaError(
+                "Source, primary, and temporary media paths must be distinct"
+            )
         self.probe(source_path, require_audio=True, model=model)
         primary_path.parent.mkdir(parents=True, exist_ok=True)
         if primary_path.exists() or temporary_path.exists():
@@ -205,13 +242,27 @@ class MediaStore:
         try:
             try:
                 result = subprocess.run(
-                    [self.ffmpeg_binary, "-n", "-i", str(source_path), "-map", "0:v:0", "-c:v", "copy", "-an", str(temporary_path)],
+                    [
+                        self.ffmpeg_binary,
+                        "-n",
+                        "-i",
+                        str(source_path),
+                        "-map",
+                        "0:v:0",
+                        "-c:v",
+                        "copy",
+                        "-an",
+                        str(temporary_path),
+                    ],
                     check=False,
                     capture_output=True,
                     text=True,
+                    timeout=300,
                 )
             except FileNotFoundError as error:
                 raise MediaError("ffmpeg is unavailable") from error
+            except subprocess.TimeoutExpired as error:
+                raise MediaError("ffmpeg timed out after 300 seconds") from error
             except OSError as error:
                 raise MediaError("ffmpeg could not be started") from error
             if result.returncode != 0:
@@ -247,7 +298,9 @@ class MediaStore:
                 derived_primary=False,
             )
 
-        _, primary_path, temporary_path = self.attempt_paths(job_id, item_sequence, attempt_number)
+        _, primary_path, temporary_path = self.attempt_paths(
+            job_id, item_sequence, attempt_number
+        )
         self.make_vt_primary(
             source_path,
             primary_path,
@@ -255,7 +308,9 @@ class MediaStore:
             model=model,
         )
         try:
-            primary_evidence = self.probe(primary_path, require_audio=False, model=model)
+            primary_evidence = self.probe(
+                primary_path, require_audio=False, model=model
+            )
             if primary_evidence.has_audio:
                 raise MediaError("Silent primary unexpectedly contains audio")
         except Exception:

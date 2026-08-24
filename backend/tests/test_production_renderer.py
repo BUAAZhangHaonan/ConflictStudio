@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -515,6 +516,43 @@ def test_gateway_persists_va_and_vt_success(
     run(scenario())
 
 
+def test_gateway_persists_media_off_the_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "offloop", category=Category.A_VT, model=ModelName.LTX
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+        source = source_path(database, request)
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"audio-source")
+        prompt_id = await gateway.submit(request)
+        gpu0.history = success_history(request, prompt_id)
+
+        loop_thread = threading.current_thread()
+        observed_threads: list[threading.Thread] = []
+        original = gateway.media_store.prepare_attempt
+
+        def recording_prepare_attempt(**kwargs: object) -> object:
+            observed_threads.append(threading.current_thread())
+            return original(**kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(
+            gateway.media_store, "prepare_attempt", recording_prepare_attempt
+        )
+
+        result = await gateway.wait(GpuSlotName.GPU0, prompt_id)
+
+        assert result.output_references[1].startswith("media/jobs/")
+        assert observed_threads
+        assert all(thread is not loop_thread for thread in observed_threads)
+
+    install_media_tools(monkeypatch)
+    run(scenario())
+
+
 @pytest.mark.parametrize(
     ("precision", "transformer"),
     [
@@ -923,6 +961,7 @@ def test_gateway_accepts_output_completed_while_application_was_stopped(
     install_media_tools(monkeypatch)
     run(scenario())
 
+
 def test_gateway_cancels_accepted_prompt_and_records_only_current_item_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -945,7 +984,9 @@ def test_gateway_cancels_accepted_prompt_and_records_only_current_item_failure(
                 )
             ).one()
             event_count_before = len(
-                session.exec(select(JobEvent).where(JobEvent.job_id == request.job_id)).all()
+                session.exec(
+                    select(JobEvent).where(JobEvent.job_id == request.job_id)
+                ).all()
             )
         assert job_before is not None and item_before is not None
 
@@ -971,7 +1012,10 @@ def test_gateway_cancels_accepted_prompt_and_records_only_current_item_failure(
         assert job is not None and job.status is JobStatus.FAILED
         assert job.failed_count == 1
         assert job.failure_code == "renderer_state_persist_failed"
-        assert job.failure_reason == "The accepted render could not be recorded and was cancelled"
+        assert (
+            job.failure_reason
+            == "The accepted render could not be recorded and was cancelled"
+        )
         assert job.finished_at is not None
         assert job.revision == job_before.revision + 1
         assert item is not None and item.status is JobStatus.FAILED
