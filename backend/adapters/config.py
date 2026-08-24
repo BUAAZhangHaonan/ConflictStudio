@@ -8,12 +8,12 @@ from backend.adapters.gpu import UNIT_DEFINITIONS, UnitDefinition
 from backend.domain.enums import GpuSlotName
 
 
-DATA_ROOT_VALUE = "/home/team/zhanghaonan/ConflictStudio-data"
+DEFAULT_DATA_ROOT = "/home/team/zhanghaonan/ConflictStudio-data"
 ENV_FILE_VALUE = "/home/team/zhanghaonan/ConflictStudio/ConflictStudio.env"
-LTX23_WORKFLOW_PATH_VALUE = (
+DEFAULT_LTX23_WORKFLOW_PATH = (
     "/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json"
 )
-H3_WORKFLOW_PATH_VALUE = (
+DEFAULT_H3_WORKFLOW_PATH = (
     "/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/"
     "h3/va_aligned/payload.json"
 )
@@ -40,10 +40,6 @@ class RendererSettings:
     unit_definitions: tuple[UnitDefinition, ...]
 
     def __post_init__(self) -> None:
-        if self.ltx23_template.as_posix() != LTX23_WORKFLOW_PATH_VALUE:
-            raise ValueError("The LTX workflow path must match the fixed read-only template")
-        if self.h3_template.as_posix() != H3_WORKFLOW_PATH_VALUE:
-            raise ValueError("The H3 workflow path must match the fixed read-only payload")
         if self.ltx25_bf16_template != LTX25_BF16_WORKFLOW_PATH_VALUE:
             raise ValueError("The LTX-2.5 BF16 workflow must use the bundled resource")
         if self.ltx25_int8_template != LTX25_INT8_WORKFLOW_PATH_VALUE:
@@ -65,10 +61,7 @@ class Settings:
 
     @classmethod
     def from_environment(cls) -> "Settings":
-        value = os.environ.get("CONFLICTSTUDIO_DATA_ROOT", DATA_ROOT_VALUE)
-        if value != DATA_ROOT_VALUE:
-            raise RuntimeError(f"CONFLICTSTUDIO_DATA_ROOT must equal {DATA_ROOT_VALUE}")
-        data_root = Path(value)
+        data_root = Path(os.environ.get("CONFLICTSTUDIO_DATA_ROOT", DEFAULT_DATA_ROOT))
         renderer_values = {
             "ltx23": os.environ.get("CONFLICTSTUDIO_LTX23_WORKFLOW_PATH", ""),
             "h3": os.environ.get("CONFLICTSTUDIO_H3_WORKFLOW_PATH", ""),
@@ -80,14 +73,6 @@ class Settings:
         if any(configured_values) and not all(configured_values):
             raise RuntimeError("Every renderer environment value is required together")
         if all(configured_values):
-            if renderer_values["ltx23"] != LTX23_WORKFLOW_PATH_VALUE:
-                raise RuntimeError(
-                    "CONFLICTSTUDIO_LTX23_WORKFLOW_PATH must equal the fixed read-only template"
-                )
-            if renderer_values["h3"] != H3_WORKFLOW_PATH_VALUE:
-                raise RuntimeError(
-                    "CONFLICTSTUDIO_H3_WORKFLOW_PATH must equal the fixed read-only payload"
-                )
             renderer = RendererSettings(
                 ltx23_template=Path(renderer_values["ltx23"]),
                 h3_template=Path(renderer_values["h3"]),

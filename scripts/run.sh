@@ -2,16 +2,10 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_ROOT=/home/team/zhanghaonan/ConflictStudio
+PROJECT_ROOT="$ROOT"
 ENV_FILE="$PROJECT_ROOT/ConflictStudio.env"
 DATA_ROOT=/home/team/zhanghaonan/ConflictStudio-data
-LTX23_WORKFLOW_PATH=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json
-H3_WORKFLOW_PATH=/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json
 
-if [[ "$ROOT" != "$PROJECT_ROOT" ]]; then
-  echo "ConflictStudio must run from $PROJECT_ROOT" >&2
-  exit 1
-fi
 if [[ ! -r "$ENV_FILE" ]]; then
   echo "$ENV_FILE is required and must be readable" >&2
   exit 1
@@ -42,10 +36,6 @@ if [[ ! -x "$CONFLICTSTUDIO_PYTHON" ]]; then
   echo "CONFLICTSTUDIO_PYTHON is not executable" >&2
   exit 1
 fi
-if [[ "$CONFLICTSTUDIO_DATA_ROOT" != "$DATA_ROOT" ]]; then
-  echo "CONFLICTSTUDIO_DATA_ROOT must equal $DATA_ROOT" >&2
-  exit 1
-fi
 if [[ ! -d "$CONFLICTSTUDIO_DATA_ROOT" || ! -w "$CONFLICTSTUDIO_DATA_ROOT" ]]; then
   echo "CONFLICTSTUDIO_DATA_ROOT must be an existing writable directory" >&2
   exit 1
@@ -64,14 +54,6 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
 fi
 if ! command -v ffprobe >/dev/null 2>&1; then
   echo "ffprobe is required" >&2
-  exit 1
-fi
-if [[ "$CONFLICTSTUDIO_LTX23_WORKFLOW_PATH" != "$LTX23_WORKFLOW_PATH" ]]; then
-  echo "CONFLICTSTUDIO_LTX23_WORKFLOW_PATH must equal $LTX23_WORKFLOW_PATH" >&2
-  exit 1
-fi
-if [[ "$CONFLICTSTUDIO_H3_WORKFLOW_PATH" != "$H3_WORKFLOW_PATH" ]]; then
-  echo "CONFLICTSTUDIO_H3_WORKFLOW_PATH must equal $H3_WORKFLOW_PATH" >&2
   exit 1
 fi
 if [[ ! -r "$CONFLICTSTUDIO_LTX23_WORKFLOW_PATH" ]]; then

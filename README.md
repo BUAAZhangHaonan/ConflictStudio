@@ -27,15 +27,15 @@ python -m compileall -q backend
 
 ## Runtime configuration
 
-Runtime configuration is loaded only from `/home/team/zhanghaonan/ConflictStudio/ConflictStudio.env`. The data root defaults to `/home/team/zhanghaonan/ConflictStudio-data`; any explicit `CONFLICTSTUDIO_DATA_ROOT` value must match that path.
+Runtime configuration is loaded only from the `ConflictStudio.env` file at the project root. `CONFLICTSTUDIO_DATA_ROOT`, `CONFLICTSTUDIO_LTX23_WORKFLOW_PATH`, and `CONFLICTSTUDIO_H3_WORKFLOW_PATH` are optional overrides; when unset they default to `/home/team/zhanghaonan/ConflictStudio-data`, `/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json`, and `/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json` respectively. The GPU endpoint ports (8188/8189) and the systemd unit allowlist remain fixed, as do the bundled LTX-2.5 workflow templates. `scripts/run.sh` validates the resolved paths (an existing writable data root, readable workflow files) instead of requiring them to equal the defaults.
 
 Runtime runs require:
 
-- a writable data root at `/home/team/zhanghaonan/ConflictStudio-data`
+- a writable data root directory
 - `ffmpeg` and `ffprobe`
 - an existing Python environment
-- the fixed LTX-2.3 workflow file
-- the fixed H3 workflow file
+- a readable LTX-2.3 workflow file
+- a readable H3 workflow file
 - the two external GPU model endpoints
 
 Build the frontend first:
