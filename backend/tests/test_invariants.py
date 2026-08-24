@@ -321,7 +321,7 @@ def test_write_lock_returns_stable_409_and_releases_connection(tmp_path: Path) -
             locker.rollback()
             locker.close()
 
-        assert monotonic() - started < 1
+        assert monotonic() - started < SQLITE_BUSY_TIMEOUT_MS / 1000 + 1
         assert response.status_code == 409
         assert response.json()["error"] == {
             "code": "database_busy",

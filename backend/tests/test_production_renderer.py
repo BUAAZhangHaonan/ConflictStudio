@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from subprocess import CompletedProcess
 from typing import Any
@@ -13,7 +14,7 @@ import pytest
 from sqlmodel import select
 
 from backend.adapters.comfyui import AdapterError
-from backend.adapters.database import Database
+from backend.adapters.database import Database, DatabaseBusyError
 from backend.adapters.gpu import SlotInspection
 from backend.adapters.llm import OpenAICompatiblePromptModel
 from backend.adapters.media import MediaStore
@@ -1127,5 +1128,97 @@ def test_gateway_surfaces_failure_when_database_cannot_record_terminal_state(
         assert item is not None and item.status is JobStatus.RUNNING
         assert attempts == []
         assert events == []
+
+    run(scenario())
+
+
+def test_progress_database_busy_does_not_fail_render(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "progress-busy", category=Category.A_VA
+        )
+        gateway, gpu0, _, _ = make_gateway(database)
+        source = source_path(database, request)
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"audio-source")
+        prompt_id = await gateway.submit(request)
+
+        async def progress_messages(client_id: str) -> AsyncIterator[dict[str, Any]]:
+            yield {
+                "type": "progress",
+                "data": {"prompt_id": prompt_id, "value": 1, "max": 10},
+            }
+            yield {
+                "type": "progress",
+                "data": {"prompt_id": prompt_id, "value": 5, "max": 10},
+            }
+            gpu0.history = success_history(request, prompt_id)
+
+        monkeypatch.setattr(gpu0, "websocket_messages", progress_messages)
+
+        real_session = database.immediate_session
+        busy_calls: list[int] = []
+
+        @contextmanager
+        def busy_once_session() -> Any:
+            busy_calls.append(1)
+            if len(busy_calls) == 1:
+                raise DatabaseBusyError(
+                    "The database is busy with another write transaction"
+                )
+            with real_session() as session:
+                yield session
+
+        monkeypatch.setattr(database, "immediate_session", busy_once_session)
+
+        result = await gateway.wait(GpuSlotName.GPU0, prompt_id)
+
+        assert result.output_references[0].startswith("gpu0/output/")
+        assert busy_calls
+        assert any("database is busy" in record.message for record in caplog.records)
+
+    install_media_tools(monkeypatch)
+    run(scenario())
+
+
+def test_progress_events_are_rate_limited_per_item(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        database, request = await create_running_request(
+            tmp_path / "progress-rate-limit", category=Category.A_VA
+        )
+        gateway, _, _, _ = make_gateway(database)
+        prompt_id = await gateway.submit(request)
+        context = gateway._contexts[(GpuSlotName.GPU0, prompt_id)]
+        assert context is not None
+
+        real_session = database.immediate_session
+        session_calls: list[int] = []
+
+        @contextmanager
+        def counting_session() -> Any:
+            session_calls.append(1)
+            with real_session() as session:
+                yield session
+
+        monkeypatch.setattr(database, "immediate_session", counting_session)
+
+        gateway._record_progress(context, 1, 10)
+        gateway._record_progress(context, 2, 10)
+        gateway._record_progress(context, 3, 10)
+        assert len(session_calls) == 1
+
+        base = time.monotonic()
+        monkeypatch.setattr(
+            "backend.adapters.production_renderer.time.monotonic", lambda: base + 3.0
+        )
+        gateway._record_progress(context, 4, 10)
+        assert len(session_calls) == 2
 
     run(scenario())

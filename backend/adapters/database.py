@@ -15,7 +15,7 @@ from backend.domain.models import GpuSlot
 from backend.domain.prompt_policy import BANNED_EMOTION_LABELS, BACKGROUND_DATABASE_FORBIDDEN_PHRASES
 
 
-SQLITE_BUSY_TIMEOUT_MS = 100
+SQLITE_BUSY_TIMEOUT_MS = 5000
 
 
 class DatabaseBusyError(RuntimeError):

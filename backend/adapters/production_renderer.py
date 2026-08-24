@@ -12,7 +12,7 @@ from sqlmodel import select
 
 from backend.adapters.comfyui import AdapterError, ComfyUIClient
 from backend.adapters.config import RendererSettings
-from backend.adapters.database import Database
+from backend.adapters.database import Database, DatabaseBusyError
 from backend.adapters.gpu import (
     PORTS,
     UNIT_DEFINITIONS,
@@ -111,6 +111,7 @@ class ProductionRendererGateway:
         self.render_timeout_seconds = render_timeout_seconds
         self.status_poll_seconds = status_poll_seconds
         self._contexts: dict[tuple[GpuSlotName, str], _RenderContext] = {}
+        self._progress_persisted_at: dict[int, float] = {}
         self._event_notifier: Callable[[], None] | None = None
 
     @classmethod
@@ -279,6 +280,7 @@ class ProductionRendererGateway:
             source_relative_path = await self._wait_for_output(context)
             result = await self._persist_output(context, source_relative_path)
             self._contexts.pop((slot, prompt_id), None)
+            self._progress_persisted_at.pop(context.request.job_item_id, None)
             return result
         except asyncio.CancelledError:
             raise
@@ -350,6 +352,7 @@ class ProductionRendererGateway:
                     self._fail_context(context, safe.message)
                     raise safe from completion_error
                 self._contexts.pop((slot, prompt_id), None)
+                self._progress_persisted_at.pop(context.request.job_item_id, None)
                 return CancelOutcome.ALREADY_COMPLETED
             safe = self._safe_error(error)
             if context is not None:
@@ -897,29 +900,42 @@ class ProductionRendererGateway:
     def _record_progress(
         self, context: _RenderContext, value: int, maximum: int
     ) -> None:
-        with self.database.immediate_session() as session:
-            job = session.get(Job, context.request.job_id)
-            item = session.get(JobItem, context.request.job_item_id)
-            if (
-                job is None
-                or item is None
-                or item.renderer_prompt_id != context.prompt_id
-            ):
-                return
-            payload = self._event_payload(job, item)
-            payload["progressValue"] = value
-            payload["progressMaximum"] = maximum
-            session.add(
-                JobEvent(
-                    job_id=job.id,
-                    item_id=item.id,
-                    event_type="ItemRenderProgress",
-                    payload_json=json.dumps(
-                        payload, ensure_ascii=False, separators=(",", ":")
-                    ),
-                    created_at=utc_now(),
+        item_id = context.request.job_item_id
+        now = time.monotonic()
+        last_persisted = self._progress_persisted_at.get(item_id)
+        if last_persisted is not None and now - last_persisted < 2.0:
+            return
+        try:
+            with self.database.immediate_session() as session:
+                job = session.get(Job, context.request.job_id)
+                item = session.get(JobItem, item_id)
+                if (
+                    job is None
+                    or item is None
+                    or item.renderer_prompt_id != context.prompt_id
+                ):
+                    return
+                payload = self._event_payload(job, item)
+                payload["progressValue"] = value
+                payload["progressMaximum"] = maximum
+                session.add(
+                    JobEvent(
+                        job_id=job.id,
+                        item_id=item.id,
+                        event_type="ItemRenderProgress",
+                        payload_json=json.dumps(
+                            payload, ensure_ascii=False, separators=(",", ":")
+                        ),
+                        created_at=utc_now(),
+                    )
                 )
+        except DatabaseBusyError:
+            logger.warning(
+                "Skipping progress event for item %s: database is busy",
+                item_id,
             )
+            return
+        self._progress_persisted_at[item_id] = now
         self._notify_events()
 
     def _mark_attempt_failed(self, context: _RenderContext, reason: str) -> None:
@@ -1006,6 +1022,7 @@ class ProductionRendererGateway:
                 (context.request.gpu_slot, context.prompt_id),
                 None,
             )
+            self._progress_persisted_at.pop(context.request.job_item_id, None)
 
     @staticmethod
     def _event(job: Job, item: JobItem, event_type: str) -> JobEvent:
