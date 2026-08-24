@@ -174,3 +174,56 @@ ConflictStudio 是一个本地全栈工具。它负责组织生成配置、提�
 - 已确认拓扑：浏览器 → 8890 → 18003 → 6403:8001 健康 ok；renderer 单元按需未运行。
 - 已明确：生成管线缺端到端 GPU 测试；归档无数据；本轮代码尚未在重启后回归。
 - 本轮唯一 Git 变化：`docs/NEXT_SESSION_HANDOFF.md`。
+
+## 2026-08-24 bug-fix session (by lvshuyang's assistant, commits 2f8d86b / ca4695f / 75333fc)
+
+Fixed, all gates green (backend pytest 522 passed, npm run check passed),
+verified end to end on 8890 after restarting conflictstudio-preview:
+
+1. Prompt generation now retries content-level failures up to 3 times,
+   feeding the validator errors back to DeepSeek. Before this, some
+   generative content scripts failed 100% of the time with 502
+   invalid_prompt_schema because the model exceeded the bodyAction /
+   vocalDelivery word budgets. Transport/auth errors still fail fast.
+2. /api/prompt-templates supports ?category=, template versions support
+   ?verificationStatus=, /api/samples supports ?inArchive=, and
+   /api/jobs/{id}/events supports ?order=desc. The frontend now uses
+   these instead of client-side filtering, which fixes: template
+   dropdown pagination mismatch (page total showed the unfiltered
+   count), templates on later pages being unselectable, archive page
+   pagination missing archived samples beyond server page 1, and the
+   workspace pending-archive metric counting already-archived samples.
+3. Review flow: after a 409 revision conflict the related queries are
+   invalidated so retrying works without a full page reload; the note
+   draft re-syncs from the server after a conflict.
+4. Review list search is debounced (was one navigation + request per
+   keystroke, clearing the batch selection each time). Archive page
+   search is debounced and server-side.
+5. MediaPanel sets video src directly; swapping a <source> child never
+   reloads the video (job item retries / WS updates kept showing the
+   old clip in ResultsOutputList).
+6. Stage changes render newest-first (order=desc) and collapse keeps
+   the latest progress event; completion events are visible without
+   paging. Prompt schema error toasts now include the field reasons.
+7. Small fixes: template options show the template name; the
+   unselectable empty option only renders when a list is empty; the
+   production submit dialog no longer shows an empty dataset name; the
+   unsaved-changes dialog has a distinct title; emotion labels outside
+   the vocabulary fall back to the raw value; frontend emotion equality
+   is case-insensitive like the backend.
+
+Known items intentionally NOT touched (for the owner to decide):
+- deploy/nginx/conflictstudio.conf still describes the OLD 8888 system
+  (listen 8888 -> 127.0.0.1:8000); the real 8890 nginx lives on g203.
+  The filename is misleading.
+- The live sqlite still contains dropped tables configuration_assistants
+  and generation_test_drafts (create_all never drops); tests assert they
+  must not exist on fresh databases.
+- The H3 workflow template path points into
+  H3-ComfyUI/output/compare-vt-va-20260806/...; anything cleaning that
+  output directory breaks the H3 renderer. Consider moving it into
+  backend/resources/workflows/.
+- Dead code noticed: useJobAttemptsQuery, useReleaseGpuMutation + gpu
+  release strings, latestCachedJobEventId (no callers).
+- queryKeys.job/jobItems do not encode test vs production; manual URL
+  edits of tab= can serve cached data from the other endpoint.
