@@ -35,6 +35,17 @@ from backend.domain.prompt_policy import (
 from .errors import PromptServiceError, ServiceError
 
 
+MAX_PROMPT_ATTEMPTS = 3
+RETRYABLE_PROMPT_FAILURE_CODES = frozenset(
+    {
+        "invalid_prompt_json",
+        "duplicate_prompt_key",
+        "invalid_prompt_schema",
+        "invalid_prompt_response",
+    }
+)
+RETRY_PREVIOUS_RESPONSE_LIMIT = 4000
+
 FORBIDDEN_TRUE_EMOTION_DESCRIPTION_TOKENS = (
     "a-va",
     "a-vt",
@@ -255,22 +266,46 @@ class PromptService:
                 "validation_error",
                 "The prepared prompt category does not match the request",
             )
-        try:
-            response = await self.model.generate(
-                prepared.system_input, prepared.user_input
-            )
-        except PromptAdapterError as error:
-            status = 503 if error.code == "external_configuration_missing" else 502
-            raise PromptServiceError(
-                status,
-                error.code,
-                error.message,
-                PromptFailureDetails.model_validate(error.details)
-                if error.metadata is not None
-                else None,
-            ) from error
-        raw = response.content
-        transport_details = response.metadata.as_details()
+        user_input = prepared.user_input
+        for attempt in range(1, MAX_PROMPT_ATTEMPTS + 1):
+            try:
+                response = await self.model.generate(
+                    prepared.system_input, user_input
+                )
+            except PromptAdapterError as error:
+                status = 503 if error.code == "external_configuration_missing" else 502
+                raise PromptServiceError(
+                    status,
+                    error.code,
+                    error.message,
+                    PromptFailureDetails.model_validate(error.details)
+                    if error.metadata is not None
+                    else None,
+                ) from error
+            raw = response.content
+            transport_details = response.metadata.as_details()
+            try:
+                return self._complete_attempt(
+                    prepared, category, raw, transport_details
+                )
+            except ServiceError as error:
+                if (
+                    attempt == MAX_PROMPT_ATTEMPTS
+                    or error.code not in RETRYABLE_PROMPT_FAILURE_CODES
+                ):
+                    raise
+                user_input = _retry_user_input(
+                    prepared.user_input, raw, _failure_reasons(error)
+                )
+        raise AssertionError("prompt completion loop must return or raise")
+
+    def _complete_attempt(
+        self,
+        prepared: PreparedPrompt,
+        category: Category,
+        raw: str,
+        transport_details: dict[str, int | str],
+    ) -> PromptResult:
         try:
             payload = _load_unique_json(raw)
         except DuplicatePromptKeyError as error:
@@ -399,6 +434,38 @@ class PromptService:
 
 class DuplicatePromptKeyError(ValueError):
     pass
+
+
+def _failure_reasons(error: ServiceError) -> list[str]:
+    fields = error.details.get("fields") if isinstance(error.details, dict) else None
+    if isinstance(fields, list) and fields:
+        reasons: list[str] = []
+        for field in fields:
+            if isinstance(field, dict) and field.get("reason"):
+                path = field.get("path")
+                reason = str(field["reason"])
+                reasons.append(f"{path}: {reason}" if path else reason)
+        if reasons:
+            return reasons
+    return [error.message]
+
+
+def _retry_user_input(
+    base_user_input: str, previous_raw: str, reasons: list[str]
+) -> str:
+    previous = previous_raw.strip()
+    if len(previous) > RETRY_PREVIOUS_RESPONSE_LIMIT:
+        previous = previous[:RETRY_PREVIOUS_RESPONSE_LIMIT]
+    listed = "\n".join(f"- {reason}" for reason in reasons)
+    return (
+        f"{base_user_input}\n\n"
+        "Your previous JSON attempt was rejected by the application validator.\n"
+        f"Previous attempt:\n{previous}\n\n"
+        f"Validation errors:\n{listed}\n\n"
+        "Return one corrected strict JSON object with the same keys. "
+        "Fix every listed problem, keep the other field values unchanged, "
+        "and count the words in each component to stay inside its word budget."
+    )
 
 
 def _load_unique_json(raw: str) -> object:

@@ -736,3 +736,65 @@ def test_prepare_revalidates_historical_background_text(mode: ContentMode) -> No
     assert error.value.status_code == 422
     assert error.value.code == "validation_error"
     assert error.value.details["fields"][0]["path"] == "scene"
+
+
+class SequencePromptModel:
+    configured = True
+
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = list(responses)
+        self.calls = 0
+        self.user_inputs: list[str] = []
+
+    async def generate(
+        self, system_input: str, user_input: str
+    ) -> PromptModelResponse:
+        self.user_inputs.append(user_input)
+        raw = self.responses[min(self.calls, len(self.responses) - 1)]
+        self.calls += 1
+        return PromptModelResponse(
+            content=raw,
+            metadata=PromptResponseMetadata(
+                http_status=200, finish_reason="stop", request_id="strict-test"
+            ),
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+def test_retry_recovers_from_component_budget_violation() -> None:
+    over_budget = component_json(
+        bodyAction=component_boundary_sentence("body_action", 37)
+    )
+    model = SequencePromptModel([over_budget, component_json()])
+    service = PromptService(model)
+    prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
+
+    result = asyncio.run(service.complete(prepared, Category.A_VA))
+
+    assert model.calls == 2
+    assert result.dialogue == VA_DIALOGUE
+    assert model.user_inputs[0] == prepared.user_input
+    assert "Validation errors:" in model.user_inputs[1]
+    assert "bodyAction" in model.user_inputs[1]
+
+
+def test_retry_stops_after_three_attempts_and_keeps_error_shape() -> None:
+    model = SequencePromptModel(
+        [component_json(bodyAction=component_boundary_sentence("body_action", 37))]
+    )
+    service = PromptService(model)
+    prepared = service.prepare(prompt_context(mode=ContentMode.GENERATIVE))
+
+    with pytest.raises(ServiceError) as error:
+        asyncio.run(service.complete(prepared, Category.A_VA))
+
+    assert model.calls == 3
+    assert error.value.code == "invalid_prompt_schema"
+    assert set(error.value.details) == {
+        "httpStatus",
+        "finishReason",
+        "requestId",
+        "fields",
+    }
