@@ -102,6 +102,7 @@ export function ReviewListPage() {
   const restoredLocationRef = useRef<string | null>(null);
   const [searchInput, setSearchInput] = useState(locationState.search ?? '');
   const debouncedSearch = useDebouncedValue(searchInput);
+  const searchPending = searchInput !== debouncedSearch;
   const locale = i18n.language === 'zh-CN' ? 'zh-CN' : 'en-US';
   const emotionLabel = (value: string) => {
     if (!value.trim()) return t('review.list.emotionNotProvided');
@@ -418,6 +419,7 @@ export function ReviewListPage() {
             page={listQuery.data.page}
             totalPages={listQuery.data.totalPages}
             total={listQuery.data.total}
+            disabled={searchPending}
             onPageChange={page => updateLocation({ ...locationState, page })}
           />
 

@@ -7,9 +7,10 @@ interface PaginationProps {
   total: number;
   onPageChange: (page: number) => void;
   className?: string;
+  disabled?: boolean;
 }
 
-export function Pagination({ page, totalPages, total, onPageChange, className = '' }: PaginationProps) {
+export function Pagination({ page, totalPages, total, onPageChange, className = '', disabled = false }: PaginationProps) {
   const { t } = useTranslation();
   if (total === 0 || totalPages === 0) return null;
   return (
@@ -20,10 +21,10 @@ export function Pagination({ page, totalPages, total, onPageChange, className = 
         recordCount: t('pagination.recordCount', { count: total }),
       })}</p>
       <div>
-        <Button variant="secondary" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
+        <Button variant="secondary" disabled={disabled || page <= 1} onClick={() => onPageChange(page - 1)}>
           {t('pagination.previous')}
         </Button>
-        <Button variant="secondary" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)}>
+        <Button variant="secondary" disabled={disabled || page >= totalPages} onClick={() => onPageChange(page + 1)}>
           {t('pagination.next')}
         </Button>
       </div>
