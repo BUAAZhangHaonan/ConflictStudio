@@ -215,6 +215,10 @@
 
 .button--quiet { border-color: transparent; background: transparent; color: var(--color-blue); }
 
+.button--danger { border-color: var(--color-danger); background: transparent; color: var(--color-danger); }
+
+.button--danger:hover:not(:disabled) { border-color: var(--color-danger); color: var(--color-danger); filter: brightness(0.9); }
+
 .button:disabled { cursor: not-allowed; opacity: .55; }
 
 .button__progress {
