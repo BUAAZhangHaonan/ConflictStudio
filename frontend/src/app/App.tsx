@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { StateView } from '../components';
 import { ReviewGate } from './ReviewGate';
+import { ErrorBoundary } from './ErrorBoundary';
 
 const ArchivePage = lazy(() => import('../pages/ArchivePage').then(module => ({ default: module.ArchivePage })));
 const GeneratePage = lazy(() => import('../pages/GeneratePage').then(module => ({ default: module.GeneratePage })));
@@ -17,6 +18,7 @@ export function App() {
   return (
     <AppShell>
       <Suspense fallback={<StateView state="loading" />}>
+        <ErrorBoundary>
         <Routes>
           <Route path="/" element={<Navigate to="/workspace" replace />} />
           <Route path="/workspace" element={<WorkspacePage />} />
@@ -33,6 +35,7 @@ export function App() {
           <Route path="/me/statistics" element={<StatisticsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
+        </ErrorBoundary>
       </Suspense>
     </AppShell>
   );

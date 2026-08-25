@@ -17,6 +17,10 @@ const zhCN = {
     changeLanguage: '切换为英文',
     mainNavigation: '主导航',
     generateNavigation: '生成页面导航',
+    errorBoundary: {
+      title: '页面无法显示',
+      body: '页面渲染时发生意外错误。返回工作台后重试。',
+    },
   },
   nav: {
     workspace: '工作台',

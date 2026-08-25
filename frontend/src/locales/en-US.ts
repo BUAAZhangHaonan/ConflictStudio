@@ -12,6 +12,10 @@ const enUS = {
     changeLanguage: 'Switch to Chinese',
     mainNavigation: 'Main navigation',
     generateNavigation: 'Generate navigation',
+    errorBoundary: {
+      title: 'This page could not be shown',
+      body: 'An unexpected error occurred while rendering the page. Return to the workspace and try again.',
+    },
   },
   nav: {
     workspace: 'Workspace',
