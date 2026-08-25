@@ -33,7 +33,7 @@ from backend.tests.test_sample_integration import (
     create_api_sources,
     make_app,
 )
-from backend.tests.support import mark_prompt_version_verified
+from backend.tests.support import create_prompt_template, mark_prompt_version_verified
 
 
 def prompt_test_payload(
@@ -170,12 +170,7 @@ def test_template_identity_versions_are_revisioned_and_verified_versions_are_imm
 ) -> None:
     app = make_app(tmp_path)
     with TestClient(app) as client:
-        template = client.post(
-            "/api/prompt-templates",
-            json={"name": "Natural portrait", "category": "A-VA"},
-        )
-        assert template.status_code == 201
-        identity = template.json()
+        identity = create_prompt_template(client.app, "Natural portrait", "A-VA")
         version = client.post(
             f"/api/prompt-templates/{identity['id']}/versions",
             json={
@@ -776,14 +771,8 @@ def test_template_and_version_lists_support_server_side_filters(
 ) -> None:
     app = make_app(tmp_path)
     with TestClient(app) as client:
-        first = client.post(
-            "/api/prompt-templates",
-            json={"name": "Aligned portrait", "category": "A-VA"},
-        ).json()
-        second = client.post(
-            "/api/prompt-templates",
-            json={"name": "Conflicted portrait", "category": "C-VT"},
-        ).json()
+        first = create_prompt_template(client.app, "Aligned portrait", "A-VA")
+        second = create_prompt_template(client.app, "Conflicted portrait", "C-VT")
 
         filtered = client.get("/api/prompt-templates", params={"category": "C-VT"})
         assert filtered.status_code == 200

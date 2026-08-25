@@ -213,29 +213,6 @@ class DatasetRead(ApiModel):
     updated_at: str
 
 
-class DatasetMergeSource(ApiModel):
-    id: int = Field(gt=0)
-    expected_revision: int = Field(ge=1)
-
-
-class DatasetMergeRequest(ApiModel):
-    target_expected_revision: int = Field(ge=1)
-    sources: list[DatasetMergeSource] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def reject_duplicate_sources(self) -> Self:
-        identifiers = [source.id for source in self.sources]
-        if len(identifiers) != len(set(identifiers)):
-            raise ValueError("A source dataset can be selected only once")
-        return self
-
-
-class DatasetMergeRead(ApiModel):
-    target_dataset: DatasetRead
-    source_datasets: list[DatasetRead]
-    moved_sample_count: int = Field(ge=0)
-
-
 class ContentScriptFields(ApiModel):
     name_zh: Name
     name_en: EnglishDisplayName
@@ -385,10 +362,6 @@ class PromptTemplateVersionFields(ApiModel):
 class PromptTemplateCreate(ApiModel):
     name: EnglishDisplayName
     category: Category
-
-
-class PromptTemplateUpdate(ExpectedRevision):
-    name: EnglishDisplayName
 
 
 class PromptTemplateRead(ApiModel):
@@ -772,28 +745,6 @@ class BatchPreviewRead(ApiModel):
     total_count: int
     gpu_revisions: dict[GpuSlotName, int]
     allocations: list[BatchAllocationRead]
-
-
-class PromptPreviewRequest(ApiModel):
-    content_script: SourceSelection
-    prompt_template_version: SourceSelection
-    scene: SourceSelection
-    demographic: DemographicInput
-    model: ModelName
-
-
-class PromptPreviewRead(ApiModel):
-    content_script: BilingualSelectionRead
-    prompt_template_version: SelectionRead
-    scene: BilingualSelectionRead
-    category: Category
-    conflict_direction: ConflictDirection | None
-    demographic: DemographicInput
-    requires_prompt_generation: bool
-    system_input: str
-    user_input: str
-    final_positive_prompt: str | None
-    negative_prompt: str
 
 
 class TestComparisonInput(ApiModel):

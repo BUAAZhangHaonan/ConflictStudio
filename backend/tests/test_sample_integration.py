@@ -57,7 +57,7 @@ from backend.domain.models import (
     Scene,
     utc_now,
 )
-from backend.tests.support import mark_prompt_version_verified
+from backend.tests.support import create_prompt_template, mark_prompt_version_verified
 
 
 class ApiRenderer:
@@ -248,13 +248,7 @@ def create_api_sources(
             "sceneIds": [background["id"]],
         },
     ).json()
-    template = client.post(
-        "/api/prompt-templates",
-        json={
-            "name": "Natural shot",
-            "category": "A-VA",
-        },
-    ).json()
+    template = create_prompt_template(client.app, "Natural shot", "A-VA")
     prompt = client.post(
         f"/api/prompt-templates/{template['id']}/versions",
         json={

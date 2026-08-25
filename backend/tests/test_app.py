@@ -13,7 +13,7 @@ from backend.adapters.renderer import CancelOutcome, RendererInstallationStatus
 from backend.api.gpu_contracts import GpuSlotRead
 from backend.app import create_app
 from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName, Precision
-from backend.tests.support import mark_prompt_version_verified
+from backend.tests.support import create_prompt_template, mark_prompt_version_verified
 
 
 def client_for(
@@ -41,10 +41,9 @@ def write_frontend(frontend: Path) -> None:
 
 
 def create_verified_prompt(client: TestClient) -> dict[str, object]:
-    template = client.post(
-        "/api/prompt-templates",
-        json={"name": "Natural shot", "category": "A-VA"},
-    ).json()
+    template = create_prompt_template(
+        client.app, "Natural shot", "A-VA"
+    )
     version = client.post(
         f"/api/prompt-templates/{template['id']}/versions",
         json={
@@ -232,7 +231,6 @@ def test_openapi_contains_review_statistics_and_archive_contracts(tmp_path: Path
         "/api/reviews",
         "/api/reviews/batch",
         "/api/samples/{sample_id}/classification",
-        "/api/samples/{sample_id}/classification-history",
         "/api/samples/{sample_id}/review-note-draft",
         "/api/archives",
         "/api/archives/preview",
@@ -501,35 +499,6 @@ def test_frontend_deep_links_use_index_and_api_paths_stay_on_api(tmp_path: Path)
     assert api.json()["database"] == "ready"
     assert api_ws.status_code == 404
     assert api_ws.json()["error"]["code"] == "not_found"
-
-
-def test_prompt_preview_is_read_only_and_returns_typed_inputs(tmp_path: Path) -> None:
-    with client_for(tmp_path) as client:
-        background = client.post(
-            "/api/scenes",
-            json=background_request(),
-        )
-        content = client.post(
-            "/api/content-scripts",
-            json=content_script_request([background.json()["id"]]),
-        )
-        prompt = create_verified_prompt(client)
-        response = client.post(
-            "/api/prompt-preview",
-            json={
-                "contentScript": {"id": content.json()["id"], "expectedRevision": content.json()["revision"]},
-                "promptTemplateVersion": {"id": prompt["id"], "expectedRevision": prompt["revision"]},
-                "scene": {"id": background.json()["id"], "expectedRevision": background.json()["revision"]},
-                "demographic": {"age": 25, "gender": "Female", "ethnicity": "EastAsian"},
-                "model": "LTX-2.3",
-            },
-        )
-
-    assert response.status_code == 200
-    assert response.json()["requiresPromptGeneration"] is True
-    assert response.json()["finalPositivePrompt"] is None
-    assert response.json()["negativePrompt"] == "subtitles, captions, distortion"
-    assert response.json()["contentScript"]["id"] == content.json()["id"]
 
 
 def test_submit_ltx25_int8_batch_returns_202_with_location(tmp_path: Path) -> None:

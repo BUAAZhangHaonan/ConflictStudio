@@ -12,7 +12,7 @@ from backend.adapters.database import SQLITE_BUSY_TIMEOUT_MS, Database
 from backend.adapters.llm import UnconfiguredPromptModel
 from backend.app import create_app
 from backend.tests.test_review_api import sample_app
-from backend.tests.support import mark_prompt_version_verified
+from backend.tests.support import create_prompt_template, mark_prompt_version_verified
 
 
 def client_for(tmp_path: Path) -> TestClient:
@@ -39,14 +39,11 @@ def create_catalog_records(client: TestClient) -> dict[str, dict]:
             "framingEn": "Use a static eye-level medium shot.",
         },
     )
-    template = client.post(
-        "/api/prompt-templates",
-        json={"name": "Natural shot", "category": "A-VA"},
-    )
+    template = create_prompt_template(client.app, "Natural shot", "A-VA")
     prompt = client.post(
-        f"/api/prompt-templates/{template.json()['id']}/versions",
+        f"/api/prompt-templates/{template['id']}/versions",
         json={
-            "expectedTemplateRevision": template.json()["revision"],
+            "expectedTemplateRevision": template["revision"],
             "styleGuidance": "Use a static medium shot.",
             "ltxNegativePrompt": "subtitles, captions, camera shake",
             "h3NegativePrompt": "subtitles, captions, camera shake",
@@ -339,10 +336,7 @@ def test_write_lock_returns_stable_409_and_releases_connection(tmp_path: Path) -
 
 def test_prompt_template_version_reads_continue_during_sqlite_write(tmp_path: Path) -> None:
     with client_for(tmp_path) as client:
-        template = client.post(
-            "/api/prompt-templates",
-            json={"name": "Natural shot", "category": "A-VA"},
-        ).json()
+        template = create_prompt_template(client.app, "Natural shot", "A-VA")
         created = client.post(
             f"/api/prompt-templates/{template['id']}/versions",
             json={

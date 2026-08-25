@@ -48,8 +48,6 @@ from backend.domain.schemas import (
     ContentScriptRead,
     ContentScriptUpdate,
     DatasetCreate,
-    DatasetMergeRead,
-    DatasetMergeRequest,
     DatasetRead,
     DatasetUpdate,
     GenerationAttemptRead,
@@ -62,14 +60,10 @@ from backend.domain.schemas import (
     JobItemRead,
     JobSummaryRead,
     PageRead,
-    PromptTemplateCreate,
     PromptTemplateRead,
-    PromptTemplateUpdate,
     PromptTemplateVersionCreate,
     PromptTemplateVersionRead,
     PromptTemplateVersionVerify,
-    PromptPreviewRead,
-    PromptPreviewRequest,
     ReviewBatchCreate,
     ReviewCreate,
     ReviewNoteDraftRead,
@@ -87,7 +81,6 @@ from backend.domain.schemas import (
     ReviewSampleDetailRead,
     ReviewSampleListRead,
     ReviewSubmissionRead,
-    SampleClassificationChangeRead,
     SampleClassificationUpdate,
     PromptTestCreate,
     VideoTestCreate,
@@ -207,15 +200,6 @@ def update_dataset(
     return catalog(request).update_dataset(dataset_id, payload)
 
 
-@router.post("/datasets/{dataset_id}/merge", response_model=DatasetMergeRead)
-def merge_datasets(
-    dataset_id: int,
-    payload: DatasetMergeRequest,
-    request: Request,
-) -> DatasetMergeRead:
-    return catalog(request).merge_datasets(dataset_id, payload)
-
-
 @router.delete("/datasets/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_dataset(
     dataset_id: int,
@@ -278,16 +262,6 @@ def get_content_scenes(
     return catalog(request).get_content_scenes(content_id)
 
 
-@router.delete("/content-scripts/{content_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_content_script(
-    content_id: int,
-    request: Request,
-    expected_revision: int = Query(alias="expectedRevision", ge=1),
-) -> Response:
-    catalog(request).delete_content_script(content_id, expected_revision)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
 @router.get("/prompt-templates", response_model=PageRead[PromptTemplateRead])
 def list_prompt_templates(
     request: Request,
@@ -297,33 +271,12 @@ def list_prompt_templates(
     return catalog(request).list_prompt_templates(page, category)
 
 
-@router.post(
-    "/prompt-templates",
-    response_model=PromptTemplateRead,
-    status_code=status.HTTP_201_CREATED,
-)
-def create_prompt_template(
-    payload: PromptTemplateCreate,
-    request: Request,
-) -> PromptTemplateRead:
-    return catalog(request).create_prompt_template(payload)
-
-
 @router.get("/prompt-templates/{template_id}", response_model=PromptTemplateRead)
 def get_prompt_template(
     template_id: int,
     request: Request,
 ) -> PromptTemplateRead:
     return catalog(request).get_prompt_template(template_id)
-
-
-@router.patch("/prompt-templates/{template_id}", response_model=PromptTemplateRead)
-def update_prompt_template(
-    template_id: int,
-    payload: PromptTemplateUpdate,
-    request: Request,
-) -> PromptTemplateRead:
-    return catalog(request).update_prompt_template(template_id, payload)
 
 
 @router.get(
@@ -414,23 +367,6 @@ def update_scene(
     request: Request,
 ) -> SceneRead:
     return catalog(request).update_scene(preset_id, payload)
-
-
-@router.delete("/scenes/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_scene(
-    preset_id: int,
-    request: Request,
-    expected_revision: int = Query(alias="expectedRevision", ge=1),
-) -> Response:
-    catalog(request).delete_scene(preset_id, expected_revision)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post("/prompt-preview", response_model=PromptPreviewRead)
-def preview_prompt(
-    payload: PromptPreviewRequest, request: Request
-) -> PromptPreviewRead:
-    return batches(request).preview_prompt(payload)
 
 
 @router.post(
@@ -627,18 +563,6 @@ def list_samples(
 @router.get("/samples/{sample_id}", response_model=ReviewSampleDetailRead)
 def get_sample(sample_id: int, request: Request) -> ReviewSampleDetailRead:
     return samples(request).get_sample(sample_id)
-
-
-@router.get(
-    "/samples/{sample_id}/classification-history",
-    response_model=PageRead[SampleClassificationChangeRead],
-)
-def list_sample_classification_history(
-    sample_id: int,
-    request: Request,
-    page: int = Query(default=1, ge=1),
-) -> PageRead[SampleClassificationChangeRead]:
-    return samples(request).list_classification_history(sample_id, page)
 
 
 @router.patch(

@@ -196,23 +196,6 @@ class SampleService:
                 session.delete(draft)
             return self.review_detail_read_in_session(session, row)
 
-    def list_classification_history(
-        self,
-        sample_id: int,
-        page: int,
-    ) -> PageRead[SampleClassificationChangeRead]:
-        with self.database.read_session() as session:
-            if session.get(Sample, sample_id) is None:
-                raise not_found("sample", sample_id)
-            return paginate(
-                session,
-                select(SampleClassificationChange)
-                .where(SampleClassificationChange.sample_id == sample_id)
-                .order_by(SampleClassificationChange.id),
-                page,
-                lambda row: self._classification_change_read(session, row),
-            )
-
     @staticmethod
     def review_statement(filters: ReviewQueueFilter) -> Any:
         statement = select(Sample)

@@ -23,6 +23,7 @@ from backend.domain.models import (
     Scene,
 )
 from backend.services.errors import invalid_request
+from backend.tests.support import create_prompt_template
 from backend.tests.test_sample_integration import make_app
 
 
@@ -133,12 +134,9 @@ def assistant_client(tmp_path: Path):
 
 
 def create_template(client: TestClient, *, category: str = "C-VA") -> dict:
-    response = client.post(
-        "/api/prompt-templates",
-        json={"name": f"Resource {category} template", "category": category},
+    return create_prompt_template(
+        client.app, f"Resource {category} template", category
     )
-    assert response.status_code == 201, response.text
-    return response.json()
 
 
 def propose(client: TestClient, template: dict) -> httpx.Response:

@@ -29,8 +29,6 @@ from backend.domain.models import (
     ContentScript,
     ContentScriptScene,
     Dataset,
-    DatasetMergeOperation,
-    DatasetMergeSource,
     Job,
     JobItem,
     JobItemPromptResult,
@@ -49,13 +47,10 @@ from backend.domain.schemas import (
     ContentScriptRead,
     ContentScriptUpdate,
     DatasetCreate,
-    DatasetMergeRead,
-    DatasetMergeRequest,
     DatasetRead,
     DatasetUpdate,
     PromptTemplateCreate,
     PromptTemplateRead,
-    PromptTemplateUpdate,
     PromptTemplateVersionCreate,
     PromptTemplateVersionRead,
     PromptTemplateVersionVerify,
@@ -132,92 +127,6 @@ class CatalogService:
                 values["name_key"] = name_key(values["name"])
             self._apply_update(row, values)
             return DatasetRead.model_validate(row)
-
-    def merge_datasets(
-        self,
-        target_dataset_id: int,
-        payload: DatasetMergeRequest,
-    ) -> DatasetMergeRead:
-        with self.database.immediate_session() as session:
-            target = self._get(session, Dataset, target_dataset_id, "dataset")
-            self._check_revision(
-                target,
-                payload.target_expected_revision,
-                "dataset",
-            )
-            if (
-                target.purpose is not DatasetPurpose.FORMAL
-                or target.status is not ResourceStatus.ACTIVE
-            ):
-                raise ServiceError(
-                    422,
-                    "invalid_target_dataset",
-                    "The merge target must be an active formal dataset",
-                )
-
-            sources: list[Dataset] = []
-            for selected in payload.sources:
-                if selected.id == target_dataset_id:
-                    raise invalid_request("The target dataset cannot also be a source")
-                source = self._get(session, Dataset, selected.id, "dataset")
-                self._check_revision(
-                    source,
-                    selected.expected_revision,
-                    "dataset",
-                )
-                sources.append(source)
-
-            source_ids = [source.id for source in sources]
-            samples = session.exec(
-                select(Sample)
-                .where(Sample.dataset_id.in_(source_ids))
-                .order_by(Sample.id)
-            ).all()
-            sample_counts = {
-                source.id: sum(
-                    sample.dataset_id == source.id for sample in samples
-                )
-                for source in sources
-            }
-            operation = DatasetMergeOperation(
-                target_dataset_id=target.id,
-                target_revision_before=target.revision,
-                source_count=len(sources),
-            )
-            session.add(operation)
-            session.flush()
-            session.add_all(
-                [
-                    DatasetMergeSource(
-                        operation_id=operation.id,
-                        source_dataset_id=source.id,
-                        source_revision_before=source.revision,
-                        sample_count=sample_counts[source.id],
-                    )
-                    for source in sources
-                ]
-            )
-            session.flush()
-            timestamp = utc_now()
-            session.exec(
-                update(DatasetMergeOperation)
-                .where(DatasetMergeOperation.id == operation.id)
-                .values(executing=True, executed_at=timestamp)
-            )
-            session.flush()
-            session.expire_all()
-            target = self._get(session, Dataset, target_dataset_id, "dataset")
-            sources = [
-                self._get(session, Dataset, source_id, "dataset")
-                for source_id in source_ids
-            ]
-            return DatasetMergeRead(
-                target_dataset=DatasetRead.model_validate(target),
-                source_datasets=[
-                    DatasetRead.model_validate(source) for source in sources
-                ],
-                moved_sample_count=len(samples),
-            )
 
     def delete_dataset(self, dataset_id: int, expected_revision: int) -> None:
         with self.database.immediate_session() as session:
@@ -429,27 +338,6 @@ class CatalogService:
                 category=payload.category,
             )
             session.add(row)
-            session.flush()
-            return PromptTemplateRead.model_validate(row)
-
-    def update_prompt_template(
-        self,
-        template_id: int,
-        payload: PromptTemplateUpdate,
-    ) -> PromptTemplateRead:
-        with self.database.immediate_session() as session:
-            row = self._get(session, PromptTemplate, template_id, "promptTemplate")
-            self._check_revision(row, payload.expected_revision, "promptTemplate")
-            self._ensure_template_name_available(
-                session,
-                row.category,
-                payload.name,
-                exclude_id=template_id,
-            )
-            row.name = payload.name
-            row.name_key = name_key(payload.name)
-            row.revision += 1
-            row.updated_at = utc_now()
             session.flush()
             return PromptTemplateRead.model_validate(row)
 
@@ -741,24 +629,6 @@ class CatalogService:
             values["name_en_key"] = name_key(candidate.name_en)
             self._apply_update(row, values)
             return SceneRead.model_validate(row)
-
-    def delete_scene(self, preset_id: int, expected_revision: int) -> None:
-        with self.database.immediate_session() as session:
-            row = self._get(session, Scene, preset_id, "scene")
-            self._check_revision(row, expected_revision, "scene")
-            if row.status is not ResourceStatus.DISABLED:
-                raise state_conflict("scene", preset_id, "Disable the scene before deleting it")
-            if session.exec(
-                select(BatchDraftCombination).where(
-                    BatchDraftCombination.scene_id == preset_id
-                )
-            ).first() or session.exec(
-                select(ContentScriptScene).where(
-                    ContentScriptScene.scene_id == preset_id
-                )
-            ).first():
-                raise state_conflict("scene", preset_id, "The scene is already used by a batch")
-            session.delete(row)
 
     @staticmethod
     def _get(session: Session, model: type[Any], identifier: int, resource: str) -> Any:

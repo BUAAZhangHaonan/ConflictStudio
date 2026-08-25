@@ -201,9 +201,6 @@ def test_catalog_create_and_mutable_update_apis_return_stable_display_name_422(t
         )
         assert content.status_code == 201
 
-        prompt = client.post("/api/prompt-templates", json=prompt_payload(name="A-VA"))
-        assert prompt.status_code == 201
-
         invalid_responses = [
             (
                 client.post(
@@ -222,13 +219,6 @@ def test_catalog_create_and_mutable_update_apis_return_stable_display_name_422(t
                     },
                 ),
                 "nameEn",
-            ),
-            (
-                client.post(
-                    "/api/prompt-templates",
-                    json=prompt_payload(name="prototype-prompt"),
-                ),
-                "name",
             ),
             (
                 client.post(

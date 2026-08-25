@@ -76,8 +76,6 @@ from backend.domain.schemas import (
     JobSummaryRead,
     PageRead,
     PromptFailureDetails,
-    PromptPreviewRead,
-    PromptPreviewRequest,
     SelectionRead,
     SnapshotRead,
     SourceSelection,
@@ -235,48 +233,6 @@ class BatchService:
             },
             allocations=[self._allocation_read(value) for value in allocations],
         )
-
-    def preview_prompt(self, payload: PromptPreviewRequest) -> PromptPreviewRead:
-        with self.database.read_session() as session:
-            selection = self._prepare_prompt_selection(
-                session,
-                payload.content_script,
-                payload.prompt_template_version,
-                payload.scene,
-                payload.demographic,
-                payload.model,
-            )
-            content = selection.content
-            template = selection.template
-            preset = selection.preset
-            scene = selection.scene
-            return PromptPreviewRead(
-                content_script=BilingualSelectionRead(
-                    id=content.id,
-                    name_zh=content.name_zh,
-                    name_en=content.name_en,
-                    revision=content.revision,
-                ),
-                prompt_template_version=SelectionRead(
-                    id=preset.id,
-                    name=f"{template.name} v{preset.version}",
-                    revision=preset.revision,
-                ),
-                scene=BilingualSelectionRead(
-                    id=scene.id,
-                    name_zh=scene.name_zh,
-                    name_en=scene.name_en,
-                    revision=scene.revision,
-                ),
-                category=content.category,
-                conflict_direction=content.conflict_direction,
-                demographic=payload.demographic,
-                requires_prompt_generation=True,
-                system_input=selection.prepared.system_input,
-                user_input=selection.prepared.user_input,
-                final_positive_prompt=None,
-                negative_prompt=selection.prepared.negative_prompt,
-            )
 
     async def submit_prompt_test(self, payload: PromptTestCreate) -> JobDetailRead:
         with self.database.read_session() as session:

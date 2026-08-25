@@ -6,7 +6,7 @@ import pytest
 from sqlmodel import select
 
 from backend.domain.enums import BatchDraftStatus, DatasetPurpose, GenerationAttemptStatus, JobItemStage, JobSource, JobStatus
-from backend.domain.models import Archive, ArchiveItem, Asset, BatchDraft, BatchVideoInputSnapshot, Dataset, DatasetMergeOperation, DatasetMergeSource, GenerationAttempt, Job, JobItem, JobItemPromptResult, Review, Sample, utc_now
+from backend.domain.models import Archive, ArchiveItem, Asset, BatchDraft, BatchVideoInputSnapshot, Dataset, GenerationAttempt, Job, JobItem, JobItemPromptResult, Review, Sample, utc_now
 from backend.services.samples import create_sample_for_completed_item
 from backend.domain.schemas import ReviewQueueFilter
 from backend.tests.test_invariants import client_for
@@ -108,122 +108,6 @@ def test_dataset_delete_reports_every_reference_without_cascade(tmp_path: Path) 
         assert session.get(ArchiveItem, (dataset["id"], sample["id"])) is not None
         assert session.get(Job, 1) is not None
         assert session.get(BatchDraft, 1) is not None
-
-
-def test_dataset_merge_preserves_sample_media_review_and_job_history(
-    tmp_path: Path,
-) -> None:
-    app = sample_app(tmp_path)
-    with TestClient(app) as client:
-        sample = client.get("/api/samples").json()["items"][0]
-        source = client.get(f"/api/datasets/{sample['datasetId']}").json()
-        reviewer = create_reviewer(client)
-        reviewed = client.post(
-            "/api/reviews",
-            json=review_payload(sample, reviewer),
-        ).json()
-        source_preview = client.post(
-            "/api/archives/preview",
-            json={"datasetId": source["id"]},
-        ).json()
-        client.post("/api/archives/sync", json=source_preview)
-        target = client.post(
-            "/api/datasets",
-            json={"name": "Combined formal set", "note": ""},
-        ).json()
-
-        stale = client.post(
-            f"/api/datasets/{target['id']}/merge",
-            json={
-                "targetExpectedRevision": target["revision"] + 1,
-                "sources": [
-                    {"id": source["id"], "expectedRevision": source["revision"]}
-                ],
-            },
-        )
-        stale_source = client.post(
-            f"/api/datasets/{target['id']}/merge",
-            json={
-                "targetExpectedRevision": target["revision"],
-                "sources": [
-                    {
-                        "id": source["id"],
-                        "expectedRevision": source["revision"] + 1,
-                    }
-                ],
-            },
-        )
-        unchanged = client.get(f"/api/samples/{sample['id']}").json()
-        merged = client.post(
-            f"/api/datasets/{target['id']}/merge",
-            json={
-                "targetExpectedRevision": target["revision"],
-                "sources": [
-                    {"id": source["id"], "expectedRevision": source["revision"]}
-                ],
-            },
-        )
-        assert merged.status_code == 200, merged.text
-        moved = client.get(f"/api/samples/{sample['id']}").json()
-        source_after = client.post(
-            "/api/archives/preview",
-            json={"datasetId": source["id"]},
-        ).json()
-        target_after = client.post(
-            "/api/archives/preview",
-            json={"datasetId": target["id"]},
-        ).json()
-        target_statistics = client.get(
-            f"/api/reviewers/{reviewer['id']}/statistics",
-            params={"datasetId": target["id"]},
-        ).json()
-        blocked_delete = client.delete(
-            f"/api/datasets/{source['id']}?expectedRevision="
-            f"{merged.json()['sourceDatasets'][0]['revision']}"
-        )
-
-    assert stale.status_code == 409
-    assert stale_source.status_code == 409
-    assert unchanged["datasetId"] == source["id"]
-    assert merged.status_code == 200
-    assert merged.json()["movedSampleCount"] == 1
-    assert merged.json()["targetDataset"]["revision"] == target["revision"] + 1
-    assert merged.json()["sourceDatasets"][0]["revision"] == source["revision"] + 1
-    assert moved["datasetId"] == target["id"]
-    assert moved["datasetName"] == target["name"]
-    assert moved["revision"] == reviewed["revision"] + 1
-    assert moved["primaryMedia"] == reviewed["primaryMedia"]
-    assert moved["sourceMedia"] == reviewed["sourceMedia"]
-    assert moved["reviewDecision"] == "Accepted"
-    assert moved["reviewRevision"] == reviewed["reviewRevision"]
-    assert moved["currentReview"]["id"] == reviewed["currentReview"]["id"]
-    assert "datasetId" not in moved["currentReview"]
-    assert [row["sampleId"] for row in source_after["removed"]] == [sample["id"]]
-    assert source_after["removed"][0]["datasetId"] == source["id"]
-    assert [row["sampleId"] for row in target_after["added"]] == [sample["id"]]
-    assert target_after["added"][0]["datasetId"] == target["id"]
-    assert target_statistics["uniqueReviewedCount"] == 1
-    assert blocked_delete.status_code == 409
-    assert blocked_delete.json()["error"]["details"]["references"] == {
-        "samples": 0,
-        "jobs": 1,
-        "archives": 1,
-        "archiveItems": 1,
-        "batchDrafts": 1,
-    }
-
-    with app.state.database.read_session() as session:
-        persisted_review = session.get(Review, reviewed["currentReview"]["id"])
-        job = session.get(Job, 1)
-        assert persisted_review is not None
-        assert persisted_review.sample_id == sample["id"]
-        assert persisted_review.decision.value == "Accepted"
-        assert session.get(Asset, int(reviewed["primaryMedia"]["url"].rsplit("/", 1)[1])) is not None
-        assert job is not None
-        assert job.dataset_id == source["id"]
-        assert job.dataset_name_snapshot == source["name"]
-        assert session.exec(select(DatasetMergeOperation)).all() == []
-        assert session.exec(select(DatasetMergeSource)).all() == []
 
 
 def test_sqlite_requires_both_dataset_revisions_for_sample_moves(
