@@ -16,9 +16,10 @@ from backend.adapters.database import Database, DatabaseBusyError
 from backend.adapters.gpu import (
     PORTS,
     UNIT_DEFINITIONS,
-    UNITS_BY_SLOT_PROFILE,
     SlotInspection,
     SlotInspector,
+    UnitDefinition,
+    unit_definitions,
 )
 from backend.adapters.media import MediaError, MediaStore, PreparedMedia
 from backend.adapters.model_service import ModelServiceController
@@ -90,10 +91,11 @@ class ProductionRendererGateway:
         *,
         render_timeout_seconds: float = 60 * 60,
         status_poll_seconds: float = 0.5,
+        unit_definitions: tuple[UnitDefinition, ...] = UNIT_DEFINITIONS,
     ) -> None:
         if set(clients) != set(GpuSlotName):
             raise ValueError("One ComfyUI client is required for every GPU slot")
-        controlled_models = {definition.model for definition in UNIT_DEFINITIONS}
+        controlled_models = {definition.model for definition in unit_definitions}
         if set(workflow_builders) != controlled_models:
             raise ValueError(
                 "One workflow builder is required for every controlled renderer model"
@@ -104,6 +106,9 @@ class ProductionRendererGateway:
             raise ValueError("Renderer media and database roots must match")
         self.database = database
         self.inspector = inspector
+        self._units_by_profile = {
+            (unit.slot, unit.model, unit.precision): unit for unit in unit_definitions
+        }
         self.model_controller = model_controller
         self.clients = dict(clients)
         self.workflow_builders = dict(workflow_builders)
@@ -120,8 +125,6 @@ class ProductionRendererGateway:
         database: Database,
         settings: RendererSettings,
     ) -> ProductionRendererGateway:
-        if settings.unit_definitions != UNIT_DEFINITIONS:
-            raise ValueError("Renderer unit definitions must match the fixed allowlist")
         urls = settings.urls_by_slot()
         if set(urls) != set(GpuSlotName):
             raise ValueError("One renderer URL is required for every GPU slot")
@@ -139,7 +142,12 @@ class ProductionRendererGateway:
             ),
             ModelName.H3: H3WorkflowBuilder(settings.h3_template),
         }
-        inspector = SlotInspector()
+        definitions = unit_definitions(database.data_root.as_posix())
+        if settings.unit_definitions != definitions:
+            raise ValueError(
+                "Renderer unit definitions must match the allowlist for the configured data root"
+            )
+        inspector = SlotInspector(unit_definitions=definitions)
         controller = ModelServiceController(
             inspector,
             required_node_types={
@@ -147,6 +155,7 @@ class ProductionRendererGateway:
                 for model, builder in workflow_builders.items()
             },
             slot_urls=urls,
+            unit_definitions=definitions,
         )
         return cls(
             database,
@@ -155,6 +164,7 @@ class ProductionRendererGateway:
             {slot: ComfyUIClient(url) for slot, url in urls.items()},
             workflow_builders,
             MediaStore(database.data_root),
+            unit_definitions=definitions,
         )
 
     def set_event_notifier(self, notifier: Callable[[], None]) -> None:
@@ -807,7 +817,7 @@ class ProductionRendererGateway:
                 "renderer_output_invalid",
                 "ComfyUI returned an unexpected video output path",
             )
-        definition = UNITS_BY_SLOT_PROFILE.get(
+        definition = self._units_by_profile.get(
             (
                 context.request.gpu_slot,
                 context.request.model,

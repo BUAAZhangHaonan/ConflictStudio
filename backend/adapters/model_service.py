@@ -8,11 +8,11 @@ import httpx
 
 from backend.adapters.gpu import (
     PORTS,
-    UNITS_BY_NAME,
-    UNITS_BY_SLOT_PROFILE,
+    UNIT_DEFINITIONS,
     CommandRunner,
     SlotInspection,
     SlotInspector,
+    UnitDefinition,
     run_command,
 )
 from backend.adapters.renderer import RendererGatewayError
@@ -30,11 +30,16 @@ class ModelServiceController:
         slot_urls: Mapping[GpuSlotName, str] | None = None,
         readiness_timeout_seconds: float = 60.0,
         readiness_poll_seconds: float = 0.5,
+        unit_definitions: tuple[UnitDefinition, ...] = UNIT_DEFINITIONS,
     ) -> None:
         if readiness_timeout_seconds <= 0 or readiness_poll_seconds <= 0:
             raise ValueError("Readiness timing must be positive")
         self._inspector = inspector
         self._run = command_runner
+        self._units_by_name = {unit.name: unit for unit in unit_definitions}
+        self._units_by_slot_profile = {
+            (unit.slot, unit.model, unit.precision): unit for unit in unit_definitions
+        }
         self._client = http_client or httpx.AsyncClient()
         self._owns_client = http_client is None
         self._slot_urls = dict(slot_urls) if slot_urls is not None else {
@@ -44,7 +49,7 @@ class ModelServiceController:
             model: frozenset(node_types)
             for model, node_types in required_node_types.items()
         }
-        controlled_models = {definition.model for definition in UNITS_BY_NAME.values()}
+        controlled_models = {definition.model for definition in self._units_by_name.values()}
         if (
             not self._required_node_types
             or not set(self._required_node_types) <= controlled_models
@@ -70,7 +75,7 @@ class ModelServiceController:
         precision: Precision | None = None,
         confirm_switch: bool,
     ) -> SlotInspection:
-        target = UNITS_BY_SLOT_PROFILE.get((slot, model, precision))
+        target = self._units_by_slot_profile.get((slot, model, precision))
         if target is None:
             raise RendererGatewayError(
                 "model_profile_not_allowlisted",
@@ -145,7 +150,7 @@ class ModelServiceController:
         expected_precision: Precision | None,
         expected_unit: str,
     ) -> SlotInspection:
-        expected_definition = UNITS_BY_NAME.get(expected_unit)
+        expected_definition = self._units_by_name.get(expected_unit)
         if (
             expected_definition is None
             or expected_definition.slot is not slot
@@ -190,7 +195,7 @@ class ModelServiceController:
                 "model_service_changed",
                 "The model service ownership changed before it could be stopped",
             )
-        definition = UNITS_BY_NAME.get(unit_name)
+        definition = self._units_by_name.get(unit_name)
         if definition is None or definition.slot is not slot:
             raise RendererGatewayError("model_service_untrusted", "The model unit is not allowlisted for this GPU")
         result = await self._run(("systemctl", "--user", "stop", definition.name))

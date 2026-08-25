@@ -13,7 +13,8 @@ from backend.domain.enums import GpuAvailability, GpuSlotName, ModelName, Precis
 
 SERVICE_USER = "zhanghaonan"
 USER_UNIT_DIRECTORY = "/home/team/zhanghaonan/.config/systemd/user"
-DATA_ROOT = "/home/team/zhanghaonan/ConflictStudio-data"
+DEFAULT_DATA_ROOT = "/home/team/zhanghaonan/ConflictStudio-data"
+COMMAND_TIMEOUT_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class UnitDefinition:
     port: int
     precision: Precision | None = None
     data_directory: str | None = None
+    data_root: str = DEFAULT_DATA_ROOT
 
     @property
     def fragment_path(self) -> str:
@@ -98,16 +100,17 @@ class UnitDefinition:
         ]
         if self.data_directory is not None:
             directories.append(f"{self.absolute_data_directory}/database")
-        directories.append(f"{DATA_ROOT}/logs")
+        directories.append(f"{self.data_root}/logs")
         return "/usr/bin/mkdir", "-p", *directories
 
     @property
     def absolute_data_directory(self) -> str:
-        return self.data_directory or f"{DATA_ROOT}/{self.slot.value.lower()}"
+        directory = self.data_directory or self.slot.value.lower()
+        return f"{self.data_root}/{directory}"
 
     @property
     def relative_data_directory(self) -> str:
-        root = PurePosixPath(DATA_ROOT)
+        root = PurePosixPath(self.data_root)
         path = PurePosixPath(self.absolute_data_directory)
         try:
             return path.relative_to(root).as_posix()
@@ -115,80 +118,101 @@ class UnitDefinition:
             raise ValueError("Renderer data directories must stay below the data root") from error
 
 
-UNIT_DEFINITIONS = (
-    UnitDefinition(
-        "conflictstudio-ltx-gpu0.service",
-        GpuSlotName.GPU0,
-        ModelName.LTX,
-        "/home/team/lvshuyang/anaconda3/envs/comfyui/bin/python",
-        "/home/team/lvshuyang/ComfyUI",
-        8188,
-    ),
-    UnitDefinition(
-        "conflictstudio-ltx-gpu1.service",
-        GpuSlotName.GPU1,
-        ModelName.LTX,
-        "/home/team/lvshuyang/anaconda3/envs/comfyui/bin/python",
-        "/home/team/lvshuyang/ComfyUI",
-        8189,
-    ),
-    UnitDefinition(
-        "conflictstudio-h3-gpu0.service",
-        GpuSlotName.GPU0,
-        ModelName.H3,
-        "/home/team/zhanghaonan/H3-ComfyUI/.venv/bin/python",
-        "/home/team/zhanghaonan/H3-ComfyUI",
-        8188,
-    ),
-    UnitDefinition(
-        "conflictstudio-h3-gpu1.service",
-        GpuSlotName.GPU1,
-        ModelName.H3,
-        "/home/team/zhanghaonan/H3-ComfyUI/.venv/bin/python",
-        "/home/team/zhanghaonan/H3-ComfyUI",
-        8189,
-    ),
-    UnitDefinition(
-        "conflictstudio-ltx25-bf16-gpu0.service",
-        GpuSlotName.GPU0,
-        ModelName.LTX_25,
-        "/home/team/zhanghaonan/LTX-2.5-ComfyUI/.uv-python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13",
-        "/home/team/zhanghaonan/LTX-2.5-ComfyUI",
-        8188,
-        Precision.BF16,
-        "/home/team/zhanghaonan/ConflictStudio-data/comfyui/gpu0/ltx25-bf16",
-    ),
-    UnitDefinition(
-        "conflictstudio-ltx25-int8-gpu0.service",
-        GpuSlotName.GPU0,
-        ModelName.LTX_25,
-        "/home/team/zhanghaonan/LTX-2.5-ComfyUI/.uv-python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13",
-        "/home/team/zhanghaonan/LTX-2.5-ComfyUI",
-        8188,
-        Precision.INT8,
-        "/home/team/zhanghaonan/ConflictStudio-data/comfyui/gpu0/ltx25-int8",
-    ),
-    UnitDefinition(
-        "conflictstudio-ltx25-bf16-gpu1.service",
-        GpuSlotName.GPU1,
-        ModelName.LTX_25,
-        "/home/team/zhanghaonan/LTX-2.5-ComfyUI/.uv-python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13",
-        "/home/team/zhanghaonan/LTX-2.5-ComfyUI",
-        8189,
-        Precision.BF16,
-        "/home/team/zhanghaonan/ConflictStudio-data/comfyui/gpu1/ltx25-bf16",
-    ),
-    UnitDefinition(
-        "conflictstudio-ltx25-int8-gpu1.service",
-        GpuSlotName.GPU1,
-        ModelName.LTX_25,
-        "/home/team/zhanghaonan/LTX-2.5-ComfyUI/.uv-python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13",
-        "/home/team/zhanghaonan/LTX-2.5-ComfyUI",
-        8189,
-        Precision.INT8,
-        "/home/team/zhanghaonan/ConflictStudio-data/comfyui/gpu1/ltx25-int8",
-    ),
-)
+def unit_definitions(data_root: str = DEFAULT_DATA_ROOT) -> tuple[UnitDefinition, ...]:
+    ltx_python = "/home/team/lvshuyang/anaconda3/envs/comfyui/bin/python"
+    ltx_working_directory = "/home/team/lvshuyang/ComfyUI"
+    ltx25_python = (
+        "/home/team/zhanghaonan/LTX-2.5-ComfyUI/.uv-python/"
+        "cpython-3.13.15-linux-x86_64-gnu/bin/python3.13"
+    )
+    ltx25_working_directory = "/home/team/zhanghaonan/LTX-2.5-ComfyUI"
+    h3_python = "/home/team/zhanghaonan/H3-ComfyUI/.venv/bin/python"
+    h3_working_directory = "/home/team/zhanghaonan/H3-ComfyUI"
+    return (
+        UnitDefinition(
+            "conflictstudio-ltx-gpu0.service",
+            GpuSlotName.GPU0,
+            ModelName.LTX,
+            ltx_python,
+            ltx_working_directory,
+            8188,
+            data_root=data_root,
+        ),
+        UnitDefinition(
+            "conflictstudio-ltx-gpu1.service",
+            GpuSlotName.GPU1,
+            ModelName.LTX,
+            ltx_python,
+            ltx_working_directory,
+            8189,
+            data_root=data_root,
+        ),
+        UnitDefinition(
+            "conflictstudio-h3-gpu0.service",
+            GpuSlotName.GPU0,
+            ModelName.H3,
+            h3_python,
+            h3_working_directory,
+            8188,
+            data_root=data_root,
+        ),
+        UnitDefinition(
+            "conflictstudio-h3-gpu1.service",
+            GpuSlotName.GPU1,
+            ModelName.H3,
+            h3_python,
+            h3_working_directory,
+            8189,
+            data_root=data_root,
+        ),
+        UnitDefinition(
+            "conflictstudio-ltx25-bf16-gpu0.service",
+            GpuSlotName.GPU0,
+            ModelName.LTX_25,
+            ltx25_python,
+            ltx25_working_directory,
+            8188,
+            Precision.BF16,
+            "comfyui/gpu0/ltx25-bf16",
+            data_root=data_root,
+        ),
+        UnitDefinition(
+            "conflictstudio-ltx25-int8-gpu0.service",
+            GpuSlotName.GPU0,
+            ModelName.LTX_25,
+            ltx25_python,
+            ltx25_working_directory,
+            8188,
+            Precision.INT8,
+            "comfyui/gpu0/ltx25-int8",
+            data_root=data_root,
+        ),
+        UnitDefinition(
+            "conflictstudio-ltx25-bf16-gpu1.service",
+            GpuSlotName.GPU1,
+            ModelName.LTX_25,
+            ltx25_python,
+            ltx25_working_directory,
+            8189,
+            Precision.BF16,
+            "comfyui/gpu1/ltx25-bf16",
+            data_root=data_root,
+        ),
+        UnitDefinition(
+            "conflictstudio-ltx25-int8-gpu1.service",
+            GpuSlotName.GPU1,
+            ModelName.LTX_25,
+            ltx25_python,
+            ltx25_working_directory,
+            8189,
+            Precision.INT8,
+            "comfyui/gpu1/ltx25-int8",
+            data_root=data_root,
+        ),
+    )
+
+
+UNIT_DEFINITIONS = unit_definitions()
 
 UNITS_BY_NAME = {unit.name: unit for unit in UNIT_DEFINITIONS}
 UNITS_BY_SLOT_PROFILE = {
@@ -243,12 +267,17 @@ async def run_command(command: tuple[str, ...]) -> CommandResult:
 
 
 class SlotInspector:
-    def __init__(self, command_runner: CommandRunner = run_command) -> None:
+    def __init__(
+        self,
+        command_runner: CommandRunner = run_command,
+        unit_definitions: tuple[UnitDefinition, ...] = UNIT_DEFINITIONS,
+    ) -> None:
         self._run = command_runner
+        self._unit_definitions = unit_definitions
 
     async def inspect(self, slot: GpuSlotName) -> SlotInspection:
         gpu_details = await self._gpu_details(slot)
-        definitions = tuple(unit for unit in UNIT_DEFINITIONS if unit.slot is slot)
+        definitions = tuple(unit for unit in self._unit_definitions if unit.slot is slot)
         unit_states: list[UnitState] = []
         missing_definition: UnitDefinition | None = None
         failed_definition: UnitDefinition | None = None

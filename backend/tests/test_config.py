@@ -78,6 +78,46 @@ def test_environment_overrides_data_root_and_both_workflow_templates(
     assert settings.renderer.urls_by_slot() == GPU_URL_VALUES
 
 
+def test_data_root_override_moves_renderer_unit_output_directories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_renderer_environment(monkeypatch)
+    monkeypatch.setenv("CONFLICTSTUDIO_DATA_ROOT", "/somewhere/else/data")
+
+    settings = Settings.from_environment()
+
+    assert settings.renderer is not None
+    assert settings.renderer.unit_definitions != UNIT_DEFINITIONS
+    for definition, default in zip(
+        settings.renderer.unit_definitions, UNIT_DEFINITIONS, strict=True
+    ):
+        assert definition.name == default.name
+        assert definition.relative_data_directory == default.relative_data_directory
+        assert definition.absolute_data_directory == (
+            f"/somewhere/else/data/{definition.relative_data_directory}"
+        )
+        assert (
+            f"{definition.absolute_data_directory}/output"
+            in definition.required_exec_tokens
+        )
+
+
+def test_settings_reject_renderer_definitions_from_another_data_root() -> None:
+    with pytest.raises(ValueError, match="configured data root"):
+        Settings(
+            data_root=Path("/somewhere/else/data"),
+            frontend_dist=Path("/tmp/frontend"),
+            renderer=RendererSettings(
+                ltx23_template=Path(DEFAULT_LTX23_WORKFLOW_PATH),
+                h3_template=Path(DEFAULT_H3_WORKFLOW_PATH),
+                ltx25_bf16_template=LTX25_BF16_WORKFLOW_PATH_VALUE,
+                ltx25_int8_template=LTX25_INT8_WORKFLOW_PATH_VALUE,
+                slot_urls=tuple(GPU_URL_VALUES.items()),
+                unit_definitions=UNIT_DEFINITIONS,
+            ),
+        )
+
+
 def test_renderer_environment_group_is_all_or_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

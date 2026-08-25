@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from backend.adapters.gpu import UNIT_DEFINITIONS, UnitDefinition
+from backend.adapters.gpu import UnitDefinition, unit_definitions
 from backend.domain.enums import GpuSlotName
 
 
@@ -46,8 +46,6 @@ class RendererSettings:
             raise ValueError("The LTX-2.5 INT8 workflow must use the bundled resource")
         if self.urls_by_slot() != GPU_URL_VALUES:
             raise ValueError("Renderer URLs must match the fixed local service ports")
-        if self.unit_definitions != UNIT_DEFINITIONS:
-            raise ValueError("Renderer unit definitions must match the fixed allowlist")
 
     def urls_by_slot(self) -> dict[GpuSlotName, str]:
         return dict(self.slot_urls)
@@ -58,6 +56,14 @@ class Settings:
     data_root: Path
     frontend_dist: Path
     renderer: RendererSettings | None = None
+
+    def __post_init__(self) -> None:
+        if self.renderer is not None and self.renderer.unit_definitions != unit_definitions(
+            self.data_root.as_posix()
+        ):
+            raise ValueError(
+                "Renderer unit definitions must match the allowlist for the configured data root"
+            )
 
     @classmethod
     def from_environment(cls) -> "Settings":
@@ -82,7 +88,7 @@ class Settings:
                     (GpuSlotName.GPU0, renderer_values["gpu0"]),
                     (GpuSlotName.GPU1, renderer_values["gpu1"]),
                 ),
-                unit_definitions=UNIT_DEFINITIONS,
+                unit_definitions=unit_definitions(data_root.as_posix()),
             )
         return cls(
             data_root=data_root,
