@@ -262,3 +262,43 @@ Layout QA (all 11 routes, desktop 1280x800 + mobile 375x812, guest and
 signed-in states): zero console errors, zero horizontal overflow, zero
 real element overlap (4 apparent overlaps were closed <details> panels,
 not painted). CSS var audit: used-vs-defined diff empty both ways.
+
+## 2026-08-25 third review round (commits 287b578..9df07f2 + be7d451, 12 个)
+
+Third full pass (backend deep-read + frontend deep-read + API contract
+cross-check). All gates green per commit (backend pytest 524; repo-root
+npm run check); service restarted and verified on 8890:
+
+1. `287b578` configured paths (data root + both workflow templates) are
+   now resolved in Settings.from_environment before unit definitions are
+   built — env paths with symlinks or ".." no longer fail the allowlist
+   assertion at startup (symlink test added).
+2. `6b9343e` run.sh validates data paths after cd into project root.
+3. `cfe3f10` the post-kill drain of gpu subprocess pipes is bounded (5s)
+   — a D-state nvidia-smi can no longer hang the executor coroutine.
+4. `c65e436` seven frontend-unused API routes deleted (prompt-preview,
+   dataset merge, content-scripts/scenes DELETE, prompt-templates
+   POST/PATCH, classification-history) plus their orphaned services and
+   schemas. NOTE: GET /api/archives/{id}/manifest was kept — ArchivePage
+   downloads it via <a href>, outside the query layer.
+5. `14dbb01` + `be7d451` review table scrolls with a 720px min width in
+   the 721-768px band (media block must come after the base rule —
+   same-specificity cascade).
+6. `21574dd` gpuCodes now maps the codes the backend actually emits
+   (gpu_slot_unavailable / gpu_state_unavailable / model_service_changed).
+7. `b1b9469` archive_preview_stale joins reloadCodes; ArchivePage drops
+   the stale local preview on conflict instead of retrying into 409.
+8. `fdf97be` detail disclosure/history panels reset across samples
+   (key={sample.id} on both <details>).
+9. `46fc638` switching reviewer in the detail banner flushes the pending
+   note under the OLD reviewer id before resetting the draft.
+10. `678440f` ErrorBoundary now wraps AppShell (topbar/shell crashes get
+    the fallback UI too).
+11. `9df07f2` pagination is disabled while the search debounce settles
+    (new optional `disabled` prop on Pagination).
+
+Browser-verified after deploy: 744px band (table 720px + h-scroll),
+desktop status-cell centering intact, disclosure closes on next-sample
+navigation, pagination disables during debounce, zero console errors.
+Not live-tested (logic-verified only): error-boundary fallback render,
+note flush on switch, gpu/archive error-code paths.
