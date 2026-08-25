@@ -71,7 +71,14 @@
   margin: 0;
 }
 
-.review-list__results .table-shell { overflow: visible; }
+@media (min-width: 769px) {
+  .review-list__results .table-shell { overflow: visible; }
+}
+
+@media (max-width: 768px) {
+  .review-list__results .table-shell { overflow-x: auto; }
+  .review-list__results .table-shell table { min-width: 720px; }
+}
 .review-list__results .table-shell table {
   width: 100%;
   min-width: 0;
@@ -145,9 +152,7 @@
 @media (max-width: 720px) {
   .review-list__filter-grid { grid-template-columns: 1fr; }
 
-  .review-list__selection-bar,
-  .review-list__results .table-shell { overflow-x: auto; }
-  .review-list__results .table-shell table { min-width: 720px; }
+  .review-list__selection-bar { overflow-x: auto; }
   .review-list__batch {
     align-items: stretch;
     flex-direction: column;
