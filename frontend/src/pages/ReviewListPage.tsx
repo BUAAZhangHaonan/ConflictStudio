@@ -166,8 +166,7 @@ export function ReviewListPage() {
     const next = debouncedSearch || null;
     if (next === locationState.search) return;
     updateLocation({ ...locationState, search: next, page: 1 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch]);
+  }, [debouncedSearch, queryString]);
 
   const clearFilters = () => updateLocation(defaultReviewListLocation);
 
