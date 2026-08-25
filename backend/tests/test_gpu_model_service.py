@@ -1016,3 +1016,28 @@ def test_run_command_kills_subprocess_on_timeout() -> None:
     assert result.stdout == ""
     assert "did not finish within 0.1 seconds" in result.stderr
     assert "sleep" in result.stderr
+
+
+def test_run_command_returns_even_when_post_kill_drain_hangs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _StuckProcess:
+        pid = 4242
+        returncode: int | None = None
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            await asyncio.sleep(30)
+            raise AssertionError("communicate should never finish")
+
+    async def fake_exec(*command: str, **kwargs: object) -> _StuckProcess:
+        return _StuckProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    result = asyncio.run(run_command(("sleep", "30"), timeout_seconds=0.1))
+
+    assert result.returncode == 124
+    assert "did not finish within 0.1 seconds" in result.stderr

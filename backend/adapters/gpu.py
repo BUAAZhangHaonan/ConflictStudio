@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import shlex
 from collections.abc import Awaitable, Callable
@@ -15,6 +16,9 @@ SERVICE_USER = "zhanghaonan"
 USER_UNIT_DIRECTORY = "/home/team/zhanghaonan/.config/systemd/user"
 DEFAULT_DATA_ROOT = "/home/team/zhanghaonan/ConflictStudio-data"
 COMMAND_TIMEOUT_SECONDS = 30
+DRAIN_TIMEOUT_SECONDS = 5
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -268,7 +272,17 @@ async def run_command(
         )
     except TimeoutError:
         process.kill()
-        await process.communicate()
+        try:
+            await asyncio.wait_for(
+                process.communicate(),
+                timeout=DRAIN_TIMEOUT_SECONDS,
+            )
+        except Exception as error:  # drain must never hang the caller
+            logger.warning(
+                "Timed out draining subprocess after kill (pid %s): %r",
+                process.pid,
+                error,
+            )
         return CommandResult(
             124,
             "",
