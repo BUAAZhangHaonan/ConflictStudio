@@ -36,10 +36,6 @@ if [[ ! -x "$CONFLICTSTUDIO_PYTHON" ]]; then
   echo "CONFLICTSTUDIO_PYTHON is not executable" >&2
   exit 1
 fi
-if [[ ! -d "$CONFLICTSTUDIO_DATA_ROOT" || ! -w "$CONFLICTSTUDIO_DATA_ROOT" ]]; then
-  echo "CONFLICTSTUDIO_DATA_ROOT must be an existing writable directory" >&2
-  exit 1
-fi
 if [[ ! "$CONFLICTSTUDIO_PORT" =~ ^[0-9]+$ ]] || (( CONFLICTSTUDIO_PORT < 1 || CONFLICTSTUDIO_PORT > 65535 )); then
   echo "CONFLICTSTUDIO_PORT must be between 1 and 65535" >&2
   exit 1
@@ -66,6 +62,11 @@ if [[ ! -r "$CONFLICTSTUDIO_H3_WORKFLOW_PATH" ]]; then
 fi
 
 cd "$ROOT"
+
+if [[ ! -d "$CONFLICTSTUDIO_DATA_ROOT" || ! -w "$CONFLICTSTUDIO_DATA_ROOT" ]]; then
+  echo "CONFLICTSTUDIO_DATA_ROOT must be an existing writable directory" >&2
+  exit 1
+fi
 "$CONFLICTSTUDIO_PYTHON" -c \
   'import fastapi, httpx, jinja2, pydantic, sqlmodel, uvicorn, websockets, yaml' \
   || { echo "ConflictStudio backend dependencies are incomplete" >&2; exit 1; }
