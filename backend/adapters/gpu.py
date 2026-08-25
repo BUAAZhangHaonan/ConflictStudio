@@ -252,13 +252,29 @@ class _UnitNotInstalled(RuntimeError):
     pass
 
 
-async def run_command(command: tuple[str, ...]) -> CommandResult:
+async def run_command(
+    command: tuple[str, ...],
+    timeout_seconds: float = COMMAND_TIMEOUT_SECONDS,
+) -> CommandResult:
     process = await asyncio.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await process.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError:
+        process.kill()
+        await process.communicate()
+        return CommandResult(
+            124,
+            "",
+            f"The command did not finish within {timeout_seconds} seconds: "
+            + " ".join(command),
+        )
     return CommandResult(
         process.returncode or 0,
         stdout.decode(errors="replace"),

@@ -14,6 +14,7 @@ from backend.adapters.gpu import (
     SlotInspector,
     UnitDefinition,
     UNITS_BY_SLOT_PROFILE,
+    run_command,
 )
 from backend.adapters.model_service import ModelServiceController
 from backend.adapters.renderer import (
@@ -1003,3 +1004,15 @@ def test_release_model_rejects_a_profile_changed_before_the_first_inspection() -
 
     asyncio.run(scenario())
     assert commands.calls == []
+
+
+def test_run_command_kills_subprocess_on_timeout() -> None:
+    async def scenario() -> CommandResult:
+        return await run_command(("sleep", "30"), timeout_seconds=0.1)
+
+    result = asyncio.run(scenario())
+
+    assert result.returncode == 124
+    assert result.stdout == ""
+    assert "did not finish within 0.1 seconds" in result.stderr
+    assert "sleep" in result.stderr
