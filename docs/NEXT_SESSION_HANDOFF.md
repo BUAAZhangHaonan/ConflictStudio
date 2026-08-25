@@ -213,9 +213,9 @@ verified end to end on 8890 after restarting conflictstudio-preview:
    is case-insensitive like the backend.
 
 Known items intentionally NOT touched (for the owner to decide):
-- deploy/nginx/conflictstudio.conf still describes the OLD 8888 system
-  (listen 8888 -> 127.0.0.1:8000); the real 8890 nginx lives on g203.
-  The filename is misleading.
+- deploy/nginx/conflictstudio.conf (the OLD 8888-prototype config) has been
+  deleted from the repo; the real 8890 nginx config lives on the g203 machine
+  (~/.config/nginx/) and is not part of this repository.
 - The live sqlite still contains dropped tables configuration_assistants
   and generation_test_drafts (create_all never drops); tests assert they
   must not exist on fresh databases.

@@ -9,7 +9,6 @@ backend() { "$BACKEND_PYTHON" "$@"; }
 
 deploy_check() {
   local service="$ROOT/deploy/systemd/conflictstudio.service"
-  [[ -f "$ROOT/deploy/nginx/conflictstudio.conf" ]] || { echo "missing nginx config" >&2; return 1; }
   [[ -f "$service" ]] || { echo "missing service unit" >&2; return 1; }
   [[ -f "$ROOT/scripts/run.sh" && -x "$ROOT/scripts/run.sh" ]] || { echo "scripts/run.sh must be executable" >&2; return 1; }
   for name in CONFLICTSTUDIO_DATA_ROOT CONFLICTSTUDIO_HOST CONFLICTSTUDIO_PORT CONFLICTSTUDIO_PYTHON; do
@@ -21,9 +20,6 @@ deploy_check() {
   grep -qx 'ExecStart=/home/team/zhanghaonan/ConflictStudio/scripts/run.sh' "$service"
   grep -qx 'Environment=CONFLICTSTUDIO_LTX23_WORKFLOW_PATH=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json' "$service"
   grep -qx 'Environment=CONFLICTSTUDIO_H3_WORKFLOW_PATH=/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json' "$service"
-  grep -q 'listen 8888' "$ROOT/deploy/nginx/conflictstudio.conf"
-  grep -q 'proxy_set_header Upgrade' "$ROOT/deploy/nginx/conflictstudio.conf"
-  grep -q 'proxy_pass' "$ROOT/deploy/nginx/conflictstudio.conf"
 }
 
 case "${1:-verify}" in
