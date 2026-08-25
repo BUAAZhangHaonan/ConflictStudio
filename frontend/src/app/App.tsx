@@ -16,9 +16,9 @@ const WorkspacePage = lazy(() => import('../pages/WorkspacePage').then(module =>
 
 export function App() {
   return (
+    <ErrorBoundary>
     <AppShell>
       <Suspense fallback={<StateView state="loading" />}>
-        <ErrorBoundary>
         <Routes>
           <Route path="/" element={<Navigate to="/workspace" replace />} />
           <Route path="/workspace" element={<WorkspacePage />} />
@@ -35,8 +35,8 @@ export function App() {
           <Route path="/me/statistics" element={<StatisticsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
-        </ErrorBoundary>
       </Suspense>
     </AppShell>
+    </ErrorBoundary>
   );
 }
