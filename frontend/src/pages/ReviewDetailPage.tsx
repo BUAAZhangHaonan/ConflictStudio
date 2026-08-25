@@ -461,7 +461,7 @@ export function ReviewDetailPage() {
               <div><dt>{t('review.detail.directionLabel')}</dt><dd>{directionText}</dd></div>
             </dl>
 
-            <details className="review-detail__disclosure">
+            <details key={sample.id} className="review-detail__disclosure">
               <summary>{t('review.detail.details')}</summary>
               <dl className="review-detail__facts">
                 <div><dt>{t('review.demographics')}</dt><dd>{sample.age}, {t(`review.gender.${sample.gender}`)}, {t(`review.ethnicity.${sample.ethnicity}`)}</dd></div>
@@ -473,6 +473,7 @@ export function ReviewDetailPage() {
           </section>
 
           <details
+            key={sample.id}
             className="panel review-detail__history"
             onToggle={event => setHistoryOpen(event.currentTarget.open)}
           >
