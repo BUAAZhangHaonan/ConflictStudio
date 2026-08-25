@@ -15,6 +15,10 @@
   background: var(--color-surface-muted);
 }
 
+.review-gate__banner p {
+  margin: 0;
+}
+
 .review-gate__switcher summary {
   cursor: pointer;
   color: var(--color-blue);
