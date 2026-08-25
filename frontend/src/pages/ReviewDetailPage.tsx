@@ -108,6 +108,7 @@ export function ReviewDetailPage() {
   const savedNoteRef = useRef(savedNote);
   const noteRevisionRef = useRef(noteRevision);
   const noteSavePromiseRef = useRef<Promise<boolean> | null>(null);
+  const lastReviewerIdRef = useRef(reviewerId);
   noteRef.current = note;
   savedNoteRef.current = savedNote;
   noteRevisionRef.current = noteRevision;
@@ -141,6 +142,26 @@ export function ReviewDetailPage() {
   }, [sampleId]);
 
   useEffect(() => {
+    const previousReviewerId = lastReviewerIdRef.current;
+    lastReviewerIdRef.current = reviewerId;
+    if (
+      previousReviewerId !== reviewerId
+      && previousReviewerId !== null
+      && sampleId !== null
+      && sampleRevision !== null
+      && initializedDraftRef.current !== null
+      && noteRef.current !== savedNoteRef.current
+    ) {
+      noteMutation.mutate({
+        sampleId,
+        input: {
+          reviewerId: previousReviewerId,
+          note: noteRef.current,
+          expectedRevision: noteRevisionRef.current,
+          expectedSampleRevision: sampleRevision,
+        },
+      }, { onError: error => { console.error('Failed to save the pending note before the reviewer switch.', error); } });
+    }
     setUseSourceAudio(false);
     setReviewDecision(null);
     setConversionOpen(false);
