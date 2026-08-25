@@ -6,7 +6,7 @@ type ApiErrorKind = 'notFound' | 'revision' | 'reviewRevision' | 'noteDraftRevis
 
 const reloadCodes = new Set(['revision_conflict', 'review_revision_conflict', 'note_draft_revision_conflict', 'referenced_resource_changed', 'gpu_state_changed']);
 const referenceCodes = new Set(['referenced_resource_changed']);
-const gpuCodes = new Set(['gpu_state_changed', 'gpu_unavailable', 'gpu_not_available']);
+const gpuCodes = new Set(['gpu_state_changed', 'gpu_slot_unavailable', 'gpu_state_unavailable', 'model_service_changed']);
 const rendererCodes = new Set(['renderer_not_configured', 'renderer_unavailable', 'renderer_execution_failed', 'renderer_output_invalid', 'model_service_unavailable', 'model_service_readiness_timeout']);
 const conflictMessages = new Map([
   ['review_revision_conflict', 'This review changed. Reload it and try again.'],
