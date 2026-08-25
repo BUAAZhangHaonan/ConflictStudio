@@ -15,7 +15,9 @@ from backend.adapters.config import (
     RendererSettings,
     Settings,
 )
-from backend.adapters.gpu import UNIT_DEFINITIONS
+from backend.adapters.gpu import UNIT_DEFINITIONS, unit_definitions
+from backend.adapters.database import Database
+from backend.adapters.production_renderer import ProductionRendererGateway
 from backend.domain.enums import GpuSlotName
 
 
@@ -140,6 +142,41 @@ def test_renderer_settings_reject_arbitrary_ltx25_workflow_paths() -> None:
             slot_urls=tuple(GPU_URL_VALUES.items()),
             unit_definitions=UNIT_DEFINITIONS,
         )
+
+
+def test_settings_resolve_symlinked_data_root_before_building_units(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_root = tmp_path / "real-data"
+    real_root.mkdir()
+    linked_root = tmp_path / "linked-data"
+    linked_root.symlink_to(real_root)
+
+    set_renderer_environment(monkeypatch)
+    monkeypatch.setenv("CONFLICTSTUDIO_DATA_ROOT", str(linked_root))
+    fixtures = Path(__file__).parent / "fixtures" / "workflows"
+    monkeypatch.setenv(
+        "CONFLICTSTUDIO_LTX23_WORKFLOW_PATH",
+        str(fixtures / ".." / "workflows" / "ltx23_minimal.json"),
+    )
+    monkeypatch.setenv(
+        "CONFLICTSTUDIO_H3_WORKFLOW_PATH",
+        str(fixtures / ".." / "workflows" / "h3_minimal.json"),
+    )
+
+    settings = Settings.from_environment()
+
+    assert settings.data_root == real_root.resolve()
+    assert settings.renderer is not None
+    assert settings.renderer.unit_definitions == unit_definitions(
+        settings.data_root.as_posix()
+    )
+    database = Database(settings.data_root)
+    try:
+        ProductionRendererGateway.from_settings(database, settings.renderer)
+    finally:
+        database.engine.dispose()
 
 
 def test_renderer_settings_reject_changed_gpu_urls() -> None:

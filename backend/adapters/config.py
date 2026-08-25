@@ -67,7 +67,9 @@ class Settings:
 
     @classmethod
     def from_environment(cls) -> "Settings":
-        data_root = Path(os.environ.get("CONFLICTSTUDIO_DATA_ROOT", DEFAULT_DATA_ROOT))
+        data_root = Path(
+            os.environ.get("CONFLICTSTUDIO_DATA_ROOT", DEFAULT_DATA_ROOT)
+        ).resolve()
         renderer_values = {
             "ltx23": os.environ.get("CONFLICTSTUDIO_LTX23_WORKFLOW_PATH", ""),
             "h3": os.environ.get("CONFLICTSTUDIO_H3_WORKFLOW_PATH", ""),
@@ -80,8 +82,8 @@ class Settings:
             raise RuntimeError("Every renderer environment value is required together")
         if all(configured_values):
             renderer = RendererSettings(
-                ltx23_template=Path(renderer_values["ltx23"]),
-                h3_template=Path(renderer_values["h3"]),
+                ltx23_template=Path(renderer_values["ltx23"]).resolve(),
+                h3_template=Path(renderer_values["h3"]).resolve(),
                 ltx25_bf16_template=LTX25_BF16_WORKFLOW_PATH_VALUE,
                 ltx25_int8_template=LTX25_INT8_WORKFLOW_PATH_VALUE,
                 slot_urls=(
