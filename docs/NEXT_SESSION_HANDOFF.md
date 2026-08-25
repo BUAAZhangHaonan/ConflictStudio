@@ -227,3 +227,38 @@ Known items intentionally NOT touched (for the owner to decide):
   release strings, latestCachedJobEventId (no callers).
 - queryKeys.job/jobItems do not encode test vs production; manual URL
   edits of tab= can serve cached data from the other endpoint.
+
+## 2026-08-25 full-repo review + fix round (commits 36b9883..d31d042, 9 个)
+
+Fresh full review (backend + frontend + browser-measured layout) followed by
+fixes; every commit individually green (backend pytest 525 passed; repo-root
+npm run check passed), service restarted, end-to-end verified on 8890:
+
+1. `36b9883` renderer output directories now derive from the configured
+   data root (Settings single source of truth). gpu.py no longer hardcodes
+   ConflictStudio-data; env override now actually flows to systemd
+   --output-directory. Default deployment byte-identical (unit token tests
+   against the live unit files still pass).
+2. `6b20686` gpu slot subprocess calls (systemctl/nvidia-smi/ss) bounded
+   with a 30s timeout; a hung nvidia-smi can no longer hang /api/health.
+3. `8375b1c` run.sh exports the CONFLICTSTUDIO_DATA_ROOT fallback to
+   uvicorn (set +a was cutting it off).
+4. `aaa55a8` stale prototype nginx config deleted (see "Known items"
+   above); integrate.sh deploy:check no longer greps it.
+5. `3afee8e` app-wide React ErrorBoundary (was: any render error =
+   unstyled white screen), fallback reuses state-view error styles with a
+   return-to-workspace button; copy in both locales.
+6. `b310a38` review list search debounce no longer captures a stale
+   locationState (filters changed inside the debounce window used to be
+   reverted by the delayed navigation).
+7. `7cb140d` .button--danger finally has CSS (red border/text); used by
+   the dataset delete action (only rendered for Inactive datasets).
+8. `a5bbf65` + `d31d042` review gate banner actions vertically centered
+   (align-items baseline -> center, plus resetting the <p> UA bottom
+   margin that offset the text 7px). Verified by measurement: all banner
+   children now share center=99px at 1280x800.
+
+Layout QA (all 11 routes, desktop 1280x800 + mobile 375x812, guest and
+signed-in states): zero console errors, zero horizontal overflow, zero
+real element overlap (4 apparent overlaps were closed <details> panels,
+not painted). CSS var audit: used-vs-defined diff empty both ways.
