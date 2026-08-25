@@ -12,8 +12,8 @@ if [[ ! -r "$ENV_FILE" ]]; then
 fi
 set -a
 source "$ENV_FILE"
-set +a
 CONFLICTSTUDIO_DATA_ROOT="${CONFLICTSTUDIO_DATA_ROOT:-$DATA_ROOT}"
+set +a
 
 required=(
   CONFLICTSTUDIO_HOST
