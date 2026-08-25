@@ -75,15 +75,16 @@
   .review-list__results .table-shell { overflow: visible; }
 }
 
-@media (max-width: 768px) {
-  .review-list__results .table-shell { overflow-x: auto; }
-  .review-list__results .table-shell table { min-width: 720px; }
-}
 .review-list__results .table-shell table {
   width: 100%;
   min-width: 0;
   table-layout: fixed;
   font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  .review-list__results .table-shell { overflow-x: auto; }
+  .review-list__results .table-shell table { min-width: 720px; }
 }
 .review-list__results .table-shell th,
 .review-list__results .table-shell td { padding: 6px; overflow-wrap: anywhere; vertical-align: middle; }
