@@ -367,8 +367,10 @@ export function ReviewListPage() {
                 <td className="review-list__emotion">{emotionLabel(sample.trueEmotion)} <span aria-hidden="true">→</span> {emotionLabel(sample.apparentEmotion)}</td>
                 <td>{sample.conflictDirection ? t(`direction.${sample.conflictDirection}`) : t('review.list.directionNotNeeded')}</td>
                 <td className="review-list__status-cell">
-                  <StatusBadge label={t(`status.review.${sample.reviewDecision}`)} kind={reviewStatusKind(sample.reviewDecision)} />
-                  {sample.generationCompatibility === 'NeedsRegeneration' ? <small>{t('review.compatibility.short')}</small> : null}
+                  <div className="review-list__status-stack">
+                    <StatusBadge label={t(`status.review.${sample.reviewDecision}`)} kind={reviewStatusKind(sample.reviewDecision)} />
+                    {sample.generationCompatibility === 'NeedsRegeneration' ? <small>{t('review.compatibility.short')}</small> : null}
+                  </div>
                 </td>
               </tr>
             ))}

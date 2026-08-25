@@ -113,7 +113,7 @@
   overflow-wrap: anywhere;
 }
 
-.review-list__status-cell {
+.review-list__status-stack {
   display: grid;
   gap: 5px;
   justify-items: start;
