@@ -4,7 +4,7 @@ export type ApiErrorTransport = 'http' | 'network' | 'malformed';
 export type ApiErrorRecovery = 'none' | 'reload' | 'retry' | 'confirmModelSwitch';
 type ApiErrorKind = 'notFound' | 'revision' | 'reviewRevision' | 'noteDraftRevision' | 'reference' | 'gpu' | 'database' | 'renderer' | 'promptEnvelope' | 'promptEmpty' | 'promptJson' | 'promptDuplicateKey' | 'promptSchema' | 'displayName' | 'http' | 'network' | 'invalidInput' | 'modelSwitchConfirmationRequired' | 'unavailable';
 
-const reloadCodes = new Set(['revision_conflict', 'review_revision_conflict', 'note_draft_revision_conflict', 'referenced_resource_changed', 'gpu_state_changed']);
+const reloadCodes = new Set(['revision_conflict', 'review_revision_conflict', 'note_draft_revision_conflict', 'referenced_resource_changed', 'gpu_state_changed', 'archive_preview_stale']);
 const referenceCodes = new Set(['referenced_resource_changed']);
 const gpuCodes = new Set(['gpu_state_changed', 'gpu_slot_unavailable', 'gpu_state_unavailable', 'model_service_changed']);
 const rendererCodes = new Set(['renderer_not_configured', 'renderer_unavailable', 'renderer_execution_failed', 'renderer_output_invalid', 'model_service_unavailable', 'model_service_readiness_timeout']);

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { apiErrorMessage } from '../api/client';
+import { apiErrorMessage, shouldReloadAfterApiError } from '../api/client';
 import type { ArchiveChange } from '../api/contracts';
 import {
   useAllDatasetsQuery,
@@ -101,6 +101,12 @@ export function ArchivePage() {
       onSuccess: () => {
         setConfirmOpen(false);
         previewMutation.reset();
+      },
+      onError: error => {
+        if (shouldReloadAfterApiError(error)) {
+          setConfirmOpen(false);
+          previewMutation.reset();
+        }
       },
     });
   };
