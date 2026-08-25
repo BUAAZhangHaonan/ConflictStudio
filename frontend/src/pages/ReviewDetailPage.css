@@ -5,6 +5,10 @@
   overflow-x: hidden;
 }
 
+.review-detail__context .section-header {
+  justify-content: flex-start;
+}
+
 .review-detail__layout {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(26rem, 0.9fr);
