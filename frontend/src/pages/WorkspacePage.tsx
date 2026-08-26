@@ -12,6 +12,7 @@ import {
 } from '../api/queries';
 import type { DatasetStatus, JobSummary } from '../api/contracts';
 import { ApiError, apiErrorMessage } from '../api/client';
+import { useReviewerState } from '../preferences';
 import { formatDateTime } from '../time';
 import './WorkspacePage.css';
 
@@ -42,6 +43,7 @@ function failureKey(code: string | null): 'gpu' | 'prompt' | 'media' | 'model' |
 export function WorkspacePage() {
   const { t, i18n } = useTranslation();
   const { showToast } = useToast();
+  const { currentReviewerId: reviewerId } = useReviewerState();
   const [datasetPage, setDatasetPage] = useState(1);
   const [jobPage, setJobPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -160,7 +162,7 @@ export function WorkspacePage() {
 
   return (
     <div className="page-stack workspace-page">
-      <PageHeader title={t(`${copyKey}.workspace.title`)} actions={<Button variant="primary" onClick={() => setCreateOpen(true)}>{t(`${copyKey}.workspace.create.action`)}</Button>} />
+      <PageHeader title={t(`${copyKey}.workspace.title`)} actions={<Button variant="primary" disabled={reviewerId === null} onClick={() => setCreateOpen(true)}>{t(`${copyKey}.workspace.create.action`)}</Button>} />
       {mutationError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(mutationError, locale)}</p></section> : null}
       <section className="workspace-attention" aria-labelledby="workspace-attention-title"><div className="section-header"><h2 id="workspace-attention-title">{t(`${copyKey}.workspace.attention.title`)}</h2></div><div className="metric-grid metric-grid--five workspace-attention__metrics"><Link className="workspace-metric-link" to="/review?decision=Pending"><Metric label={t(`${copyKey}.workspace.attention.pendingReview`)} value={pendingReview} /></Link><Link className="workspace-metric-link" to="/generate/results?tab=production&status=Running"><Metric label={t(`${copyKey}.workspace.attention.runningJobs`)} value={runningJobsQuery.data?.total ?? 0} /></Link><Link className="workspace-metric-link" to="/generate/results?tab=production&status=Failed"><Metric label={t(`${copyKey}.workspace.attention.failedJobs`)} value={failedJobsQuery.data?.total ?? 0} /></Link><Link className="workspace-metric-link" to="/archive"><Metric label={t(`${copyKey}.workspace.attention.pendingArchive`)} value={pendingArchive} /></Link></div></section>
       <section className="panel workspace-datasets" aria-labelledby="workspace-datasets-title">
@@ -171,7 +173,7 @@ export function WorkspacePage() {
           <td data-label={t(`${copyKey}.workspace.datasets.purposeLabel`)}>{t(`${copyKey}.workspace.datasets.purpose.${dataset.purpose}`)}</td>
           <td data-label={t(`${copyKey}.workspace.datasets.status`)}><StatusBadge label={t(`${copyKey}.status.dataset.${dataset.status}`)} kind={dataset.status === 'Active' ? 'active' : 'neutral'} /></td>
           <td data-label={t(`${copyKey}.workspace.datasets.updatedAt`)}><time dateTime={dataset.updatedAt}>{formatDateTime(dataset.updatedAt)}</time></td>
-          <td data-label={t(`${copyKey}.workspace.datasets.actions`)}><div className="workspace-datasets__actions"><Button variant="quiet" onClick={() => openRename({ id: dataset.id, name: dataset.name, note: dataset.note, revision: dataset.revision })}>{t(`${copyKey}.workspace.rename.action`)}</Button>{dataset.status === 'Active' ? <Button variant="quiet" onClick={() => setDisableTarget({ id: dataset.id, name: dataset.name, note: dataset.note, revision: dataset.revision })}>{t(`${copyKey}.workspace.disable.action`)}</Button> : <><Button variant="quiet" onClick={() => setEnableTarget({ id: dataset.id, name: dataset.name, note: dataset.note, revision: dataset.revision })}>{t(`${copyKey}.workspace.enable.action`)}</Button><Button className="button--danger" onClick={() => { deleteMutation.reset(); setDeleteTarget({ id: dataset.id, name: dataset.name, note: dataset.note, revision: dataset.revision }); }}>{t(`${copyKey}.workspace.delete.action`)}</Button></>}</div></td>
+          <td data-label={t(`${copyKey}.workspace.datasets.actions`)}><div className="workspace-datasets__actions"><Button variant="quiet" disabled={reviewerId === null} onClick={() => openRename({ id: dataset.id, name: dataset.name, note: dataset.note, revision: dataset.revision })}>{t(`${copyKey}.workspace.rename.action`)}</Button>{dataset.status === 'Active' ? <Button variant="quiet" disabled={reviewerId === null} onClick={() => setDisableTarget({ id: dataset.id, name: dataset.name, note: dataset.note, revision: dataset.revision })}>{t(`${copyKey}.workspace.disable.action`)}</Button> : <><Button variant="quiet" disabled={reviewerId === null} onClick={() => setEnableTarget({ id: dataset.id, name: dataset.name, note: dataset.note, revision: dataset.revision })}>{t(`${copyKey}.workspace.enable.action`)}</Button><Button className="button--danger" disabled={reviewerId === null} onClick={() => { deleteMutation.reset(); setDeleteTarget({ id: dataset.id, name: dataset.name, note: dataset.note, revision: dataset.revision }); }}>{t(`${copyKey}.workspace.delete.action`)}</Button></>}</div></td>
         </tr>)}</TableShell>}
         <Pagination page={datasetsQuery.data?.page ?? 1} totalPages={datasetsQuery.data?.totalPages ?? 0} total={datasetsQuery.data?.total ?? 0} onPageChange={setDatasetPage} />
       </section>
