@@ -6,8 +6,8 @@ type ApiErrorKind = 'notFound' | 'revision' | 'reviewRevision' | 'noteDraftRevis
 
 const reloadCodes = new Set(['revision_conflict', 'review_revision_conflict', 'note_draft_revision_conflict', 'referenced_resource_changed', 'gpu_state_changed', 'archive_preview_stale']);
 const referenceCodes = new Set(['referenced_resource_changed']);
-const gpuCodes = new Set(['gpu_state_changed', 'gpu_slot_unavailable', 'gpu_state_unavailable', 'model_service_changed']);
-const rendererCodes = new Set(['renderer_not_configured', 'renderer_unavailable', 'renderer_execution_failed', 'renderer_output_invalid', 'model_service_unavailable', 'model_service_readiness_timeout']);
+const gpuCodes = new Set(['gpu_state_changed', 'gpu_slot_unavailable', 'gpu_state_unavailable', 'model_service_changed', 'gpu_unavailable', 'gpu_occupation_untrusted', 'gpu_ownership_unproven']);
+const rendererCodes = new Set(['renderer_not_configured', 'renderer_unavailable', 'renderer_execution_failed', 'renderer_output_invalid', 'model_service_unavailable', 'model_service_readiness_timeout', 'model_service_untrusted', 'model_not_loaded']);
 const conflictMessages = new Map([
   ['review_revision_conflict', 'This review changed. Reload it and try again.'],
   ['note_draft_revision_conflict', 'This note changed. Reload it and try again.'],
