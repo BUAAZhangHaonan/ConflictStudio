@@ -732,10 +732,6 @@ def test_catalog_persists_records_and_rejects_stale_revision(tmp_path: Path) -> 
         )
     assert error.value.code == "revision_conflict"
 
-    with pytest.raises(ServiceError) as delete_error:
-        catalog.delete_content_script(content.id, content.revision)
-    assert delete_error.value.code == "state_conflict"
-
     reopened = Database(tmp_path)
     reopened.initialize()
     assert reopened.database_path.is_file()

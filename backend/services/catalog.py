@@ -24,7 +24,6 @@ from backend.domain.models import (
     Archive,
     ArchiveItem,
     BatchDraft,
-    BatchDraftCombination,
     BatchVideoInputSnapshot,
     ContentScript,
     ContentScriptScene,
@@ -282,16 +281,6 @@ class CatalogService:
                 row.status = ContentStatus.ACTIVE
                 session.flush()
             return self._content_script_read(session, row)
-
-    def delete_content_script(self, content_id: int, expected_revision: int) -> None:
-        with self.database.immediate_session() as session:
-            row = self._get(session, ContentScript, content_id, "contentScript")
-            self._check_revision(row, expected_revision, "contentScript")
-            if row.status is not ContentStatus.DRAFT:
-                raise state_conflict("contentScript", content_id, "Only an unused draft content script can be deleted")
-            if self._content_referenced(session, content_id):
-                raise state_conflict("contentScript", content_id, "The content script is already used by a batch")
-            session.delete(row)
 
     def get_content_scenes(self, content_id: int) -> ContentScriptSceneRead:
         with self.database.read_session() as session:
@@ -863,15 +852,3 @@ class CatalogService:
             ],
         )
 
-    @staticmethod
-    def _content_referenced(session: Session, content_id: int) -> bool:
-        return bool(
-            session.exec(
-                select(BatchDraftCombination).where(
-                    BatchDraftCombination.content_script_id == content_id
-                )
-            ).first()
-            or session.exec(
-                select(BatchVideoInputSnapshot).where(BatchVideoInputSnapshot.content_script_id == content_id)
-            ).first()
-        )
