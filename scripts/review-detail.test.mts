@@ -55,6 +55,17 @@ test('note draft re-initializes when the reviewer identity changes mid-session',
   assert.match(page, /const key = `\$\{sample\.id\}:\$\{reviewerId\}:\$\{sample\.revision\}`/u);
 });
 
+test('reviewer switches cancel stale note saves and hand off the pending draft', () => {
+  assert.match(page, /const draftEpochRef = useRef\(0\)/u);
+  assert.match(page, /const noteSavePromiseRef = useRef<Promise<ReviewNoteDraftRead> \| null>\(null\)/u);
+  assert.match(page, /const epoch = draftEpochRef\.current/u);
+  assert.match(page, /draftEpochRef\.current \+= 1/u);
+  assert.equal((page.match(/if \(epoch !== draftEpochRef\.current\) return false;/gu) ?? []).length, 2);
+  assert.match(page, /if \(epoch !== draftEpochRef\.current\) return;[\s\S]*noteRevisionRef\.current = saved\.revision/u);
+  assert.match(page, /const inFlight = noteSavePromiseRef\.current;[\s\S]*saved = inFlight === null \? null : await inFlight\.catch\(\(\) => null\)/u);
+  assert.match(page, /saved\?\.revision \?\? pendingNoteRevision/u);
+});
+
 test('note autosave and every exit flush the live draft revision before continuing', () => {
   assert.match(page, /type NoteState = 'loading' \| 'dirty' \| 'saving' \| 'saved' \| 'failed'/u);
   assert.match(page, /const flushNote = useCallback\(async \(\): Promise<boolean>/u);

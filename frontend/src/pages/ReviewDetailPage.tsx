@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError, apiErrorMessage, shouldReloadAfterApiError } from '../api/client';
-import type { ReviewDecision, ReviewQueue, ReviewSampleDetailRead } from '../api/contracts';
+import type { ReviewDecision, ReviewNoteDraftRead, ReviewQueue, ReviewSampleDetailRead } from '../api/contracts';
 import {
   reviewSampleQueries,
   useConvertSampleClassificationMutation,
@@ -107,7 +107,8 @@ export function ReviewDetailPage() {
   const noteRef = useRef(note);
   const savedNoteRef = useRef(savedNote);
   const noteRevisionRef = useRef(noteRevision);
-  const noteSavePromiseRef = useRef<Promise<boolean> | null>(null);
+  const noteSavePromiseRef = useRef<Promise<ReviewNoteDraftRead> | null>(null);
+  const draftEpochRef = useRef(0);
   const lastReviewerIdRef = useRef(reviewerId);
   noteRef.current = note;
   savedNoteRef.current = savedNote;
@@ -144,24 +145,14 @@ export function ReviewDetailPage() {
   useEffect(() => {
     const previousReviewerId = lastReviewerIdRef.current;
     lastReviewerIdRef.current = reviewerId;
-    if (
-      previousReviewerId !== reviewerId
-      && previousReviewerId !== null
-      && sampleId !== null
-      && sampleRevision !== null
-      && initializedDraftRef.current !== null
-      && noteRef.current !== savedNoteRef.current
-    ) {
-      noteMutation.mutate({
-        sampleId,
-        input: {
-          reviewerId: previousReviewerId,
-          note: noteRef.current,
-          expectedRevision: noteRevisionRef.current,
-          expectedSampleRevision: sampleRevision,
-        },
-      }, { onError: error => { console.error('Failed to save the pending note before the reviewer switch.', error); } });
-    }
+    const pendingSampleId = sampleId;
+    const pendingSampleRevision = sampleRevision;
+    const pendingNote = noteRef.current;
+    const pendingNoteRevision = noteRevisionRef.current;
+    const inFlight = noteSavePromiseRef.current;
+    const hadDraft = initializedDraftRef.current !== null;
+    const dirty = noteRef.current !== savedNoteRef.current;
+    draftEpochRef.current += 1;
     setUseSourceAudio(false);
     setReviewDecision(null);
     setConversionOpen(false);
@@ -182,6 +173,27 @@ export function ReviewDetailPage() {
     setNoteRevision(0);
     setNoteState('loading');
     setNoteError(null);
+    if (
+      hadDraft
+      && previousReviewerId !== null
+      && previousReviewerId !== reviewerId
+      && pendingSampleId !== null
+      && pendingSampleRevision !== null
+      && dirty
+    ) {
+      void (async () => {
+        const saved = inFlight === null ? null : await inFlight.catch(() => null);
+        noteMutation.mutate({
+          sampleId: pendingSampleId,
+          input: {
+            reviewerId: previousReviewerId,
+            note: pendingNote,
+            expectedRevision: saved?.revision ?? pendingNoteRevision,
+            expectedSampleRevision: pendingSampleRevision,
+          },
+        }, { onError: error => { console.error('Failed to save the pending note before the reviewer switch.', error); } });
+      })();
+    }
   }, [sampleId, reviewerId]);
 
   useEffect(() => {
@@ -200,9 +212,12 @@ export function ReviewDetailPage() {
   }, [noteQuery.data, reviewerId, sample]);
 
   const flushNote = useCallback(async (): Promise<boolean> => {
+    const epoch = draftEpochRef.current;
     while (true) {
       if (noteSavePromiseRef.current !== null) {
-        if (!await noteSavePromiseRef.current) return false;
+        const inFlight = noteSavePromiseRef.current;
+        if (!await inFlight.then(() => true, () => false)) return false;
+        if (epoch !== draftEpochRef.current) return false;
         continue;
       }
       if (noteRef.current === savedNoteRef.current) {
@@ -220,26 +235,31 @@ export function ReviewDetailPage() {
           expectedRevision: noteRevisionRef.current,
           expectedSampleRevision: sample.revision,
         },
-      }).then(saved => {
-        noteRevisionRef.current = saved.revision;
-        savedNoteRef.current = value;
-        setNoteRevision(saved.revision);
-        setSavedNote(value);
-        setNoteError(null);
-        setNoteState(noteRef.current === value ? 'saved' : 'dirty');
-        return true;
-      }).catch(error => {
-        if (shouldReloadAfterApiError(error)) initializedDraftRef.current = null;
-        setNoteError(error);
-        setNoteState('failed');
-        return false;
       });
+      request.then(
+        saved => {
+          if (epoch !== draftEpochRef.current) return;
+          noteRevisionRef.current = saved.revision;
+          savedNoteRef.current = value;
+          setNoteRevision(saved.revision);
+          setSavedNote(value);
+          setNoteError(null);
+          setNoteState(noteRef.current === value ? 'saved' : 'dirty');
+        },
+        error => {
+          if (epoch !== draftEpochRef.current) return;
+          if (shouldReloadAfterApiError(error)) initializedDraftRef.current = null;
+          setNoteError(error);
+          setNoteState('failed');
+        },
+      );
       noteSavePromiseRef.current = request;
       setNoteError(null);
       setNoteState('saving');
-      const saved = await request;
+      const ok = await request.then(() => true, () => false);
+      if (epoch !== draftEpochRef.current) return false;
       if (noteSavePromiseRef.current === request) noteSavePromiseRef.current = null;
-      if (!saved) return false;
+      if (!ok) return false;
     }
   }, [noteMutation, noteQuery.isSuccess, reviewerId, sample]);
 
