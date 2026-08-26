@@ -169,6 +169,13 @@ export function ReviewListPage() {
     updateLocation({ ...locationState, search: next, page: 1 });
   }, [debouncedSearch, queryString]);
 
+  useEffect(() => {
+    const data = listQuery.data;
+    if (!data || data.items.length > 0 || locationState.page <= 1) return;
+    const targetPage = data.totalPages >= 1 ? data.totalPages : 1;
+    if (targetPage !== locationState.page) updateLocation({ ...locationState, page: targetPage });
+  }, [listQuery.data, locationState]);
+
   const clearFilters = () => updateLocation(defaultReviewListLocation);
 
   const openDetail = (sample: ReviewSampleListRead) => {
