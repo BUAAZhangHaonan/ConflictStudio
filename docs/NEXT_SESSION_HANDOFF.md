@@ -302,3 +302,40 @@ desktop status-cell centering intact, disclosure closes on next-sample
 navigation, pagination disables during debounce, zero console errors.
 Not live-tested (logic-verified only): error-boundary fallback render,
 note flush on switch, gpu/archive error-code paths.
+
+## 2026-08-26 fourth review round (commits f8a0b16..c2671ab, 7 个)
+
+Fourth pass (backend deep-read + frontend deep-read + live browser flow
+testing). Both heavy findings were residuals of the third round's own
+fixes. All gates green per commit (backend pytest 523; repo-root npm run
+check); service restarted; end-to-end browser-verified:
+
+1. `f8a0b16` (Critical) note autosave vs reviewer switch race fixed with
+   a draft epoch: reset bumps the epoch so the old flushNote loop and its
+   .then callbacks stop writing refs (previously the stale loop PUT an
+   EMPTY note over the just-saved text); a handoff captures the pending
+   draft before reset and saves it under the OLD reviewer id after the
+   in-flight save settles. Verified live: delayed (2s) save in flight +
+   logout mid-flight → server note kept the typed text (was: emptied).
+2. `e16df0b` (Major) gpuCodes/rendererCodes now cover every code the
+   backend actually emits: + gpu_unavailable, gpu_occupation_untrusted,
+   gpu_ownership_unproven (gpu) and model_service_untrusted,
+   model_not_loaded (renderer).
+3. `a052e11` archive_preview_stale gets a dedicated kind + en/zh copy
+   ("preview is stale, re-preview") instead of the generic
+   "service unavailable".
+4. `406d919` guest gating extended beyond review pages (user decision):
+   workspace dataset create/rename/disable/enable/delete and archive
+   preview-sync/sync are disabled for guests. Generation pages stay open.
+5. `ae1a68c` /review?page=N beyond totalPages auto-recovers to the last
+   valid page (verified: page=99 → page 1 with rows).
+6. `9497fda` orphaned CatalogService.delete_content_script deleted.
+7. `c2671ab` unreachable dataset-merge domain layer deleted (2 tables,
+   6 triggers, -345 lines). The live SQLite keeps its residual merge
+   tables/triggers (create_all never drops; the startup drop-loop entry
+   was removed too so restarts do NOT drop them). Same category as the
+   known configuration_assistants leftover.
+
+Guest read-only scope is now: review pages + workspace + archive;
+generation chain intentionally not gated (frontend-only gating; the
+backend still has no auth by design).
