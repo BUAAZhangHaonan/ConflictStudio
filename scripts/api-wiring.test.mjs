@@ -127,6 +127,19 @@ test('display name failures have plain bilingual messages without backend detail
   );
 });
 
+test('archive preview stale conflicts ask for a fresh preview in both locales', async () => {
+  const client = loadClient(async () => ({ ok: false, status: 409, json: async () => ({ error: { code: 'archive_preview_stale', message: 'internal archive detail' } }) }));
+  await assert.rejects(
+    () => client.apiRequest('/api/archives/sync', { method: 'POST', body: '{}' }),
+    error => {
+      assert.equal(client.apiErrorMessage(error, 'en-US'), 'The archive preview is out of date. Preview the archive again, then retry.');
+      assert.equal(client.apiErrorMessage(error, 'zh-CN'), '归档预览已过期。请重新预览后重试。');
+      assert.equal(error.recovery, 'reload');
+      return true;
+    },
+  );
+});
+
 test('frontend contracts include current generation, review, statistics, archive, health and sample fields', () => {
   for (const name of ['BatchDraft', 'BatchPreview', 'PromptTestCreate', 'VideoTestCreate', 'ResourceAssistantBundle', 'ResourceAssistantProposal', 'JobItem', 'Reviewer', 'ReviewSampleListRead', 'ReviewSampleDetailRead', 'ReviewNoteDraftRead', 'ReviewSubmissionCreate', 'ReviewBatchSubmissionCreate', 'SampleClassificationConversionUpdate', 'ReviewerStatistics', 'ArchivePreview', 'Archive', 'Health']) {
     assert.match(contractSource, new RegExp(`export (?:interface|type) ${name}\\b`));
