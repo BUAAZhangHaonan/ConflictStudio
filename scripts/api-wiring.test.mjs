@@ -39,6 +39,8 @@ const generationCss = read('../frontend/src/pages/generate/GenerationPage.css');
 const responsiveCss = read('../frontend/src/styles/responsive.css');
 const sharedSource = read('../frontend/src/pages/generate/shared.tsx');
 const gpuStatusSource = read('../frontend/src/gpuStatus.ts');
+const gpuPanelSource = read('../frontend/src/components/GpuStatusPanel.tsx');
+const workspaceLocaleSource = read('../frontend/src/locales/features/workspaceSettingsStatistics.ts');
 const archiveHelpers = read('../frontend/src/reviewArchive.ts');
 const mainSource = read('../frontend/src/main.tsx');
 const appSource = read('../frontend/src/app/App.tsx');
@@ -480,6 +482,24 @@ test('GPU status reasons cover every availability without contradictory ready te
   assert.equal(gpuStatusReason({ ...gpu, availability: 'ExternalOccupied' }), 'external');
   assert.equal(gpuStatusReason({ ...gpu, availability: 'Unknown', loadedModel: 'LTX-2.5' }), 'unknown');
   assert.equal(gpuStatusReason({ ...gpu, availability: 'Unknown', activeJobId: 7 }), 'activeJob');
+});
+
+test('gpu status panel polls slots and active job progress on both host pages', () => {
+  assert.match(workspaceSource, /<GpuStatusPanel \/>/u);
+  assert.match(resourcesPageSource, /<GpuStatusPanel \/>/u);
+  for (const token of ['generationQueries.gpuSlots()', 'generationQueries.gpuPanelJob(', 'generationQueries.jobLatestProgress(', 'refetchInterval: 5000', 'jobId=${job.id}', 'datasetId=${job.datasetId}']) {
+    assert.match(gpuPanelSource, new RegExp(token.replaceAll(/[.?${}()]/gu, '\\$&')));
+  }
+  assert.match(querySource, /latest-progress/u);
+  assert.match(querySource, /gpu-panel/u);
+  assert.match(querySource, /eventType === 'ItemRenderProgress'/u);
+  const [workspaceLocaleEnUS, workspaceLocaleZhCN] = workspaceLocaleSource.split('workspaceSettingsStatisticsZhCN');
+  assert.match(workspaceLocaleEnUS, /gpuStatus: \{/u);
+  assert.match(workspaceLocaleZhCN, /gpuStatus: \{/u);
+  for (const stage of ['PromptQueued', 'PromptGenerating', 'PromptReady', 'Rendering', 'MediaProcessing', 'Completed']) {
+    assert.match(workspaceLocaleEnUS, new RegExp(`${stage}: `));
+    assert.match(workspaceLocaleZhCN, new RegExp(`${stage}: `));
+  }
 });
 
 test('production source is disconnected from the removed business mock system', () => {

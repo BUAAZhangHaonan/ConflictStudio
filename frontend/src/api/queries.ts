@@ -1,5 +1,5 @@
 import { queryOptions, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { apiRequest, shouldReloadAfterApiError } from './client';
+import { ApiError, apiRequest, shouldReloadAfterApiError } from './client';
 import type {
   Archive, ArchivePreview, ArchivePreviewRequest, ArchiveSyncRequest,
   BatchDraft, BatchDraftCreate, BatchDraftUpdate, BatchPreview,
@@ -83,6 +83,8 @@ export const queryKeys = {
   jobItems: (id: number, page: number) => [...roots.jobs, 'detail', id, 'items', page] as const,
   jobAttempts: (itemId: number, page: number) => ['jobItems', itemId, 'attempts', page] as const,
   jobEvents: (id: number, page: number) => [...roots.jobs, 'detail', id, 'events', page] as const,
+  jobLatestProgress: (id: number) => [...roots.jobs, 'detail', id, 'latest-progress'] as const,
+  gpuPanelJob: (id: number) => [...roots.jobs, 'detail', id, 'gpu-panel'] as const,
   gpuSlots: ['gpuSlots'] as const,
   health: ['health'] as const,
   reviewersPage: (page: number) => [...roots.reviewers, 'page', page] as const,
@@ -189,6 +191,26 @@ export const generationQueries = {
   resultItems: (kind: 'test' | 'production', id: number, page: number) => queryOptions({ queryKey: queryKeys.jobItems(id, page), queryFn: () => apiRequest<Page<JobItem>>(pagePath((kind === 'test' ? '/api/test-results/' : '/api/generation-results/') + id + '/items', page)) }),
   jobAttempts: (itemId: number, page: number) => queryOptions({ queryKey: queryKeys.jobAttempts(itemId, page), queryFn: () => apiRequest<Page<GenerationAttempt>>(pagePath('/api/job-items/' + itemId + '/attempts', page)) }),
   jobEvents: (id: number, page: number) => queryOptions({ queryKey: queryKeys.jobEvents(id, page), queryFn: () => apiRequest<Page<JobEvent>>(pagePath('/api/jobs/' + id + '/events', page, new URLSearchParams({ order: 'desc' }))) }),
+  jobLatestProgress: (id: number) => queryOptions({
+    queryKey: queryKeys.jobLatestProgress(id),
+    queryFn: () => apiRequest<Page<JobEvent>>(pagePath('/api/jobs/' + id + '/events', 1, new URLSearchParams({ order: 'desc' }))),
+    refetchInterval: 5000,
+    select: page => page.items.filter(event => event.eventType === 'ItemRenderProgress').slice(0, 2),
+  }),
+  gpuPanelJob: (id: number) => queryOptions({
+    queryKey: queryKeys.gpuPanelJob(id),
+    queryFn: async () => {
+      try {
+        return await apiRequest<JobDetail>('/api/generation-results/' + id);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) {
+          return apiRequest<JobDetail>('/api/test-results/' + id);
+        }
+        throw error;
+      }
+    },
+    refetchInterval: 5000,
+  }),
   gpuSlots: () => queryOptions({ queryKey: queryKeys.gpuSlots, queryFn: () => apiRequest<GpuSlot[]>('/api/gpu-slots'), refetchOnWindowFocus: true }),
   health: () => queryOptions({ queryKey: queryKeys.health, queryFn: () => apiRequest<Health>('/api/health') }),
   reviewers: (page: number) => queryOptions({ queryKey: queryKeys.reviewersPage(page), queryFn: () => apiRequest<Page<Reviewer>>(pagePath('/api/reviewers', page)) }),

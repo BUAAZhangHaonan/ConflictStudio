@@ -2,6 +2,7 @@ export * from './Button';
 export * from './ConfirmDialog';
 export * from './Dialog';
 export * from './Field';
+export * from './GpuStatusPanel';
 export * from './MediaPanel';
 export * from './Metric';
 export * from './PageHeader';

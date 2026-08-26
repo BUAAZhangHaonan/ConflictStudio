@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
-import { Button, ConfirmDialog, Dialog, Field, Metric, PageHeader, Pagination, StatusBadge, TableShell, useToast } from '../components';
+import { Button, ConfirmDialog, Dialog, Field, GpuStatusPanel, Metric, PageHeader, Pagination, StatusBadge, TableShell, useToast } from '../components';
 import {
   useCreateDatasetMutation,
   useDeleteDatasetMutation,
@@ -165,6 +165,7 @@ export function WorkspacePage() {
       <PageHeader title={t(`${copyKey}.workspace.title`)} actions={<Button variant="primary" disabled={reviewerId === null} onClick={() => setCreateOpen(true)}>{t(`${copyKey}.workspace.create.action`)}</Button>} />
       {mutationError ? <section className="generation-feedback" role="alert"><p>{apiErrorMessage(mutationError, locale)}</p></section> : null}
       <section className="workspace-attention" aria-labelledby="workspace-attention-title"><div className="section-header"><h2 id="workspace-attention-title">{t(`${copyKey}.workspace.attention.title`)}</h2></div><div className="metric-grid metric-grid--five workspace-attention__metrics"><Link className="workspace-metric-link" to="/review?decision=Pending"><Metric label={t(`${copyKey}.workspace.attention.pendingReview`)} value={pendingReview} /></Link><Link className="workspace-metric-link" to="/generate/results?tab=production&status=Running"><Metric label={t(`${copyKey}.workspace.attention.runningJobs`)} value={runningJobsQuery.data?.total ?? 0} /></Link><Link className="workspace-metric-link" to="/generate/results?tab=production&status=Failed"><Metric label={t(`${copyKey}.workspace.attention.failedJobs`)} value={failedJobsQuery.data?.total ?? 0} /></Link><Link className="workspace-metric-link" to="/archive"><Metric label={t(`${copyKey}.workspace.attention.pendingArchive`)} value={pendingArchive} /></Link></div></section>
+      <GpuStatusPanel />
       <section className="panel workspace-datasets" aria-labelledby="workspace-datasets-title">
         <div className="section-header"><h2 id="workspace-datasets-title">{t(`${copyKey}.workspace.datasets.title`)}</h2></div>
         <div className="workspace-datasets__filters"><Field label={t(`${copyKey}.workspace.datasets.searchLabel`)} htmlFor="workspace-dataset-search"><input id="workspace-dataset-search" type="search" value={search} onChange={event => { setSearch(event.target.value); setDatasetPage(1); }} /></Field><Field label={t(`${copyKey}.workspace.datasets.statusFilterLabel`)} htmlFor="workspace-dataset-status"><select id="workspace-dataset-status" value={status} onChange={event => { setStatus(event.target.value as DatasetStatus | 'All'); setDatasetPage(1); }}><option value="All">{t(`${copyKey}.workspace.datasets.allStatuses`)}</option><option value="Active">{t(`${copyKey}.status.dataset.Active`)}</option><option value="Inactive">{t(`${copyKey}.status.dataset.Inactive`)}</option></select></Field></div>
