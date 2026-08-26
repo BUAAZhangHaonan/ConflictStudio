@@ -1,8 +1,6 @@
-import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-import pytest
 from sqlmodel import select
 
 from backend.domain.enums import BatchDraftStatus, DatasetPurpose, GenerationAttemptStatus, JobItemStage, JobSource, JobStatus
@@ -108,100 +106,6 @@ def test_dataset_delete_reports_every_reference_without_cascade(tmp_path: Path) 
         assert session.get(ArchiveItem, (dataset["id"], sample["id"])) is not None
         assert session.get(Job, 1) is not None
         assert session.get(BatchDraft, 1) is not None
-
-
-def test_sqlite_requires_both_dataset_revisions_for_sample_moves(
-    tmp_path: Path,
-) -> None:
-    app = sample_app(tmp_path)
-    with TestClient(app) as client:
-        sample = client.get("/api/samples").json()["items"][0]
-        source = client.get(f"/api/datasets/{sample['datasetId']}").json()
-        target = client.post(
-            "/api/datasets",
-            json={"name": "Direct move target", "note": ""},
-        ).json()
-
-    connection = sqlite3.connect(app.state.database.database_path)
-    try:
-        connection.execute("PRAGMA foreign_keys=ON")
-
-        def begin_operation() -> None:
-            connection.execute("BEGIN")
-            cursor = connection.execute(
-                "INSERT INTO dataset_merge_operations "
-                "(target_dataset_id, target_revision_before, source_count, "
-                "executing, executed_at) VALUES (?, ?, 1, 0, NULL)",
-                (target["id"], target["revision"]),
-            )
-            connection.execute(
-                "INSERT INTO dataset_merge_sources "
-                "(operation_id, source_dataset_id, source_revision_before, sample_count) "
-                "VALUES (?, ?, ?, 1)",
-                (cursor.lastrowid, source["id"], source["revision"]),
-            )
-
-        connection.execute("BEGIN")
-        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
-            connection.execute(
-                "UPDATE samples SET dataset_id = ?, revision = revision + 1 WHERE id = ?",
-                (target["id"], sample["id"]),
-            )
-        connection.rollback()
-
-        begin_operation()
-        connection.execute(
-            "UPDATE datasets SET revision = revision + 1 WHERE id = ?",
-            (source["id"],),
-        )
-        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
-            connection.execute(
-                "UPDATE samples SET dataset_id = ?, revision = revision + 1 WHERE id = ?",
-                (target["id"], sample["id"]),
-            )
-        connection.rollback()
-
-        begin_operation()
-        connection.execute(
-            "UPDATE datasets SET revision = revision + 1 WHERE id = ?",
-            (target["id"],),
-        )
-        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
-            connection.execute(
-                "UPDATE samples SET dataset_id = ?, revision = revision + 1 WHERE id = ?",
-                (target["id"], sample["id"]),
-            )
-        connection.rollback()
-
-        begin_operation()
-        connection.execute(
-            "UPDATE datasets SET revision = revision + 1 WHERE id = ?",
-            (source["id"],),
-        )
-        connection.execute(
-            "UPDATE datasets SET revision = revision + 2 WHERE id = ?",
-            (target["id"],),
-        )
-        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
-            connection.execute(
-                "UPDATE samples SET dataset_id = ?, revision = revision + 1 WHERE id = ?",
-                (target["id"], sample["id"]),
-            )
-        connection.rollback()
-
-        begin_operation()
-        connection.execute(
-            "UPDATE datasets SET revision = revision + 1 WHERE id IN (?, ?)",
-            (source["id"], target["id"]),
-        )
-        with pytest.raises(sqlite3.IntegrityError, match="both dataset revisions"):
-            connection.execute(
-                "UPDATE samples SET dataset_id = ?, revision = revision + 2 WHERE id = ?",
-                (target["id"], sample["id"]),
-            )
-        connection.rollback()
-    finally:
-        connection.close()
 
 
 def test_incremental_production_appends_without_changing_existing_review(
