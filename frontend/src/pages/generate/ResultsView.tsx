@@ -156,6 +156,16 @@ export function ResultsView() {
     setSelectedFailures([]);
   }, [itemPage]);
 
+  const deepLinkJobId = params.get('jobId');
+  useEffect(() => {
+    if (deepLinkJobId === null) return;
+    const value = Number(deepLinkJobId);
+    const next = new URLSearchParams(params);
+    next.delete('jobId');
+    if (Number.isInteger(value) && value > 0) next.set('job', deepLinkJobId);
+    setParams(next, { replace: true });
+  }, [deepLinkJobId, params, setParams]);
+
   const updateParams = (updates: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
     for (const [key, value] of Object.entries(updates)) {
