@@ -406,7 +406,9 @@ def validate_final_positive_prompt(
     banned_emotions.extend(
         value for value in (true_emotion, apparent_emotion) if value.strip()
     )
-    _append_phrase_violation(violations, prompt, banned_emotions, "emotion labels")
+    # 情绪词禁令只约束叙述(stage direction);引号内台词是模态内容本身,
+    # 直陈情绪正是冲突协议的设计(英文台词自然包含 angry/scared 等词)。
+    _append_phrase_violation(violations, narrative, banned_emotions, "emotion labels")
     _append_phrase_violation(
         violations, prompt, BANNED_CERTAINTY_MODIFIERS, "certainty claims"
     )

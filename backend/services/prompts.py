@@ -16,7 +16,14 @@ from pydantic import (
 )
 
 from backend.adapters.llm import PromptAdapterError, PromptModel
-from backend.domain.enums import Category, Ethnicity, Gender, Language, ModelName
+from backend.domain.enums import (
+    Category,
+    ContentMode,
+    Ethnicity,
+    Gender,
+    Language,
+    ModelName,
+)
 from backend.domain.models import ContentScript, PromptTemplateVersion, Scene
 from backend.domain.schemas import PromptFailureDetails, PromptSchemaFieldDetail
 from backend.domain.prompt_policy import (
@@ -204,6 +211,22 @@ class PromptService:
             ) from error
 
         policy = POLICIES[context.content.category]
+        language_name = LANGUAGE_DISPLAY[context.language]
+        if context.content.mode is ContentMode.GENERATIVE:
+            line_copy_rule = (
+                "When a requested line is supplied, keep its meaning, event anchor "
+                f"and emotional polarity in {language_name}, but vary the wording "
+                "slightly (small synonyms, particles or word order) so that repeated "
+                "generations do not produce an identical sentence; translate it "
+                f"faithfully into {language_name} first when the language differs."
+            )
+        else:
+            line_copy_rule = (
+                "When a requested line is supplied in the same language, copy it "
+                "exactly; when it is supplied in another language, translate it "
+                f"faithfully into {language_name}, keeping the stated event anchor "
+                "and emotional polarity."
+            )
         system_input = self.system_template.render(
             policy=policy,
             direction_rule=direction_rule(
@@ -211,8 +234,9 @@ class PromptService:
             ),
             banned_certainty_modifiers=BANNED_CERTAINTY_MODIFIERS,
             component_word_limits=COMPONENT_WORD_LIMITS,
-            spoken_language=LANGUAGE_DISPLAY[context.language],
+            spoken_language=language_name,
             spoken_line_rule=SPOKEN_LINE_RULES[context.language],
+            line_copy_rule=line_copy_rule,
         ).strip()
         user_input = self.user_template.render(
             policy=policy,
