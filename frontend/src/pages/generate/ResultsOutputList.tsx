@@ -80,6 +80,7 @@ export function ResultsOutputList({
             g(('demographic.age.' + item.input.age) as GenerationKey),
             g(('demographic.gender.' + item.input.gender) as GenerationKey),
             g(('demographic.ethnicity.' + item.input.ethnicity) as GenerationKey),
+            g(('demographic.language.' + item.input.language) as GenerationKey),
           ].join(', ');
           const outputTitleId = 'result-output-' + item.id;
           return (

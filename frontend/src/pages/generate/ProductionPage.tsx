@@ -38,6 +38,8 @@ import {
   toggleValue,
   useGenerationCopy,
   useDebouncedValue,
+  languagesByEthnicity,
+  defaultLanguageFor,
   useGenerationLocale,
   useUnsavedChanges,
 } from './shared';
@@ -53,7 +55,7 @@ function defaultName(category: Category): string {
 }
 
 const lastDemographicsKey = 'conflictstudio.generation.lastDemographics';
-const fallbackDemographics: Demographic[] = [{ age: 25, gender: 'Female', ethnicity: 'EastAsian' }];
+const fallbackDemographics: Demographic[] = [{ age: 25, gender: 'Female', ethnicity: 'EastAsian', language: 'zh' }];
 
 function lastDemographics(): Demographic[] {
   try {
@@ -64,7 +66,8 @@ function lastDemographics(): Demographic[] {
       const person = item as Partial<Demographic>;
       return ages.includes(person.age as Demographic['age'])
         && genders.includes(person.gender as Demographic['gender'])
-        && ethnicities.includes(person.ethnicity as Demographic['ethnicity']);
+        && ethnicities.includes(person.ethnicity as Demographic['ethnicity'])
+        && languagesByEthnicity[person.ethnicity as Demographic['ethnicity']].includes(person.language as Demographic['language']);
     });
     return valid ? value as Demographic[] : fallbackDemographics.map(item => ({ ...item }));
   } catch {
@@ -415,7 +418,10 @@ export function ProductionPage() {
                 <select id={'production-gender-' + index} value={person.gender} onChange={event => markDirty(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, gender: event.target.value as Demographic['gender'] } : item) }))}>{genders.map(value => <option key={value} value={value}>{g(('demographic.gender.' + value) as GenerationKey)}</option>)}</select>
               </Field>
               <Field label={g('production.ethnicities')} htmlFor={'production-ethnicity-' + index}>
-                <select id={'production-ethnicity-' + index} value={person.ethnicity} onChange={event => markDirty(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, ethnicity: event.target.value as Demographic['ethnicity'] } : item) }))}>{ethnicities.map(value => <option key={value} value={value}>{g(('demographic.ethnicity.' + value) as GenerationKey)}</option>)}</select>
+                <select id={'production-ethnicity-' + index} value={person.ethnicity} onChange={event => { const ethnicity = event.target.value as Demographic['ethnicity']; markDirty(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, ethnicity, language: languagesByEthnicity[ethnicity].includes(item.language) ? item.language : defaultLanguageFor(ethnicity) } : item) })); }}>{ethnicities.map(value => <option key={value} value={value}>{g(('demographic.ethnicity.' + value) as GenerationKey)}</option>)}</select>
+              </Field>
+              <Field label={g('production.languages')} htmlFor={'production-language-' + index}>
+                <select id={'production-language-' + index} value={person.language} onChange={event => markDirty(current => ({ ...current, demographics: current.demographics.map((item, itemIndex) => itemIndex === index ? { ...item, language: event.target.value as Demographic['language'] } : item) }))}>{languagesByEthnicity[person.ethnicity].map(value => <option key={value} value={value}>{g(('demographic.language.' + value) as GenerationKey)}</option>)}</select>
               </Field>
               <Button variant="quiet" disabled={form.demographics.length === 1} onClick={() => markDirty(current => ({ ...current, demographics: current.demographics.filter((_, itemIndex) => itemIndex !== index) }))}>{g('production.removePerson')}</Button>
             </div>)}
@@ -459,7 +465,7 @@ export function ProductionPage() {
             <td>{row.sequence}</td>
             <td>{localizedName(locale, row.contentScript)}</td>
             <td>{localizedName(locale, row.scene)}</td>
-            <td>{g(('demographic.age.' + row.demographic.age) as GenerationKey)} {g(('demographic.gender.' + row.demographic.gender) as GenerationKey)} {g(('demographic.ethnicity.' + row.demographic.ethnicity) as GenerationKey)}</td>
+            <td>{g(('demographic.age.' + row.demographic.age) as GenerationKey)} {g(('demographic.gender.' + row.demographic.gender) as GenerationKey)} {g(('demographic.ethnicity.' + row.demographic.ethnicity) as GenerationKey)} {g(('demographic.language.' + row.demographic.language) as GenerationKey)}</td>
             <td>{row.seed}</td>
             <td>{row.gpuSlot}</td>
           </tr>)}</TableShell>

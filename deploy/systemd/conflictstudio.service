@@ -9,11 +9,11 @@ Environment=CONFLICTSTUDIO_HOST=127.0.0.1
 Environment=CONFLICTSTUDIO_PORT=8001
 Environment=CONFLICTSTUDIO_PYTHON=/home/team/zhanghaonan/ConflictStudio/.venv/bin/python
 Environment=CONFLICTSTUDIO_LTX23_WORKFLOW_PATH=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json
-Environment=CONFLICTSTUDIO_H3_WORKFLOW_PATH=/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json
+Environment=CONFLICTSTUDIO_H3_WORKFLOW_PATH=/home/team/zhanghaonan/ConflictStudio-data/workflows/h3_payload.json
 Environment=CONFLICTSTUDIO_GPU0_URL=http://127.0.0.1:8188
 Environment=CONFLICTSTUDIO_GPU1_URL=http://127.0.0.1:8189
 EnvironmentFile=/home/team/zhanghaonan/ConflictStudio/ConflictStudio.env
-ReadOnlyPaths=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json /home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json
+ReadOnlyPaths=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json /home/team/zhanghaonan/ConflictStudio-data/workflows/h3_payload.json
 ReadWritePaths=/home/team/zhanghaonan/ConflictStudio-data
 ExecStartPre=/usr/bin/mkdir -p /home/team/zhanghaonan/ConflictStudio-data/database /home/team/zhanghaonan/ConflictStudio-data/media /home/team/zhanghaonan/ConflictStudio-data/logs
 ExecStart=/home/team/zhanghaonan/ConflictStudio/scripts/run.sh

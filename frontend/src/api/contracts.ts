@@ -14,7 +14,8 @@ export type GpuSlotName = 'GPU0' | 'GPU1';
 export type GpuAvailability = 'Available' | 'Reserved' | 'Busy' | 'ExternalOccupied' | 'Unknown';
 export type Gender = 'Male' | 'Female';
 export type Ethnicity = 'EastAsian' | 'White' | 'Black' | 'SouthAsian' | 'Latino';
-export type Age = 25 | 35 | 45 | 60;
+export type Age = 25 | 45 | 60;
+export type SpokenLanguage = 'zh' | 'en' | 'es' | 'de' | 'ja' | 'ko';
 export type JobSource = 'Production' | 'PromptTest' | 'VideoTest';
 export type JobStatus = 'Queued' | 'Running' | 'Interrupted' | 'Completed' | 'Failed' | 'Cancelled';
 export type GenerationAttemptStatus = 'Running' | 'Completed' | 'Failed';
@@ -196,6 +197,7 @@ export interface Demographic {
   age: Age;
   gender: Gender;
   ethnicity: Ethnicity;
+  language: SpokenLanguage;
 }
 
 export interface BatchDraftFields {
@@ -405,6 +407,7 @@ export interface Snapshot {
   age: Age;
   gender: Gender;
   ethnicity: Ethnicity;
+  language: SpokenLanguage;
   model: ModelName;
   precision: ModelPrecision | null;
   seed: number;
@@ -589,6 +592,7 @@ export interface ReviewSampleDetailRead extends ReviewSampleListRead {
   psychologicalBackgroundEn: string;
   age: number;
   ethnicity: Ethnicity;
+  language: SpokenLanguage;
   model: ModelName;
   precision: ModelPrecision | null;
   compatibleSceneCount: number;

@@ -25,6 +25,7 @@ import type {
   Scene,
   TestComparisonInput,
   TestExecutionMode,
+  SpokenLanguage,
 } from '../../api/contracts';
 import {
   addSecondTestComparison,
@@ -62,6 +63,8 @@ import {
   type TestCopyDraft,
   useGenerationCopy,
   useDebouncedValue,
+  languagesByEthnicity,
+  defaultLanguageFor,
   useGenerationLocale,
 } from './shared';
 import type { GenerationKey } from '../../locales/features/generation';
@@ -79,6 +82,7 @@ interface TestForm {
   age: Age;
   gender: Gender;
   ethnicity: Ethnicity;
+  language: SpokenLanguage;
   seed: string;
   model: ModelName;
   precision: ModelPrecision | null;
@@ -100,6 +104,7 @@ function emptyForm(): TestForm {
     age: 25,
     gender: 'Female',
     ethnicity: 'EastAsian',
+    language: 'zh',
     seed: '1',
     model: defaultGenerationProfile.model,
     precision: defaultGenerationProfile.precision,
@@ -123,6 +128,7 @@ export function TestPage() {
     age: copied.age,
     gender: copied.gender,
     ethnicity: copied.ethnicity,
+    language: copied.language ?? defaultLanguageFor(copied.ethnicity),
     seed: String(copied.seed),
     model: copied.model,
     precision: copied.precision,
@@ -300,7 +306,7 @@ export function TestPage() {
       contentScript: { id: selectedContent.id, expectedRevision: selectedContent.revision },
       promptTemplateVersion: { id: selectedVersion.id, expectedRevision: selectedVersion.revision },
       scene: { id: selectedScene.id, expectedRevision: selectedScene.revision },
-      demographic: { age: form.age, gender: form.gender, ethnicity: form.ethnicity },
+      demographic: { age: form.age, gender: form.gender, ethnicity: form.ethnicity, language: form.language },
     };
     try {
       const job = form.kind === 'PromptTest'
@@ -414,7 +420,8 @@ export function TestPage() {
             <div className="generation-form__grid generation-form__grid--three">
               <Field label={g('test.age')} htmlFor="test-age"><select id="test-age" value={form.age} onChange={event => setForm(current => ({ ...current, age: Number(event.target.value) as Age }))}>{ages.map(value => <option key={value} value={value}>{g(('demographic.age.' + value) as GenerationKey)}</option>)}</select></Field>
               <Field label={g('test.gender')} htmlFor="test-gender"><select id="test-gender" value={form.gender} onChange={event => setForm(current => ({ ...current, gender: event.target.value as Gender }))}>{genders.map(value => <option key={value} value={value}>{g(('demographic.gender.' + value) as GenerationKey)}</option>)}</select></Field>
-              <Field label={g('test.ethnicity')} htmlFor="test-ethnicity"><select id="test-ethnicity" value={form.ethnicity} onChange={event => setForm(current => ({ ...current, ethnicity: event.target.value as Ethnicity }))}>{ethnicities.map(value => <option key={value} value={value}>{g(('demographic.ethnicity.' + value) as GenerationKey)}</option>)}</select></Field>
+              <Field label={g('test.ethnicity')} htmlFor="test-ethnicity"><select id="test-ethnicity" value={form.ethnicity} onChange={event => { const ethnicity = event.target.value as Ethnicity; setForm(current => ({ ...current, ethnicity, language: languagesByEthnicity[ethnicity].includes(current.language) ? current.language : defaultLanguageFor(ethnicity) })); }}>{ethnicities.map(value => <option key={value} value={value}>{g(('demographic.ethnicity.' + value) as GenerationKey)}</option>)}</select></Field>
+              <Field label={g('test.language')} htmlFor="test-language"><select id="test-language" value={form.language} onChange={event => setForm(current => ({ ...current, language: event.target.value as SpokenLanguage }))}>{languagesByEthnicity[form.ethnicity].map(value => <option key={value} value={value}>{g(('demographic.language.' + value) as GenerationKey)}</option>)}</select></Field>
             </div>
           </fieldset>
 

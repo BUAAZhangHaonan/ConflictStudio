@@ -505,7 +505,7 @@ export function ReviewDetailPage() {
             <details key={sample.id} className="review-detail__disclosure">
               <summary>{t('review.detail.details')}</summary>
               <dl className="review-detail__facts">
-                <div><dt>{t('review.demographics')}</dt><dd>{sample.age}, {t(`review.gender.${sample.gender}`)}, {t(`review.ethnicity.${sample.ethnicity}`)}</dd></div>
+                <div><dt>{t('review.demographics')}</dt><dd>{sample.age}, {t(`review.gender.${sample.gender}`)}, {t(`review.ethnicity.${sample.ethnicity}`)}, {t(`review.language.${sample.language}`)}</dd></div>
                 <div><dt>{t('review.model')}</dt><dd>{sample.model}</dd></div>
                 <div><dt>{t('review.precision')}</dt><dd>{sample.precision ?? t('review.notApplicable')}</dd></div>
                 <div><dt>{t('review.detail.beijingTime')}</dt><dd>{beijingTimestamp(sample.updatedAt, locale)}</dd></div>

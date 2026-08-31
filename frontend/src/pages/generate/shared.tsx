@@ -10,6 +10,7 @@ import type {
   Gender,
   JobEvent,
   JobStatus,
+  SpokenLanguage,
   TestComparisonInput,
   TestExecutionMode,
 } from '../../api/contracts';
@@ -22,9 +23,19 @@ import type {
 } from '../../types';
 
 export const categories: Category[] = ['A-VA', 'A-VT', 'C-VA', 'C-VT'];
-export const ages: Age[] = [25, 35, 45, 60];
+export const ages: Age[] = [25, 45, 60];
 export const genders: Gender[] = ['Male', 'Female'];
 export const ethnicities: Ethnicity[] = ['EastAsian', 'White', 'Black', 'SouthAsian', 'Latino'];
+export const languagesByEthnicity: Record<Ethnicity, SpokenLanguage[]> = {
+  EastAsian: ['zh'],
+  White: ['en'],
+  Black: ['en'],
+  SouthAsian: ['en'],
+  Latino: ['en'],
+};
+export function defaultLanguageFor(ethnicity: Ethnicity): SpokenLanguage {
+  return languagesByEthnicity[ethnicity][0];
+}
 
 const draftPrefix = 'conflictstudio.generation.';
 
@@ -40,6 +51,7 @@ export interface TestCopyDraft {
   age: Age;
   gender: Gender;
   ethnicity: Ethnicity;
+  language?: SpokenLanguage;
   seed: number;
   model: ModelName;
   precision: ModelPrecision | null;

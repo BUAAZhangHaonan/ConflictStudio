@@ -19,7 +19,7 @@ deploy_check() {
   grep -qx 'EnvironmentFile=/home/team/zhanghaonan/ConflictStudio/ConflictStudio.env' "$service"
   grep -qx 'ExecStart=/home/team/zhanghaonan/ConflictStudio/scripts/run.sh' "$service"
   grep -qx 'Environment=CONFLICTSTUDIO_LTX23_WORKFLOW_PATH=/home/team/lvshuyang/prompt-make/workflows/ltx23_t2v_audio_single_stage_api.json' "$service"
-  grep -qx 'Environment=CONFLICTSTUDIO_H3_WORKFLOW_PATH=/home/team/zhanghaonan/H3-ComfyUI/output/compare-vt-va-20260806/h3/va_aligned/payload.json' "$service"
+  grep -qx 'Environment=CONFLICTSTUDIO_H3_WORKFLOW_PATH=/home/team/zhanghaonan/ConflictStudio-data/workflows/h3_payload.json' "$service"
 }
 
 case "${1:-verify}" in
