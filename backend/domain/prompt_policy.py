@@ -4,10 +4,10 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from .enums import Category, ConflictDirection
+from .enums import Category, ConflictDirection, Language
 
 
-POLICY_VERSION = "2026-08-20.1"
+POLICY_VERSION = "2026-08-31.1"
 
 COMPONENT_WORD_LIMITS: Mapping[str, int] = {
     "appearance": 18,
@@ -27,6 +27,28 @@ assert (
 )
 
 
+LANGUAGE_DISPLAY: Mapping[Language, str] = {
+    Language.ZH: "Mandarin Chinese",
+    Language.EN: "English",
+    Language.ES: "Spanish",
+    Language.DE: "German",
+    Language.JA: "Japanese",
+    Language.KO: "Korean",
+}
+
+SPOKEN_LINE_RULES: Mapping[Language, str] = {
+    Language.ZH: "Use 2 to 40 Chinese characters.",
+    Language.EN: (
+        "Use 2 to 14 plain English words in ASCII, written without contractions "
+        "or any apostrophes."
+    ),
+    Language.ES: "Use 2 to 14 plain Spanish words without any apostrophes.",
+    Language.DE: "Use 2 to 14 plain German words without any apostrophes.",
+    Language.JA: "Use 2 to 40 Japanese characters.",
+    Language.KO: "Use 2 to 40 Korean characters.",
+}
+
+
 @dataclass(frozen=True)
 class CategoryPolicy:
     category: Category
@@ -39,43 +61,43 @@ POLICIES = {
     Category.A_VA: CategoryPolicy(
         category=Category.A_VA,
         protocol_rule=(
-            "The visible behavior, Mandarin words and vocal delivery all convey the true state."
+            "The visible behavior, spoken words and vocal delivery all convey the true state."
         ),
         relation_rule="Keep the visible and audible evidence aligned.",
         output_rule=(
-            "spokenText is the Mandarin dialogue. bodyAction and vocalDelivery both carry the true state."
+            "spokenText is the spoken dialogue. bodyAction and vocalDelivery both carry the true state."
         ),
     ),
     Category.A_VT: CategoryPolicy(
         category=Category.A_VT,
         protocol_rule=(
-            "The visible behavior and independently stored Mandarin text both convey the true state. "
+            "The visible behavior and independently stored text both convey the true state. "
             "The source vocal delivery follows the visible behavior before the audio is removed."
         ),
         relation_rule="Keep the visible evidence and stored text aligned without rendering the text on screen.",
         output_rule=(
-            "spokenText is the independently stored Mandarin vtText. bodyAction, vocalDelivery and spokenText "
+            "spokenText is the independently stored vtText. bodyAction, vocalDelivery and spokenText "
             "all carry the true state in the audio-bearing source video; the application removes its audio later."
         ),
     ),
     Category.C_VA: CategoryPolicy(
         category=Category.C_VA,
-        protocol_rule="The visible behavior intentionally disagrees with the Mandarin words and vocal delivery.",
+        protocol_rule="The visible behavior intentionally disagrees with the spoken words and vocal delivery.",
         relation_rule="Follow the selected direction exactly and keep the disagreement readable throughout the clip.",
         output_rule=(
-            "spokenText is the Mandarin dialogue. bodyAction carries the Vision assignment; vocalDelivery and "
+            "spokenText is the spoken dialogue. bodyAction carries the Vision assignment; vocalDelivery and "
             "spokenText carry the Audio assignment."
         ),
     ),
     Category.C_VT: CategoryPolicy(
         category=Category.C_VT,
         protocol_rule=(
-            "The visible behavior intentionally disagrees with the independently stored Mandarin text. "
+            "The visible behavior intentionally disagrees with the independently stored text. "
             "The source vocal delivery follows the visible behavior before the audio is removed."
         ),
         relation_rule="Follow the selected direction exactly and never render the stored text on screen.",
         output_rule=(
-            "spokenText is the independently stored Mandarin vtText. bodyAction and vocalDelivery carry the "
+            "spokenText is the independently stored vtText. bodyAction and vocalDelivery carry the "
             "Vision assignment in the audio-bearing source video; spokenText carries the Text assignment."
         ),
     ),
@@ -329,13 +351,13 @@ def direction_rule(category: Category, direction: ConflictDirection | None) -> s
     if direction is None:
         raise ValueError("Conflict content requires a direction")
     if category is Category.C_VA and direction is ConflictDirection.VISION:
-        return "Visible behavior carries the true state; the Mandarin words and vocal delivery carry the apparent state."
+        return "Visible behavior carries the true state; the spoken words and vocal delivery carry the apparent state."
     if category is Category.C_VA and direction is ConflictDirection.AUDIO:
         return "The Mandarin words and vocal delivery carry the true state; visible behavior carries the apparent state."
     if category is Category.C_VT and direction is ConflictDirection.VISION:
-        return "Visible behavior and source vocal delivery carry the true state; the stored Mandarin text carries the apparent state."
+        return "Visible behavior and source vocal delivery carry the true state; the stored text carries the apparent state."
     if category is Category.C_VT and direction is ConflictDirection.TEXT:
-        return "The stored Mandarin text carries the true state; visible behavior and source vocal delivery carry the apparent state."
+        return "The stored text carries the true state; visible behavior and source vocal delivery carry the apparent state."
     raise ValueError("Conflict direction does not match the category")
 
 
@@ -348,6 +370,7 @@ def validate_final_positive_prompt(
     expected_ethnicity: str | None = None,
     expected_gender: str | None = None,
     expected_age: int | None = None,
+    language: Language = Language.ZH,
 ) -> None:
     """Validate a final video prompt without changing any supplied text."""
 
@@ -360,7 +383,7 @@ def validate_final_positive_prompt(
     if "```" in prompt:
         violations.append("positivePrompt must not contain a Markdown code fence")
 
-    quoted_spoken_text = _validate_spoken_text(spoken_text, violations)
+    quoted_spoken_text = _validate_spoken_text(spoken_text, violations, language)
     if prompt.count(spoken_text) != 1 or quoted_spoken_text not in prompt:
         violations.append(
             "positivePrompt must contain the exact short spoken text once in single quotes"
@@ -376,7 +399,7 @@ def validate_final_positive_prompt(
         )
     if _CJK_RE.search(narrative):
         violations.append(
-            "positivePrompt narrative must be English outside the quoted Mandarin speech"
+            "positivePrompt narrative must be English outside the quoted speech"
         )
 
     banned_emotions = list(BANNED_EMOTION_LABELS)
@@ -518,7 +541,11 @@ def validate_scene_policy_fields(values: Mapping[str, str]) -> None:
         validate_scene_policy_text(value, field_name)
 
 
-def _validate_spoken_text(spoken_text: str, violations: list[str]) -> str:
+def _validate_spoken_text(
+    spoken_text: str,
+    violations: list[str],
+    language: Language = Language.ZH,
+) -> str:
     if not spoken_text.strip():
         violations.append("spoken text must not be blank")
         return ""
@@ -531,6 +558,15 @@ def _validate_spoken_text(spoken_text: str, violations: list[str]) -> str:
         for mark in ('"', "'", "\u2018", "\u2019", "\u201c", "\u201d")
     ):
         violations.append("spoken text must not contain quote marks")
+    if language is Language.EN:
+        if not spoken_text.isascii():
+            violations.append("spoken text must be plain ASCII English")
+        english_words = count_english_words(spoken_text)
+        if not 2 <= english_words <= 14:
+            violations.append(
+                f"spoken text must contain 2 to 14 English words; found {english_words}"
+            )
+        return f"'{spoken_text}'"
     han_count = sum(1 for character in spoken_text if _CJK_RE.fullmatch(character))
     other_alphanumeric_count = sum(
         1

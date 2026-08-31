@@ -321,6 +321,7 @@ class ArchiveService:
                 "age": sample.age,
                 "gender": sample.gender.value,
                 "ethnicity": sample.ethnicity.value,
+                "language": sample.language.value,
             },
             "review": {
                 "id": review.id,

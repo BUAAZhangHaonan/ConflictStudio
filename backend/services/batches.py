@@ -408,6 +408,7 @@ class BatchService:
                         age=payload.demographic.age,
                         gender=payload.demographic.gender,
                         ethnicity=payload.demographic.ethnicity,
+                        language=payload.demographic.language,
                         model=comparison.model,
                         precision=comparison.precision,
                         seed=seed,
@@ -565,6 +566,7 @@ class BatchService:
                         age=allocation.demographic.age,
                         gender=allocation.demographic.gender,
                         ethnicity=allocation.demographic.ethnicity,
+                        language=allocation.demographic.language,
                         model=current.draft.model,
                         precision=current.draft.precision,
                         seed=allocation.seed,
@@ -872,6 +874,7 @@ class BatchService:
                 age=demographic.age,
                 gender=demographic.gender,
                 ethnicity=demographic.ethnicity,
+                language=demographic.language,
                 model=model,
             )
         )
@@ -1035,6 +1038,7 @@ class BatchService:
                             age=demographic.age,
                             gender=demographic.gender,
                             ethnicity=demographic.ethnicity,
+                            language=demographic.language,
                         )
                     )
                     combination_position += 1
@@ -1142,6 +1146,7 @@ class BatchService:
                         age=row.age,
                         gender=row.gender,
                         ethnicity=row.ethnicity,
+                        language=row.language,
                     ),
                 )
             )
@@ -1282,6 +1287,7 @@ class BatchService:
                         age=demographic.age,
                         gender=demographic.gender,
                         ethnicity=demographic.ethnicity,
+                        language=demographic.language,
                         model=aggregate.draft.model,
                     )
                 )
@@ -1327,6 +1333,7 @@ class BatchService:
                 age=allocation.demographic.age,
                 gender=allocation.demographic.gender,
                 ethnicity=allocation.demographic.ethnicity,
+                language=allocation.demographic.language,
             ),
             gpu_slot=allocation.gpu_slot,
             model=allocation.model,
@@ -1586,6 +1593,7 @@ class BatchService:
             age=demographic.age,
             gender=demographic.gender,
             ethnicity=demographic.ethnicity,
+            language=demographic.language,
             model=model,
             precision=precision,
             seed=seed,

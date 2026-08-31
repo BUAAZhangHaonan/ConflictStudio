@@ -994,6 +994,7 @@ class JobExecutor:
             age=snapshot.age,
             gender=snapshot.gender,
             ethnicity=snapshot.ethnicity,
+            language=snapshot.language,
             system_input=snapshot.system_input,
             user_input=snapshot.user_input,
             negative_prompt=snapshot.negative_prompt,

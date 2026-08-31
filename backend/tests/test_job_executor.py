@@ -78,7 +78,7 @@ class RecordingPromptModel:
 
     async def generate(self, system_input: str, user_input: str) -> PromptModelResponse:
         self.calls += 1
-        if "Age: 35" in user_input:
+        if "Gender: Male" in user_input:
             appearance = "He wears a plain navy shirt, and his short dark hair remains neatly combed away from his face."
             pronoun = "He"
         else:

@@ -158,7 +158,46 @@ class Ethnicity(ValueEnum):
     LATINO = "Latino"
 
 
-AGES = (25, 35, 45, 60)
+AGES = (25, 45, 60)
+
+
+class Language(ValueEnum):
+    ZH = "zh"
+    EN = "en"
+    ES = "es"
+    DE = "de"
+    JA = "ja"
+    KO = "ko"
+
+
+ENABLED_LANGUAGES = frozenset({Language.ZH, Language.EN})
+
+_LANGUAGE_PREFERENCE: dict[Ethnicity, tuple[Language, ...]] = {
+    Ethnicity.EAST_ASIAN: (Language.ZH, Language.JA, Language.KO),
+    Ethnicity.WHITE: (Language.EN, Language.ES, Language.DE),
+    Ethnicity.BLACK: (Language.EN,),
+    Ethnicity.SOUTH_ASIAN: (Language.EN,),
+    Ethnicity.LATINO: (Language.ES, Language.EN),
+}
+
+LANGUAGES_BY_ETHNICITY: dict[Ethnicity, frozenset[Language]] = {
+    ethnicity: frozenset(languages)
+    for ethnicity, languages in _LANGUAGE_PREFERENCE.items()
+}
+
+
+def default_language_for(ethnicity: Ethnicity) -> Language:
+    for language in _LANGUAGE_PREFERENCE[ethnicity]:
+        if language in ENABLED_LANGUAGES:
+            return language
+    return Language.EN
+
+
+def validate_language(ethnicity: Ethnicity, language: Language) -> bool:
+    return (
+        language in ENABLED_LANGUAGES
+        and language in LANGUAGES_BY_ETHNICITY[ethnicity]
+    )
 
 
 def validate_direction(category: Category, direction: ConflictDirection | None) -> bool:

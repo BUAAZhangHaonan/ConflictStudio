@@ -16,13 +16,15 @@ from pydantic import (
 )
 
 from backend.adapters.llm import PromptAdapterError, PromptModel
-from backend.domain.enums import Category, Ethnicity, Gender, ModelName
+from backend.domain.enums import Category, Ethnicity, Gender, Language, ModelName
 from backend.domain.models import ContentScript, PromptTemplateVersion, Scene
 from backend.domain.schemas import PromptFailureDetails, PromptSchemaFieldDetail
 from backend.domain.prompt_policy import (
     BANNED_CERTAINTY_MODIFIERS,
     COMPONENT_WORD_LIMITS,
+    LANGUAGE_DISPLAY,
     POLICY_VERSION,
+    SPOKEN_LINE_RULES,
     POLICIES,
     PromptPolicyViolation,
     direction_rule,
@@ -124,6 +126,7 @@ class PromptContext:
     gender: Gender
     ethnicity: Ethnicity
     model: ModelName
+    language: Language = Language.ZH
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,7 @@ class PreparedPrompt:
     system_input: str
     user_input: str
     negative_prompt: str
+    language: Language = Language.ZH
 
 
 @dataclass(frozen=True)
@@ -207,6 +211,8 @@ class PromptService:
             ),
             banned_certainty_modifiers=BANNED_CERTAINTY_MODIFIERS,
             component_word_limits=COMPONENT_WORD_LIMITS,
+            spoken_language=LANGUAGE_DISPLAY[context.language],
+            spoken_line_rule=SPOKEN_LINE_RULES[context.language],
         ).strip()
         user_input = self.user_template.render(
             policy=policy,
@@ -239,6 +245,7 @@ class PromptService:
             age=context.age,
             gender=context.gender.value,
             ethnicity=context.ethnicity.value,
+            spoken_language=LANGUAGE_DISPLAY[context.language],
         ).strip()
         return PreparedPrompt(
             policy_version=POLICY_VERSION,
@@ -248,6 +255,7 @@ class PromptService:
             age=context.age,
             gender=context.gender,
             ethnicity=context.ethnicity,
+            language=context.language,
             system_input=system_input,
             user_input=user_input,
             negative_prompt=(
@@ -347,7 +355,7 @@ class PromptService:
         output: GeneratedPrompt,
         raw: str,
     ) -> PromptResult:
-        cls._validate_generated_output(output)
+        cls._validate_generated_output(output, prepared.language)
         positive_prompt = cls._assemble_positive_prompt(prepared, output)
         try:
             validate_final_positive_prompt(
@@ -358,6 +366,7 @@ class PromptService:
                 expected_ethnicity=cls._ethnicity_text(prepared.ethnicity),
                 expected_gender=prepared.gender.value,
                 expected_age=prepared.age,
+                language=prepared.language,
             )
         except PromptPolicyViolation as error:
             raise ServiceError(
@@ -379,9 +388,11 @@ class PromptService:
         )
 
     @staticmethod
-    def _validate_generated_output(output: GeneratedPrompt) -> None:
+    def _validate_generated_output(
+        output: GeneratedPrompt, language: Language = Language.ZH
+    ) -> None:
         try:
-            _validate_spoken_text_component(output.spoken_text)
+            _validate_spoken_text_component(output.spoken_text, language)
             for field_name in (
                 "appearance",
                 "body_action",
@@ -499,7 +510,9 @@ def _pydantic_error_fields(error: ValidationError) -> list[dict[str, str]]:
     return fields
 
 
-def _validate_spoken_text_component(value: str) -> str:
+def _validate_spoken_text_component(
+    value: str, language: Language = Language.ZH
+) -> str:
     if value != value.strip() or "\n" in value or "\r" in value:
         raise ValueError(
             "spokenText must not contain surrounding whitespace or line breaks"
@@ -508,6 +521,13 @@ def _validate_spoken_text_component(value: str) -> str:
         mark in value for mark in ('"', "'", "\u2018", "\u2019", "\u201c", "\u201d")
     ):
         raise ValueError("spokenText must not contain quote marks")
+    if language is Language.EN:
+        if not value.isascii():
+            raise ValueError("spokenText must be plain ASCII English")
+        words = len([word for word in re.split(r"[^A-Za-z]+", value) if word])
+        if not 2 <= words <= 14:
+            raise ValueError("spokenText must contain 2 to 14 English words")
+        return value
     han_count = len(re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff]", value))
     other_alphanumeric_count = sum(
         1

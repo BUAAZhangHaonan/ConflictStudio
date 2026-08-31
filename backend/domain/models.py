@@ -17,6 +17,7 @@ from sqlmodel import Field, SQLModel
 
 from .enums import (
     AGES,
+    Language,
     BatchDraftStatus,
     Category,
     ConflictDirection,
@@ -445,6 +446,7 @@ class BatchDraftCombination(SQLModel, table=True):
     age: int
     gender: Gender = Field(sa_column=enum_column(Gender))
     ethnicity: Ethnicity = Field(sa_column=enum_column(Ethnicity))
+    language: Language = Field(default=Language.ZH, sa_column=enum_column(Language))
 
 
 class BatchDraftPromptTemplateVersion(SQLModel, table=True):
@@ -564,6 +566,7 @@ class BatchVideoInputSnapshot(SQLModel, table=True):
     age: int
     gender: Gender = Field(sa_column=enum_column(Gender))
     ethnicity: Ethnicity = Field(sa_column=enum_column(Ethnicity))
+    language: Language = Field(default=Language.ZH, sa_column=enum_column(Language))
     model: ModelName = Field(sa_column=enum_column(ModelName))
     precision: Precision | None = Field(default=None, sa_column=enum_column(Precision, nullable=True))
     seed: int = Field(ge=0, lt=2**31)
@@ -861,6 +864,7 @@ class Sample(SQLModel, table=True):
     age: int
     gender: Gender = Field(sa_column=enum_column(Gender))
     ethnicity: Ethnicity = Field(sa_column=enum_column(Ethnicity))
+    language: Language = Field(default=Language.ZH, sa_column=enum_column(Language))
     seed: int = Field(ge=0, lt=2**31)
     revision: int = Field(default=1, ge=1)
     created_at: str = Field(default_factory=utc_now, sa_column=Column(String(32), nullable=False))

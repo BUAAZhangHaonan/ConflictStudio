@@ -240,12 +240,12 @@ def complete_generated(
         (
             Category.C_VT,
             ConflictDirection.VISION,
-            "stored Mandarin text carries the apparent state",
+            "stored text carries the apparent state",
         ),
         (
             Category.C_VT,
             ConflictDirection.TEXT,
-            "stored Mandarin text carries the true state",
+            "stored text carries the true state",
         ),
     ],
 )

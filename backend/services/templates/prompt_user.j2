@@ -18,8 +18,8 @@ True state for component reasoning only:
 Apparent state for component reasoning only:
 {{ apparent_emotion }}
 
-Requested Mandarin spokenText:
-{{ requested_spoken_text or "Create one short natural Mandarin line from the selected content." }}
+Requested spoken line (translate faithfully into {{ spoken_language }} when the language differs):
+{{ requested_spoken_text or "Create one short natural " + spoken_language + " line from the selected content." }}
 
 Content scene supplement:
 {{ content_scene_supplement }}
@@ -41,6 +41,7 @@ Selected demographic, added by the application:
 Age: {{ age }}
 Gender: {{ gender }}
 Population: {{ ethnicity }}
+Spoken language: {{ spoken_language }}
 
 Positive examples for writing the matching component only:
 {% for example in positive_examples %}{{ loop.index }}. {{ example }}

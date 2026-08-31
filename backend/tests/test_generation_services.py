@@ -246,7 +246,7 @@ def make_batch(
         DemographicInput(
             age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
         ),
-        DemographicInput(age=35, gender=Gender.MALE, ethnicity=Ethnicity.WHITE),
+        DemographicInput(age=45, gender=Gender.MALE, ethnicity=Ethnicity.EAST_ASIAN),
     ]
     if quantity == 1:
         demographics = demographics[:1]
@@ -997,7 +997,7 @@ def test_preview_rotates_backgrounds_and_unknown_gpu_blocks_submit(
             promptTemplateVersionId=preset.id,
             demographics=[
                 DemographicInput(
-                    age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.LATINO
+                    age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN
                 )
             ],
             gpuSlots=[GpuSlotName.GPU0],
@@ -1345,7 +1345,7 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
     )
     demographics = [
         DemographicInput(age=25, gender=Gender.FEMALE, ethnicity=Ethnicity.EAST_ASIAN),
-        DemographicInput(age=35, gender=Gender.MALE, ethnicity=Ethnicity.WHITE),
+        DemographicInput(age=45, gender=Gender.MALE, ethnicity=Ethnicity.EAST_ASIAN),
     ]
     selections = {
         "targetDatasetId": dataset.id,
@@ -1380,7 +1380,7 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             content_one.id,
             preset_one.id,
             background_one.id,
-            (35, Gender.MALE, Ethnicity.WHITE),
+            (45, Gender.MALE, Ethnicity.EAST_ASIAN),
         ),
         (
             content_two.id,
@@ -1392,7 +1392,7 @@ def test_cartesian_preview_and_submit_cover_all_dimensions_in_order(
             content_two.id,
             preset_one.id,
             background_two.id,
-            (35, Gender.MALE, Ethnicity.WHITE),
+            (45, Gender.MALE, Ethnicity.EAST_ASIAN),
         ),
     ]
 

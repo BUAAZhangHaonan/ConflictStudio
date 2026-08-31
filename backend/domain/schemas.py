@@ -17,6 +17,7 @@ from pydantic import (
 
 from .enums import (
     AGES,
+    Language,
     ArchiveSyncStatus,
     BatchDraftStatus,
     Category,
@@ -41,6 +42,8 @@ from .enums import (
     TestExecutionMode,
     TemplateVersionStatus,
     relation_for,
+    default_language_for,
+    validate_language,
     validate_direction,
     validate_model_precision,
 )
@@ -559,11 +562,19 @@ class DemographicInput(ApiModel):
     age: int
     gender: Gender
     ethnicity: Ethnicity
+    language: Language | None = None
 
     @model_validator(mode="after")
-    def validate_age(self) -> Self:
+    def validate_demographic(self) -> Self:
         if self.age not in AGES:
-            raise ValueError("Age must be one of 25, 35, 45 or 60")
+            allowed = ", ".join(str(value) for value in AGES)
+            raise ValueError(f"Age must be one of {allowed}")
+        if self.language is None:
+            self.language = default_language_for(self.ethnicity)
+        if not validate_language(self.ethnicity, self.language):
+            raise ValueError(
+                "The selected language is not enabled for this population"
+            )
         return self
 
 
@@ -630,10 +641,14 @@ class BatchDraftFields(ApiModel):
         if len(self.seeds) != len(set(self.seeds)):
             raise ValueError("Duplicate seed selection")
         demographics = [
-            (value.age, value.gender, value.ethnicity) for value in self.demographics
+            (value.age, value.gender, value.ethnicity, value.language)
+            for value in self.demographics
         ]
         if len(demographics) != len(set(demographics)):
             raise ValueError("Duplicate demographic selection")
+        languages = {value.language for value in self.demographics}
+        if len(languages) > 1:
+            raise ValueError("A batch draft must use a single spoken language")
         return self
 
 
@@ -820,6 +835,7 @@ class SnapshotRead(ApiModel):
     age: int
     gender: Gender
     ethnicity: Ethnicity
+    language: Language
     model: ModelName
     precision: Precision | None
     seed: int
@@ -1151,6 +1167,7 @@ class SampleRead(ApiModel):
     age: int
     gender: Gender
     ethnicity: Ethnicity
+    language: Language
     seed: int
     revision: int
     created_at: str
@@ -1201,6 +1218,7 @@ class ReviewSampleDetailRead(ReviewSampleListRead):
     psychological_background_en: str
     age: int
     ethnicity: Ethnicity
+    language: Language
     model: ModelName
     precision: Precision | None
     compatible_scene_count: int = Field(ge=0)
