@@ -242,11 +242,6 @@ class SampleService:
         sample_id: int,
         filters: ReviewQueueFilter,
     ) -> int | None:
-        current = session.exec(
-            self.review_statement(filters).where(Sample.id == sample_id)
-        ).first()
-        if current is None:
-            raise invalid_request("The sample is not part of the supplied review queue")
         next_row = session.exec(
             self.review_statement(filters).where(Sample.id > sample_id).limit(1)
         ).first()

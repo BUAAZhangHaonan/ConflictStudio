@@ -649,6 +649,66 @@ def test_aligned_to_conflict_requires_coherent_emotions_and_preserves_review_his
     assert removed_endpoint.status_code == 405
 
 
+def test_review_submission_survives_a_queue_the_converted_sample_left(
+    tmp_path: Path,
+) -> None:
+    app = sample_app(tmp_path)
+    add_sample_copies(app, 2)
+    with TestClient(app) as client:
+        queue = client.get("/api/samples", params={"relation": "Aligned"}).json()["items"]
+        reviewer = create_reviewer(client)
+        moved_first = client.patch(
+            f"/api/samples/{queue[0]['id']}/classification",
+            json=classification_payload(
+                queue[0],
+                reviewer,
+                "C-VA",
+                "The face looks tense while the voice stays calm.",
+                direction="Vision",
+                apparent_emotion="tense",
+            ),
+        )
+        submitted = client.post(
+            "/api/reviews",
+            json=review_payload(
+                client.get(f"/api/samples/{queue[0]['id']}").json(),
+                reviewer,
+                queue={"relation": "Aligned"},
+            ),
+        )
+        moved_last = client.patch(
+            f"/api/samples/{queue[2]['id']}/classification",
+            json=classification_payload(
+                queue[2],
+                reviewer,
+                "C-VA",
+                "The face looks tense while the voice stays calm.",
+                direction="Vision",
+                apparent_emotion="tense",
+            ),
+        )
+        submitted_last = client.post(
+            "/api/reviews",
+            json=review_payload(
+                client.get(f"/api/samples/{queue[2]['id']}").json(),
+                reviewer,
+                queue={"relation": "Aligned"},
+            ),
+        )
+
+    assert moved_first.status_code == 200
+    assert submitted.status_code == 201
+    assert submitted.json()["reviewDecision"] == "Accepted"
+    assert submitted.json()["nextReference"] == {
+        "id": queue[1]["id"],
+        "displayId": queue[1]["displayId"],
+        "page": 1,
+    }
+    assert moved_last.status_code == 200
+    assert submitted_last.status_code == 201
+    assert submitted_last.json()["nextReference"] is None
+
+
 @pytest.mark.parametrize(
     ("category", "target_category", "valid_direction", "invalid_direction"),
     [
