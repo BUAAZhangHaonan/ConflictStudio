@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ApiError, apiErrorMessage, shouldReloadAfterApiError } from '../api/client';
-import type { ReviewDecision, ReviewNoteDraftRead, ReviewQueue, ReviewSampleDetailRead } from '../api/contracts';
+import type { ReviewDecision, ReviewNoteDraftRead, ReviewQueue, ReviewSampleDetailRead, ReviewSampleListRead } from '../api/contracts';
 import {
   reviewSampleQueries,
   useConvertSampleClassificationMutation,
@@ -131,11 +131,14 @@ export function ReviewDetailPage() {
   const historyQuery = useReviewHistoryQuery(sampleId, historyPage, historyOpen);
   const sample = detailQuery.data;
   const queueItems = navigationListQuery.data?.items ?? [];
-  const queueIndex = sampleId === null ? -1 : queueItems.findIndex(item => item.id === sampleId);
-  const canGoPrevious = listReturnTo !== null && queueIndex >= 0 && (queueIndex > 0 || listLocation.page > 1);
-  const canGoNext = listReturnTo !== null && queueIndex >= 0 && (
-    queueIndex < queueItems.length - 1
-    || listLocation.page < (navigationListQuery.data?.totalPages ?? 0)
+  const queueTotalPages = navigationListQuery.data?.totalPages ?? 0;
+  const canGoPrevious = listReturnTo !== null && navigationListQuery.data !== undefined && sampleId !== null && (
+    queueItems.some(item => item.id < sampleId)
+    || listLocation.page > 1
+  );
+  const canGoNext = listReturnTo !== null && navigationListQuery.data !== undefined && sampleId !== null && (
+    queueItems.some(item => item.id > sampleId)
+    || listLocation.page < queueTotalPages
   );
 
   useLayoutEffect(() => {
@@ -272,22 +275,25 @@ export function ReviewDetailPage() {
   const retryNoteSave = () => { void flushNote(); };
 
   const navigateAdjacent = async (direction: 'previous' | 'next') => {
-    if (listReturnTo === null || queueIndex < 0) return;
+    if (listReturnTo === null || sampleId === null) return;
     setNavigationPending(true);
     try {
       if (!await flushNote()) return;
+      const followsCurrent = (item: ReviewSampleListRead) => (
+        direction === 'previous' ? item.id < sampleId : item.id > sampleId
+      );
+      const orderedItems = direction === 'previous' ? [...queueItems].reverse() : queueItems;
       let targetPage = listLocation.page;
-      let target = queueItems[queueIndex + (direction === 'previous' ? -1 : 1)] ?? null;
+      let target = orderedItems.find(followsCurrent) ?? null;
       if (target === null) {
         targetPage += direction === 'previous' ? -1 : 1;
-        if (targetPage < 1 || targetPage > (navigationListQuery.data?.totalPages ?? 0)) return;
+        if (targetPage < 1 || targetPage > queueTotalPages) return;
         const adjacent = await queryClient.fetchQuery(reviewSampleQueries.list({
           ...navigationQueue,
           page: targetPage,
         }));
-        target = direction === 'previous'
-          ? adjacent.items[adjacent.items.length - 1] ?? null
-          : adjacent.items[0] ?? null;
+        const adjacentItems = direction === 'previous' ? [...adjacent.items].reverse() : adjacent.items;
+        target = adjacentItems.find(followsCurrent) ?? null;
       }
       if (target === null) return;
       const nextReturnTo = buildReviewListLocation({ ...listLocation, page: targetPage });
